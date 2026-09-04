@@ -1,12 +1,13 @@
 # sqlshape
 
-Make SQL a first-class citizen of your Go codebase.
+Make SQL a first-class citizen of your codebase.
 
-SQL that lives in your repo gets what your Go code already has: version control,
+SQL that lives in your repo gets what your application code already has: version control,
 type checking, refactoring, tests, dependency graphs, and editor diagnostics.
 Not by hiding it behind a DSL or an ORM, but by checking it as SQL.
 
-`sqlshape` is a `go/analysis` analyzer. It finds `sqlshape.Query[R, P](template)`
+The core is language-agnostic. The first frontend is a `go/analysis` analyzer
+that finds `sqlshape.Query[R, P](template)`
 call sites, expands every branch of the template (`if` / `switch` / `range`),
 prepares each expansion against a PostgreSQL loaded from `schema.sql`, and checks
 that the declared row type `R` and parameter type `P` match what the database
