@@ -226,6 +226,25 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 
 psqldef の `CREATE VIEW` 差分は対応があるはず。MV / 関数は対応が薄ければ全量再適用の分担。
 
+## ORM の代替としての読み方
+
+ORM の目的を分けると、読み側はビュー、書き側は関数、動的絞り込みはテンプレートに散る。
+
+- **読み: ビューが集約の形を返す。** `order_detail` を `array_agg(row(...))` で定義すれば集約ルートが 1 行で返る。
+  N+1 は構造的に起きない、遅延ロードは不要（形を事前に決めるから）、identity map も不要。
+  ネストの型は複合型から導出。DDD 的には 集約 = 読みのビュー + 書きの関数 の対
+- **書き: 複合型を受ける関数。** `CREATE TYPE order_input AS (...)` + `save_order(order_input, order_item_input[])`。
+  unit of work / dirty checking / cascade save の置き換え。複合型はカタログにいるので引数も型検査
+- **動的絞り込み: テンプレートがビューの上に載る。** `FROM order_detail WHERE {{if .Status}}...`
+- 捨てるもの: DB 可搬性、クラスからのスキーマ生成、SQL を隠すこと
+
+注意:
+
+- ビューの増殖。ビューは集約・ドメインの形の単位、画面ごとの投影はテンプレート側で列を選ぶ
+- プランナーの inline 可否。GROUP BY / DISTINCT / ウィンドウを含むビューは述語が押し込めない場合がある。
+  EXPLAIN ベースの lint で「このビューへの述語は押し込まれない」を警告できる
+- LEFT JOIN のネスト側の nullability は JOIN 種別から正しく nullable にする
+
 ## 位置づけ: Fat Database の復権、現代のツールチェーン付き
 
 DB 中心設計（Koppelaars "Fat Database"、PL/SQL 中心の基幹系）が退潮したのは思想の誤りではなく、
