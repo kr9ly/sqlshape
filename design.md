@@ -123,6 +123,27 @@ for row, err := range listOrders.Run(ctx, db, ListOrdersParams{Status: &s}) { ..
 
 PGlite は JS ホスト前提で Go からは使いづらい。embedded-postgres（実バイナリ、起動 1 秒弱）で行く。
 
+### prober の差し替え候補（DB を起動しない方式）
+
+prober は interface にして、後から実装を増やせるようにする。
+
+1. **パーサー抽出**: libpg_query（pg_query_go）。構文は本物だが raw parse まで。
+   `parse_analyze` はカタログ依存で抽出されていない
+2. **生成カタログ + 型推論の仕様実装**: PG ソースの `pg_proc.dat` / `pg_operator.dat` /
+   `pg_type.dat` / `pg_cast.dat` から静的カタログを生成し、ユーザーテーブルは schema.sql を
+   pg_query で解析して足す。型推論はマニュアル 10 章「型変換」が仕様として書き切っている
+   （§10.2 演算子解決、§10.3 関数解決、§10.5 UNION/CASE、多相型）ので仕様どおりに実装する。
+   sqlc の穴は仕様を全部実装しなかったことから来ていて方式の限界ではない。
+   pure Go・起動ゼロだが、数千〜1 万行と PG バージョン追従の永続コスト。
+   採ると重心が「アナライザー再実装」に移るので初版では採らない
+3. **アナライザーごと抽出 + 偽カタログ**: libpg_query の手法を `analyze.c` / `parse_*.c` まで
+   広げ、syscache の裏をメモリ上の偽カタログにする。忠実度は本物だが syscache / relcache /
+   MemoryContext の絡みが深く研究課題に近い
+4. **PG を wasm に**: PGlite の WASI ビルドが成立すれば wazero でプロセス内・ミリ秒起動。
+   実用段階かは未確認
+
+どの方式でも nullability は PG が答えないので自前。方式選択は「起動 1 秒を許すか」に縮む。
+
 ## MVP
 
 1. analyzer が `sqlshape.Query[R, P](literal)` を拾いリテラルを取り出す
