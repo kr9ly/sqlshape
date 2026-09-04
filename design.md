@@ -172,6 +172,32 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 スコープ外: PL/pgSQL、ルール、トリガー、照合順序、`.dat` に無い拡張の関数。
 拡張は本物の PG から `pg_proc` を dump して同じ形式に落とす経路を残す。
 
+## 副産物: 型安全なストアドプロシージャ
+
+`schema.sql` の `CREATE FUNCTION` / `CREATE PROCEDURE` はカタログの `pg_proc` 行として取り込まれるので、
+`SELECT * FROM f($1, $2)` / `CALL p(...)` は組み込み関数と同じ経路で引数型・戻り列・オーバーロード・
+多相の解決が通る。特別対応なし。
+
+ストアドが避けられてきた理由がこの構成で全部消える:
+
+- バージョン管理されない → schema.sql が git にある
+- デプロイが手作業 → sqldef が `CREATE OR REPLACE FUNCTION` の差分を当てる
+- 呼び出し側が型なしで壊れる → シグネチャ変更で全呼び出し箇所が lint で赤くなる
+
+踏み込める範囲:
+
+- `LANGUAGE sql` の `BEGIN ATOMIC` 本体（PG14+）は素の SQL なので自前アナライザーで本体も検査できる。
+  関数越しのテーブル依存も追えて DROP ゲート / 死んだスキーマ検出が効く
+- PL/pgSQL 本体はスコープ外。シグネチャだけ信用する（PG 自身も実行時まで検証しない）。plpgsql_check の位置
+
+注意点:
+
+- 関数戻り値の nullability は原理的に不明。`STRICT` と NOT NULL ドメインから拾い、他は nullable 扱いで
+  `-- sqlshape: not null` 注釈で上書き
+- `RETURNS record` を OUT なしで宣言した関数は呼び出し側の列定義リストが必須。そこも検査対象
+- psqldef が `CREATE FUNCTION` の差分をどこまで扱えるか未確認。扱えなければテーブルは sqldef、
+  関数は `CREATE OR REPLACE` で全量再適用、の分担で済む
+
 ## MVP
 
 1. analyzer が `sqlshape.Query[R, P](literal)` を拾いリテラルを取り出す
