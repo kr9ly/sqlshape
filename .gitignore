@@ -1,0 +1,15 @@
+# Binary
+sqlshape
+
+# IDE / Editor
+.idea/
+.vscode/
+
+# Claude Code local
+.claude/settings.local.json
+
+# Komado local
+.komado.yaml
+
+# Local notes
+NOTES.local.md
