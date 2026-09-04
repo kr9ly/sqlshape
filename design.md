@@ -121,11 +121,10 @@ for row, err := range listOrders.Run(ctx, db, ListOrdersParams{Status: &s}) { ..
   展開形ごとの statement キャッシュ
 - 補助: pg_query_go（libpg_query）で断片の切り出し・バインド位置の式文脈特定
 
-PGlite は JS ホスト前提で Go からは使いづらい。embedded-postgres（実バイナリ、起動 1 秒弱）で行く。
+### prober の方式候補
 
-### prober の差し替え候補（DB を起動しない方式）
-
-prober は interface にして、後から実装を増やせるようにする。
+当初案は embedded-postgres（実バイナリ、起動 1 秒弱）に schema.sql を流して PREPARE / Describe。
+PGlite は JS ホスト前提で Go からは使いづらい。DB を起動しない代替は以下。prober は interface にして差し替え可能にする。
 
 1. **パーサー抽出**: libpg_query（pg_query_go）。構文は本物だが raw parse まで。
    `parse_analyze` はカタログ依存で抽出されていない
@@ -134,8 +133,7 @@ prober は interface にして、後から実装を増やせるようにする�
    pg_query で解析して足す。型推論はマニュアル 10 章「型変換」が仕様として書き切っている
    （§10.2 演算子解決、§10.3 関数解決、§10.5 UNION/CASE、多相型）ので仕様どおりに実装する。
    sqlc の穴は仕様を全部実装しなかったことから来ていて方式の限界ではない。
-   pure Go・起動ゼロだが、数千〜1 万行と PG バージョン追従の永続コスト。
-   採ると重心が「アナライザー再実装」に移るので初版では採らない
+   pure Go・起動ゼロだが、数千〜1 万行と PG バージョン追従の永続コスト
 3. **アナライザーごと抽出 + 偽カタログ**: libpg_query の手法を `analyze.c` / `parse_*.c` まで
    広げ、syscache の裏をメモリ上の偽カタログにする。忠実度は本物だが syscache / relcache /
    MemoryContext の絡みが深く研究課題に近い
@@ -182,12 +180,12 @@ prober は interface にして、後から実装を増やせるようにする�
 4. R と結果列、P とパラメータを照合し diagnostics
 5. nullability は NOT NULL / JOIN 種別 / COALESCE の伝播で推論し、`col:"name,nullable"` で上書き可
 
-一番面倒なのは PG 型 → Go 型の対応表と、Describe の OID を pgx 型マップに通す部分。
+一番面倒なのは PG 型 → Go 型の対応表と、typmod / 多相型の解決。
 
 ## 未解決
 
-- **nullability**。Describe は結果列の null 許容を返さない。NOT NULL 制約 + JOIN 種別 +
-  COALESCE 程度の規則で 9 割を拾い、残りは注釈で逃がす。どのアプローチでも避けられない壁
+- **nullability** の推論精度。NOT NULL 制約 + JOIN 種別 + COALESCE の規則で 9 割を拾い、
+  残りは注釈で逃がす。オラクル（実 PG）は null 許容を返さないので、ここだけ差分テストが効かない
 - 制御用とバインド用で同じ変数を使うときの型付け（pointer か Optional か）
 - range の 0・1・2 展開で代表できない構造（再帰的 CTE の動的生成）は対象外
 - 再生の外にあるもの（CREATE EXTENSION、ロール、search_path、PG バージョン）は
