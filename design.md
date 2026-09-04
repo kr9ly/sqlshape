@@ -115,7 +115,7 @@ for row, err := range listOrders.Run(ctx, db, ListOrdersParams{Status: &s}) { ..
 - **analyzer**: `go/analysis`。`go vet -vettool` / golangci-lint / gopls に一度に乗る
 - **frontend**: `sqlshape.Query[R, P](literal)` を拾い、`go/types` で R・P のフィールド解決
 - **expander**: テンプレート → 全展開形（`{{.X}}` → `$n`）
-- **prober**: embedded-postgres に `schema.sql` を流し、各展開形を PREPARE / Describe
+- **prober**: 生成カタログ + 自前アナライザー（pure Go）。embedded-postgres は差分テストのオラクル
 - **matcher**: 結果列 ↔ R フィールド（名前 + `col` タグ）、パラメータ ↔ P フィールドの型照合
 - **runtime**: pgx 直結。テンプレート実行、`$n` 引数列、名前ベースの行マッパー、
   展開形ごとの statement キャッシュ
@@ -142,15 +142,45 @@ prober は interface にして、後から実装を増やせるようにする�
 4. **PG を wasm に**: PGlite の WASI ビルドが成立すれば wazero でプロセス内・ミリ秒起動。
    実用段階かは未確認
 
-どの方式でも nullability は PG が答えないので自前。方式選択は「起動 1 秒を許すか」に縮む。
+どの方式でも nullability は PG が答えないので自前。
+
+### 裁定: 2 を本線、embedded PG はオラクル
+
+2 に寄せる積極的理由:
+
+- nullability が同じ木の走査に載る。embedded PG 方式では「型は PG、null は自前」で
+  解析器が 2 つになるが、自前で式の木を歩くなら NOT NULL / JOIN 種別 / COALESCE の伝播は
+  数百行の追加
+- 参照の全数が取れる。Describe は結果列の由来しか返さず WHERE / JOIN 条件の列は見えない。
+  自前解析なら DROP ゲートと死んだスキーマの検出が完全になる
+
+1 週間で終わらせる条件:
+
+- 初日にオラクルを作る。本物の PG を差分テストの正解役に置き、クエリ生成 → 自前推論と
+  PREPARE / Describe の突き合わせ → 不一致を fixture 化、のループで収束させる
+- カタログ生成も初日。`pg_type.dat` / `pg_proc.dat` / `pg_operator.dat` / `pg_cast.dat` /
+  `pg_aggregate.dat` を Go のテーブルに吐く
+- マニュアル §10（型変換）を先に、構文カバレッジは後に。演算子解決・関数解決・暗黙キャスト・
+  多相型・UNION/CASE の統一が本体。JOIN / サブクエリ / CTE / 集合演算 / ウィンドウは
+  スコープと列可視性の問題で型推論より単純
+
+細部で踏みやすいもの:
+
+- `$n` の型推論。PG は `unknown` から文脈解決し、`SELECT $1` は「型を決定できない」になる。
+  鏡写しにしないと偽陰性
+- typmod（`varchar(20)`、`numeric(10,2)`）の伝播規則が関数ごとに違う
+- 集合返却関数と LATERAL、RETURNING、`INSERT ... ON CONFLICT` の列可視性
+
+スコープ外: PL/pgSQL、ルール、トリガー、照合順序、`.dat` に無い拡張の関数。
+拡張は本物の PG から `pg_proc` を dump して同じ形式に落とす経路を残す。
 
 ## MVP
 
 1. analyzer が `sqlshape.Query[R, P](literal)` を拾いリテラルを取り出す
 2. text/template/parse で if / switch を全展開、`{{.X}}` を `$n` に置換
-3. `schema.sql` を流した embedded PG に各展開形を PREPARE、Describe で型取得
+3. 生成カタログ + schema.sql で各展開形を解析し、パラメータ型・結果列型・null 許容を取得（正解は embedded PG の PREPARE / Describe と差分テスト）
 4. R と結果列、P とパラメータを照合し diagnostics
-5. nullability は `col:"name,nullable"` の明示だけ。推論は後回し
+5. nullability は NOT NULL / JOIN 種別 / COALESCE の伝播で推論し、`col:"name,nullable"` で上書き可
 
 一番面倒なのは PG 型 → Go 型の対応表と、Describe の OID を pgx 型マップに通す部分。
 
