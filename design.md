@@ -329,5 +329,10 @@ sqlshape + schema.sql + sqldef はその差を埋める。加えて LLM の時�
 - **Doma / uroboroSQL / DBFlute**（Java）: 2-way SQL。既定 1 形しか検査しない
 - **sqlc**: 静的ファイル前提のコード生成。動的 SQL で詰まる
 - **sqldef / Atlas**: 宣言スキーマ側単独。クエリ検査と結線した製品はない
+- **PostgREST / Supabase**: Schema Isolation（テーブルは private、`api` スキーマのビューと関数だけ公開）を
+  標準作法として推奨し、Supabase の規模で実運用実績がある。ただしアプリ層を捨てて DB を直接 API にする形。
+  sqlshape はアプリ層を Go で残しつつ同じ規律を持ち込み、呼び出し側まで型検査する
+- ORM 系: モデルがテーブルと 1 対 1 の前提なのでビュー主役は構造的に無理。Rails Scenic のように
+  ビューをマイグレーション管理する補助はあるが推奨作法ではない
 
 欠けている 1 点は「テンプレートの出力集合を有限として列挙し全形を検査する」。
