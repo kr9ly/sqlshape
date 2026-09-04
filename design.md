@@ -245,6 +245,15 @@ ORM の目的を分けると、読み側はビュー、書き側は関数、動�
   EXPLAIN ベースの lint で「このビューへの述語は押し込まれない」を警告できる
 - LEFT JOIN のネスト側の nullability は JOIN 種別から正しく nullable にする
 
+性能の落とし穴:
+
+- ネスト側の巨大化。子が 1 万行ある集約を `array_agg` で畳むと行が肥大化する。ビュー側でネストに
+  `LIMIT` を入れるか、大きくなり得る子は別クエリに分ける。lint で「ネスト内に上限なし」を警告可
+- prepared statement の generic plan。同じ文 5 回で generic に切り替わり、偏った列の `$1` で遅い値が出る。
+  展開形ごとの statement キャッシュはこれに当たりやすい。runtime に「この文は毎回 custom plan」フラグ
+  （`plan_cache_mode = force_custom_plan` 相当）
+- lint の EXPLAIN は embedded PG 上で統計が本番と違う。プラン系の警告は統計非依存（構造的に押し込めない等）に限定
+
 ## 位置づけ: Fat Database の復権、現代のツールチェーン付き
 
 DB 中心設計（Koppelaars "Fat Database"、PL/SQL 中心の基幹系）が退潮したのは思想の誤りではなく、
