@@ -254,6 +254,31 @@ ORM の目的を分けると、読み側はビュー、書き側は関数、動�
   （`plan_cache_mode = force_custom_plan` 相当）
 - lint の EXPLAIN は embedded PG 上で統計が本番と違う。プラン系の警告は統計非依存（構造的に押し込めない等）に限定
 
+## 分析基盤との共有: ビューを semantic layer にする
+
+アプリ側の「解釈」（有効注文の条件、コード値の名前解決、税抜→税込）が ORM のモデルクラスにあると
+分析側（Aurora → Athena / Redshift）からは見えず、dbt の staging モデルで再実装して静かにずれる。
+解釈がビューにあれば SQL テキストとして持ち出せる。
+
+- Athena federated query（Aurora PG コネクタ）ならビューはそのまま見える（本番負荷が乗るので軽い用途）
+- S3 エクスポート / zero-ETL はテーブルしか運ばないので、schema.sql のビュー定義を sqlglot で
+  PG → Trino/Athena に transpile して `CREATE VIEW` を再作成する CI ジョブ
+- Redshift は PG 系でほぼそのまま
+
+意味を所有するアプリチームが schema.sql に一度だけ書き、分析側は消費者に回る。
+「テーブルは private、ビューは public API」の消費者に分析基盤が加わる。テーブル変更で分析側が静かに
+壊れる問題がビュー固定で消える。
+
+規約: ビューを 2 層に分ける。
+
+- **意味層（flat）**: 分析側に持ち出す前提。ネストなし・PG 固有機能なし。スキーマ `semantic` 等で区別
+- **集約層（nested）**: アプリが読む `array_agg(row(...))` 入り。意味層の上に組む。持ち出さない
+
+lint: 「`semantic` スキーマのビューは transpile 可能な方言サブセットのみ」。自前アナライザーが式の木を
+持つので使用関数・構文の白名簿検査は安い。
+
+LLM: 分析用エージェントに schema.sql の意味層を読ませれば、アプリの解釈を持った状態でクエリを書く。
+
 ## 位置づけ: Fat Database の復権、現代のツールチェーン付き
 
 DB 中心設計（Koppelaars "Fat Database"、PL/SQL 中心の基幹系）が退潮したのは思想の誤りではなく、
