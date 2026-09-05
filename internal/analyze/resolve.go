@@ -80,9 +80,9 @@ func (a *analyzer) canCoerce(from, to catalog.OID, ctx coercionContext) bool {
 			return c.Context == 'i'
 		}
 	}
-	// array → array via element cast
+	// array → array via element cast (never into oidvector / int2vector, as in PG)
 	ft, tt2 := a.typ(from), a.typ(to)
-	if ft != nil && tt2 != nil && ft.IsArray() && tt2.IsArray() {
+	if ft != nil && tt2 != nil && ft.IsArray() && tt2.IsArray() && to != catalog.OIDVector && to != catalog.Int2Vector {
 		return a.canCoerce(ft.Elem, tt2.Elem, ctx)
 	}
 	// composite / record: any row type to record

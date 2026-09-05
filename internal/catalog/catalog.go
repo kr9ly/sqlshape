@@ -84,8 +84,15 @@ type Type struct {
 	Schema string
 }
 
-// IsArray reports whether t is an array type (has an element type and is not a pseudo type).
-func (t *Type) IsArray() bool { return t.Elem != 0 && t.Kind != 'p' }
+// IsArray reports whether t is a true array type: it has an element type and is a
+// varlena (get_element_type). Fixed-length types with typelem (point, line, ...) are not.
+func (t *Type) IsArray() bool { return t.Elem != 0 && t.Len == -1 && t.Kind != 'p' }
+
+// Well-known OIDs of the vector types PG never coerces arrays into (find_coercion_pathway).
+const (
+	OIDVector  OID = 30
+	Int2Vector OID = 22
+)
 
 // IsPolymorphic reports whether t is one of the any* pseudo types (§38.2.5).
 func (t *Type) IsPolymorphic() bool {

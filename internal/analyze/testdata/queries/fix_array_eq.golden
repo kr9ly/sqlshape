@@ -1,0 +1,7 @@
+params:
+  $1 bigint
+columns:
+  eq boolean
+  ne boolean
+  has boolean
+  lit boolean
