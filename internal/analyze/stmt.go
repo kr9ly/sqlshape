@@ -85,6 +85,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 			return nil, err
 		}
 	}
+	if err := a.checkGrouping(sel, sc, cols); err != nil {
+		return nil, err
+	}
 	for _, lim := range []*pg_query.Node{sel.LimitCount, sel.LimitOffset} {
 		if lim == nil {
 			continue

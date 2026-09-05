@@ -660,7 +660,8 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | |
 | 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則まで。関数戻り値・CASE 全分岐等の精緻化が残 |
 | ✅ | `-- sqlshape: not null` 注釈 | schema.sql では CREATE FUNCTION 直前のコメントで戻り値を NOT NULL に、テンプレートでは `-- sqlshape: not null col, col` で結果列を上書き。STRICT なユーザー関数も引数から伝播 |
-| ⬜ | GROUP BY 妥当性（42803）、照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
+| ✅ | GROUP BY 妥当性（42803） | analyze/grouping.go: deparse 一致・集約引数・PK による関数従属、GROUPING SETS は未検査。golden 5 本 |
+| ⬜ | 照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
 | ⬜ | `CALL procedure(...)` | statement として未対応 |
 | ⬜ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | 今はシグネチャだけ信用 |
 | ⬜ | EXPLAIN 系 lint（seq scan、ビューへの述語押し込み不可、ネスト内 LIMIT 無し） | 統計非依存に限定する方針のみ |

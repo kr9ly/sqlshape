@@ -1,0 +1,4 @@
+params:
+columns:
+  s order_status <- orders.status not null
+  n bigint

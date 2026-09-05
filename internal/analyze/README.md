@@ -33,4 +33,6 @@ DELETE with RETURNING and ON CONFLICT.
 - `testdata/queries/*.sql` + `.golden`: goldens come from the real PG (`go test ./internal/analyze -update`);
   the default run compares the analyzer to them without starting PG
 - Error fixtures agree on SQLSTATE; the message text is informative only
-- Not yet: GROUP BY validity (42803), collation, range types' subtypes, ROWS FROM, data-modifying CTEs
+- GROUP BY validity (`grouping.go`): grouping expressions matched by deparsed text, aggregate arguments
+  exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS unchecked
+- Not yet: collation, range types' subtypes, ROWS FROM, data-modifying CTEs
