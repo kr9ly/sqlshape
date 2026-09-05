@@ -34,6 +34,8 @@ type analyzer struct {
 	inView int
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
+	// funcParams: when analyzing a SQL function body, its parameters (by name and position)
+	funcParams []funcParam
 }
 
 // Analyze analyzes exactly one SQL statement against s.
@@ -46,6 +48,18 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if len(tree.Stmts) != 1 {
 		return nil, fmt.Errorf("expected exactly one statement, got %d", len(tree.Stmts))
 	}
+	return analyzeStmt(s, tree.Stmts[0].Stmt, nil)
+}
+
+// funcParam is a SQL-function parameter visible in its body by name and as $n.
+type funcParam struct {
+	name string
+	typ  schema.TypeRef
+}
+
+// analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
+func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam) (*Result, error) {
+	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
 	a := &analyzer{
 		s:          s,
 		params:     map[int32]catalog.OID{},
@@ -53,6 +67,10 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		viewCache:  map[*schema.Relation][]rteCol{},
 		viewScopes: map[*schema.Relation]*subquery{},
 		viewBusy:   map[*schema.Relation]bool{},
+		funcParams: fp,
+	}
+	for i, p := range fp {
+		a.params[int32(i+1)] = p.typ.OID
 	}
 	sc := newScope(nil)
 	var cols []rteCol
@@ -75,6 +93,9 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		return nil, aerr
 	}
 	res := &Result{}
+	if len(fp) > 0 {
+		a.maxParam = 0 // a function body's $n are its parameters, not statement parameters
+	}
 	for i := int32(1); i <= a.maxParam; i++ {
 		t, ok := a.params[i]
 		if !ok {

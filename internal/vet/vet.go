@@ -55,10 +55,16 @@ func init() {
 
 var (
 	schemaMu    sync.Mutex
-	schemaCache = map[string]*schema.Schema{}
+	schemaCache = map[string]*loadedSchema{}
 )
 
-func loadSchema(path string) (*schema.Schema, error) {
+// loadedSchema is a schema plus the findings about the schema itself, reported once per package.
+type loadedSchema struct {
+	s        *schema.Schema
+	problems []string
+}
+
+func loadSchema(path string) (*loadedSchema, error) {
 	schemaMu.Lock()
 	defer schemaMu.Unlock()
 	if s, ok := schemaCache[path]; ok {
@@ -72,8 +78,18 @@ func loadSchema(path string) (*schema.Schema, error) {
 	if err != nil {
 		return nil, err
 	}
-	schemaCache[path] = s
-	return s, nil
+	ls := &loadedSchema{s: s}
+	for _, p := range s.Problems {
+		ls.problems = append(ls.problems, p.String())
+	}
+	// SQL function bodies are checked like PG does at CREATE time
+	for _, fn := range s.Functions {
+		if _, err := analyze.AnalyzeFunction(s, fn); err != nil {
+			ls.problems = append(ls.problems, fmt.Sprintf("function %s: %v", fn.Name, err))
+		}
+	}
+	schemaCache[path] = ls
+	return ls, nil
 }
 
 func findSchema(pass *analysis.Pass) (string, error) {
@@ -106,13 +122,16 @@ type checker struct {
 
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-	var calls []*ast.CallExpr
+	var calls, matviews []*ast.CallExpr
 	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
 		call := n.(*ast.CallExpr)
 		if isQueryCall(pass, call) {
 			calls = append(calls, call)
+		} else if isMatViewConversion(pass, call) {
+			matviews = append(matviews, call)
 		}
 	})
+	calls = append(calls, matviews...)
 	if len(calls) == 0 {
 		// still export constant sets so packages that use these types in queries can diff them
 		(&checker{pass: pass, bindings: map[*types.TypeName]*binding{}}).exportConstSets()
@@ -123,20 +142,24 @@ func run(pass *analysis.Pass) (any, error) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: %v", err)
 		return nil, nil
 	}
-	s, err := loadSchema(path)
+	ls, err := loadSchema(path)
 	if err != nil {
 		pass.Reportf(calls[0].Pos(), "sqlshape: load %s: %v", path, err)
 		return nil, nil
 	}
+	s := ls.s
 	c := &checker{pass: pass, s: s, strict: strictFlag, bindings: map[*types.TypeName]*binding{}}
-	for _, p := range s.Problems {
+	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
 	if strictFlag {
 		c.adviseSchema(calls[0].Pos())
 	}
-	for _, call := range calls {
+	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
+	}
+	for _, call := range matviews {
+		c.checkMatView(call)
 	}
 	c.finishBindings()
 	return nil, nil
@@ -630,5 +653,35 @@ func (c *checker) adviseSchema(at token.Pos) {
 		if !unique {
 			c.pass.Reportf(at, "sqlshape: schema: materialized view %s has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible", rel.FullName())
 		}
+	}
+}
+
+// isMatViewConversion recognizes sqlshape.MatView("name").
+func isMatViewConversion(pass *analysis.Pass, call *ast.CallExpr) bool {
+	tv, ok := pass.TypesInfo.Types[call.Fun]
+	if !ok || !tv.IsType() {
+		return false
+	}
+	return isNamed(tv.Type, sqlshapePkg, "MatView") && len(call.Args) == 1
+}
+
+// checkMatView verifies the named materialized view exists.
+func (c *checker) checkMatView(call *ast.CallExpr) {
+	tv, ok := c.pass.TypesInfo.Types[call.Args[0]]
+	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: MatView name must be a string constant")
+		return
+	}
+	name := constant.StringVal(tv.Value)
+	sch, n := "", name
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		sch, n = name[:i], name[i+1:]
+	}
+	rel := c.s.Relation(sch, n)
+	switch {
+	case rel == nil:
+		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: materialized view %q does not exist", name)
+	case rel.Kind != schema.MatView:
+		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: %q is not a materialized view", name)
 	}
 }

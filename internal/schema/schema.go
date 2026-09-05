@@ -131,6 +131,10 @@ type Function struct {
 	// Raises are the `-- sqlshape: error XX001 = Name` annotations: SQLSTATEs the function
 	// (typically a trigger function) raises on purpose.
 	Raises []RaisedError
+	// Body is the `AS $$ ... $$` text of a LANGUAGE sql function (analyzable); SQLBody the
+	// parsed BEGIN ATOMIC body (a List of statements, or a ReturnStmt). Nil for other languages.
+	Body    string
+	SQLBody Expr
 }
 
 // RaisedError is a custom SQLSTATE a function raises, with its application-side name.
@@ -721,11 +725,16 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 			fn.RetType = TypeRef{OID: catalog.Record, Typmod: -1}
 		}
 	}
+	fn.SQLBody = st.SqlBody
 	for _, on := range st.Options {
 		d := on.GetDefElem()
 		switch d.GetDefname() {
 		case "language":
 			fn.Language = d.GetArg().GetString_().GetSval()
+		case "as":
+			if items := d.GetArg().GetList().GetItems(); len(items) == 1 {
+				fn.Body = items[0].GetString_().GetSval()
+			}
 		case "volatility":
 			fn.Volatile = d.GetArg().GetString_().GetSval()[0]
 		case "strict":

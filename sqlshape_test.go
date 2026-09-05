@@ -247,6 +247,11 @@ func TestAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// materialized view refresh
+	if err := sqlshape.MatView("order_stats").Refresh(ctx, db); err != nil {
+		t.Errorf("refresh: %v", err)
+	}
+
 	// procedures
 	if _, err := markPaidProc.Exec(ctx, db, struct{ ID int64 }{id1}); err != nil {
 		t.Errorf("CALL: %v", err)

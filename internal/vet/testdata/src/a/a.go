@@ -196,3 +196,10 @@ var notNullOverride = sqlshape.Query[NotedOrder, struct{}]("-- sqlshape: not nul
 var notNullTypo = sqlshape.Query[NotedOrder, struct{}]("-- sqlshape: not null note, nope\nSELECT id, note FROM orders") // want `not null: the query has no result column "nope"`
 
 var countByFunc = sqlshape.Query[int64, struct{ U int64 }](`SELECT order_count({{.U}})`)
+
+// materialized view handles are checked against the schema
+var orderStats = sqlshape.MatView("order_stats")
+
+var noSuchView = sqlshape.MatView("order_statz") // want `materialized view "order_statz" does not exist`
+
+var notAMatView = sqlshape.MatView("order_summary") // want `"order_summary" is not a materialized view`

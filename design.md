@@ -663,7 +663,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | GROUP BY 妥当性（42803） | analyze/grouping.go: deparse 一致・集約引数・PK による関数従属、GROUPING SETS は未検査。golden 5 本 |
 | ⬜ | 照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
 | ✅ | `CALL procedure(...)` | 引数は関数と同じ経路（OUT も渡す）、INOUT / OUT が結果行、関数の CALL / プロシージャの SELECT は 42809。オラクルは拡張プロトコルの Parse で CALL を Describe できた |
-| ⬜ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | 今はシグネチャだけ信用 |
+| ✅ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | analyze/function.go: 引数を名前と `$n` で見せて各文を解析（同名列が優先、PG と同じ）、最終文の形を RETURNS と照合（代入キャスト許容、42P13）。vet はスキーマ読込時に全関数を検査。`FunctionResult.Relations` が関数越しの依存 |
 | ⬜ | EXPLAIN 系 lint（seq scan、ビューへの述語押し込み不可、ネスト内 LIMIT 無し） | 統計非依存に限定する方針のみ |
 | ⬜ | 拡張の `pg_proc` を dump して取り込む経路 | 生成器は同形式なので経路は開いている |
 | ⬜ | 述語ポリシー（`deleted_at IS NULL` を常に通す等）| 列ポリシーは等値のみ |
@@ -719,7 +719,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ↪ | 未検査展開形の実行時 panic | 「vet が通した集合の埋め込み」は生成物が要るので採らず、分岐シグネチャで静的展開形と SQL をバイト一致照合し error にする |
 | ✅ | 未知 enum ラベル受信の型付きエラー | Go の enum 型が `Known() bool`（`Labelled`）を実装していれば行マッパーが検証し `*UnknownLabelError`。実装しなければ素通し。panic モードは置かない |
 | ⬜ | 展開形ごとの statement キャッシュ制御、毎回 custom plan フラグ | pgx の自動 prepare に委ねている |
-| ⬜ | MV の型付き `Refresh` ハンドル | |
+| ✅ | MV の型付き `Refresh` ハンドル | `sqlshape.MatView("name").Refresh / RefreshConcurrently`、vet が名前と種別を検査 |
 
 ### スキーマ / マイグレーション（ゴール `sqlshape/migration`）
 

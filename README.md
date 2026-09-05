@@ -54,6 +54,7 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 - a Go named type that meets a **domain** is bound to it; mixing domains is reported
 - inside SQL a domain is an **opaque unit**: `price_yen + weight_g` or `balance > total` is reported even though PG accepts it; literals and parameters adopt the unit, `yen + yen`, `yen * n`, `abs(yen)`, `coalesce(yen, 0)` stay yen, and an explicit cast to the base type drops it
 - nullability can be asserted on the SQL side too: `-- sqlshape: not null` before a `CREATE FUNCTION` in schema.sql marks its result, `-- sqlshape: not null col, col` in a template marks result columns (the twin of the `col:",notnull"` tag)
+- `LANGUAGE sql` function bodies in schema.sql are analyzed like PG does at CREATE time (parameters in scope, RETURNS shape checked); `sqlshape.MatView("order_stats").Refresh(ctx, db)` is checked against the schema
 - `-require-columns=tenant_id` makes every statement pin that column by equality on each table that has it (row ownership); `pgtest.Start` gives tests a real PostgreSQL with schema.sql applied
 - `-no-tables` forbids direct table references (application code reads views and calls functions; tables are the database's private side) and `-schemas=a_api,b_private` enforces a service boundary
 - a Go enum type may implement `Known() bool`; the row mapper then rejects labels this build does not know with `*UnknownLabelError`

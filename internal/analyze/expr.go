@@ -379,6 +379,12 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 			if r := sc.wholeRow(col); r != nil && r.rowType != 0 {
 				return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 			}
+			// a SQL function's parameter (a column of the same name takes precedence)
+			for _, p := range a.funcParams {
+				if p.name == col {
+					return &expr{typ: p.typ, nullable: true, node: nodeOf(c)}, nil
+				}
+			}
 		} else if r := sc.wholeRow(tbl); r != nil {
 			// t.field where field is a composite column's field? not supported; fall through
 		}

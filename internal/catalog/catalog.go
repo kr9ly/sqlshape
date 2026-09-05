@@ -51,6 +51,7 @@ const (
 	Any                     OID = 2276
 	AnyArray                OID = 2277
 	Void                    OID = 2278
+	Trigger                 OID = 2279
 	AnyElement              OID = 2283
 	AnyNonArray             OID = 2776
 	AnyEnum                 OID = 3500
