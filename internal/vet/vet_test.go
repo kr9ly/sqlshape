@@ -74,3 +74,27 @@ func TestCoverage(t *testing.T) {
 	defer Analyzer.Flags.Set("coverage", "false")
 	analysistest.Run(t, td, Analyzer, "cov")
 }
+
+func TestRawSQL(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, td, Analyzer, "raw")
+}
+
+func TestRawSQLForbid(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("raw-sql", "forbid"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("raw-sql-allow", "rawok/..."); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("raw-sql", "constant")
+	defer Analyzer.Flags.Set("raw-sql-allow", "")
+	analysistest.Run(t, td, Analyzer, "rawforbid", "rawok")
+}

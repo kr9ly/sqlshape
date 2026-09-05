@@ -41,6 +41,8 @@ var (
 	schemaPath   string
 	strictFlag   bool
 	noTables     bool
+	rawSQLFlag   string
+	rawSQLAllow  string
 	schemasFlag  string
 	requireCols  string
 	coverageFlag bool
@@ -50,6 +52,8 @@ var (
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql (default: nearest schema.sql above the package directory)")
 	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
+	Analyzer.Flags.StringVar(&rawSQLFlag, "raw-sql", "constant", "driver calls (pgx / database/sql Query, Exec, ...) outside sqlshape: constant requires their SQL to be a constant string, forbid rejects them, allow ignores them")
+	Analyzer.Flags.StringVar(&rawSQLAllow, "raw-sql-allow", "", "comma-separated package paths (or prefixes ending in /...) where -raw-sql=forbid does not apply")
 	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
 	Analyzer.Flags.StringVar(&requireCols, "require-columns", "", "comma-separated columns (e.g. tenant_id) every statement must pin by equality on each table that has them (row ownership); INSERTs must assign them")
 	Analyzer.Flags.BoolVar(&coverageFlag, "coverage", false, "report per package how many Query / One declarations were checked and how many could not be (non-constant templates)")
@@ -144,9 +148,10 @@ type checker struct {
 
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-	var calls, matviews, copies []*ast.CallExpr
+	var calls, matviews, copies, all []*ast.CallExpr
 	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
 		call := n.(*ast.CallExpr)
+		all = append(all, call)
 		switch {
 		case isQueryCall(pass, call):
 			calls = append(calls, call)
@@ -158,6 +163,7 @@ func run(pass *analysis.Pass) (any, error) {
 	})
 	matviews = append(matviews, copies...) // checked after the statements, like matviews
 	calls = append(calls, matviews...)
+	checkRawSQL(pass, all)
 	if len(calls) == 0 {
 		// still export constant sets so packages that use these types in queries can diff them
 		(&checker{pass: pass, bindings: map[*types.TypeName]*binding{}}).exportConstSets()
