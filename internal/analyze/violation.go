@@ -182,7 +182,9 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 	for _, con := range rel.Constraints {
 		switch con.Kind {
 		case schema.PrimaryKey, schema.Unique:
-			if !absorbed[con.Name] {
+			// a key made only of GENERATED ALWAYS AS IDENTITY columns the INSERT leaves to
+			// the system cannot collide: nothing but the sequence ever writes it
+			if !absorbed[con.Name] && !systemGenerated(rel, con.Columns, inserted) {
 				out = append(out, Violation{Code: codeUniqueViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns})
 			}
 		case schema.ForeignKey:
@@ -210,6 +212,21 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 		}
 	}
 	return dedupe(out)
+}
+
+// systemGenerated reports whether every column is a GENERATED ALWAYS AS IDENTITY column
+// the statement does not assign.
+func systemGenerated(rel *schema.Relation, cols []string, inserted map[string]bool) bool {
+	if len(cols) == 0 {
+		return false
+	}
+	for _, name := range cols {
+		c := rel.Column(name)
+		if c == nil || c.Identity != 'a' || inserted[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // updateViolations lists what storing into the set columns of rel may violate.

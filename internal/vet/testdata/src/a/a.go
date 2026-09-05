@@ -129,11 +129,12 @@ type NewUser struct {
 	Name  *string
 }
 
-var insertUser = sqlshape.Query[int64, NewUser]("-- sqlshape: expect users_email_key, email_check\nINSERT INTO users (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id") // want "may violate users_pkey \\(UNIQUE \\(id\\) on users, SQLSTATE 23505\\); add `-- sqlshape: expect users_pkey` to the template or make it impossible"
+// users.id is GENERATED ALWAYS AS IDENTITY: an INSERT that leaves it to the system cannot violate users_pkey
+var insertUser = sqlshape.Query[int64, NewUser]("-- sqlshape: expect users_email_key, email_check\nINSERT INTO users (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id")
 
-var insertUserOK = sqlshape.Query[int64, NewUser]("-- sqlshape: expect users_email_key, email_check, users_pkey\nINSERT INTO users (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id")
+var insertUserOK = sqlshape.Query[int64, NewUser]("-- sqlshape: expect users_email_key, email_check, users_pkey\nINSERT INTO users (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id") // want `expects users_pkey but no expansion can violate it`
 
-var nullableEmail = sqlshape.Query[int64, struct{ Email *string }]("-- sqlshape: expect users_email_key, email_check, users_pkey\nINSERT INTO users (email) VALUES ({{.Email}}) RETURNING id") // want "may violate users.email \\(NOT NULL on users.email, SQLSTATE 23502\\)"
+var nullableEmail = sqlshape.Query[int64, struct{ Email *string }]("-- sqlshape: expect users_email_key, email_check\nINSERT INTO users (email) VALUES ({{.Email}}) RETURNING id") // want "may violate users.email \\(NOT NULL on users.email, SQLSTATE 23502\\)"
 
 var staleExpect = sqlshape.Query[struct{}, struct{ ID int64 }]("-- sqlshape: expect orders_user_note_key, P0401\nUPDATE orders SET status = 'paid' WHERE id = {{.ID}}") // want "expects orders_user_note_key but no expansion can violate it"
 

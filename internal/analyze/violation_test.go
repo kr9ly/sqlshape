@@ -25,11 +25,11 @@ func TestViolations(t *testing.T) {
 		notes string
 	}{
 		{sql: "INSERT INTO users (email, name) VALUES ($1, $2)",
-			want: "23502 users.email@1, 23505 users_email_key, 23505 users_pkey, 23514 email_check"},
+			want: "23502 users.email@1, 23505 users_email_key, 23514 email_check"},
 		{sql: "INSERT INTO users (email, name) VALUES ('a@x', $1)",
-			want: "23505 users_email_key, 23505 users_pkey, 23514 email_check"},
+			want: "23505 users_email_key, 23514 email_check"},
 		{sql: "INSERT INTO users (email, balance) VALUES ($1, $2)",
-			want: "23502 users.balance@2, 23502 users.email@1, 23505 users_email_key, 23505 users_pkey, 23514 email_check, 23514 yen_check"},
+			want: "23502 users.balance@2, 23502 users.email@1, 23505 users_email_key, 23514 email_check, 23514 yen_check"},
 		{sql: "INSERT INTO orders (user_id, total) VALUES ($1, $2)",
 			want: "23502 orders.total@2, 23502 orders.user_id@1, 23503 orders_user_id_fkey, 23505 orders_pkey, 23505 orders_uid_active, 23505 orders_user_note_key, 23514 orders_total_check, P0401 P0401"},
 		{sql: "INSERT INTO orders (user_id, total) VALUES ($1, 10) ON CONFLICT (user_id, note) DO NOTHING",
@@ -43,7 +43,7 @@ func TestViolations(t *testing.T) {
 		{sql: "INSERT INTO orders (user_id) VALUES ($1)",
 			want:  "23502 orders.user_id@1, 23503 orders_user_id_fkey, 23505 orders_pkey, 23505 orders_uid_active, 23505 orders_user_note_key, P0401 P0401",
 			notes: "INSERT omits orders.total, which is NOT NULL without a default: every execution fails"},
-		{sql: "INSERT INTO users DEFAULT VALUES", want: "23505 users_email_key, 23505 users_pkey"},
+		{sql: "INSERT INTO users DEFAULT VALUES", want: "23505 users_email_key"},
 		// UPDATE: only what the SET columns touch, plus FKs pointing at changed keys
 		{sql: "UPDATE orders SET status = 'paid' WHERE id = $1", want: "P0401 P0401"},
 		{sql: "UPDATE orders SET note = $1 WHERE id = $2", want: "23505 orders_user_note_key, P0401 P0401"},
