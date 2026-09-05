@@ -53,6 +53,12 @@ func (s Single[R, P]) Unprepared() Single[R, P] {
 	return s
 }
 
+// SQLTemplate is the template text; pgtest.Verify expands and checks it against a real PG.
+func (s Stmt[R, P]) SQLTemplate() string { return s.Template }
+
+// SQLTemplate is the template text (see Stmt.SQLTemplate).
+func (s Single[R, P]) SQLTemplate() string { return s.stmt.Template }
+
 // Query declares a statement. The argument must be a string literal so the
 // analyzer can expand and check it.
 func Query[R, P any](template string) Stmt[R, P] {
