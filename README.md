@@ -62,6 +62,6 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 
 ## Status
 
-First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 62 golden
+First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 66 golden
 statements and the checker reports type / column / nullability findings on real Go code.
 Not yet: collations, custom SQLSTATEs raised by triggers, `{{switch}}`, the migration side.

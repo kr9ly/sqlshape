@@ -70,6 +70,12 @@ LANGUAGE sql STABLE AS $$ SELECT count(*) FROM orders WHERE user_id = p_user $$;
 CREATE FUNCTION nick_of(p_user bigint) RETURNS text
 LANGUAGE sql STABLE STRICT AS $$ SELECT name FROM users WHERE id = p_user $$;
 
+CREATE PROCEDURE mark_paid(p_order bigint)
+LANGUAGE sql AS $$ UPDATE orders SET status = 'paid' WHERE id = p_order $$;
+
+CREATE PROCEDURE settle(p_order bigint, INOUT p_total numeric)
+LANGUAGE sql AS $$ UPDATE orders SET status = 'paid' WHERE id = p_order; SELECT total FROM orders WHERE id = p_order $$;
+
 COMMENT ON TABLE orders IS 'One purchase.';
 COMMENT ON COLUMN orders.status IS 'Lifecycle state; see order_status.';
 COMMENT ON TYPE order_status IS 'Order lifecycle.';

@@ -858,3 +858,27 @@ func (a *analyzer) noteEnumSort(n *pg_query.Node, sc *scope, cols []rteCol) {
 		a.note(noteEnumOrder, loc(n), "ORDER BY enum "+t.Name+" sorts in declaration order, not alphabetically")
 	}
 }
+
+// callStmt analyzes CALL procedure(args): the arguments bind like a function call and
+// the OUT / INOUT parameters come back as one result row.
+func (a *analyzer) callStmt(call *pg_query.CallStmt, sc *scope) ([]rteCol, *Error) {
+	a.inCall = true
+	e, err := a.funcCall(call.Funccall, sc)
+	a.inCall = false
+	if err != nil {
+		return nil, err
+	}
+	_ = e
+	fn := a.lastUserFunc
+	if fn == nil || !fn.IsProc {
+		names := strs(call.Funccall.Funcname)
+		return nil, errAt(codeWrongObjectType, call.Funccall.Location, "%s is not a procedure", names[len(names)-1])
+	}
+	var cols []rteCol
+	for _, arg := range fn.Args {
+		if arg.Mode == 'o' || arg.Mode == 'b' {
+			cols = append(cols, rteCol{name: arg.Name, typ: arg.Type, nullable: true})
+		}
+	}
+	return cols, nil
+}

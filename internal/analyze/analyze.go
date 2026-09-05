@@ -25,6 +25,8 @@ type analyzer struct {
 	insertSelScope *scope
 	// lastFuncRetSet is whether the most recent funcCall resolved a set-returning function
 	lastFuncRetSet bool
+	// inCall is set while analyzing the FuncCall of a CALL statement (procedures allowed)
+	inCall bool
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
 }
@@ -59,6 +61,8 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		cols, aerr = a.updateStmt(st.UpdateStmt, sc)
 	case *pg_query.Node_DeleteStmt:
 		cols, aerr = a.deleteStmt(st.DeleteStmt, sc)
+	case *pg_query.Node_CallStmt:
+		cols, aerr = a.callStmt(st.CallStmt, sc)
 	default:
 		return nil, &Error{Code: codeFeatureNotSupported, Message: fmt.Sprintf("unsupported statement %T", tree.Stmts[0].Stmt.Node)}
 	}

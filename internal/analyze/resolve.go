@@ -392,6 +392,10 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 			ndef := 0
 			for _, arg := range fn.Args {
 				switch arg.Mode {
+				case 'o':
+					if fn.IsProc {
+						in = append(in, arg.Type.OID) // CALL passes OUT arguments too
+					}
 				case 'i', 'b':
 					in = append(in, arg.Type.OID)
 					if arg.HasDefault {

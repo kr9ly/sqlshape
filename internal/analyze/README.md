@@ -27,7 +27,7 @@ variadic / defaults / polymorphic consistency, implicit / assignment / explicit 
 `pg_cast` + array / domain / record rules, `select_common_type` for UNION / CASE / COALESCE /
 ARRAY / IN / VALUES (§10.5), `$n` inference from context with `text` fallback, parse-time literal
 validation (22P02). Scopes: JOIN (USING / NATURAL / LATERAL), subqueries, CTEs (incl. recursive),
-set operations, VALUES, functions in FROM, views (analyzed once), whole-row refs, INSERT / UPDATE /
+set operations, VALUES, functions in FROM, views (analyzed once), whole-row refs, CALL, INSERT / UPDATE /
 DELETE with RETURNING and ON CONFLICT.
 
 - `testdata/queries/*.sql` + `.golden`: goldens come from the real PG (`go test ./internal/analyze -update`);

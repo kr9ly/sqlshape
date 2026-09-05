@@ -1,0 +1,4 @@
+params:
+  $1 bigint
+columns:
+  p_total numeric

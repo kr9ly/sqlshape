@@ -657,6 +657,9 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 		return nil, errAt(codeUndefinedFunction, f.Location, "function %s(%s) does not exist", name, a.typeNames(actual))
 	}
+	if c.ufn != nil && c.ufn.IsProc && !a.inCall {
+		return nil, errAt(codeWrongObjectType, f.Location, "%s(%s) is a procedure", name, a.typeNames(actual))
+	}
 	if err := a.bindArgs(args, c, f.Location); err != nil {
 		return nil, err
 	}

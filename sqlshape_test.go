@@ -55,6 +55,10 @@ var markPaid = sqlshape.Query[struct{}, struct{ ID int64 }](`UPDATE orders SET s
 var orderByID = sqlshape.One[OrderRow, struct{ ID int64 }](`
 SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.id = {{.ID}}`)
 
+var markPaidProc = sqlshape.Query[struct{}, struct{ ID int64 }](`CALL mark_paid({{.ID}})`)
+
+var settleProc = sqlshape.One[struct{ PTotal string }, struct{ ID int64 }](`CALL settle({{.ID}}, NULL)`)
+
 var countByStatus = sqlshape.Query[struct {
 	Status OrderStatus
 	N      int64
@@ -216,6 +220,17 @@ func TestAgainstPostgres(t *testing.T) {
 	}
 	if _, ok, err := orderByID.Find(ctx, db, struct{ ID int64 }{id2 + 100}); err != nil || ok {
 		t.Errorf("One.Find missing: %v %v", ok, err)
+	}
+
+	// procedures
+	if _, err := markPaidProc.Exec(ctx, db, struct{ ID int64 }{id1}); err != nil {
+		t.Errorf("CALL: %v", err)
+	}
+	if st, err := settleProc.Get(ctx, db, struct{ ID int64 }{id1}); err != nil || st.PTotal != "10.50" {
+		t.Errorf("CALL with INOUT: %v %+v", err, st)
+	}
+	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'pending' WHERE id = $1`, id1); err != nil {
+		t.Fatal(err)
 	}
 
 	// nested rows
