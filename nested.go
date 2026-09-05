@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"time"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -33,8 +33,18 @@ func isNested(t reflect.Type) bool {
 			t = t.Elem()
 		}
 	}
-	return t.Kind() == reflect.Struct && t != reflect.TypeOf(time.Time{}) &&
+	return t.Kind() == reflect.Struct && !scalarStruct(t) &&
 		!reflect.PointerTo(t).Implements(reflect.TypeOf((*interface{ Scan(any) error })(nil)).Elem())
+}
+
+// scalarStruct reports whether a struct type is a scalar pgx decodes itself rather than a
+// row: time.Time, netip.Addr / Prefix, and every pgtype value (Range[T], Bits, Point, ...).
+func scalarStruct(t reflect.Type) bool {
+	switch p := t.PkgPath(); {
+	case p == "time", p == "net/netip", strings.HasSuffix(p, "jackc/pgx/v5/pgtype"):
+		return true
+	}
+	return false
 }
 
 // nestedDest returns the scan target for a struct / slice-of-struct field.
@@ -184,24 +194,59 @@ func registerTypes(ctx context.Context, conn *pgx.Conn, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
+	keep, err := fixedElemTypes(ctx, conn)
+	if err != nil {
+		return err
+	}
 	types, err := conn.LoadTypes(ctx, names)
+	conn.TypeMap().RegisterTypes(keep)
 	if err != nil {
 		return fmt.Errorf("sqlshape: load types %v: %w", names, err)
 	}
 	conn.TypeMap().RegisterTypes(types)
+	conn.TypeMap().RegisterTypes(keep)
 	return nil
 }
 
-// registerScalarBases registers the scalar base types outside pg_catalog, i.e. what
-// extensions define (citext, hstore, ltree, ...), with the text codec, plus their array
-// types. pgx's LoadTypes skips them (it knows no codec), yet a composite or a result
-// column may carry one. Idempotent: types the connection already knows are left alone.
+// fixedElemTypes returns the connection's registrations of the pg_catalog types that have
+// a typelem without being arrays (point, box, line, lseg, path, polygon, circle: their
+// typelem is the coordinate type). pgx's LoadTypes (v5.10) takes typelem for "is an
+// array" while resolving a composite's field types and overwrites e.g. point (OID 600)
+// with an ArrayCodec, even when it then fails; registerTypes restores these afterwards.
+func fixedElemTypes(ctx context.Context, conn *pgx.Conn) ([]*pgtype.Type, error) {
+	rows, err := conn.Query(ctx, `
+SELECT t.oid FROM pg_type t
+ WHERE t.typelem <> 0 AND t.typtype = 'b' AND t.typsubscript <> 'array_subscript_handler'::regproc`)
+	if err != nil {
+		return nil, nil // typsubscript is PG 14+; older servers keep pgx's behaviour
+	}
+	var out []*pgtype.Type
+	for rows.Next() {
+		var oid uint32
+		if err := rows.Scan(&oid); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if t, ok := conn.TypeMap().TypeForOID(oid); ok {
+			out = append(out, t)
+		}
+	}
+	rows.Close()
+	return out, rows.Err()
+}
+
+// registerScalarBases registers the scalar base types the connection does not know yet
+// with the text codec: what extensions define (citext, ltree, ...; hstore gets pgx's
+// HstoreCodec) and the pg_catalog types pgx ships no codec for (money, tsquery,
+// pg_lsn, reg*, ...), plus their array types. pgx's LoadTypes skips them and fails on a
+// composite that carries one, so a table with a money column would otherwise be
+// unloadable. Idempotent: types the connection already knows are left alone.
 func registerScalarBases(ctx context.Context, conn *pgx.Conn) error {
 	rows, err := conn.Query(ctx, `
 SELECT t.oid, n.nspname, t.typname, t.typarray
   FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
  WHERE t.typtype = 'b' AND t.typelem = 0
-   AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+   AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_toast%'
  ORDER BY t.oid`)
 	if err != nil {
 		return err
@@ -228,7 +273,12 @@ SELECT t.oid, n.nspname, t.typname, t.typarray
 		if _, ok := tm.TypeForOID(b.oid); ok {
 			continue
 		}
-		t := &pgtype.Type{Name: qualify(b.nsp, b.name), OID: b.oid, Codec: pgtype.TextCodec{}}
+		var codec pgtype.Codec = pgtype.TextCodec{}
+		if b.name == "hstore" {
+			// pgx ships a codec: map[string]*string / pgtype.Hstore in Go
+			codec = pgtype.HstoreCodec{}
+		}
+		t := &pgtype.Type{Name: qualify(b.nsp, b.name), OID: b.oid, Codec: codec}
 		tm.RegisterType(t)
 		if b.arr != 0 {
 			tm.RegisterType(&pgtype.Type{Name: qualify(b.nsp, "_"+b.name), OID: b.arr, Codec: &pgtype.ArrayCodec{ElementType: t}})

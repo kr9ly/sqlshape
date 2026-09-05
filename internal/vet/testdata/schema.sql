@@ -100,3 +100,23 @@ CREATE TABLE memos (
     deleted_at timestamptz
 );
 CREATE VIEW live_memos AS SELECT id, user_id, body FROM memos WHERE deleted_at IS NULL;
+
+CREATE EXTENSION hstore;
+
+CREATE TABLE hosts (
+    id      int PRIMARY KEY,
+    addr    inet NOT NULL,
+    net     cidr NOT NULL,
+    mac     macaddr NOT NULL,
+    uptime  interval NOT NULL,
+    attrs   hstore NOT NULL,
+    span    int4range NOT NULL,
+    spans   int4multirange NOT NULL,
+    seen    tstzrange NOT NULL,
+    pos     point NOT NULL,
+    doc     tsvector NOT NULL,
+    body    xml NOT NULL,
+    fee     money NOT NULL,
+    at_tz   timetz NOT NULL,
+    rel     oid NOT NULL
+);

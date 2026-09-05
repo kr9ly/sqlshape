@@ -174,3 +174,21 @@ CREATE SCHEMA app;
 SET search_path TO app, public;
 CREATE TABLE settings (k text PRIMARY KEY, v text);
 SET search_path TO public;
+
+CREATE TABLE hosts (
+    id      int PRIMARY KEY,
+    addr    inet NOT NULL,
+    net     cidr,
+    mac     macaddr,
+    uptime  interval NOT NULL,
+    attrs   hstore,
+    span    int4range NOT NULL,
+    spans   int4multirange NOT NULL,
+    seen    tstzrange,
+    fr      floatrange,
+    pos     point,
+    flags   bit(4),
+    doc     tsvector,
+    fee     money,
+    at_tz   timetz
+);

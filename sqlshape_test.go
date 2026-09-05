@@ -3,10 +3,13 @@ package sqlshape_test
 import (
 	"context"
 	"errors"
+	"net"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/internal/oracle"
 )
@@ -125,7 +128,7 @@ var statusPairs = sqlshape.Query[[]StatusPair, struct{}](`SELECT array_agg(row(o
 // extension types (citext, hstore) decode as text before and after LoadUserTypes
 var extTypes = sqlshape.Query[struct {
 	Handle *string
-	Attrs  *string
+	Attrs  map[string]*string
 	Tags   []string
 }, struct{ H string }](`SELECT handle, attrs, array_agg(handle) OVER () AS tags FROM users WHERE handle = {{.H}} OR handle IS NULL LIMIT 1`)
 
@@ -149,6 +152,35 @@ type ByUser struct{ ID int64 }
 
 var embeddedRows = sqlshape.Query[UserNotedOrders, ByUser](`
 SELECT u.id, array_agg(row(o.id, o.total, o.note) ORDER BY o.id) AS orders FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = {{.ID}} GROUP BY u.id`)
+
+// the Go type table, end to end: network, interval, hstore, ranges, bit, geometry, text-only types
+type Host struct {
+	ID     int32
+	Addr   netip.Addr
+	Net    *netip.Prefix
+	Mac    net.HardwareAddr
+	Uptime time.Duration
+	Attrs  map[string]*string
+	Span   pgtype.Range[int32]
+	Spans  pgtype.Multirange[pgtype.Range[int32]]
+	Seen   pgtype.Range[time.Time]
+	Fr     pgtype.Range[float64]
+	Pos    pgtype.Point
+	Flags  pgtype.Bits
+	Doc    pgtype.TSVector
+	Fee    *string
+	AtTz   *string
+}
+
+var insertHost = sqlshape.Query[struct{}, Host](`
+-- sqlshape: expect hosts_pkey
+INSERT INTO hosts (id, addr, net, mac, uptime, attrs, span, spans, seen, fr, pos, flags, doc, fee, at_tz)
+VALUES ({{.ID}}, {{.Addr}}, {{.Net}}, {{.Mac}}, {{.Uptime}}, {{.Attrs}}, {{.Span}}, {{.Spans}}, {{.Seen}}, {{.Fr}}, {{.Pos}}, {{.Flags}}, {{.Doc}}, {{.Fee}}, {{.AtTz}})`)
+
+var hostByAddr = sqlshape.One[Host, struct {
+	Addr string
+	Span pgtype.Range[int32]
+}](`SELECT * FROM hosts WHERE addr = {{.Addr}} AND span && {{.Span}}`)
 
 var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
 
@@ -324,7 +356,7 @@ func TestAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	et, err := extTypes.First(ctx, db, struct{ H string }{"alice"})
-	if err != nil || et.Handle == nil || *et.Handle != "Alice" || et.Attrs == nil || *et.Attrs != `"k"=>"v"` || len(et.Tags) == 0 {
+	if err != nil || et.Handle == nil || *et.Handle != "Alice" || et.Attrs == nil || et.Attrs["k"] == nil || *et.Attrs["k"] != "v" || len(et.Tags) == 0 {
 		t.Errorf("extension types before LoadUserTypes: %v %+v", err, et)
 	}
 	if err := sqlshape.LoadUserTypes(ctx, db); err != nil {
@@ -337,6 +369,39 @@ func TestAgainstPostgres(t *testing.T) {
 	sp, err := statusPairs.First(ctx, db, struct{}{})
 	if err != nil || len(sp) != 2 || sp[1].Status != "paid" {
 		t.Errorf("enum in record: %v %+v", err, sp)
+	}
+
+	// the Go type table round trip (floatrange as a parameter needs the type loaded: LoadUserTypes above)
+	oneStr := "1"
+	net24 := netip.MustParsePrefix("10.0.0.0/24")
+	fee, atTz := "$12.34", "12:00:00+00"
+	h := Host{
+		ID: 7, Addr: netip.MustParseAddr("10.0.0.9"), Net: &net24, Mac: net.HardwareAddr{8, 0, 0x2b, 1, 2, 3},
+		Uptime: 90 * time.Minute, Attrs: map[string]*string{"a": &oneStr, "b": nil},
+		Span:  pgtype.Range[int32]{Lower: 1, Upper: 5, LowerType: pgtype.Inclusive, UpperType: pgtype.Exclusive, Valid: true},
+		Spans: pgtype.Multirange[pgtype.Range[int32]]{{Lower: 1, Upper: 3, LowerType: pgtype.Inclusive, UpperType: pgtype.Exclusive, Valid: true}},
+		Seen:  pgtype.Range[time.Time]{Lower: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), Upper: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), LowerType: pgtype.Inclusive, UpperType: pgtype.Exclusive, Valid: true},
+		Fr:    pgtype.Range[float64]{Lower: 0.5, Upper: 1.5, LowerType: pgtype.Inclusive, UpperType: pgtype.Exclusive, Valid: true},
+		Pos:   pgtype.Point{P: pgtype.Vec2{X: 1, Y: 2}, Valid: true},
+		Flags: pgtype.Bits{Bytes: []byte{0xa0}, Len: 4, Valid: true},
+		Doc:   pgtype.TSVector{Lexemes: []pgtype.TSVectorLexeme{{Word: "cat"}}, Valid: true},
+		Fee:   &fee, AtTz: &atTz,
+	}
+	if _, err := insertHost.Exec(ctx, db, h); err != nil {
+		t.Fatalf("insert host: %v", err)
+	}
+	got, err := hostByAddr.Get(ctx, db, struct {
+		Addr string
+		Span pgtype.Range[int32]
+	}{"10.0.0.9", pgtype.Range[int32]{Lower: 4, Upper: 6, LowerType: pgtype.Inclusive, UpperType: pgtype.Exclusive, Valid: true}})
+	if err != nil {
+		t.Fatalf("host round trip: %v", err)
+	}
+	if got.Addr != h.Addr || got.Net == nil || *got.Net != net24 || got.Mac.String() != h.Mac.String() || got.Uptime != h.Uptime ||
+		got.Attrs["a"] == nil || *got.Attrs["a"] != "1" || got.Attrs["b"] != nil || got.Span.Upper != 5 || len(got.Spans) != 1 || got.Spans[0].Upper != 3 ||
+		!got.Seen.Upper.Equal(h.Seen.Upper) || got.Fr.Upper != 1.5 || got.Pos.P.X != 1 || got.Flags.Len != 4 || got.Flags.Bytes[0] != 0xa0 ||
+		len(got.Doc.Lexemes) != 1 || got.Fee == nil || *got.Fee != "$12.34" || got.AtTz == nil || *got.AtTz != "12:00:00+00" {
+		t.Errorf("host round trip: %+v", got)
 	}
 
 	first, err := listOrders.First(ctx, db, ListParams{IDs: []int64{id1, id2}})

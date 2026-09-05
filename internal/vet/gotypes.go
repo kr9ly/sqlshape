@@ -30,6 +30,9 @@ func unwrapNullable(t types.Type) (types.Type, bool) {
 			case obj.Pkg().Path() == "database/sql" && strings.HasPrefix(obj.Name(), "Null"):
 				return nil, true // sql.NullString etc.: type checked loosely
 			case strings.HasSuffix(obj.Pkg().Path(), "jackc/pgx/v5/pgtype"):
+				if n.TypeArgs() != nil {
+					return t, true // Range[T] / Multirange[T]: nullable, and T is checked
+				}
 				return nil, true // pgtype.* all carry Valid
 			}
 		}
@@ -63,13 +66,21 @@ func isByteSlice(t types.Type) bool {
 	return ok && (k == types.Byte || k == types.Uint8)
 }
 
-// match decides whether Go type t can carry PG type pg (domains flattened).
+// match decides whether Go type t can carry PG type pg (domains flattened) as a result.
 func (c *checker) match(pg schema.TypeRef, t types.Type) fit {
+	return c.matchDir(pg, t, false)
+}
+
+// matchDir is match in one direction: param = false for a result column scanned into t,
+// param = true for a Go value encoded as a parameter. The two differ for types pgx
+// decodes only in binary (inet, interval, ranges, bit, ...): any string encodes as a
+// parameter (text format), but a result column cannot be scanned into one.
+func (c *checker) matchDir(pg schema.TypeRef, t types.Type, param bool) fit {
 	inner, nullable := unwrapNullable(t)
 	if inner == nil {
 		return fit{ok: true, nullable: true}
 	}
-	f := c.matchValue(pg, inner)
+	f := c.matchValue(pg, inner, param)
 	// a nil slice receives a NULL array / record[] without a pointer
 	if _, isSlice := inner.Underlying().(*types.Slice); isSlice {
 		nullable = true
@@ -78,7 +89,11 @@ func (c *checker) match(pg schema.TypeRef, t types.Type) fit {
 	return f
 }
 
-func (c *checker) matchValue(pg schema.TypeRef, t types.Type) fit {
+// The Go type table. Each entry is what pgx v5 actually scans (result) or encodes
+// (parameter) for the PG type, verified against a running PG; keep it honest rather than
+// generous, since a wrong "ok" only fails at runtime. pgtype.* values are accepted for
+// every type by unwrapNullable (they all carry Valid), so they need no entry here.
+func (c *checker) matchValue(pg schema.TypeRef, t types.Type, param bool) fit {
 	base := c.s.Types.BaseOf(pg)
 	pt := c.s.Types.ByOID(base.OID)
 	if pt == nil {
@@ -96,16 +111,18 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type) fit {
 		}
 		return false
 	}
-	// arrays
+	// a string encodes as any parameter type (text format)
+	if param && is(types.String) {
+		return fit{ok: true}
+	}
+	// arrays (record[] is a pseudo-type array, so not IsArray)
 	if pt.Elem != 0 && strings.HasPrefix(pt.Name, "_") {
 		switch u := t.Underlying().(type) {
 		case *types.Slice:
-			if pt.Elem == catalog.Bytea || is() { // fallthrough
-			}
-			ef := c.matchValue(schema.TypeRef{OID: pt.Elem, Typmod: -1}, u.Elem())
+			ef := c.matchValue(schema.TypeRef{OID: pt.Elem, Typmod: -1}, u.Elem(), param)
 			return fit{ok: ef.ok, lossy: ef.lossy, unknown: ef.unknown}
 		case *types.Array:
-			ef := c.matchValue(schema.TypeRef{OID: pt.Elem, Typmod: -1}, u.Elem())
+			ef := c.matchValue(schema.TypeRef{OID: pt.Elem, Typmod: -1}, u.Elem(), param)
 			return fit{ok: ef.ok, lossy: ef.lossy, unknown: ef.unknown}
 		}
 		return fit{}
@@ -124,7 +141,11 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type) fit {
 		}
 		return fit{ok: is(types.Int64, types.Int)}
 	case catalog.OIDType:
-		return fit{ok: is(types.Uint32, types.Uint64, types.Uint)}
+		// pgx scans oid into uint32 only; it encodes any integer
+		if param {
+			return fit{ok: is(types.Uint32, types.Int32, types.Int64, types.Int, types.Uint64, types.Uint)}
+		}
+		return fit{ok: is(types.Uint32)}
 	case catalog.Float4:
 		return fit{ok: is(types.Float32, types.Float64)}
 	case catalog.Float8:
@@ -159,8 +180,11 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type) fit {
 		return fit{}
 	case catalog.Date, catalog.Timestamp, catalog.TimestampTZ:
 		return fit{ok: isNamed(t, "time", "Time")}
-	case catalog.Time, catalog.TimeTZ:
+	case catalog.Time:
 		return fit{ok: isNamed(t, "time", "Time") || is(types.String)}
+	case catalog.TimeTZ:
+		// pgx has no timetz codec: text only (time.Time fails to parse the zone suffix)
+		return fit{ok: is(types.String)}
 	case catalog.Interval:
 		return fit{ok: isNamed(t, "time", "Duration")}
 	case catalog.JSON, catalog.JSONB:
@@ -179,11 +203,83 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type) fit {
 	case 'c': // composite / row type: a struct
 		_, isStruct := t.Underlying().(*types.Struct)
 		return fit{ok: isStruct}
+	case 'r': // range: pgtype.Range[T] with T carrying the subtype
+		if rng := c.s.Types.RangeOf(base.OID); rng != nil {
+			return c.matchGeneric(t, "Range", schema.TypeRef{OID: rng.Subtype, Typmod: -1}, param)
+		}
+		return fit{ok: true, unknown: true}
+	case 'm': // multirange: pgtype.Multirange[pgtype.Range[T]]
+		if rng := c.s.Types.RangeOfMulti(base.OID); rng != nil {
+			if !isNamed(t, "pgtype", "Multirange") {
+				return fit{}
+			}
+			args := t.(*types.Named).TypeArgs()
+			if args == nil || args.Len() != 1 {
+				return fit{}
+			}
+			return c.matchGeneric(args.At(0), "Range", schema.TypeRef{OID: rng.Subtype, Typmod: -1}, param)
+		}
+		return fit{ok: true, unknown: true}
 	}
-	if pt.Name == "citext" {
+	// pg_catalog types pgx knows by name, and extension types the runtime registers
+	if pt.Schema == "" || pt.Schema == "pg_catalog" {
+		switch pt.Name {
+		case "inet":
+			return fit{ok: isNamed(t, "net/netip", "Prefix") || isNamed(t, "net/netip", "Addr")}
+		case "cidr":
+			return fit{ok: isNamed(t, "net/netip", "Prefix")}
+		case "macaddr", "macaddr8":
+			return fit{ok: is(types.String) || isNamed(t, "net", "HardwareAddr") || isByteSlice(t)}
+		case "bit", "varbit":
+			return fit{} // pgtype.Bits only (accepted above)
+		case "point", "lseg", "path", "box", "polygon", "line", "circle":
+			return fit{} // pgtype.Point / Box / ... only
+		case "tsvector":
+			return fit{} // pgtype.TSVector only
+		case "xml":
+			return fit{ok: is(types.String) || isByteSlice(t)}
+		case "money", "tsquery", "jsonpath", "tid", "pg_lsn", "txid_snapshot", "pg_snapshot", "aclitem", "regclass", "regtype", "regproc", "regprocedure", "regoper", "regoperator", "regnamespace", "regrole", "regconfig", "regdictionary", "regcollation":
+			return fit{ok: is(types.String)}
+		}
+	}
+	switch pt.Name {
+	case "hstore":
+		// the runtime registers pgx's HstoreCodec: map[string]*string (NULL values) or pgtype.Hstore
+		if m, ok := t.Underlying().(*types.Map); ok {
+			k, _ := basicKind(m.Key())
+			if k != types.String {
+				return fit{}
+			}
+			if ptr, ok := m.Elem().(*types.Pointer); ok {
+				ek, _ := basicKind(ptr.Elem())
+				return fit{ok: ek == types.String}
+			}
+			if ek, _ := basicKind(m.Elem()); ek == types.String {
+				if param {
+					return fit{ok: true}
+				}
+				return fit{ok: true, lossy: "hstore into map[string]string fails at scan time when a value is NULL; use map[string]*string"}
+			}
+		}
+		return fit{}
+	case "citext", "ltree", "lquery", "ltxtquery":
+		// text-codec scalars the runtime registers as text
 		return fit{ok: is(types.String)}
 	}
 	return fit{ok: true, unknown: true}
+}
+
+// matchGeneric matches t against pgtype.<name>[T] where T must carry elem.
+func (c *checker) matchGeneric(t types.Type, name string, elem schema.TypeRef, param bool) fit {
+	if !isNamed(t, "pgtype", name) {
+		return fit{}
+	}
+	args := t.(*types.Named).TypeArgs()
+	if args == nil || args.Len() != 1 {
+		return fit{}
+	}
+	ef := c.matchDir(elem, args.At(0), param)
+	return fit{ok: ef.ok, lossy: ef.lossy, unknown: ef.unknown}
 }
 
 // structField is one column-bearing field of a result struct, embedded structs flattened.
@@ -243,8 +339,11 @@ func embeddedStruct(fv *types.Var, tag string) *types.Struct {
 	if p, ok := t.(*types.Pointer); ok {
 		t = p.Elem()
 	}
-	if isNamed(t, "time", "Time") {
-		return nil
+	if n, ok := t.(*types.Named); ok && n.Obj().Pkg() != nil {
+		switch p := n.Obj().Pkg().Path(); {
+		case p == "time", p == "net/netip", strings.HasSuffix(p, "jackc/pgx/v5/pgtype"):
+			return nil // scalars pgx decodes itself, as the runtime's scalarStruct
+		}
 	}
 	st, ok := t.Underlying().(*types.Struct)
 	if !ok {
@@ -329,7 +428,7 @@ func snake(s string) string {
 // paramFit is match in the Go → PG direction: the Go value must fit the PG parameter type,
 // so the lossy cases are the ones where Go is wider than PG.
 func (c *checker) paramFit(pg schema.TypeRef, t types.Type) fit {
-	f := c.match(pg, t)
+	f := c.matchDir(pg, t, true)
 	f.lossy = ""
 	inner, _ := unwrapNullable(t)
 	if inner == nil || !f.ok {

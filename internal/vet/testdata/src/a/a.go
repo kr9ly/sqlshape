@@ -1,10 +1,13 @@
 package a
 
 import (
+	"net"
+	"net/netip"
 	"time"
 
 	"b"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kr9ly/sqlshape"
 )
 
@@ -309,3 +312,60 @@ var embeddedParam = sqlshape.Query[OrderWithNote, struct {
 	ByID
 	Limit int32
 }](`SELECT id, total, note FROM orders WHERE id = {{.ID}} LIMIT {{.Limit}}`)
+
+// the Go type table: what pgx scans each PG type into (results) and encodes (parameters)
+type Host struct {
+	ID     int32
+	Addr   netip.Addr
+	Net    netip.Prefix
+	Mac    net.HardwareAddr
+	Uptime time.Duration
+	Attrs  map[string]*string
+	Span   pgtype.Range[int32]
+	Spans  pgtype.Multirange[pgtype.Range[int32]]
+	Seen   pgtype.Range[time.Time]
+	Pos    pgtype.Point
+	Doc    pgtype.TSVector
+	Body   string
+	Fee    string
+	AtTz   string
+	Rel    uint32
+	Flags  pgtype.Bits
+}
+
+var hosts = sqlshape.Query[Host, struct{}](`SELECT h.*, u.flags FROM hosts h JOIN users u ON u.id = h.id`)
+
+type BadHost struct {
+	Addr   string
+	Net    netip.Addr
+	Uptime string
+	Attrs  map[string]string
+	Span   pgtype.Range[string]
+	Spans  []pgtype.Range[int32]
+	Pos    string
+	Doc    string
+	AtTz   time.Time
+	Rel    int64
+	Flags  string
+	Vflags []byte
+}
+
+var badHosts = sqlshape.Query[BadHost, struct{}](`SELECT h.addr, h.net, h.uptime, h.attrs, h.span, h.spans, h.pos, h.doc, h.at_tz, h.rel, u.flags, u.vflags FROM hosts h JOIN users u ON u.id = h.id`) // want `field Addr is string but column "addr" is inet` `field Net is net/netip.Addr but column "net" is cidr` `field Uptime is string but column "uptime" is interval` `field Attrs: hstore into map\[string\]string fails at scan time when a value is NULL; use map\[string\]\*string` `field Span is github.com/jackc/pgx/v5/pgtype.Range\[string\] but column "span" is int4range` `field Spans is \[\]github.com/jackc/pgx/v5/pgtype.Range\[int32\] but column "spans" is int4multirange` `field Pos is string but column "pos" is point` `field Doc is string but column "doc" is tsvector` `field AtTz is time.Time but column "at_tz" is time with time zone` `field Rel is int64 but column "rel" is oid` `field Flags is string but column "flags" is bit\(4\)` `field Vflags is \[\]byte but column "vflags" is bit varying\(8\)`
+
+var lossyRange = sqlshape.Query[struct{ Span pgtype.Range[int32] }, struct{}](`SELECT int8range(1, 5) AS span`) // want `field Span: bigint into int32`
+
+// parameters: strings encode as anything, typed values must fit
+var hostParams = sqlshape.Query[struct{ ID int32 }, struct {
+	Addr   string
+	Net    netip.Prefix
+	Uptime time.Duration
+	Attrs  map[string]string
+	Span   pgtype.Range[int64]
+	Spans  string
+	Rel    int64
+}](`SELECT id FROM hosts WHERE addr = {{.Addr}} AND net = {{.Net}} AND uptime > {{.Uptime}} AND attrs @> {{.Attrs}} AND span && {{.Span}} AND spans && {{.Spans}} AND rel = {{.Rel}}`)
+
+var badHostParams = sqlshape.Query[struct{ ID int32 }, struct {
+	Addr int64
+	Span pgtype.Range[time.Time]
+}](`SELECT id FROM hosts WHERE addr = {{.Addr}} AND span && {{.Span}}`) // want `parameter .Addr is int64 but SQL expects inet` `parameter .Span is github.com/jackc/pgx/v5/pgtype.Range\[time.Time\] but SQL expects int4range`
