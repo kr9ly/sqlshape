@@ -3,7 +3,7 @@
 Make SQL a first-class citizen of your codebase.
 
 SQL that lives in your repo gets what your application code already has: version control,
-type checking, refactoring, tests, dependency graphs, and editor diagnostics.
+type checking, refactoring, tests, dependency graphs, and diagnostics in your editor's problems pane.
 Not by hiding it behind a DSL or an ORM, but by checking it as SQL.
 
 The core is language-agnostic: a pure-Go PostgreSQL analyzer built from PostgreSQL's
@@ -27,8 +27,32 @@ See [design.md](design.md) for the rationale and architecture.
 $ go run ./cmd/sqlshape ./examples/...
 ```
 
-`cmd/sqlshape` is a `go vet -vettool`-compatible checker. It looks for `schema.sql` above the
-package directory (or `-schema path`). See `examples/orders` for the shape of a query.
+`cmd/sqlshape` is a `go vet -vettool`-compatible checker. It looks for `schema.sql`, or a
+`schema/` directory whose `*.sql` files apply in name order, above the package directory
+(or `-schema path`). See `examples/orders` for the shape of a query.
+
+### In the editor
+
+gopls cannot load third-party analyzers, so the checker runs as `go vet`, on save:
+
+```
+$ go build -o "$(go env GOPATH)/bin/sqlshape" ./cmd/sqlshape
+$ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...     # what the editor runs
+```
+
+VS Code (Go extension): `"go.vetOnSave": "workspace"` and `"go.vetFlags": ["-vettool=/path/to/sqlshape", "-strict"]`
+put the findings in the Problems pane. Other editors: run the same `go vet` command as the
+on-save linter (or add `sqlshape` to golangci-lint as a module plugin). Quick fixes the checker
+proposes (`-sync-comments`) are applied with `sqlshape -fix ./...`.
+
+### Templates
+
+Templates are Go `text/template` syntax restricted to what can be expanded statically:
+
+- **value actions** `{{.Field}}`, `{{.Outer.Inner}}`, `{{.}}` and `{{$x}}` inside a range are plain field references, and each becomes a `$n` parameter — never SQL text. Function calls, method calls and pipelines are rejected in value position
+- **branches** `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`, `{{with}}` and `{{range}}` (expanded for 0, 1 and 2 iterations); `{{define}}` / `{{template}}` are not supported — share SQL through Go constants instead
+- **conditions** may use the builtins `not`, `and`, `or`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `len`, `index`, string / number constants and field references; there is no `{{switch}}` — write `{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`
+- **directives** are SQL comments the checker reads: `-- sqlshape: expect …`, `-- sqlshape: not null …`, `-- sqlshape: unfiltered …`
 
 ## Layout
 
@@ -71,7 +95,7 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 - **embedded structs** flatten: `type Row struct { Base; Note *string }` receives Base's columns as its own (checker and mapper agree; two fields binding one column is an error), and `{{.ID}}` in a template reaches a promoted field of P. A named struct field, or an embedded one with a `col:"..."` tag, is a nested row instead
 - **nested rows**: `array_agg(row(o.id, o.total))`, `array_agg(o)` and composite columns are received by a struct / slice of structs; the checker matches the struct's fields to the row type positionally (by name and order for a named type), the runtime scans them field by field and loads user types (enums, composites, extension types such as `citext` / `hstore` as text) into the connection lazily; `LoadUserTypes` does it wholesale for a pool's AfterConnect
 - a column only some branches select may be received by a nullable field (pointer / slice), which those branches leave nil; a field no branch selects is still an error
-- `-sync-comments` turns the schema's `COMMENT ON` into doc-comment quick fixes on the receiving Go fields and types; `-coverage` reports how many statements a package checks; `Stmt.Unprepared()` runs a statement without a prepared statement (custom plan every time)
+- `-sync-comments` turns the schema's `COMMENT ON` into doc-comment fixes on the receiving Go fields and types (`sqlshape -fix`); `-coverage` reports how many statements a package checks; `Stmt.Unprepared()` runs a statement without a prepared statement (custom plan every time)
 - `-strict` also gives structural performance advice without running PostgreSQL: a table predicate no index leads with, and a view predicate the planner cannot push into the view
 - templates with more than 256 branch combinations are checked **sparsely** (all off, all on, each branch alone), which still covers independent AND predicates in full
 - the runtime **refuses SQL the checker never saw**: every rendering is compared byte for byte with the static expansion of the same branch signature

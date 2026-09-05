@@ -50,14 +50,14 @@ var (
 )
 
 func init() {
-	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql (default: nearest schema.sql above the package directory)")
+	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql, or to a directory whose *.sql files apply in name order (default: the nearest schema.sql or schema/ above the package directory)")
 	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
 	Analyzer.Flags.StringVar(&rawSQLFlag, "raw-sql", "constant", "driver calls (pgx / database/sql Query, Exec, ...) outside sqlshape: constant requires their SQL to be a constant string, forbid rejects them, allow ignores them")
 	Analyzer.Flags.StringVar(&rawSQLAllow, "raw-sql-allow", "", "comma-separated package paths (or prefixes ending in /...) where -raw-sql=forbid does not apply")
 	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
 	Analyzer.Flags.StringVar(&requireCols, "require-columns", "", "comma-separated columns (e.g. tenant_id) every statement must pin by equality on each table that has them (row ownership); INSERTs must assign them")
 	Analyzer.Flags.BoolVar(&coverageFlag, "coverage", false, "report per package how many Query / One declarations were checked and how many could not be (non-constant templates)")
-	Analyzer.Flags.BoolVar(&syncComments, "sync-comments", false, "suggest doc comments for result struct fields and types from the schema's COMMENT ON (applied as quick fixes by gopls)")
+	Analyzer.Flags.BoolVar(&syncComments, "sync-comments", false, "suggest doc comments for result struct fields and types from the schema's COMMENT ON (apply with sqlshape -fix)")
 	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report advisory findings: enum / domain / key columns carried by unnamed Go types, timestamp / date received as time.Time, non-pointer enum parameters (zero value is no label), parameters that always override a column DEFAULT, LIMIT without ORDER BY, enum ordering")
 }
 
@@ -78,11 +78,11 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if s, ok := schemaCache[path]; ok {
 		return s, nil
 	}
-	b, err := os.ReadFile(path)
+	src, err := schema.ReadSource(path)
 	if err != nil {
 		return nil, err
 	}
-	s, err := schema.Load(string(b))
+	s, err := schema.Load(src)
 	if err != nil {
 		return nil, err
 	}
@@ -125,13 +125,16 @@ func findSchema(pass *analysis.Pass) (string, error) {
 	}
 	dir := filepath.Dir(pass.Fset.File(pass.Files[0].Pos()).Name())
 	for {
-		p := filepath.Join(dir, "schema.sql")
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+		// a schema.sql file, or a schema/ directory of *.sql files applied in name order
+		for _, name := range []string{"schema.sql", "schema"} {
+			p := filepath.Join(dir, name)
+			if fi, err := os.Stat(p); err == nil && (fi.IsDir() == (name == "schema")) {
+				return p, nil
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("schema.sql not found above %s (use -schema)", filepath.Dir(pass.Fset.File(pass.Files[0].Pos()).Name()))
+			return "", fmt.Errorf("schema.sql (or a schema/ directory) not found above %s (use -schema)", filepath.Dir(pass.Fset.File(pass.Files[0].Pos()).Name()))
 		}
 		dir = parent
 	}

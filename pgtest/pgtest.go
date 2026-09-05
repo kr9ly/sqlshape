@@ -33,6 +33,10 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	return &DB{o: o, schemaSQL: schemaSQL}, nil
 }
 
+// ReadSchema reads a schema.sql file, or a directory of *.sql files applied in name order,
+// the same way the checker does, for passing to Start.
+func ReadSchema(path string) (string, error) { return schema.ReadSource(path) }
+
 // Statement is what Verify accepts: sqlshape.Stmt and sqlshape.Single.
 type Statement interface{ SQLTemplate() string }
 
