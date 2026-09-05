@@ -73,4 +73,8 @@ type Column struct {
 type Result struct {
 	Params  []schema.TypeRef
 	Columns []Column
+	// ParamSources, indexed like Params, is the table column a parameter was compared
+	// with or assigned to (nil when it met an expression). It carries "which identity"
+	// a value stands for, beyond its type.
+	ParamSources []*Source
 }

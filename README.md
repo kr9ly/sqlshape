@@ -42,8 +42,20 @@ package directory (or `-schema path`). See `examples/orders` for the shape of a 
 | `internal/vet` | the `go/analysis` analyzer: result columns ↔ `R`, `$n` ↔ `P`, nullability |
 | `internal/oracle` | a real PostgreSQL (embedded-postgres) as the differential-test oracle; never used at lint time |
 
+## Shared interpretation
+
+Meaning that lives in the catalog is checked against the Go side by use, without registration:
+
+- a Go named string type that meets an **enum** column is bound to it; its typed constants are diffed
+  against the labels both ways (across packages via `go/analysis` facts), `T("typo")` conversions and
+  non-exhaustive `switch`es are reported
+- a Go named type that meets a **key column** (PK, or FK-derived) is bound to that identity;
+  `UserID` passed where `orders.id` is expected is reported even though both are `bigint`
+- a Go named type that meets a **domain** is bound to it; mixing domains is reported
+- `-strict` also reports such columns carried by unnamed Go types (which cannot be checked)
+
 ## Status
 
 First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 57 golden
 statements and the checker reports type / column / nullability findings on real Go code.
-Not yet: the runtime (pgx), GROUP BY validation, collations, Go-type ⇔ enum/domain binding.
+Not yet: the runtime (pgx), GROUP BY validation, collations, opaque domains as units inside SQL, uniqueness-proven One.

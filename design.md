@@ -590,6 +590,17 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ## 進捗（2026-09-05）
 
+- 解釈の共有（vet/binding.go）: enum / ドメイン / キー同一性〔単一列 PK、単一列 FK を根まで辿る〕への
+  バインディングを使用箇所から推論し、衝突を報告。enum はラベル集合と typed const を両方向で diff
+  （パッケージ跨ぎは ConstSetFact / BindingFact）、`T("typo")` 変換と switch の網羅性も検査。
+  アナライザー側の変更は `Result.ParamSources`（パラメータが比較・代入された列）の追加だけ。
+  `-strict` で「無名型で受けていて検査できない」を報告。想定どおり明示登録 API は不要だった
+- runtime（ルートパッケージ）: 自前の template 評価器で `{{.X}}` → `$n` + 引数列（静的 expander と同じ
+  番号付け規則）、`Run` = `iter.Seq2[R, error]` / `Collect` / `First` / `Exec`、名前ベースの行マッパー
+  （col/db タグ・snake_case、過不足はエラー）、named string 型とその slice は string / []string に正規化して
+  pgx に渡す（未登録 enum 配列 OID でも text 形式で通る）。実 PG で round trip 確認。展開形ごとの statement
+  キャッシュは pgx の自動 prepared statement キャッシュに乗る。未実装: array_agg(row) のネスト構造体、
+  未検査展開形の実行時 panic（vet が通した集合を埋め込む経路が要る）
 - expand / vet / cmd/sqlshape で縦に通った: `go run ./cmd/sqlshape ./examples/...` が実 Go コードに対して
   型・列・nullability の指摘を出す。診断はテンプレート内の位置に写す（raw string 前提）
 - oracle / catalog / schema / analyze の 4 パッケージが動作。analyze はオラクル golden 57 本

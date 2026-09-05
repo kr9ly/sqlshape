@@ -13,6 +13,7 @@ import (
 type analyzer struct {
 	s        *schema.Schema
 	params   map[int32]catalog.OID
+	paramSrc map[int32]*Source
 	maxParam int32
 
 	viewCache map[*schema.Relation][]rteCol
@@ -34,6 +35,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	a := &analyzer{
 		s:         s,
 		params:    map[int32]catalog.OID{},
+		paramSrc:  map[int32]*Source{},
 		viewCache: map[*schema.Relation][]rteCol{},
 		viewBusy:  map[*schema.Relation]bool{},
 	}
@@ -65,6 +67,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 			t = catalog.Text // PG's final fallback for still-unknown parameters
 		}
 		res.Params = append(res.Params, ref(t))
+		res.ParamSources = append(res.ParamSources, a.paramSrc[i])
 	}
 	for _, c := range cols {
 		res.Columns = append(res.Columns, Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src})

@@ -34,10 +34,14 @@ var Analyzer = &analysis.Analyzer{
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 }
 
-var schemaPath string
+var (
+	schemaPath string
+	strictFlag bool
+)
 
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql (default: nearest schema.sql above the package directory)")
+	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report enum / domain / key columns carried by unnamed Go types (not checkable)")
 }
 
 var (
@@ -85,8 +89,10 @@ func findSchema(pass *analysis.Pass) (string, error) {
 }
 
 type checker struct {
-	pass *analysis.Pass
-	s    *schema.Schema
+	pass     *analysis.Pass
+	s        *schema.Schema
+	strict   bool
+	bindings map[*types.TypeName]*binding
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -99,6 +105,8 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 	})
 	if len(calls) == 0 {
+		// still export constant sets so packages that use these types in queries can diff them
+		(&checker{pass: pass, bindings: map[*types.TypeName]*binding{}}).exportConstSets()
 		return nil, nil
 	}
 	path, err := findSchema(pass)
@@ -111,13 +119,14 @@ func run(pass *analysis.Pass) (any, error) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: load %s: %v", path, err)
 		return nil, nil
 	}
-	c := &checker{pass: pass, s: s}
+	c := &checker{pass: pass, s: s, strict: strictFlag, bindings: map[*types.TypeName]*binding{}}
 	for _, p := range s.Problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
 	for _, call := range calls {
 		c.checkCall(call)
 	}
+	c.finishBindings()
 	return nil, nil
 }
 
@@ -257,6 +266,7 @@ func (c *checker) checkParams(e *expand.Expansion, r *analyze.Result, pType type
 			continue
 		}
 		pg := r.Params[p.N-1]
+		c.meet(gt, pg, r.ParamSources[p.N-1], lit.pos(p.Pos), "parameter "+p.Path.String())
 		f := c.paramFit(pg, gt)
 		switch {
 		case !f.ok:
@@ -280,6 +290,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			return
 		}
 		col := r.Columns[0]
+		c.meet(rType, col.Type, col.Source, at, "R")
 		f := c.match(col.Type, rType)
 		c.reportFit(report, at, "column "+col.Name, col, rType, f, where)
 		return
@@ -323,6 +334,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			continue
 		}
 		matched[col.Name] = true
+		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fv.Name())
 		f := c.match(col.Type, fv.Type())
 		if notnull[col.Name] {
 			col.Nullable = false

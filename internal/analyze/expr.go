@@ -441,11 +441,12 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			}
 			elem = rt.Elem
 		}
-		re := &expr{typ: ref(elem), nullable: true}
+		re := &expr{typ: ref(elem), nullable: true, src: r.src}
 		_, err = a.applyOperator(name, l, re, x.Location, self)
 		if err != nil {
 			return nil, err
 		}
+		a.noteParamSource(r, l)
 		if r.oid() == catalog.Unknown {
 			if err := a.bind(r, a.s.Types.ArrayOf(re.oid()), x.Location); err != nil {
 				return nil, err
@@ -543,6 +544,11 @@ func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_que
 	}
 	if err := a.bindArgs(es, c, at); err != nil {
 		return nil, err
+	}
+	// a parameter compared with a column stands for that column's identity
+	if l != nil {
+		a.noteParamSource(l, r)
+		a.noteParamSource(r, l)
 	}
 	res := c.op.Result
 	if t := a.typ(res); t != nil && t.IsPolymorphic() {
@@ -900,4 +906,13 @@ func nodeOf(m any) *pg_query.Node {
 		return &pg_query.Node{Node: &pg_query.Node_AIndirection{AIndirection: v}}
 	}
 	return nil
+}
+
+// noteParamSource records that parameter e (if it is one) met column other.
+func (a *analyzer) noteParamSource(e, other *expr) {
+	if e != nil && e.param > 0 && other != nil && other.src != nil {
+		if _, done := a.paramSrc[e.param]; !done {
+			a.paramSrc[e.param] = other.src
+		}
+	}
 }

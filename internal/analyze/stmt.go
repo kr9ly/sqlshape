@@ -547,6 +547,11 @@ func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation
 
 // assign coerces a value expression to a target column in assignment context.
 func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32) *Error {
+	if e.param > 0 {
+		if _, done := a.paramSrc[e.param]; !done {
+			a.paramSrc[e.param] = &Source{Table: relName, Column: col.Name, NotNull: col.NotNull}
+		}
+	}
 	if e.oid() == catalog.Unknown {
 		return a.bind(e, col.Type.OID, at)
 	}
@@ -604,7 +609,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 					if err != nil {
 						return nil, err
 					}
-					if err := a.assign(e, cols[i], rel.Name, loc(it)); err != nil {
+					if err := a.assign(e, cols[i], rel.FullName(), loc(it)); err != nil {
 						return nil, err
 					}
 				}
@@ -619,7 +624,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			}
 			for i, c := range src {
 				e := &expr{typ: c.typ, nullable: c.nullable}
-				if err := a.assign(e, cols[i], rel.Name, -1); err != nil {
+				if err := a.assign(e, cols[i], rel.FullName(), -1); err != nil {
 					return nil, err
 				}
 			}
@@ -674,7 +679,7 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 		if err != nil {
 			return err
 		}
-		if err := a.assign(e, col, rel.Name, loc(t.Val)); err != nil {
+		if err := a.assign(e, col, rel.FullName(), loc(t.Val)); err != nil {
 			return err
 		}
 	}
