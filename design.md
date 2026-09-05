@@ -646,6 +646,106 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 - 未実装: GROUP BY 妥当性検査（42803）、照合順序、range 型の subtype、ROWS FROM、データ変更 CTE、
   nullability の精緻化（現状は NOT NULL + 外部結合 + 主要な式規則のみ）
 
+## 実装状況の棚卸し（2026-09-05）
+
+本文に書いた機能を、実装済み（✅）・部分（🔶）・未着手（⬜）・方針転換（↪）で仕分ける。
+各項の根拠は上の各節。未着手のうち「別マイルストーン」は Komado ゴール `sqlshape/migration` /
+`sqlshape/example-app` 側。
+
+### 検査器の核（internal/analyze）
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ✅ | §10 型変換（演算子・関数・多相・キャスト・select_common_type）、スコープ、DML + RETURNING、`$n` 推論、リテラル検証 | golden 57 本でオラクル一致 |
+| ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | |
+| 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則まで。関数戻り値・CASE 全分岐等の精緻化が残 |
+| ⬜ | `-- sqlshape: not null` 注釈（SQL 側で nullability を上書き） | 現状は Go 側 `col:",notnull"` タグのみ |
+| ⬜ | GROUP BY 妥当性（42803）、照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
+| ⬜ | `CALL procedure(...)` | statement として未対応 |
+| ⬜ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | 今はシグネチャだけ信用 |
+| ⬜ | EXPLAIN 系 lint（seq scan、ビューへの述語押し込み不可、ネスト内 LIMIT 無し） | 統計非依存に限定する方針のみ |
+| ⬜ | 拡張の `pg_proc` を dump して取り込む経路 | 生成器は同形式なので経路は開いている |
+
+### テンプレートと展開（internal/expand）
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ✅ | if / else / with / range 0・1・2、`{{.X}}` → `$n`、同一パス同一番号、位置写像、256 上限 | |
+| ⬜ | `{{switch .Sort}} {{case ...}}` | 書き味の例に書いたが text/template に無い。今は `{{if eq .Sort "x"}}` で書く。独自構文にするか本文を直すか |
+| ⬜ | 分岐爆発の退避路（独立 AND 述語は「外側 true 1 本 + 全 false 1 本」） | 今は上限超過をエラー |
+| ⬜ | 分岐ごとに結果型が変わるクエリを sum 型で返す | 今は全展開形が同じ R に合うことを要求 |
+| ⬜ | interpreted string リテラルの位置写像 | raw string 前提。診断は先頭にフォールバック |
+
+### 照合（internal/vet）
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ✅ | 結果列 ↔ R、`$n` ↔ P、方向つき精度損失、nullable ラッパ、schema.sql 探索、分岐名つき診断 | |
+| ✅ | ネスト行（`array_agg(row(...))` / `array_agg(t)` / 複合型列 ↔ struct の位置照合） | |
+| 🔶 | 未検査クエリ | 非定数引数はエラー。「検査カバレッジを数値で出す」は未 |
+| ⬜ | enum の零値警告（P の非ポインタ enum フィールド） | |
+| ⬜ | enum の宣言順比較 info（`ORDER BY status`、`status < 'x'`） | |
+| ⬜ | 表現の忠実さ: `timestamp`（tz 無し）info、`date` の tz、`varchar(n)` 長さ、citext | 数値の精度損失のみ実装 |
+| ⬜ | 既定値と生成値の所有者（P 非ポインタ ⇔ DEFAULT / GENERATED 列、identity 列への明示挿入） | |
+| ⬜ | `First` / LIMIT の ORDER BY 無し警告、`array_agg` ネスト側の 1:1 / 1:N と slice / 単体の突合 | |
+| ⬜ | 行の所属（`tenant_id` / `deleted_at` の列ポリシー lint） | |
+| ⬜ | テーブル直参照禁止 lint（public / private 境界、`a_api.*` のサービス境界） | schema はスキーマ名を持っているので土台はある |
+| ⬜ | `COMMENT ON` を Go doc / gopls hover へ | `schema.Comments` に取り込み済み、出力先が無い |
+| ⬜ | MV: REFRESH CONCURRENTLY に要るユニークインデックス、依存元テーブル一覧 | |
+| ⬜ | 値集合の CHECK IN / lookup テーブル対応 | enum のみ。lookup は `@data` 宣言（マイグレーション側）待ち |
+
+### 解釈の共有
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ✅ | enum バインド + 両方向 diff + `T("typo")` + switch 網羅性（パッケージ跨ぎは Fact） | |
+| ✅ | キー同一性（単一列 PK / FK を根まで）、ドメインバインド、`-strict` の無名型報告 | |
+| ✅ | ドメインの不透明化（演算・比較・CASE/COALESCE/UNION・代入） | |
+| ✅ | カーディナリティ: `One` のユニーク鍵証明（JOIN・ビュー・サブクエリ・CTE 越し） | |
+| ✅ | 失敗モード: 違反し得る制約の列挙 + `-- sqlshape: expect` + `ConstraintError` | |
+| ⬜ | トリガーの独自 SQLSTATE（`-- sqlshape: error XX001 = Name`）→ 型付きエラー | |
+| ⬜ | 複合キー（複数列 PK / FK）の同一性 | |
+| ⬜ | `One` の既知値に関数呼び出しを含める（volatility 判定が要る）、GROUP BY 列がすべて既知のケース | |
+
+### runtime
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ✅ | Run / Collect / First / Exec、Render、名前ベース行マッパー、named string の正規化 | |
+| ✅ | ネスト行の位置スキャン、ユーザー型の遅延 `LoadTypes`、`LoadUserTypes` | |
+| ✅ | `ConstraintError` / `Violates`、`Single.Get` / `Find` / `ErrManyRows` | |
+| ↪ | 未検査展開形の実行時 panic | 「vet が通した集合の埋め込み」は生成物が要るので採らず、分岐シグネチャで静的展開形と SQL をバイト一致照合し error にする |
+| ⬜ | 未知 enum ラベル受信の型付きエラー（panic / error / 素通しを設定） | |
+| ⬜ | 展開形ごとの statement キャッシュ制御、毎回 custom plan フラグ | pgx の自動 prepare に委ねている |
+| ⬜ | MV の型付き `Refresh` ハンドル | |
+
+### スキーマ / マイグレーション（ゴール `sqlshape/migration`）
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ✅ | schema.sql → テーブル / ビュー / MV / enum / ドメイン / 複合型 / 関数 / 制約 / ユニークインデックス / COMMENT | 無名制約は PG と同じ命名 |
+| ⬜ | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、ドリフト検出、sqldef DROP ゲート | analyzer は列参照を全部見ているが、集計して出す層が無い |
+| ⬜ | 意図宣言 `@migrate`（rename / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
+| ⬜ | 固定値テーブルの `@data` 宣言 → 差分適用 + ドリフト検出、値集合としての読み取り | 本命 |
+| ⬜ | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | |
+| ⬜ | psqldef の CREATE FUNCTION / MV 差分の対応確認 | 対応が薄ければ全量再適用の分担 |
+
+### 周辺・同梱物
+
+| 状態 | 項目 | 備考 |
+|---|---|---|
+| ⬜ | example プロジェクト（ビュー / 関数 / 複合型 / enum / lookup を含む schema.sql、読み・書き・動的絞り込みの 3 形） | ゴール `sqlshape/example-app` |
+| ⬜ | DB 側ロジックのテスト作法（embedded PG 上で Go テストから叩く土台の公開） | `internal/oracle` を公開 API に切る形か |
+| 🔶 | 言語非依存化 | analyze / expand / schema は Go 非依存。vet / runtime が Go フロントエンド。契約（expect 行）は SQL 側に置く方針で揃えた |
+
+### 本文と実装のズレ（本文側を直すか判断が要るもの）
+
+- 書き味の例にある `{{switch}}` / `{{case}}` は未実装（上記）
+- 「展開形にハッシュを振り…実行時に panic」は分岐シグネチャ照合 + error に置き換えた
+- prober は方式 2（生成カタログ + §10 仕様実装）で確定、embedded PG はオラクル。カタログは `.dat` 解析ではなく COPY dump
+- 「runtime が接続時に検査で見た enum 型を全部 LoadType」は、結果列の未知 OID を見つけたときの遅延ロード +
+  `LoadUserTypes` の一括登録に置き換えた（runtime は検査結果を持たないため）
+
 ## 未解決
 
 - **nullability** の推論精度。NOT NULL 制約 + JOIN 種別 + COALESCE の規則で 9 割を拾い、
