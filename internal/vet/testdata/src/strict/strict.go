@@ -14,9 +14,9 @@ type UserID int64 // want UserID:`bound k users.id`
 
 // advisory findings, reported only with -strict
 
-var plainEnumParam = sqlshape.Query[OrderID, struct{ S OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`) // want `schema: materialized view order_stats has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible` `parameter .S is a non-pointer strict.OrderStatus: its zero value "" is not a label of enum order_status and fails at runtime \(SQLSTATE 22P02\) when unset`
+var plainEnumParam = sqlshape.Query[OrderID, struct{ S OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`) // want `schema: materialized view order_stats has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible` `no index on orders leads with any of \(status\): this predicate scans the whole table` `parameter .S is a non-pointer strict.OrderStatus: its zero value "" is not a label of enum order_status and fails at runtime \(SQLSTATE 22P02\) when unset`
 
-var pointerEnumParam = sqlshape.Query[OrderID, struct{ S *OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`)
+var pointerEnumParam = sqlshape.Query[OrderID, struct{ S *OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`) // want `no index on orders leads with any of \(status\)`
 
 type Times struct {
 	UpdatedAt *time.Time
@@ -37,4 +37,4 @@ var unorderedLimit = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders LI
 
 var orderedLimit = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders ORDER BY id LIMIT 10`)
 
-var enumOrder = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders WHERE status > 'paid' ORDER BY status`) // want `enum order_status compares in declaration order, not alphabetically` `ORDER BY enum order_status sorts in declaration order, not alphabetically`
+var enumOrder = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders WHERE status > 'paid' ORDER BY status`) // want `enum order_status compares in declaration order, not alphabetically` `ORDER BY enum order_status sorts in declaration order, not alphabetically` `no index on orders leads with any of \(status\)`

@@ -664,7 +664,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ⬜ | 照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
 | ✅ | `CALL procedure(...)` | 引数は関数と同じ経路（OUT も渡す）、INOUT / OUT が結果行、関数の CALL / プロシージャの SELECT は 42809。オラクルは拡張プロトコルの Parse で CALL を Describe できた |
 | ✅ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | analyze/function.go: 引数を名前と `$n` で見せて各文を解析（同名列が優先、PG と同じ）、最終文の形を RETURNS と照合（代入キャスト許容、42P13）。vet はスキーマ読込時に全関数を検査。`FunctionResult.Relations` が関数越しの依存 |
-| ⬜ | EXPLAIN 系 lint（seq scan、ビューへの述語押し込み不可、ネスト内 LIMIT 無し） | 統計非依存に限定する方針のみ |
+| ↪ | EXPLAIN 系 lint | lint 時に PG を起動しない方針を維持し、統計非依存の構造的 advisory に置換（`-strict`）: ① 述語列に先頭一致するインデックス / 鍵が無いテーブル述語（schema が全インデックスを保持）② ビューへ押し込めない述語（LIMIT/OFFSET・集合演算・ウィンドウ関数・GROUP BY ビューの非グループ列）。「ネスト内に上限なし」は構造的に決められないので不採用。EXPLAIN 本体はオラクル上でも統計が違うため採らない |
 | ⬜ | 拡張の `pg_proc` を dump して取り込む経路 | 生成器は同形式なので経路は開いている |
 | ✅ | 述語ポリシー | schema.sql でテーブル直前に `-- sqlshape: visible where deleted_at IS NULL`。全 select レベルで葉ごとに述語の構造一致（WHERE / その葉を縛る ON）を要求、ビュー本体は AnalyzeView でスキーマ問題として一度だけ報告、テンプレートは `-- sqlshape: unfiltered t` で明示的に外す。vet フラグ案は棄却（ポリシーはスキーマの知識） |
 
@@ -675,7 +675,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | if / else / with / range 0・1・2、`{{.X}}` → `$n`、同一パス同一番号、位置写像、256 上限 | |
 | ↪ | `{{switch .Sort}} {{case ...}}` | text/template に無く、前処理で書き換えると位置写像が崩れる。`{{if eq .Sort "x"}} ... {{else if eq .Sort "y"}} ... {{end}}` で書く方針に決め、書き味の例を直した |
 | ✅ | 分岐爆発の退避路 | 全組合せが 256 を超えたら「全 off・全 on・各分岐単独 on」の疎な集合に自動で落とす（`Result.Sparse`）。依存する断片は単独形でエラーになるのが再構成の合図。runtime の展開形照合はこのとき無効、`-strict` で疎検査を通知。「非独立な組み合わせだけ全列挙に戻す」自動判定は棄却（独立性の判定が要る） |
-| ⬜ | 分岐ごとに結果型が変わるクエリを sum 型で返す | 今は全展開形が同じ R に合うことを要求 |
+| ↪ | 分岐ごとに結果型が変わるクエリを sum 型で返す | Go に sum 型が無いので「省略可能な投影」に読み替え: ある展開形にだけ無い列は nullable フィールド（ポインタ / slice）で受け、その分岐では nil のまま。全展開形で無い列は従来どおりエラー。runtime の行マッパーも nullable フィールドの欠落を許す。タグ付き union の生成は棄却（生成物が要る） |
 | ✅ | interpreted string リテラルの位置写像 | エスケープを復号しながら源位置を辿る |
 
 ### 照合（internal/vet）

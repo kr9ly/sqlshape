@@ -35,11 +35,17 @@ const (
 	// advisory notes (the checker reports them with -strict)
 	noteUnorderedLimit = "unordered-limit"
 	noteEnumOrder      = "enum-order"
+	noteNoIndex        = "no-index"
+	noteViewPushdown   = "view-pushdown"
 )
 
 // Advisory reports whether a note is advice rather than a likely bug.
 func (n Note) Advisory() bool {
-	return n.Code == noteUnorderedLimit || n.Code == noteEnumOrder
+	switch n.Code {
+	case noteUnorderedLimit, noteEnumOrder, noteNoIndex, noteViewPushdown:
+		return true
+	}
+	return false
 }
 
 func (a *analyzer) note(code string, loc int32, msg string) {

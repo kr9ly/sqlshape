@@ -69,6 +69,9 @@ type Relation struct {
 	Query Expr
 	// ColumnAliases are explicit column names given to a view (CREATE VIEW v (a, b) AS ...).
 	ColumnAliases []string
+	// Indexes are every index on the table (unique ones also appear in Constraints), for
+	// the advisory "no index leads with a predicate column".
+	Indexes []*Index
 	// Visible is the `-- sqlshape: visible where <predicate>` policy: rows of the table are
 	// only meant to be seen through this predicate, so every statement reading it (and
 	// every view over it) must carry the predicate. Nil when none.
@@ -148,6 +151,14 @@ type Function struct {
 type RaisedError struct {
 	Code string
 	Name string
+}
+
+// Index is an index on a table; Columns is empty when the leading element is an expression.
+type Index struct {
+	Name      string
+	Columns   []string
+	Unique    bool
+	Predicate Expr
 }
 
 // Trigger is a row / statement trigger on a table.
@@ -654,24 +665,25 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 }
 
 func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
-	if !st.Unique {
-		return // non-unique indexes have no typing / cardinality consequence
-	}
 	schema, name := rangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
 		s.problem(loc, "CREATE INDEX: relation %q does not exist", name)
 		return
 	}
-	c := &Constraint{Name: st.Idxname, Kind: Unique, Predicate: st.WhereClause, NullsNotDistinct: st.NullsNotDistinct}
+	idx := &Index{Name: st.Idxname, Unique: st.Unique, Predicate: st.WhereClause}
 	for _, pn := range st.IndexParams {
 		ie := pn.GetIndexElem()
 		if ie.GetName() == "" {
-			// expression index: cannot be matched to a column set for uniqueness proofs
-			return
+			break // expression element: the columns up to here still lead the index
 		}
-		c.Columns = append(c.Columns, ie.GetName())
+		idx.Columns = append(idx.Columns, ie.GetName())
 	}
+	rel.Indexes = append(rel.Indexes, idx)
+	if !st.Unique || len(idx.Columns) != len(st.IndexParams) {
+		return // only whole-column unique indexes give uniqueness proofs
+	}
+	c := &Constraint{Name: st.Idxname, Kind: Unique, Predicate: st.WhereClause, NullsNotDistinct: st.NullsNotDistinct, Columns: idx.Columns}
 	s.addConstraint(rel, c)
 }
 

@@ -328,6 +328,10 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	possible := map[string]analyze.Violation{}
 	branch := map[string]string{}
 	analyzedAll := true
+	analyzed := 0
+	missing := map[string]int{}
+	missingType := map[string]types.Type{}
+	missingBranch := map[string]string{}
 
 	for i := range res.Expansions {
 		e := &res.Expansions[i]
@@ -370,7 +374,32 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
 		}
 		c.checkParams(e, r, pType, lit, report, where)
-		c.checkResult(call.Pos(), r, rType, lit, report, where)
+		for name, t := range c.checkResult(call.Pos(), r, rType, lit, report, where) {
+			missing[name]++
+			missingType[name] = t
+			if _, ok := missingBranch[name]; !ok {
+				missingBranch[name] = where
+			}
+		}
+		analyzed++
+	}
+	// optional projection: a field some branches do not select must be nullable; a field no
+	// branch selects is a mistake
+	names := make([]string, 0, len(missing))
+	for name := range missing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if missing[name] == analyzed {
+			report(call.Pos(), "field %s.%s has no result column", typeName(rType), name)
+			continue
+		}
+		if _, nullable := unwrapNullable(missingType[name]); !nullable {
+			if _, isSlice := missingType[name].Underlying().(*types.Slice); !isSlice {
+				report(call.Pos(), "field %s.%s is not selected in every branch%s: make it a pointer so those branches leave it nil", typeName(rType), name, missingBranch[name])
+			}
+		}
 	}
 	if analyzedAll {
 		c.checkExpectations(lit, possible, branch, report)
@@ -444,8 +473,11 @@ func (c *checker) fidelity(pg schema.TypeRef, gt types.Type) string {
 	return ""
 }
 
-// checkResult matches result columns against R.
-func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) {
+// checkResult matches result columns against R. It returns the struct fields that had
+// no result column in this expansion (name → type); checkCall decides whether that is
+// an error (missing everywhere) or an optional projection (missing in some branches,
+// allowed for nullable fields).
+func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) map[string]types.Type {
 	at := callPos
 	// `-- sqlshape: not null a, b` in the template overrides the analyzer's nullability
 	overrides, _ := notNullOverrides(lit.text)
@@ -466,7 +498,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		// scalar R: exactly one column
 		if len(r.Columns) != 1 {
 			report(at, "R is %s but the query returns %d columns%s", rType, len(r.Columns), where)
-			return
+			return nil
 		}
 		col := r.Columns[0]
 		c.meet(rType, col.Type, col.Source, at, "R")
@@ -475,7 +507,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		if f.ok {
 			c.checkNested(col, rType, at, "R", report, where)
 		}
-		return
+		return nil
 	}
 	// struct R: fields ↔ columns both ways
 	fields := map[string]*types.Var{}
@@ -529,16 +561,13 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			}
 		}
 	}
-	missing := []string{}
+	missing := map[string]types.Type{}
 	for _, name := range order {
 		if !matched[name] {
-			missing = append(missing, fields[name].Name())
+			missing[fields[name].Name()] = fields[name].Type()
 		}
 	}
-	sort.Strings(missing)
-	for _, m := range missing {
-		report(at, "field %s.%s has no result column%s", typeName(rType), m, where)
-	}
+	return missing
 }
 
 func (c *checker) reportFit(report func(token.Pos, string, ...any), at token.Pos, what string, col analyze.Column, gt types.Type, f fit, where string) {

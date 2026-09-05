@@ -719,6 +719,7 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 		}
 	}
 	a.checkVisibility(p, loc(where))
+	a.advisePlans(p)
 }
 
 // checkVisibility enforces `-- sqlshape: visible where ...` policies: every table leaf with
@@ -744,4 +745,130 @@ func (a *analyzer) checkVisibility(p *prover, at int32) {
 			a.note(notePolicy, at, "rows of "+l.rel.Name+" are visible where "+deparse(l.rel.Visible)[len("SELECT "):]+": add that predicate for "+alias+", or opt out with `-- sqlshape: unfiltered "+l.rel.Name+"`")
 		}
 	}
+}
+
+// advisePlans emits the structural performance advisories (no EXPLAIN, no statistics):
+// a table predicate no index leads with, and a view predicate the planner cannot push
+// into the view (LIMIT / OFFSET / set operation / window function, or a non-grouping
+// column of a GROUP BY view), so the view is computed in full before filtering.
+func (a *analyzer) advisePlans(p *prover) {
+	for _, l := range p.leaves {
+		cols := p.predicateColumns(l)
+		if len(cols) == 0 {
+			continue
+		}
+		switch {
+		case l.rel != nil:
+			if !a.indexLeads(l.rel, cols) {
+				a.note(noteNoIndex, p.firstPredicatePos(l), "no index on "+l.rel.Name+" leads with any of ("+strings.Join(cols, ", ")+"): this predicate scans the whole table")
+			}
+		case l.sub != nil && l.sub.what == "view":
+			if why := a.pushdownBlocker(l, cols); why != "" {
+				a.note(noteViewPushdown, p.firstPredicatePos(l), "predicate on view "+l.alias+" ("+strings.Join(cols, ", ")+") is not pushed into the view: "+why+"; the view is computed in full, then filtered")
+			}
+		}
+	}
+}
+
+// predicateColumns lists the leaf's columns that predicates restricting it compare or test.
+func (p *prover) predicateColumns(l *rte) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range p.conjuncts {
+		if c.allow != nil && !c.allow[l] {
+			continue
+		}
+		var sides []*pg_query.Node
+		switch v := c.n.Node.(type) {
+		case *pg_query.Node_AExpr:
+			sides = []*pg_query.Node{v.AExpr.Lexpr, v.AExpr.Rexpr}
+		case *pg_query.Node_NullTest:
+			sides = []*pg_query.Node{v.NullTest.Arg}
+		case *pg_query.Node_BooleanTest:
+			sides = []*pg_query.Node{v.BooleanTest.Arg}
+		}
+		for _, sd := range sides {
+			if sd == nil {
+				continue
+			}
+			if k, ok := p.resolve(sd); ok && k.r == l && !seen[l.cols[k.i].name] {
+				seen[l.cols[k.i].name] = true
+				out = append(out, l.cols[k.i].name)
+			}
+		}
+	}
+	return out
+}
+
+func (p *prover) firstPredicatePos(l *rte) int32 {
+	for _, c := range p.conjuncts {
+		if c.allow == nil || c.allow[l] {
+			return loc(c.n)
+		}
+	}
+	return -1
+}
+
+// indexLeads reports whether some index or key of rel starts with one of the columns.
+func (a *analyzer) indexLeads(rel *schema.Relation, cols []string) bool {
+	leads := map[string]bool{}
+	for _, idx := range rel.Indexes {
+		if len(idx.Columns) > 0 {
+			leads[idx.Columns[0]] = true
+		}
+	}
+	for _, con := range rel.Constraints {
+		if (con.Kind == schema.PrimaryKey || con.Kind == schema.Unique) && len(con.Columns) > 0 {
+			leads[con.Columns[0]] = true
+		}
+	}
+	for _, c := range cols {
+		if leads[c] {
+			return true
+		}
+	}
+	return false
+}
+
+// pushdownBlocker says why a predicate on the view's columns cannot move inside it.
+func (a *analyzer) pushdownBlocker(l *rte, cols []string) string {
+	sel := l.sub.sel
+	switch {
+	case sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Op != pg_query.SetOperation_SET_OPERATION_UNDEFINED:
+		return "the view is a set operation"
+	case sel.LimitCount != nil || sel.LimitOffset != nil:
+		return "the view has LIMIT / OFFSET"
+	}
+	for _, tn := range sel.TargetList {
+		hasWindow := false
+		schema.WalkNodes(tn, func(n *pg_query.Node) {
+			if f := n.GetFuncCall(); f != nil && f.Over != nil {
+				hasWindow = true
+			}
+		})
+		if hasWindow {
+			return "the view has a window function"
+		}
+	}
+	if len(sel.GroupClause) == 0 {
+		return ""
+	}
+	groups := map[string]bool{}
+	for _, g := range sel.GroupClause {
+		if g.GetGroupingSet() != nil {
+			return "the view uses GROUPING SETS"
+		}
+		groups[deparse(a.groupExpr(g, sel, l.sub.sc, l.cols))] = true
+	}
+	for _, c := range cols {
+		for i, vc := range l.cols {
+			if vc.name != c || i >= len(sel.TargetList) {
+				continue
+			}
+			if !groups[deparse(sel.TargetList[i].GetResTarget().GetVal())] {
+				return c + " is an aggregate, not a grouping column"
+			}
+		}
+	}
+	return ""
 }

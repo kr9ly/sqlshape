@@ -362,7 +362,8 @@ func newMapper[R any](fds []pgconn.FieldDescription) (*mapper[R], error) {
 			m.fields[i] = idx
 		}
 		for name, idx := range byName {
-			if !used[idx] {
+			if !used[idx] && !optionalKind(rt.Field(idx).Type) {
+				// a nullable field may be left unset by a branch that does not select it
 				return nil, fmt.Errorf("sqlshape: field %s.%s has no result column (%s)", rt.Name(), rt.Field(idx).Name, name)
 			}
 		}
@@ -428,3 +429,12 @@ func snake(s string) string {
 
 // IsNoRows reports whether err is ErrNoRows.
 func IsNoRows(err error) bool { return errors.Is(err, ErrNoRows) }
+
+// optionalKind reports whether a field type can stay unset when a branch does not select it.
+func optionalKind(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Interface:
+		return true
+	}
+	return false
+}

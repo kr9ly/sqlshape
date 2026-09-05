@@ -223,3 +223,20 @@ var allMemos = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM memos WH
 var trashMemos = sqlshape.Query[int64, struct{ U int64 }]("-- sqlshape: unfiltered memos\nSELECT id FROM memos WHERE user_id = {{.U}} AND deleted_at IS NOT NULL")
 
 var viaLiveView = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM live_memos WHERE user_id = {{.U}}`)
+
+// optional projection: a field only some branches select must be nullable
+type DetailRow struct {
+	ID    int64
+	Total *string
+}
+
+var optionalTotal = sqlshape.Query[DetailRow, struct{ Detailed bool }](`SELECT id {{if .Detailed}}, total {{end}} FROM orders`)
+
+type DetailRowBad struct {
+	ID    int64
+	Total string
+}
+
+var optionalTotalBad = sqlshape.Query[DetailRowBad, struct{ Detailed bool }](`SELECT id {{if .Detailed}}, total {{end}} FROM orders`) // want `field DetailRowBad.Total is not selected in every branch \[if@\d+:else\]: make it a pointer so those branches leave it nil`
+
+var neverSelected = sqlshape.Query[DetailRow, struct{ Detailed bool }](`SELECT id FROM orders`) // want `field DetailRow.Total has no result column`

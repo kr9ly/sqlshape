@@ -89,6 +89,9 @@ func TestDomainNotes(t *testing.T) {
 			}
 			var got []string
 			for _, n := range r.Notes {
+				if n.Advisory() {
+					continue
+				}
 				if n.Code != noteDomainMismatch {
 					t.Errorf("unexpected code %q", n.Code)
 				}
