@@ -142,6 +142,8 @@ type checker struct {
 	s        *schema.Schema
 	strict   bool
 	bindings map[*types.TypeName]*binding
+	// constDecls: this package's constant declarations, for mapping concatenated templates back to source
+	constDecls map[*types.Const]ast.Expr
 	// unchecked counts Query / One calls whose template is not a constant (-coverage)
 	unchecked int
 }
@@ -225,27 +227,50 @@ func isQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	return obj.Pkg().Path() == sqlshapePkg && (obj.Name() == "Query" || obj.Name() == "One")
 }
 
-// literal is where diagnostics about the template text land.
+// literal is where diagnostics about the template text land. A template may be one
+// string literal or a constant expression concatenating literals and named constants
+// (shared SQL fragments); each piece is a segment mapping a range of template offsets
+// back to its literal, so a diagnostic lands in the fragment it is about.
 type literal struct {
-	lit      *ast.BasicLit
-	raw      bool // raw string: template offsets map 1:1 onto file positions
 	text     string
+	segs     []segment
 	fallback token.Pos
 }
 
+// segment is one piece of the template text: [start, end) offsets and their source.
+type segment struct {
+	start, end int
+	lit        *ast.BasicLit // nil: a constant without a literal in this package
+	raw        bool          // raw string: template offsets map 1:1 onto file positions
+	fallback   token.Pos
+}
+
 func (l literal) pos(tmplOff int) token.Pos {
-	if l.lit == nil || tmplOff < 0 || tmplOff > len(l.text) {
+	if tmplOff < 0 || tmplOff > len(l.text) {
 		return l.fallback
 	}
-	if l.raw {
-		return l.lit.Pos() + token.Pos(1+tmplOff)
+	for i, sg := range l.segs {
+		if tmplOff < sg.end || (i == len(l.segs)-1 && tmplOff == sg.end) {
+			if sg.lit == nil {
+				return sg.fallback
+			}
+			return litPos(sg.lit, sg.raw, tmplOff-sg.start)
+		}
+	}
+	return l.fallback
+}
+
+// litPos maps an offset into a literal's decoded text onto the literal's source.
+func litPos(lit *ast.BasicLit, raw bool, off int) token.Pos {
+	if raw {
+		return lit.Pos() + token.Pos(1+off)
 	}
 	// interpreted string: walk the source, decoding escapes, until the template offset
-	src := l.lit.Value
+	src := lit.Value
 	decoded := 0
 	for i := 1; i < len(src)-1; {
-		if decoded >= tmplOff {
-			return l.lit.Pos() + token.Pos(i)
+		if decoded >= off {
+			return lit.Pos() + token.Pos(i)
 		}
 		if src[i] != '\\' {
 			_, size := utf8.DecodeRuneInString(src[i:])
@@ -270,7 +295,80 @@ func (l literal) pos(tmplOff int) token.Pos {
 		decoded += d
 		i += n
 	}
-	return l.lit.Pos() + token.Pos(len(src)-1)
+	return lit.Pos() + token.Pos(len(src)-1)
+}
+
+// segments maps a constant string expression onto its literals: literals directly,
+// concatenations piecewise, named constants through their declaration in this package
+// (constants from other packages become one segment landing on the reference).
+func (c *checker) segments(e ast.Expr, start int) []segment {
+	tv, ok := c.pass.TypesInfo.Types[e]
+	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		return nil
+	}
+	n := len(constant.StringVal(tv.Value))
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return c.segments(x.X, start)
+	case *ast.BasicLit:
+		if x.Kind == token.STRING {
+			return []segment{{start: start, end: start + n, lit: x, raw: strings.HasPrefix(x.Value, "`")}}
+		}
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			left := c.segments(x.X, start)
+			if len(left) == 0 {
+				break
+			}
+			right := c.segments(x.Y, left[len(left)-1].end)
+			if len(right) == 0 {
+				break
+			}
+			return append(left, right...)
+		}
+	case *ast.Ident, *ast.SelectorExpr:
+		var id *ast.Ident
+		if sel, ok := x.(*ast.SelectorExpr); ok {
+			id = sel.Sel
+		} else {
+			id = x.(*ast.Ident)
+		}
+		if k, ok := c.pass.TypesInfo.Uses[id].(*types.Const); ok {
+			if decl := c.constDecl(k); decl != nil {
+				if segs := c.segments(decl, start); len(segs) > 0 {
+					return segs
+				}
+			}
+		}
+	}
+	return []segment{{start: start, end: start + n, fallback: e.Pos()}}
+}
+
+// constDecl is the value expression declaring k in this package, or nil.
+func (c *checker) constDecl(k *types.Const) ast.Expr {
+	if c.constDecls == nil {
+		c.constDecls = map[*types.Const]ast.Expr{}
+		for _, f := range c.pass.Files {
+			for _, d := range f.Decls {
+				gd, ok := d.(*ast.GenDecl)
+				if !ok || gd.Tok != token.CONST {
+					continue
+				}
+				for _, sp := range gd.Specs {
+					vs := sp.(*ast.ValueSpec)
+					if len(vs.Values) != len(vs.Names) {
+						continue
+					}
+					for i, name := range vs.Names {
+						if obj, ok := c.pass.TypesInfo.Defs[name].(*types.Const); ok {
+							c.constDecls[obj] = vs.Values[i]
+						}
+					}
+				}
+			}
+		}
+	}
+	return c.constDecls[k]
 }
 
 func runeOfHex(s string) rune {
@@ -309,11 +407,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		pass.Reportf(call.Args[0].Pos(), "sqlshape: query template must be a string constant")
 		return
 	}
-	lit := literal{text: constant.StringVal(tv.Value), fallback: call.Args[0].Pos()}
-	if bl, ok := call.Args[0].(*ast.BasicLit); ok && bl.Kind == token.STRING {
-		lit.lit = bl
-		lit.raw = strings.HasPrefix(bl.Value, "`")
-	}
+	lit := literal{text: constant.StringVal(tv.Value), fallback: call.Args[0].Pos(), segs: c.segments(call.Args[0], 0)}
 
 	res, err := expand.Expand(lit.text)
 	if err != nil {
@@ -333,6 +427,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	if c.strict {
 		c.reportUnusedParams(pType, res, call.Pos())
 	}
+	checkActionPlacement(lit.text, lit, func(pos token.Pos, format string, args ...any) {
+		pass.Reportf(pos, "sqlshape: "+format, args...)
+	})
 
 	// One diagnostic per distinct message; the branch suffix (after " [") does not count
 	// towards distinctness, so a problem shared by many expansions is reported once.
@@ -402,6 +499,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
 		}
 		c.checkParams(e, r, pType, lit, report, where)
+		checkBareOrderBy(e, lit, report, where)
 		for name, t := range c.checkResult(call.Pos(), r, rType, lit, report, where) {
 			missing[name]++
 			missingType[name] = t

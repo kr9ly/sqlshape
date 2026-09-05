@@ -447,3 +447,19 @@ type BadItem struct {
 var loadBadItems = sqlshape.Copy[BadItem]("order_items") // want `Copy: field Sku is \*string but column "sku" is NOT NULL: a nil value fails the load` `Copy: field Qty is bool but column "qty" is integer`
 
 var loadNames = sqlshape.Copy[string]("users", "name", "alias") // want `Copy\[string\] into users: a scalar R feeds exactly one column, 2 given`
+
+// shared fragments: a const concatenated into the template; diagnostics land in the fragment
+const userFrag = " AND o.user_id = {{.UserID}}" // want `parameter .UserID is bool but SQL expects bigint` `parameter .UserID is bool but SQL expects bigint`
+
+const withMissing = " AND o.status = {{.Statuz}}" // want `struct{UserID bool} has no field Statuz`
+
+var sharedFragment = sqlshape.Query[OrderRow, struct{ UserID bool }](`SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE true` + userFrag)
+
+var sharedMissing = sqlshape.Query[OrderRow, struct{ UserID bool }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE true" + withMissing + userFrag)
+
+// hazards: actions inside literals / comments are text; a bare ORDER BY parameter is a constant
+var quotedAction = sqlshape.Query[OrderRow, struct{ Q string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.note LIKE '%{{.Q}}%' -- by {{.Q}}\n") // want `{{.Q}} is inside a string literal: it becomes text, not a parameter \(write '%' \|\| {{.Q}} \|\| '%' to concatenate\)` `{{.Q}} is inside a comment and has no effect`
+
+var dollarQuoted = sqlshape.Query[OrderRow, struct{ Q string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.note = $q$ {{.Q}} $q$ /* {{.Q}} */") // want `{{.Q}} is inside a string literal` `{{.Q}} is inside a comment and has no effect`
+
+var bareSort = sqlshape.Query[OrderRow, struct{ Sort string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o ORDER BY {{.Sort}}") // want `ORDER BY {{.Sort}} sorts by a constant, not by the column the value names: branch on it instead`
