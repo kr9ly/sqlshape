@@ -7,6 +7,7 @@ CREATE TABLE users (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email      email UNIQUE,
     name       varchar(100),
+    alias      varchar(40) COLLATE "C",
     nick       character(8),
     tags       text[] NOT NULL DEFAULT '{}',
     balance    yen NOT NULL DEFAULT 0,

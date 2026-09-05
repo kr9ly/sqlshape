@@ -1,0 +1,1 @@
+SELECT id COLLATE "C" FROM users

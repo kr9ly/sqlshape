@@ -1,0 +1,1 @@
+error: 42804: collations are not supported by type bigint (at 11)

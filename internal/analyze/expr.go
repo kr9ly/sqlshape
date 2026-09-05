@@ -24,6 +24,8 @@ type expr struct {
 	// fields describes an anonymous record (row(...), whole-row reference) or an array of
 	// them, so nested Go structs can be checked positionally
 	fields []rteCol
+	// coll is the collation and its derivation, see collation.go
+	coll collation
 }
 
 func unknownRef() schema.TypeRef         { return schema.TypeRef{OID: catalog.Unknown, Typmod: -1} }
@@ -188,7 +190,7 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		if err != nil {
 			return nil, err
 		}
-		t, err := a.unify(es, v.CoalesceExpr.Location, "COALESCE")
+		t, coll, err := a.unify(es, v.CoalesceExpr.Location, "COALESCE")
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +200,7 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 				nullable = false
 			}
 		}
-		return &expr{typ: t, nullable: nullable, node: n}, nil
+		return &expr{typ: t, nullable: nullable, node: n, coll: coll}, nil
 	case *pg_query.Node_MinMaxExpr:
 		es, err := a.analyzeList(v.MinMaxExpr.Args, sc)
 		if err != nil {
@@ -208,17 +210,18 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		if v.MinMaxExpr.Op == pg_query.MinMaxOp_IS_LEAST {
 			name = "LEAST"
 		}
-		t, err := a.unify(es, v.MinMaxExpr.Location, name)
+		t, coll, err := a.unify(es, v.MinMaxExpr.Location, name)
 		if err != nil {
 			return nil, err
 		}
+		a.noteCollConflict(coll, v.MinMaxExpr.Location, name)
 		nullable := true
 		for _, e := range es {
 			if !e.nullable {
 				nullable = false
 			}
 		}
-		return &expr{typ: t, nullable: nullable, node: n}, nil
+		return &expr{typ: t, nullable: nullable, node: n, coll: coll}, nil
 	case *pg_query.Node_AArrayExpr:
 		es, err := a.analyzeList(v.AArrayExpr.Elements, sc)
 		if err != nil {
@@ -228,18 +231,18 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, errAt(codeIndeterminateDatatype, v.AArrayExpr.Location, "cannot determine type of empty array")
 		}
 		// nested ARRAY[ARRAY[..]] : elements are arrays; the result is the same array type
-		t, err := a.unify(es, v.AArrayExpr.Location, "ARRAY")
+		t, coll, err := a.unify(es, v.AArrayExpr.Location, "ARRAY")
 		if err != nil {
 			return nil, err
 		}
 		if et := a.typ(t.OID); et != nil && et.IsArray() {
-			return &expr{typ: ref(t.OID), node: n}, nil
+			return &expr{typ: ref(t.OID), node: n, coll: coll}, nil
 		}
 		arr := a.s.Types.ArrayOf(t.OID)
 		if arr == 0 {
 			return nil, errAt(codeUndefinedObject, v.AArrayExpr.Location, "could not find array type for data type %s", a.s.Types.Format(t))
 		}
-		return &expr{typ: ref(arr), node: n}, nil
+		return &expr{typ: ref(arr), node: n, coll: coll}, nil
 	case *pg_query.Node_RowExpr:
 		args, err := a.analyzeList(v.RowExpr.Args, sc)
 		if err != nil {
@@ -264,6 +267,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 	case *pg_query.Node_CollateClause:
 		e, err := a.analyzeExpr(v.CollateClause.Arg, sc)
 		if err != nil {
+			return nil, err
+		}
+		if err := a.explicitCollate(e, strs(v.CollateClause.Collname), v.CollateClause.Location); err != nil {
 			return nil, err
 		}
 		e.node = n
@@ -293,11 +299,11 @@ func (a *analyzer) analyzeList(nodes []*pg_query.Node, sc *scope) ([]*expr, *Err
 }
 
 // unify applies select_common_type and binds unknown inputs to the result (§10.5).
-func (a *analyzer) unify(es []*expr, at int32, context string) (schema.TypeRef, *Error) {
+func (a *analyzer) unify(es []*expr, at int32, context string) (schema.TypeRef, collation, *Error) {
 	oids := a.argOIDs(es)
 	t, ok := a.commonType(oids)
 	if !ok {
-		return schema.TypeRef{}, errAt(codeDatatypeMismatch, at, "%s types %s cannot be matched", context, a.typeNames(oids))
+		return schema.TypeRef{}, collation{}, errAt(codeDatatypeMismatch, at, "%s types %s cannot be matched", context, a.typeNames(oids))
 	}
 	typmod := int32(-2)
 	for _, e := range es {
@@ -318,11 +324,15 @@ func (a *analyzer) unify(es []*expr, at int32, context string) (schema.TypeRef, 
 	}
 	for _, e := range es {
 		if err := a.bind(e, t, at); err != nil {
-			return schema.TypeRef{}, err
+			return schema.TypeRef{}, collation{}, err
 		}
 	}
 	t = a.domainUnify(es, t, at, context)
-	return schema.TypeRef{OID: t, Typmod: typmod}, nil
+	c, err := a.collOf(es)
+	if err != nil {
+		return schema.TypeRef{}, collation{}, err
+	}
+	return schema.TypeRef{OID: t, Typmod: typmod}, a.resultColl(c, t), nil
 }
 
 func (a *analyzer) constExpr(c *pg_query.A_Const, n *pg_query.Node) *expr {
@@ -390,7 +400,11 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 		}
 		return nil, err
 	}
-	return &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields}, nil
+	e := &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields, coll: rc.coll.asVar()}
+	if e.coll.strength == collNone && a.collatable(rc.typ.OID) {
+		e.coll = collation{strength: collImplicit, loc: c.Location}
+	}
+	return e, nil
 }
 
 func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
@@ -465,7 +479,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			}
 			elem = rt.Elem
 		}
-		re := &expr{typ: ref(elem), nullable: true, src: r.src, lit: isLit(r)}
+		re := &expr{typ: ref(elem), nullable: true, src: r.src, lit: isLit(r), coll: r.coll}
 		_, err = a.applyOperator(name, l, re, x.Location, self)
 		if err != nil {
 			return nil, err
@@ -488,7 +502,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 		}
 		all := append([]*expr{l}, items...)
 		if _, ok := a.commonType(a.argOIDs(all)); ok {
-			if _, err := a.unify(all, x.Location, "IN"); err != nil {
+			if _, _, err := a.unify(all, x.Location, "IN"); err != nil {
 				return nil, err
 			}
 		}
@@ -589,8 +603,15 @@ func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_que
 			a.note(noteEnumOrder, at, "enum "+t.Name+" compares in declaration order, not alphabetically")
 		}
 	}
+	coll, cerr := a.collOf(es)
+	if cerr != nil {
+		return nil, cerr
+	}
+	if a.isCollSensitiveOp(name, es) {
+		a.noteCollConflict(coll, at, "string comparison")
+	}
 	nullable := r.nullable || (l != nil && l.nullable)
-	return &expr{typ: ref(res), nullable: nullable, node: self, lit: isLit(l) && isLit(r)}, nil
+	return &expr{typ: ref(res), nullable: nullable, node: self, lit: isLit(l) && isLit(r), coll: a.resultColl(coll, res)}, nil
 }
 
 func firstParam(es ...*expr) int32 {
@@ -700,6 +721,13 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			}
 		}
 	}
+	coll, cerr := a.collOf(args)
+	if cerr != nil {
+		return nil, cerr
+	}
+	if collSensitiveFunc[name] && len(args) > 0 && a.collatable(args[0].oid()) {
+		a.noteCollConflict(coll, f.Location, name+"()")
+	}
 	nullable := true
 	switch {
 	case c.fn != nil && c.fn.Kind == 'a':
@@ -724,7 +752,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			}
 		}
 	}
-	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields}, nil
+	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields, coll: a.resultColl(coll, res)}, nil
 }
 
 func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {
@@ -770,11 +798,11 @@ func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {
 		results = append(results, d)
 		nullable = nullable || d.nullable
 	}
-	t, err := a.unify(results, c.Location, "CASE")
+	t, coll, err := a.unify(results, c.Location, "CASE")
 	if err != nil {
 		return nil, err
 	}
-	return &expr{typ: t, nullable: nullable, node: nodeOf(c)}, nil
+	return &expr{typ: t, nullable: nullable, node: nodeOf(c), coll: coll}, nil
 }
 
 func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
@@ -794,7 +822,7 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
 		}
-		return &expr{typ: cols[0].typ, nullable: true, node: self}, nil
+		return &expr{typ: cols[0].typ, nullable: true, node: self, coll: cols[0].coll.asVar()}, nil
 	case pg_query.SubLinkType_ARRAY_SUBLINK:
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
@@ -816,7 +844,7 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		if len(s.OperName) > 0 {
 			name = a.opName(s.OperName)
 		}
-		r := &expr{typ: cols[0].typ, nullable: cols[0].nullable}
+		r := &expr{typ: cols[0].typ, nullable: cols[0].nullable, coll: cols[0].coll.asVar()}
 		if _, err := a.applyOperator(name, l, r, s.Location, nil); err != nil {
 			return nil, err
 		}

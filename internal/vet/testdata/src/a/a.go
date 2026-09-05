@@ -102,7 +102,8 @@ var wrongKeyResult = sqlshape.Query[OrderIDRow, struct{}](`SELECT id FROM orders
 // domains are opaque units: yen (users.balance) does not meet plain bigint / numeric
 type Yen int64 // want Yen:`bound d yen`
 
-var mixedUnits = sqlshape.Query[int64, struct{}](`SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.balance > o.total`) // want `domain mismatch: yen > numeric\(12,2\): operands must share the domain`
+var mixedUnits = sqlshape.Query[int64, struct{}](`SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.balance > o.total`)                   // want `domain mismatch: yen > numeric\(12,2\): operands must share the domain`
+var mixedCollations = sqlshape.Query[int64, struct{}](`SELECT u.id FROM users u, (SELECT id, name COLLATE "POSIX" AS p FROM users) s WHERE u.alias = s.p`) // want `could not determine which collation to use for string comparison: implicit collations "C" and "POSIX" conflict`
 
 var unitsOK = sqlshape.Query[Yen, struct{ Min Yen }](`SELECT coalesce(max(balance), 0) FROM users WHERE balance > {{.Min}}`)
 

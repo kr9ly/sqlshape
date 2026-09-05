@@ -1,0 +1,8 @@
+params:
+  $1 text
+columns:
+  name character varying(100) <- users.name null
+  alias character varying(40) <- users.alias null
+  both text
+  posix character varying(40)
+  lo text

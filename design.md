@@ -195,7 +195,7 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 - `numeric` の typmod は列直参照なら残る（`numeric(12,2)`）が集約（`sum`）や `$n` では落ちる。
   typmod 伝播規則が関数ごとに違うことの実例
 
-スコープ外: PL/pgSQL、ルール、トリガー、照合順序、`.dat` に無い拡張の関数。
+スコープ外: PL/pgSQL、ルール、拡張の関数（下記の dump 経路は未実装）。
 拡張は本物の PG から `pg_proc` を dump して同じ形式に落とす経路を残す。
 
 ## 副産物: 型安全なストアドプロシージャ
@@ -663,7 +663,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | GROUP BY 妥当性（42803） | analyze/grouping.go: deparse 一致・集約引数・PK による関数従属、GROUPING SETS は未検査。golden 5 本 |
 | ✅ | ROWS FROM、データ変更 CTE | ROWS FROM は関数ごとの列を横並び（列定義リスト・WITH ORDINALITY・別名込み）、データ変更 CTE は RETURNING 列を CTE の列にし失敗モードも合算 |
 | ✅ | range の subtype | pg_range を dump し anyrange ⇔ anyelement ⇔ anymultirange を解決（lower/upper/range_agg/multirange） |
-| ⬜ | 照合順序 | |
+| ✅ | 照合順序 | analyze/collation.go: 式に照合と導出の強さ（none / implicit / conflict / explicit）を持たせ parse_collate.c の merge 規則で合成。明示 COLLATE 同士の衝突と、UNION / INTERSECT / EXCEPT（ALL 以外）での暗黙衝突は PG と同じ 42P21 の Error（golden）。暗黙の非既定照合同士の衝突は PG が Describe を通して実行時に落ちるので、比較演算子・LIKE / 正規表現・lower / upper / min / max・GREATEST / LEAST・ORDER BY・GROUP BY・DISTINCT に届いたとき Note。照合名の存在は検証しない |
 | ✅ | `CALL procedure(...)` | 引数は関数と同じ経路（OUT も渡す）、INOUT / OUT が結果行、関数の CALL / プロシージャの SELECT は 42809。オラクルは拡張プロトコルの Parse で CALL を Describe できた |
 | ✅ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | analyze/function.go: 引数を名前と `$n` で見せて各文を解析（同名列が優先、PG と同じ）、最終文の形を RETURNS と照合（代入キャスト許容、42P13）。vet はスキーマ読込時に全関数を検査。`FunctionResult.Relations` が関数越しの依存 |
 | ↪ | EXPLAIN 系 lint | lint 時に PG を起動しない方針を維持し、統計非依存の構造的 advisory に置換（`-strict`）: ① 述語列に先頭一致するインデックス / 鍵が無いテーブル述語（schema が全インデックスを保持）② ビューへ押し込めない述語（LIMIT/OFFSET・集合演算・ウィンドウ関数・GROUP BY ビューの非グループ列）。「ネスト内に上限なし」は構造的に決められないので不採用。EXPLAIN 本体はオラクル上でも統計が違うため採らない |

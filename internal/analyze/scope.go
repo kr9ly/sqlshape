@@ -15,6 +15,7 @@ type rteCol struct {
 	src      *Source
 	lit      bool     // a constant target column, see expr.lit
 	fields   []rteCol // record shape, see expr.fields
+	coll     collation
 }
 
 // rte is a FROM item: a table / view / CTE / subquery / function, or a join of two.
@@ -215,7 +216,8 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 		for _, c := range rel.Columns {
 			cols = append(cols, rteCol{
 				name: c.Name, typ: c.Type, nullable: !c.NotNull && !a.domainNotNull(c.Type.OID),
-				src: &Source{Table: rel.FullName(), Column: c.Name, NotNull: c.NotNull},
+				src:  &Source{Table: rel.FullName(), Column: c.Name, NotNull: c.NotNull},
+				coll: a.columnColl(c),
 			})
 		}
 	case schema.View, schema.MatView:
@@ -226,7 +228,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 		r.sub = a.viewScopes[rel]
 		for _, c := range vc {
 			cols = append(cols, rteCol{
-				name: c.name, typ: c.typ, nullable: c.nullable,
+				name: c.name, typ: c.typ, nullable: c.nullable, coll: c.coll.asVar(),
 				// PG's Describe reports the view itself as the source, never the base table
 				src: &Source{Table: rel.FullName(), Column: c.name, NotNull: false},
 			})

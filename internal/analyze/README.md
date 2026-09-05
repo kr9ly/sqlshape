@@ -36,4 +36,7 @@ DELETE with RETURNING and ON CONFLICT.
 - GROUP BY validity (`grouping.go`): grouping expressions matched by deparsed text, aggregate arguments
   exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS unchecked
 - Nullability is refined by null-rejecting predicates (IS NOT NULL, strict comparisons, inner-join ON)
-- Not yet: collation
+- Collations (`collation.go`): explicit / implicit derivation per §24.2.2; conflicting COLLATE clauses and
+  UNION / INTERSECT / EXCEPT over conflicting implicit collations are the PG errors (42P21), an indeterminate
+  collation reaching a comparison, `lower()` / `max()`, ORDER BY, GROUP BY or DISTINCT is a Note (PG fails at run time).
+  Collation names are not validated against pg_collation

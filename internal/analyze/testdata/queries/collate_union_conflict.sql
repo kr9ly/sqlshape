@@ -1,0 +1,1 @@
+SELECT alias FROM users UNION SELECT p FROM (SELECT name COLLATE "POSIX" AS p FROM users) s

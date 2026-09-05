@@ -62,10 +62,10 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if name == "" {
 			name = a.figureColname(t.Val)
 		}
-		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields})
+		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll})
 	}
 	for _, g := range sel.GroupClause {
-		if err := a.orderOrGroupItem(g, sc, cols); err != nil {
+		if err := a.orderOrGroupItem(g, sc, cols, "GROUP BY"); err != nil {
 			return nil, err
 		}
 	}
@@ -73,16 +73,20 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		return nil, err
 	}
 	for _, s := range sel.SortClause {
-		if err := a.orderOrGroupItem(s.GetSortBy().GetNode(), sc, cols); err != nil {
+		if err := a.orderOrGroupItem(s.GetSortBy().GetNode(), sc, cols, "ORDER BY"); err != nil {
 			return nil, err
 		}
 		a.noteEnumSort(s.GetSortBy().GetNode(), sc, cols)
 	}
 	for _, d := range sel.DistinctClause {
 		if d.Node == nil {
+			// plain DISTINCT compares every output column
+			for _, c := range cols {
+				a.noteCollConflict(c.coll, loc(d), "DISTINCT")
+			}
 			continue
 		}
-		if err := a.orderOrGroupItem(d, sc, cols); err != nil {
+		if err := a.orderOrGroupItem(d, sc, cols, "DISTINCT ON"); err != nil {
 			return nil, err
 		}
 	}
@@ -107,10 +111,15 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	return cols, nil
 }
 
-// orderOrGroupItem types an ORDER BY / GROUP BY item; a bare integer constant is an output-column ordinal.
-func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol) *Error {
+// orderOrGroupItem types an ORDER BY / GROUP BY item; a bare integer constant is an
+// output-column ordinal. Sorting or grouping compares values, so an indeterminate
+// collation is noted here (what names the clause).
+func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, what string) *Error {
 	if c := n.GetAConst(); c != nil {
-		if _, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+		if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+			if i := int(iv.Ival.Ival); i >= 1 && i <= len(cols) {
+				a.noteCollConflict(cols[i-1].coll, loc(n), what)
+			}
 			return nil
 		}
 	}
@@ -119,12 +128,17 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol) 
 		name := cr.Fields[0].GetString_().GetSval()
 		for _, c := range cols {
 			if c.name == name {
+				a.noteCollConflict(c.coll, loc(n), what)
 				return nil
 			}
 		}
 	}
-	_, err := a.analyzeExpr(n, sc)
-	return err
+	e, err := a.analyzeExpr(n, sc)
+	if err != nil {
+		return err
+	}
+	a.noteCollConflict(e.coll, loc(n), what)
+	return nil
 }
 
 func (a *analyzer) boolClause(n *pg_query.Node, sc *scope, what string) *Error {
@@ -262,7 +276,11 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 			typmod = l.typ.Typmod
 		}
 		t = a.domainUnify([]*expr{{typ: l.typ, lit: l.lit}, {typ: r.typ, lit: r.lit}}, t, -1, setOpName(sel.Op))
-		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit}
+		coll, err := a.setOpColl(l.coll, r.coll, sel.Op, sel.All)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit, coll: a.resultColl(coll, t)}
 	}
 	// ORDER BY / LIMIT on the whole set operation
 	for _, lim := range []*pg_query.Node{sel.LimitCount, sel.LimitOffset} {
@@ -309,7 +327,7 @@ func (a *analyzer) values(lists []*pg_query.Node, sc *scope) ([]rteCol, *Error) 
 		for j := range rows {
 			col[j] = rows[j][i]
 		}
-		t, err := a.unify(col, loc(col[0].node), "VALUES")
+		t, coll, err := a.unify(col, loc(col[0].node), "VALUES")
 		if err != nil {
 			return nil, err
 		}
@@ -317,7 +335,7 @@ func (a *analyzer) values(lists []*pg_query.Node, sc *scope) ([]rteCol, *Error) 
 		for _, e := range col {
 			nullable = nullable || e.nullable
 		}
-		out[i] = rteCol{name: "column" + strconv.Itoa(i+1), typ: t, nullable: nullable}
+		out[i] = rteCol{name: "column" + strconv.Itoa(i+1), typ: t, nullable: nullable, coll: coll}
 	}
 	return out, nil
 }
