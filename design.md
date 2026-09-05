@@ -195,8 +195,8 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 - `numeric` の typmod は列直参照なら残る（`numeric(12,2)`）が集約（`sum`）や `$n` では落ちる。
   typmod 伝播規則が関数ごとに違うことの実例
 
-スコープ外: PL/pgSQL、ルール、拡張の関数（下記の dump 経路は未実装）。
-拡張は本物の PG から `pg_proc` を dump して同じ形式に落とす経路を残す。
+スコープ外: PL/pgSQL、ルール。拡張は `gen -ext <name>` で本物の PG から dump して `data/ext/<name>/` に同じ形式で置き、
+`CREATE EXTENSION` を見た schema 層がマージする（OID は拡張ごとの範囲に振り直す）。
 
 ## 副産物: 型安全なストアドプロシージャ
 
@@ -667,7 +667,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | `CALL procedure(...)` | 引数は関数と同じ経路（OUT も渡す）、INOUT / OUT が結果行、関数の CALL / プロシージャの SELECT は 42809。オラクルは拡張プロトコルの Parse で CALL を Describe できた |
 | ✅ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | analyze/function.go: 引数を名前と `$n` で見せて各文を解析（同名列が優先、PG と同じ）、最終文の形を RETURNS と照合（代入キャスト許容、42P13）。vet はスキーマ読込時に全関数を検査。`FunctionResult.Relations` が関数越しの依存 |
 | ↪ | EXPLAIN 系 lint | lint 時に PG を起動しない方針を維持し、統計非依存の構造的 advisory に置換（`-strict`）: ① 述語列に先頭一致するインデックス / 鍵が無いテーブル述語（schema が全インデックスを保持）② ビューへ押し込めない述語（LIMIT/OFFSET・集合演算・ウィンドウ関数・GROUP BY ビューの非グループ列）。「ネスト内に上限なし」は構造的に決められないので不採用。EXPLAIN 本体はオラクル上でも統計が違うため採らない |
-| ⬜ | 拡張の `pg_proc` を dump して取り込む経路 | 生成器は同形式なので経路は開いている |
+| ✅ | 拡張の `pg_proc` を dump して取り込む経路 | `gen -ext <name>`: 素の DB で `CREATE EXTENSION ... CASCADE` した直後の差分〔pg_depend の拡張メンバー + 内部依存〕を同じ 6 TSV + META に落とす。ロード時に OID を拡張ごとの範囲〔1<<28 + i<<20〕へ振り直してユーザー OID と衝突させない。名前空間を Type/Func/Operator.Schema に持ち、関数解決・型名解決は作成先スキーマで引く。contrib 16 個を同梱、golden 5 本〔citext / pgcrypto / hstore / uuid-ossp、スキーマ限定、引数型エラー〕 |
 | ✅ | 述語ポリシー | schema.sql でテーブル直前に `-- sqlshape: visible where deleted_at IS NULL`。全 select レベルで葉ごとに述語の構造一致（WHERE / その葉を縛る ON）を要求、ビュー本体は AnalyzeView でスキーマ問題として一度だけ報告、テンプレートは `-- sqlshape: unfiltered t` で明示的に外す。vet フラグ案は棄却（ポリシーはスキーマの知識） |
 
 ### テンプレートと展開（internal/expand）
@@ -716,7 +716,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 状態 | 項目 | 備考 |
 |---|---|---|
 | ✅ | Run / Collect / First / Exec、Render、名前ベース行マッパー、named string の正規化 | |
-| ✅ | ネスト行の位置スキャン、ユーザー型の遅延 `LoadTypes`、`LoadUserTypes` | |
+| ✅ | ネスト行の位置スキャン、ユーザー型の遅延 `LoadTypes`、`LoadUserTypes` | 拡張のスカラ基底型〔citext / hstore / ltree …〕は pgx の LoadTypes が読まないので TextCodec で自前登録〔配列込み〕。Go 側は string / []string で受ける |
 | ✅ | `ConstraintError` / `Violates`、`Single.Get` / `Find` / `ErrManyRows` | |
 | ↪ | 未検査展開形の実行時 panic | 「vet が通した集合の埋め込み」は生成物が要るので採らず、分岐シグネチャで静的展開形と SQL をバイト一致照合し error にする |
 | ✅ | 未知 enum ラベル受信の型付きエラー | Go の enum 型が `Known() bool`（`Labelled`）を実装していれば行マッパーが検証し `*UnknownLabelError`。実装しなければ素通し。panic モードは置かない |

@@ -1,0 +1,34 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16386	set_limit	f	700	f	0	1	0	t	v	700				public
+16387	show_limit	f	700	f	0	0	0	t	s					public
+16388	show_trgm	f	1009	f	0	1	0	t	i	25				public
+16389	similarity	f	700	f	0	2	0	t	i	25 25				public
+16390	similarity_op	f	16	f	0	2	0	t	s	25 25				public
+16392	word_similarity	f	700	f	0	2	0	t	i	25 25				public
+16393	word_similarity_op	f	16	f	0	2	0	t	s	25 25				public
+16394	word_similarity_commutator_op	f	16	f	0	2	0	t	s	25 25				public
+16397	similarity_dist	f	700	f	0	2	0	t	i	25 25				public
+16399	word_similarity_dist_op	f	700	f	0	2	0	t	i	25 25				public
+16400	word_similarity_dist_commutator_op	f	700	f	0	2	0	t	i	25 25				public
+16404	gtrgm_in	f	16403	f	0	1	0	t	i	2275				public
+16405	gtrgm_out	f	2275	f	0	1	0	t	i	16403				public
+16407	gtrgm_consistent	f	16	f	0	5	0	t	i	2281 25 21 26 2281				public
+16408	gtrgm_distance	f	701	f	0	5	0	t	i	2281 25 21 26 2281				public
+16409	gtrgm_compress	f	2281	f	0	1	0	t	i	2281				public
+16410	gtrgm_decompress	f	2281	f	0	1	0	t	i	2281				public
+16411	gtrgm_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16412	gtrgm_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16413	gtrgm_union	f	16403	f	0	2	0	t	i	2281 2281				public
+16414	gtrgm_same	f	2281	f	0	3	0	t	i	16403 16403 2281				public
+16433	gin_extract_value_trgm	f	2281	f	0	2	0	t	i	25 2281				public
+16434	gin_extract_query_trgm	f	2281	f	0	7	0	t	i	25 2281 21 2281 2281 2281 2281				public
+16435	gin_trgm_consistent	f	16	f	0	8	0	t	i	2281 21 25 23 2281 2281 2281 2281				public
+16447	gin_trgm_triconsistent	f	18	f	0	7	0	t	i	2281 21 25 23 2281 2281 2281				public
+16450	strict_word_similarity	f	700	f	0	2	0	t	i	25 25				public
+16451	strict_word_similarity_op	f	16	f	0	2	0	t	s	25 25				public
+16452	strict_word_similarity_commutator_op	f	16	f	0	2	0	t	s	25 25				public
+16455	strict_word_similarity_dist_op	f	700	f	0	2	0	t	i	25 25				public
+16456	strict_word_similarity_dist_commutator_op	f	700	f	0	2	0	t	i	25 25				public
+16462	gtrgm_options	f	2278	f	0	1	0	f	i	2281				public

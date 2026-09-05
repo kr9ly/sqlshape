@@ -1,0 +1,4 @@
+16386	hstore	b	U	f	-1	f	0	16391	0	0	-1	public
+16391	_hstore	b	A	f	-1	f	16386	0	0	0	-1	public
+16470	ghstore	b	U	f	-1	f	0	16473	0	0	-1	public
+16473	_ghstore	b	A	f	-1	f	16470	0	0	0	-1	public

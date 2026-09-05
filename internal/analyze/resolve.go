@@ -372,14 +372,27 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 	add := func(c candidate) {
 		cands = append(cands, c)
 	}
-	if schemaName == "" || schemaName == "pg_catalog" {
-		for _, fn := range a.s.Catalog.FuncsByName(name) {
-			if fn.Kind == 'p' {
+	// bootstrap functions are pg_catalog, an extension's live in the schema it was created in
+	for _, fn := range a.s.Catalog.FuncsByName(name) {
+		if fn.Kind == 'p' {
+			continue
+		}
+		switch schemaName {
+		case "":
+			if fn.Schema != "" && fn.Schema != "public" {
 				continue
 			}
-			if c, ok := expandArgs(fn.ArgTypes, int(fn.NArgDefault), fn.Variadic, len(actual)); ok {
-				add(candidate{fn: fn, args: c, nargs: len(fn.ArgTypes), variadicElem: fn.Variadic})
+		case "pg_catalog":
+			if fn.Schema != "" {
+				continue
 			}
+		default:
+			if fn.Schema != schemaName {
+				continue
+			}
+		}
+		if c, ok := expandArgs(fn.ArgTypes, int(fn.NArgDefault), fn.Variadic, len(actual)); ok {
+			add(candidate{fn: fn, args: c, nargs: len(fn.ArgTypes), variadicElem: fn.Variadic})
 		}
 	}
 	if schemaName != "pg_catalog" {

@@ -1,0 +1,14 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16386	levenshtein	f	23	f	0	2	0	t	i	25 25				public
+16387	levenshtein	f	23	f	0	5	0	t	i	25 25 23 23 23				public
+16388	levenshtein_less_equal	f	23	f	0	3	0	t	i	25 25 23				public
+16389	levenshtein_less_equal	f	23	f	0	6	0	t	i	25 25 23 23 23 23				public
+16390	metaphone	f	25	f	0	2	0	t	i	25 23				public
+16391	soundex	f	25	f	0	1	0	t	i	25				public
+16392	text_soundex	f	25	f	0	1	0	t	i	25				public
+16393	difference	f	23	f	0	2	0	t	i	25 25				public
+16394	dmetaphone	f	25	f	0	1	0	t	i	25				public
+16395	dmetaphone_alt	f	25	f	0	1	0	t	i	25				public
+16396	daitch_mokotoff	f	1009	f	0	1	0	t	i	25				public

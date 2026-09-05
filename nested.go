@@ -176,11 +176,70 @@ func registerTypes(ctx context.Context, conn *pgx.Conn, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
+	if err := registerScalarBases(ctx, conn); err != nil {
+		return err
+	}
+	// pgx cannot load scalar base types; what registerScalarBases handled is dropped
+	kept := names[:0]
+	for _, n := range names {
+		if _, ok := conn.TypeMap().TypeForName(n); !ok {
+			kept = append(kept, n)
+		}
+	}
+	names = kept
+	if len(names) == 0 {
+		return nil
+	}
 	types, err := conn.LoadTypes(ctx, names)
 	if err != nil {
 		return fmt.Errorf("sqlshape: load types %v: %w", names, err)
 	}
 	conn.TypeMap().RegisterTypes(types)
+	return nil
+}
+
+// registerScalarBases registers the scalar base types outside pg_catalog, i.e. what
+// extensions define (citext, hstore, ltree, ...), with the text codec, plus their array
+// types. pgx's LoadTypes skips them (it knows no codec), yet a composite or a result
+// column may carry one. Idempotent: types the connection already knows are left alone.
+func registerScalarBases(ctx context.Context, conn *pgx.Conn) error {
+	rows, err := conn.Query(ctx, `
+SELECT t.oid, n.nspname, t.typname, t.typarray
+  FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+ WHERE t.typtype = 'b' AND t.typelem = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+ ORDER BY t.oid`)
+	if err != nil {
+		return err
+	}
+	type base struct {
+		oid, arr  uint32
+		nsp, name string
+	}
+	var bases []base
+	for rows.Next() {
+		var b base
+		if err := rows.Scan(&b.oid, &b.nsp, &b.name, &b.arr); err != nil {
+			rows.Close()
+			return err
+		}
+		bases = append(bases, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tm := conn.TypeMap()
+	for _, b := range bases {
+		if _, ok := tm.TypeForOID(b.oid); ok {
+			continue
+		}
+		t := &pgtype.Type{Name: qualify(b.nsp, b.name), OID: b.oid, Codec: pgtype.TextCodec{}}
+		tm.RegisterType(t)
+		if b.arr != 0 {
+			tm.RegisterType(&pgtype.Type{Name: qualify(b.nsp, "_"+b.name), OID: b.arr, Codec: &pgtype.ArrayCodec{ElementType: t}})
+		}
+	}
 	return nil
 }
 

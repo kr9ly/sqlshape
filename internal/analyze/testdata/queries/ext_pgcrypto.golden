@@ -1,0 +1,8 @@
+params:
+  $1 text
+  $2 text
+columns:
+  hash text
+  d bytea
+  tok text
+  u uuid

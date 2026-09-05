@@ -1,0 +1,1 @@
+error: 42883: function digest(bigint, unknown) does not exist (at 8)

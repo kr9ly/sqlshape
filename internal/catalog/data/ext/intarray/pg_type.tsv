@@ -1,0 +1,4 @@
+16386	query_int	b	U	f	-1	f	0	16389	0	0	-1	public
+16389	_query_int	b	A	f	-1	f	16386	0	0	0	-1	public
+16461	intbig_gkey	b	U	f	-1	f	0	16464	0	0	-1	public
+16464	_intbig_gkey	b	A	f	-1	f	16461	0	0	0	-1	public

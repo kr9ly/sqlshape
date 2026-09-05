@@ -1,0 +1,63 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16387	hstore_in	f	16386	f	0	1	0	t	i	2275				public
+16388	hstore_out	f	2275	f	0	1	0	t	i	16386				public
+16389	hstore_recv	f	16386	f	0	1	0	t	i	2281				public
+16390	hstore_send	f	17	f	0	1	0	t	i	16386				public
+16392	hstore_version_diag	f	23	f	0	1	0	t	i	16386				public
+16393	fetchval	f	25	f	0	2	0	t	i	16386 25				public
+16395	slice_array	f	1009	f	0	2	0	t	i	16386 1009				public
+16397	slice	f	16386	f	0	2	0	t	i	16386 1009				public
+16398	isexists	f	16	f	0	2	0	t	i	16386 25				public
+16399	exist	f	16	f	0	2	0	t	i	16386 25				public
+16401	exists_any	f	16	f	0	2	0	t	i	16386 1009				public
+16403	exists_all	f	16	f	0	2	0	t	i	16386 1009				public
+16405	isdefined	f	16	f	0	2	0	t	i	16386 25				public
+16406	defined	f	16	f	0	2	0	t	i	16386 25				public
+16407	delete	f	16386	f	0	2	0	t	i	16386 25				public
+16408	delete	f	16386	f	0	2	0	t	i	16386 1009				public
+16409	delete	f	16386	f	0	2	0	t	i	16386 16386				public
+16413	hs_concat	f	16386	f	0	2	0	t	i	16386 16386				public
+16415	hs_contains	f	16	f	0	2	0	t	i	16386 16386				public
+16416	hs_contained	f	16	f	0	2	0	t	i	16386 16386				public
+16421	tconvert	f	16386	f	0	2	0	f	i	25 25				public
+16422	hstore	f	16386	f	0	2	0	f	i	25 25				public
+16423	hstore	f	16386	f	0	2	0	f	i	1009 1009				public
+16424	hstore	f	16386	f	0	1	0	t	i	1009				public
+16426	hstore_to_json	f	114	f	0	1	0	t	i	16386				public
+16428	hstore_to_json_loose	f	114	f	0	1	0	t	i	16386				public
+16429	hstore_to_jsonb	f	3802	f	0	1	0	t	i	16386				public
+16431	hstore_to_jsonb_loose	f	3802	f	0	1	0	t	i	16386				public
+16432	hstore	f	16386	f	0	1	0	f	i	2249				public
+16433	hstore_to_array	f	1009	f	0	1	0	t	i	16386				public
+16435	hstore_to_matrix	f	1009	f	0	1	0	t	i	16386				public
+16437	akeys	f	1009	f	0	1	0	t	i	16386				public
+16438	avals	f	1009	f	0	1	0	t	i	16386				public
+16439	skeys	f	25	t	0	1	0	t	i	16386				public
+16440	svals	f	25	t	0	1	0	t	i	16386				public
+16441	each	f	2249	t	0	1	0	t	i	16386	16386 25 25	ioo	hs,key,value	public
+16442	populate_record	f	2283	f	0	2	0	f	i	2283 16386				public
+16444	hstore_eq	f	16	f	0	2	0	t	i	16386 16386				public
+16445	hstore_ne	f	16	f	0	2	0	t	i	16386 16386				public
+16446	hstore_gt	f	16	f	0	2	0	t	i	16386 16386				public
+16447	hstore_ge	f	16	f	0	2	0	t	i	16386 16386				public
+16448	hstore_lt	f	16	f	0	2	0	t	i	16386 16386				public
+16449	hstore_le	f	16	f	0	2	0	t	i	16386 16386				public
+16450	hstore_cmp	f	23	f	0	2	0	t	i	16386 16386				public
+16465	hstore_hash	f	23	f	0	1	0	t	i	16386				public
+16471	ghstore_in	f	16470	f	0	1	0	t	i	2275				public
+16472	ghstore_out	f	2275	f	0	1	0	t	i	16470				public
+16474	ghstore_compress	f	2281	f	0	1	0	t	i	2281				public
+16475	ghstore_decompress	f	2281	f	0	1	0	t	i	2281				public
+16476	ghstore_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16477	ghstore_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16478	ghstore_union	f	16470	f	0	2	0	t	i	2281 2281				public
+16479	ghstore_same	f	2281	f	0	3	0	t	i	16470 16470 2281				public
+16480	ghstore_consistent	f	16	f	0	5	0	t	i	2281 16386 21 26 2281				public
+16495	gin_extract_hstore	f	2281	f	0	2	0	t	i	16386 2281				public
+16496	gin_extract_hstore_query	f	2281	f	0	5	0	t	i	16386 2281 21 2281 2281				public
+16497	gin_consistent_hstore	f	16	f	0	6	0	t	i	2281 21 16386 23 2281 2281				public
+16508	hstore_hash_extended	f	20	f	0	2	0	t	i	16386 20				public
+16510	ghstore_options	f	2278	f	0	1	0	f	i	2281				public
+16512	hstore_subscript_handler	f	2281	f	0	1	0	t	i	2281				public

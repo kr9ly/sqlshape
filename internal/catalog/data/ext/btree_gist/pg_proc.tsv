@@ -1,0 +1,191 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16387	gbtreekey4_in	f	16386	f	0	1	0	t	i	2275				public
+16388	gbtreekey4_out	f	2275	f	0	1	0	t	i	16386				public
+16391	gbtreekey8_in	f	16390	f	0	1	0	t	i	2275				public
+16392	gbtreekey8_out	f	2275	f	0	1	0	t	i	16390				public
+16395	gbtreekey16_in	f	16394	f	0	1	0	t	i	2275				public
+16396	gbtreekey16_out	f	2275	f	0	1	0	t	i	16394				public
+16399	gbtreekey32_in	f	16398	f	0	1	0	t	i	2275				public
+16400	gbtreekey32_out	f	2275	f	0	1	0	t	i	16398				public
+16403	gbtreekey_var_in	f	16402	f	0	1	0	t	i	2275				public
+16404	gbtreekey_var_out	f	2275	f	0	1	0	t	i	16402				public
+16406	cash_dist	f	790	f	0	2	0	t	i	790 790				public
+16408	date_dist	f	23	f	0	2	0	t	i	1082 1082				public
+16410	float4_dist	f	700	f	0	2	0	t	i	700 700				public
+16412	float8_dist	f	701	f	0	2	0	t	i	701 701				public
+16414	int2_dist	f	21	f	0	2	0	t	i	21 21				public
+16416	int4_dist	f	23	f	0	2	0	t	i	23 23				public
+16418	int8_dist	f	20	f	0	2	0	t	i	20 20				public
+16420	interval_dist	f	1186	f	0	2	0	t	i	1186 1186				public
+16422	oid_dist	f	26	f	0	2	0	t	i	26 26				public
+16424	time_dist	f	1186	f	0	2	0	t	i	1083 1083				public
+16426	ts_dist	f	1186	f	0	2	0	t	i	1114 1114				public
+16428	tstz_dist	f	1186	f	0	2	0	t	i	1184 1184				public
+16430	gbt_oid_consistent	f	16	f	0	5	0	t	i	2281 26 21 26 2281				public
+16431	gbt_oid_distance	f	701	f	0	5	0	t	i	2281 26 21 26 2281				public
+16432	gbt_oid_fetch	f	2281	f	0	1	0	t	i	2281				public
+16433	gbt_oid_compress	f	2281	f	0	1	0	t	i	2281				public
+16434	gbt_decompress	f	2281	f	0	1	0	t	i	2281				public
+16435	gbt_var_decompress	f	2281	f	0	1	0	t	i	2281				public
+16436	gbt_var_fetch	f	2281	f	0	1	0	t	i	2281				public
+16437	gbt_oid_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16438	gbt_oid_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16439	gbt_oid_union	f	16390	f	0	2	0	t	i	2281 2281				public
+16440	gbt_oid_same	f	2281	f	0	3	0	t	i	16390 16390 2281				public
+16459	gbt_int2_consistent	f	16	f	0	5	0	t	i	2281 21 21 26 2281				public
+16460	gbt_int2_distance	f	701	f	0	5	0	t	i	2281 21 21 26 2281				public
+16461	gbt_int2_compress	f	2281	f	0	1	0	t	i	2281				public
+16462	gbt_int2_fetch	f	2281	f	0	1	0	t	i	2281				public
+16463	gbt_int2_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16464	gbt_int2_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16465	gbt_int2_union	f	16386	f	0	2	0	t	i	2281 2281				public
+16466	gbt_int2_same	f	2281	f	0	3	0	t	i	16386 16386 2281				public
+16485	gbt_int4_consistent	f	16	f	0	5	0	t	i	2281 23 21 26 2281				public
+16486	gbt_int4_distance	f	701	f	0	5	0	t	i	2281 23 21 26 2281				public
+16487	gbt_int4_compress	f	2281	f	0	1	0	t	i	2281				public
+16488	gbt_int4_fetch	f	2281	f	0	1	0	t	i	2281				public
+16489	gbt_int4_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16490	gbt_int4_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16491	gbt_int4_union	f	16390	f	0	2	0	t	i	2281 2281				public
+16492	gbt_int4_same	f	2281	f	0	3	0	t	i	16390 16390 2281				public
+16511	gbt_int8_consistent	f	16	f	0	5	0	t	i	2281 20 21 26 2281				public
+16512	gbt_int8_distance	f	701	f	0	5	0	t	i	2281 20 21 26 2281				public
+16513	gbt_int8_compress	f	2281	f	0	1	0	t	i	2281				public
+16514	gbt_int8_fetch	f	2281	f	0	1	0	t	i	2281				public
+16515	gbt_int8_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16516	gbt_int8_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16517	gbt_int8_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16518	gbt_int8_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16537	gbt_float4_consistent	f	16	f	0	5	0	t	i	2281 700 21 26 2281				public
+16538	gbt_float4_distance	f	701	f	0	5	0	t	i	2281 700 21 26 2281				public
+16539	gbt_float4_compress	f	2281	f	0	1	0	t	i	2281				public
+16540	gbt_float4_fetch	f	2281	f	0	1	0	t	i	2281				public
+16541	gbt_float4_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16542	gbt_float4_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16543	gbt_float4_union	f	16390	f	0	2	0	t	i	2281 2281				public
+16544	gbt_float4_same	f	2281	f	0	3	0	t	i	16390 16390 2281				public
+16563	gbt_float8_consistent	f	16	f	0	5	0	t	i	2281 701 21 26 2281				public
+16564	gbt_float8_distance	f	701	f	0	5	0	t	i	2281 701 21 26 2281				public
+16565	gbt_float8_compress	f	2281	f	0	1	0	t	i	2281				public
+16566	gbt_float8_fetch	f	2281	f	0	1	0	t	i	2281				public
+16567	gbt_float8_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16568	gbt_float8_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16569	gbt_float8_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16570	gbt_float8_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16589	gbt_ts_consistent	f	16	f	0	5	0	t	i	2281 1114 21 26 2281				public
+16590	gbt_ts_distance	f	701	f	0	5	0	t	i	2281 1114 21 26 2281				public
+16591	gbt_tstz_consistent	f	16	f	0	5	0	t	i	2281 1184 21 26 2281				public
+16592	gbt_tstz_distance	f	701	f	0	5	0	t	i	2281 1184 21 26 2281				public
+16593	gbt_ts_compress	f	2281	f	0	1	0	t	i	2281				public
+16594	gbt_tstz_compress	f	2281	f	0	1	0	t	i	2281				public
+16595	gbt_ts_fetch	f	2281	f	0	1	0	t	i	2281				public
+16596	gbt_ts_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16597	gbt_ts_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16598	gbt_ts_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16599	gbt_ts_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16636	gbt_time_consistent	f	16	f	0	5	0	t	i	2281 1083 21 26 2281				public
+16637	gbt_time_distance	f	701	f	0	5	0	t	i	2281 1083 21 26 2281				public
+16638	gbt_timetz_consistent	f	16	f	0	5	0	t	i	2281 1266 21 26 2281				public
+16639	gbt_time_compress	f	2281	f	0	1	0	t	i	2281				public
+16640	gbt_timetz_compress	f	2281	f	0	1	0	t	i	2281				public
+16641	gbt_time_fetch	f	2281	f	0	1	0	t	i	2281				public
+16642	gbt_time_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16643	gbt_time_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16644	gbt_time_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16645	gbt_time_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16679	gbt_date_consistent	f	16	f	0	5	0	t	i	2281 1082 21 26 2281				public
+16680	gbt_date_distance	f	701	f	0	5	0	t	i	2281 1082 21 26 2281				public
+16681	gbt_date_compress	f	2281	f	0	1	0	t	i	2281				public
+16682	gbt_date_fetch	f	2281	f	0	1	0	t	i	2281				public
+16683	gbt_date_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16684	gbt_date_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16685	gbt_date_union	f	16390	f	0	2	0	t	i	2281 2281				public
+16686	gbt_date_same	f	2281	f	0	3	0	t	i	16390 16390 2281				public
+16705	gbt_intv_consistent	f	16	f	0	5	0	t	i	2281 1186 21 26 2281				public
+16706	gbt_intv_distance	f	701	f	0	5	0	t	i	2281 1186 21 26 2281				public
+16707	gbt_intv_compress	f	2281	f	0	1	0	t	i	2281				public
+16708	gbt_intv_decompress	f	2281	f	0	1	0	t	i	2281				public
+16709	gbt_intv_fetch	f	2281	f	0	1	0	t	i	2281				public
+16710	gbt_intv_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16711	gbt_intv_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16712	gbt_intv_union	f	16398	f	0	2	0	t	i	2281 2281				public
+16713	gbt_intv_same	f	2281	f	0	3	0	t	i	16398 16398 2281				public
+16732	gbt_cash_consistent	f	16	f	0	5	0	t	i	2281 790 21 26 2281				public
+16733	gbt_cash_distance	f	701	f	0	5	0	t	i	2281 790 21 26 2281				public
+16734	gbt_cash_compress	f	2281	f	0	1	0	t	i	2281				public
+16735	gbt_cash_fetch	f	2281	f	0	1	0	t	i	2281				public
+16736	gbt_cash_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16737	gbt_cash_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16738	gbt_cash_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16739	gbt_cash_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16758	gbt_macad_consistent	f	16	f	0	5	0	t	i	2281 829 21 26 2281				public
+16759	gbt_macad_compress	f	2281	f	0	1	0	t	i	2281				public
+16760	gbt_macad_fetch	f	2281	f	0	1	0	t	i	2281				public
+16761	gbt_macad_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16762	gbt_macad_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16763	gbt_macad_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16764	gbt_macad_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16781	gbt_text_consistent	f	16	f	0	5	0	t	i	2281 25 21 26 2281				public
+16782	gbt_bpchar_consistent	f	16	f	0	5	0	t	i	2281 1042 21 26 2281				public
+16783	gbt_text_compress	f	2281	f	0	1	0	t	i	2281				public
+16784	gbt_bpchar_compress	f	2281	f	0	1	0	t	i	2281				public
+16785	gbt_text_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16786	gbt_text_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16787	gbt_text_union	f	16402	f	0	2	0	t	i	2281 2281				public
+16788	gbt_text_same	f	2281	f	0	3	0	t	i	16402 16402 2281				public
+16821	gbt_bytea_consistent	f	16	f	0	5	0	t	i	2281 17 21 26 2281				public
+16822	gbt_bytea_compress	f	2281	f	0	1	0	t	i	2281				public
+16823	gbt_bytea_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16824	gbt_bytea_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16825	gbt_bytea_union	f	16402	f	0	2	0	t	i	2281 2281				public
+16826	gbt_bytea_same	f	2281	f	0	3	0	t	i	16402 16402 2281				public
+16843	gbt_numeric_consistent	f	16	f	0	5	0	t	i	2281 1700 21 26 2281				public
+16844	gbt_numeric_compress	f	2281	f	0	1	0	t	i	2281				public
+16845	gbt_numeric_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16846	gbt_numeric_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16847	gbt_numeric_union	f	16402	f	0	2	0	t	i	2281 2281				public
+16848	gbt_numeric_same	f	2281	f	0	3	0	t	i	16402 16402 2281				public
+16865	gbt_bit_consistent	f	16	f	0	5	0	t	i	2281 1560 21 26 2281				public
+16866	gbt_bit_compress	f	2281	f	0	1	0	t	i	2281				public
+16867	gbt_bit_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16868	gbt_bit_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16869	gbt_bit_union	f	16402	f	0	2	0	t	i	2281 2281				public
+16870	gbt_bit_same	f	2281	f	0	3	0	t	i	16402 16402 2281				public
+16903	gbt_inet_consistent	f	16	f	0	5	0	t	i	2281 869 21 26 2281				public
+16904	gbt_inet_compress	f	2281	f	0	1	0	t	i	2281				public
+16905	gbt_inet_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16906	gbt_inet_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16907	gbt_inet_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16908	gbt_inet_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16939	gbt_uuid_consistent	f	16	f	0	5	0	t	i	2281 2950 21 26 2281				public
+16940	gbt_uuid_fetch	f	2281	f	0	1	0	t	i	2281				public
+16941	gbt_uuid_compress	f	2281	f	0	1	0	t	i	2281				public
+16942	gbt_uuid_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16943	gbt_uuid_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16944	gbt_uuid_union	f	16398	f	0	2	0	t	i	2281 2281				public
+16945	gbt_uuid_same	f	2281	f	0	3	0	t	i	16398 16398 2281				public
+16962	gbt_macad8_consistent	f	16	f	0	5	0	t	i	2281 774 21 26 2281				public
+16963	gbt_macad8_compress	f	2281	f	0	1	0	t	i	2281				public
+16964	gbt_macad8_fetch	f	2281	f	0	1	0	t	i	2281				public
+16965	gbt_macad8_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16966	gbt_macad8_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16967	gbt_macad8_union	f	16394	f	0	2	0	t	i	2281 2281				public
+16968	gbt_macad8_same	f	2281	f	0	3	0	t	i	16394 16394 2281				public
+16985	gbt_enum_consistent	f	16	f	0	5	0	t	i	2281 3500 21 26 2281				public
+16986	gbt_enum_compress	f	2281	f	0	1	0	t	i	2281				public
+16987	gbt_enum_fetch	f	2281	f	0	1	0	t	i	2281				public
+16988	gbt_enum_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16989	gbt_enum_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16990	gbt_enum_union	f	16390	f	0	2	0	t	i	2281 2281				public
+16991	gbt_enum_same	f	2281	f	0	3	0	t	i	16390 16390 2281				public
+17009	gbtreekey2_in	f	17008	f	0	1	0	t	i	2275				public
+17010	gbtreekey2_out	f	2275	f	0	1	0	t	i	17008				public
+17012	gbt_bool_consistent	f	16	f	0	5	0	t	i	2281 16 21 26 2281				public
+17013	gbt_bool_compress	f	2281	f	0	1	0	t	i	2281				public
+17014	gbt_bool_fetch	f	2281	f	0	1	0	t	i	2281				public
+17015	gbt_bool_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+17016	gbt_bool_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+17017	gbt_bool_union	f	17008	f	0	2	0	t	i	2281 2281				public
+17018	gbt_bool_same	f	2281	f	0	3	0	t	i	17008 17008 2281				public

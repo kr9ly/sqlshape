@@ -194,6 +194,27 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
 	}
+	// CREATE EXTENSION merges the extension's dumped catalog (types, functions, operators,
+	// casts) under everything else, so it is resolved before any statement is applied
+	var exts []string
+	var extProblems []Problem
+	for _, raw := range tree.Stmts {
+		ce := raw.Stmt.GetCreateExtensionStmt()
+		if ce == nil {
+			continue
+		}
+		if _, err := catalog.ReadExtension(ce.Extname); err != nil {
+			extProblems = append(extProblems, Problem{Location: raw.StmtLocation, Message: err.Error()})
+			continue
+		}
+		exts = append(exts, ce.Extname)
+	}
+	if len(exts) > 0 {
+		cat, err = cat.WithExtensions(exts)
+		if err != nil {
+			return nil, err
+		}
+	}
 	s := &Schema{
 		Catalog:   cat,
 		Types:     newTypes(cat),
@@ -201,6 +222,7 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 		relByName: map[string]*Relation{},
 		nextOID:   FirstUserOID + 100000, // relations / functions live in a separate range from types
 	}
+	s.Problems = append(s.Problems, extProblems...)
 	prev := int32(0)
 	for _, raw := range tree.Stmts {
 		// `-- sqlshape: ...` comment lines in front of a statement annotate it (a statement's
@@ -301,7 +323,7 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 	case *pg_query.Node_CreateSeqStmt, *pg_query.Node_CreateExtensionStmt, *pg_query.Node_CreateSchemaStmt,
 		*pg_query.Node_GrantStmt, *pg_query.Node_VariableSetStmt,
 		*pg_query.Node_AlterSeqStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt:
-		// No effect on typing. (Extensions' functions need a dumped catalog: not yet.)
+		// No effect on typing (CREATE EXTENSION was resolved up front in LoadWith).
 	default:
 		s.problem(loc, "unsupported statement %T", n.Node)
 	}

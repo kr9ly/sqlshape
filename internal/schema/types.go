@@ -63,9 +63,19 @@ func (ts *Types) Lookup(schema, name string) *catalog.Type {
 		return ts.cat.TypeByName(name)
 	}
 	if schema == "pg_catalog" {
-		return ts.cat.TypeByName(name)
+		if t := ts.cat.TypeByName(name); t != nil && t.Schema == "" {
+			return t
+		}
+		return nil
 	}
-	return ts.byName[schema+"."+name]
+	if t := ts.byName[schema+"."+name]; t != nil {
+		return t
+	}
+	// an extension's type lives in the schema the extension was created in
+	if t := ts.cat.TypeByName(name); t != nil && t.Schema == schema {
+		return t
+	}
+	return nil
 }
 
 // addUser registers a user type and its array type; returns the base type.
@@ -111,7 +121,11 @@ func (ts *Types) Format(r TypeRef) string {
 		// format_type prints arrays as elem[] with the typmod applied to the element
 		return ts.Format(TypeRef{t.Elem, r.Typmod}) + "[]"
 	}
-	if s, ok := ts.Schemas[t.OID]; ok {
+	s, ok := ts.Schemas[t.OID]
+	if !ok && t.Schema != "" {
+		s, ok = t.Schema, true // an extension's type
+	}
+	if ok {
 		if s == "public" {
 			return quoteIdent(t.Name)
 		}

@@ -1,0 +1,52 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16387	cube_in	f	16386	f	0	1	0	t	i	2275				public
+16388	cube	f	16386	f	0	2	0	t	i	1022 1022				public
+16389	cube	f	16386	f	0	1	0	t	i	1022				public
+16390	cube_out	f	2275	f	0	1	0	t	i	16386				public
+16392	cube_eq	f	16	f	0	2	0	t	i	16386 16386				public
+16393	cube_ne	f	16	f	0	2	0	t	i	16386 16386				public
+16394	cube_lt	f	16	f	0	2	0	t	i	16386 16386				public
+16395	cube_gt	f	16	f	0	2	0	t	i	16386 16386				public
+16396	cube_le	f	16	f	0	2	0	t	i	16386 16386				public
+16397	cube_ge	f	16	f	0	2	0	t	i	16386 16386				public
+16398	cube_cmp	f	23	f	0	2	0	t	i	16386 16386				public
+16399	cube_contains	f	16	f	0	2	0	t	i	16386 16386				public
+16400	cube_contained	f	16	f	0	2	0	t	i	16386 16386				public
+16401	cube_overlap	f	16	f	0	2	0	t	i	16386 16386				public
+16402	cube_union	f	16386	f	0	2	0	t	i	16386 16386				public
+16403	cube_inter	f	16386	f	0	2	0	t	i	16386 16386				public
+16404	cube_size	f	701	f	0	1	0	t	i	16386				public
+16405	cube_subset	f	16386	f	0	2	0	t	i	16386 1007				public
+16406	cube_distance	f	701	f	0	2	0	t	i	16386 16386				public
+16407	distance_chebyshev	f	701	f	0	2	0	t	i	16386 16386				public
+16408	distance_taxicab	f	701	f	0	2	0	t	i	16386 16386				public
+16409	cube_dim	f	23	f	0	1	0	t	i	16386				public
+16410	cube_ll_coord	f	701	f	0	2	0	t	i	16386 23				public
+16411	cube_ur_coord	f	701	f	0	2	0	t	i	16386 23				public
+16412	cube_coord	f	701	f	0	2	0	t	i	16386 23				public
+16413	cube_coord_llur	f	701	f	0	2	0	t	i	16386 23				public
+16414	cube	f	16386	f	0	1	0	t	i	701				public
+16415	cube	f	16386	f	0	2	0	t	i	701 701				public
+16416	cube	f	16386	f	0	2	0	t	i	16386 701				public
+16417	cube	f	16386	f	0	3	0	t	i	16386 701 701				public
+16418	cube_is_point	f	16	f	0	1	0	t	i	16386				public
+16419	cube_enlarge	f	16386	f	0	3	0	t	i	16386 701 23				public
+16436	g_cube_consistent	f	16	f	0	5	0	t	i	2281 16386 21 26 2281				public
+16439	g_cube_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16440	g_cube_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16441	g_cube_union	f	16386	f	0	2	0	t	i	2281 2281				public
+16442	g_cube_same	f	2281	f	0	3	0	t	i	16386 16386 2281				public
+16443	g_cube_distance	f	701	f	0	5	0	t	i	2281 16386 21 26 2281				public
+16472	cube_recv	f	16386	f	0	1	0	t	i	2281				public
+16473	cube_send	f	17	f	0	1	0	t	i	16386				public
+16475	earth	f	701	f	0	0	0	f	i					public
+16481	sec_to_gc	f	701	f	0	1	0	t	i	701				public
+16482	gc_to_sec	f	701	f	0	1	0	t	i	701				public
+16483	ll_to_earth	f	16477	f	0	2	0	t	i	701 701				public
+16484	latitude	f	701	f	0	1	0	t	i	16477				public
+16485	longitude	f	701	f	0	1	0	t	i	16477				public
+16486	earth_distance	f	701	f	0	2	0	t	i	16477 16477				public
+16487	earth_box	f	16386	f	0	2	0	t	i	16477 701				public
+16488	geo_distance	f	701	f	0	2	0	t	i	600 600				public

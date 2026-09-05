@@ -155,3 +155,16 @@ func TestAgainstOracle(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownExtension(t *testing.T) {
+	s, err := Load("CREATE EXTENSION citext; CREATE EXTENSION nope; CREATE TABLE t (h citext);")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) != 1 || !strings.Contains(s.Problems[0].Message, `extension "nope"`) {
+		t.Fatalf("problems: %v", s.Problems)
+	}
+	if s.Relation("", "t").Columns[0].Type.OID < 1<<28 {
+		t.Fatal("citext column should resolve to the extension's renumbered type")
+	}
+}

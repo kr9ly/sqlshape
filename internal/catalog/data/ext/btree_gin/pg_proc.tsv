@@ -1,0 +1,90 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16386	gin_btree_consistent	f	16	f	0	6	0	t	i	2281 21 2283 23 2281 2281				public
+16387	gin_extract_value_int2	f	2281	f	0	2	0	t	i	21 2281				public
+16388	gin_compare_prefix_int2	f	23	f	0	4	0	t	i	21 21 21 2281				public
+16389	gin_extract_query_int2	f	2281	f	0	5	0	t	i	21 2281 21 2281 2281				public
+16402	gin_extract_value_int4	f	2281	f	0	2	0	t	i	23 2281				public
+16403	gin_compare_prefix_int4	f	23	f	0	4	0	t	i	23 23 21 2281				public
+16404	gin_extract_query_int4	f	2281	f	0	5	0	t	i	23 2281 21 2281 2281				public
+16417	gin_extract_value_int8	f	2281	f	0	2	0	t	i	20 2281				public
+16418	gin_compare_prefix_int8	f	23	f	0	4	0	t	i	20 20 21 2281				public
+16419	gin_extract_query_int8	f	2281	f	0	5	0	t	i	20 2281 21 2281 2281				public
+16432	gin_extract_value_float4	f	2281	f	0	2	0	t	i	700 2281				public
+16433	gin_compare_prefix_float4	f	23	f	0	4	0	t	i	700 700 21 2281				public
+16434	gin_extract_query_float4	f	2281	f	0	5	0	t	i	700 2281 21 2281 2281				public
+16447	gin_extract_value_float8	f	2281	f	0	2	0	t	i	701 2281				public
+16448	gin_compare_prefix_float8	f	23	f	0	4	0	t	i	701 701 21 2281				public
+16449	gin_extract_query_float8	f	2281	f	0	5	0	t	i	701 2281 21 2281 2281				public
+16462	gin_extract_value_money	f	2281	f	0	2	0	t	i	790 2281				public
+16463	gin_compare_prefix_money	f	23	f	0	4	0	t	i	790 790 21 2281				public
+16464	gin_extract_query_money	f	2281	f	0	5	0	t	i	790 2281 21 2281 2281				public
+16477	gin_extract_value_oid	f	2281	f	0	2	0	t	i	26 2281				public
+16478	gin_compare_prefix_oid	f	23	f	0	4	0	t	i	26 26 21 2281				public
+16479	gin_extract_query_oid	f	2281	f	0	5	0	t	i	26 2281 21 2281 2281				public
+16492	gin_extract_value_timestamp	f	2281	f	0	2	0	t	i	1114 2281				public
+16493	gin_compare_prefix_timestamp	f	23	f	0	4	0	t	i	1114 1114 21 2281				public
+16494	gin_extract_query_timestamp	f	2281	f	0	5	0	t	i	1114 2281 21 2281 2281				public
+16507	gin_extract_value_timestamptz	f	2281	f	0	2	0	t	i	1184 2281				public
+16508	gin_compare_prefix_timestamptz	f	23	f	0	4	0	t	i	1184 1184 21 2281				public
+16509	gin_extract_query_timestamptz	f	2281	f	0	5	0	t	i	1184 2281 21 2281 2281				public
+16522	gin_extract_value_time	f	2281	f	0	2	0	t	i	1083 2281				public
+16523	gin_compare_prefix_time	f	23	f	0	4	0	t	i	1083 1083 21 2281				public
+16524	gin_extract_query_time	f	2281	f	0	5	0	t	i	1083 2281 21 2281 2281				public
+16537	gin_extract_value_timetz	f	2281	f	0	2	0	t	i	1266 2281				public
+16538	gin_compare_prefix_timetz	f	23	f	0	4	0	t	i	1266 1266 21 2281				public
+16539	gin_extract_query_timetz	f	2281	f	0	5	0	t	i	1266 2281 21 2281 2281				public
+16552	gin_extract_value_date	f	2281	f	0	2	0	t	i	1082 2281				public
+16553	gin_compare_prefix_date	f	23	f	0	4	0	t	i	1082 1082 21 2281				public
+16554	gin_extract_query_date	f	2281	f	0	5	0	t	i	1082 2281 21 2281 2281				public
+16567	gin_extract_value_interval	f	2281	f	0	2	0	t	i	1186 2281				public
+16568	gin_compare_prefix_interval	f	23	f	0	4	0	t	i	1186 1186 21 2281				public
+16569	gin_extract_query_interval	f	2281	f	0	5	0	t	i	1186 2281 21 2281 2281				public
+16582	gin_extract_value_macaddr	f	2281	f	0	2	0	t	i	829 2281				public
+16583	gin_compare_prefix_macaddr	f	23	f	0	4	0	t	i	829 829 21 2281				public
+16584	gin_extract_query_macaddr	f	2281	f	0	5	0	t	i	829 2281 21 2281 2281				public
+16597	gin_extract_value_inet	f	2281	f	0	2	0	t	i	869 2281				public
+16598	gin_compare_prefix_inet	f	23	f	0	4	0	t	i	869 869 21 2281				public
+16599	gin_extract_query_inet	f	2281	f	0	5	0	t	i	869 2281 21 2281 2281				public
+16612	gin_extract_value_cidr	f	2281	f	0	2	0	t	i	650 2281				public
+16613	gin_compare_prefix_cidr	f	23	f	0	4	0	t	i	650 650 21 2281				public
+16614	gin_extract_query_cidr	f	2281	f	0	5	0	t	i	650 2281 21 2281 2281				public
+16627	gin_extract_value_text	f	2281	f	0	2	0	t	i	25 2281				public
+16628	gin_compare_prefix_text	f	23	f	0	4	0	t	i	25 25 21 2281				public
+16629	gin_extract_query_text	f	2281	f	0	5	0	t	i	25 2281 21 2281 2281				public
+16654	gin_extract_value_char	f	2281	f	0	2	0	t	i	18 2281				public
+16655	gin_compare_prefix_char	f	23	f	0	4	0	t	i	18 18 21 2281				public
+16656	gin_extract_query_char	f	2281	f	0	5	0	t	i	18 2281 21 2281 2281				public
+16669	gin_extract_value_bytea	f	2281	f	0	2	0	t	i	17 2281				public
+16670	gin_compare_prefix_bytea	f	23	f	0	4	0	t	i	17 17 21 2281				public
+16671	gin_extract_query_bytea	f	2281	f	0	5	0	t	i	17 2281 21 2281 2281				public
+16684	gin_extract_value_bit	f	2281	f	0	2	0	t	i	1560 2281				public
+16685	gin_compare_prefix_bit	f	23	f	0	4	0	t	i	1560 1560 21 2281				public
+16686	gin_extract_query_bit	f	2281	f	0	5	0	t	i	1560 2281 21 2281 2281				public
+16699	gin_extract_value_varbit	f	2281	f	0	2	0	t	i	1562 2281				public
+16700	gin_compare_prefix_varbit	f	23	f	0	4	0	t	i	1562 1562 21 2281				public
+16701	gin_extract_query_varbit	f	2281	f	0	5	0	t	i	1562 2281 21 2281 2281				public
+16714	gin_extract_value_numeric	f	2281	f	0	2	0	t	i	1700 2281				public
+16715	gin_compare_prefix_numeric	f	23	f	0	4	0	t	i	1700 1700 21 2281				public
+16716	gin_extract_query_numeric	f	2281	f	0	5	0	t	i	1700 2281 21 2281 2281				public
+16717	gin_numeric_cmp	f	23	f	0	2	0	t	i	1700 1700				public
+16730	gin_extract_value_macaddr8	f	2281	f	0	2	0	t	i	774 2281				public
+16731	gin_compare_prefix_macaddr8	f	23	f	0	4	0	t	i	774 774 21 2281				public
+16732	gin_extract_query_macaddr8	f	2281	f	0	5	0	t	i	774 2281 21 2281 2281				public
+16745	gin_extract_value_anyenum	f	2281	f	0	2	0	t	i	3500 2281				public
+16746	gin_compare_prefix_anyenum	f	23	f	0	4	0	t	i	3500 3500 21 2281				public
+16747	gin_extract_query_anyenum	f	2281	f	0	5	0	t	i	3500 2281 21 2281 2281				public
+16748	gin_enum_cmp	f	23	f	0	2	0	t	i	3500 3500				public
+16761	gin_extract_value_uuid	f	2281	f	0	2	0	t	i	2950 2281				public
+16762	gin_compare_prefix_uuid	f	23	f	0	4	0	t	i	2950 2950 21 2281				public
+16763	gin_extract_query_uuid	f	2281	f	0	5	0	t	i	2950 2281 21 2281 2281				public
+16776	gin_extract_value_name	f	2281	f	0	2	0	t	i	19 2281				public
+16777	gin_compare_prefix_name	f	23	f	0	4	0	t	i	19 19 21 2281				public
+16778	gin_extract_query_name	f	2281	f	0	5	0	t	i	19 2281 21 2281 2281				public
+16791	gin_extract_value_bool	f	2281	f	0	2	0	t	i	16 2281				public
+16792	gin_compare_prefix_bool	f	23	f	0	4	0	t	i	16 16 21 2281				public
+16793	gin_extract_query_bool	f	2281	f	0	5	0	t	i	16 2281 21 2281 2281				public
+16806	gin_extract_value_bpchar	f	2281	f	0	2	0	t	i	1042 2281				public
+16807	gin_compare_prefix_bpchar	f	23	f	0	4	0	t	i	1042 1042 21 2281				public
+16808	gin_extract_query_bpchar	f	2281	f	0	5	0	t	i	1042 2281 21 2281 2281				public

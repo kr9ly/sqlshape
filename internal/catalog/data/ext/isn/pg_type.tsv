@@ -1,0 +1,16 @@
+16386	ean13	b	U	f	8	t	0	16389	0	0	-1	public
+16389	_ean13	b	A	f	-1	f	16386	0	0	0	-1	public
+16390	isbn13	b	U	f	8	t	0	16393	0	0	-1	public
+16393	_isbn13	b	A	f	-1	f	16390	0	0	0	-1	public
+16394	ismn13	b	U	f	8	t	0	16397	0	0	-1	public
+16397	_ismn13	b	A	f	-1	f	16394	0	0	0	-1	public
+16398	issn13	b	U	f	8	t	0	16401	0	0	-1	public
+16401	_issn13	b	A	f	-1	f	16398	0	0	0	-1	public
+16402	isbn	b	U	f	8	t	0	16405	0	0	-1	public
+16405	_isbn	b	A	f	-1	f	16402	0	0	0	-1	public
+16406	ismn	b	U	f	8	t	0	16409	0	0	-1	public
+16409	_ismn	b	A	f	-1	f	16406	0	0	0	-1	public
+16410	issn	b	U	f	8	t	0	16413	0	0	-1	public
+16413	_issn	b	A	f	-1	f	16410	0	0	0	-1	public
+16414	upc	b	U	f	8	t	0	16417	0	0	-1	public
+16417	_upc	b	A	f	-1	f	16414	0	0	0	-1	public

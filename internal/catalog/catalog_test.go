@@ -79,3 +79,49 @@ func TestLoad(t *testing.T) {
 		t.Error("no function with arg modes parsed")
 	}
 }
+
+func TestWithExtensions(t *testing.T) {
+	base, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.TypeByName("citext") != nil {
+		t.Fatal("bootstrap catalog must not contain extension types")
+	}
+	c, err := base.WithExtensions([]string{"citext", "earthdistance", "cube"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// cube is bundled by earthdistance and loads once
+	if len(c.Extensions) != 2 {
+		t.Fatalf("extensions: got %d, want 2 (cube bundled by earthdistance)", len(c.Extensions))
+	}
+	ct := c.TypeByName("citext")
+	if ct == nil || ct.Schema != "public" || ct.OID < extBase(0) {
+		t.Fatalf("citext: %+v", ct)
+	}
+	if arr := c.TypeByOID(ct.Array); arr == nil || arr.Elem != ct.OID {
+		t.Fatalf("citext array type not renumbered consistently: %+v", arr)
+	}
+	if cube := c.TypeByName("cube"); cube == nil || cube.OID < extBase(1) {
+		t.Fatalf("cube: %+v", cube)
+	}
+	found := false
+	for _, fn := range c.FuncsByName("earth_distance") {
+		if fn.Schema == "public" && len(fn.ArgTypes) == 2 && fn.ArgTypes[0] == c.TypeByName("earth").OID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("earth_distance(earth, earth) not found with renumbered argument types")
+	}
+	if base.TypeByName("citext") != nil || len(base.Extensions) != 0 {
+		t.Fatal("WithExtensions must not modify the base catalog")
+	}
+	if _, err := base.WithExtensions([]string{"nope"}); err == nil {
+		t.Fatal("unknown extension must fail")
+	}
+	if avail := Available(); len(avail) < 10 {
+		t.Fatalf("Available: %v", avail)
+	}
+}

@@ -1,0 +1,6 @@
+16389	_tablefunc_crosstab_2	b	A	f	-1	f	16390	0	0	0	-1	public
+16390	tablefunc_crosstab_2	c	C	f	-1	f	0	16389	16388	0	-1	public
+16392	_tablefunc_crosstab_3	b	A	f	-1	f	16393	0	0	0	-1	public
+16393	tablefunc_crosstab_3	c	C	f	-1	f	0	16392	16391	0	-1	public
+16395	_tablefunc_crosstab_4	b	A	f	-1	f	16396	0	0	0	-1	public
+16396	tablefunc_crosstab_4	c	C	f	-1	f	0	16395	16394	0	-1	public

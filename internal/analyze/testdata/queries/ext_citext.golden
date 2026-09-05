@@ -1,0 +1,7 @@
+params:
+  $1 citext
+columns:
+  handle citext <- users.handle null
+  lo text
+  cat text
+  t text

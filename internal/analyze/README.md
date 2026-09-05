@@ -40,3 +40,5 @@ DELETE with RETURNING and ON CONFLICT.
   UNION / INTERSECT / EXCEPT over conflicting implicit collations are the PG errors (42P21), an indeterminate
   collation reaching a comparison, `lower()` / `max()`, ORDER BY, GROUP BY or DISTINCT is a Note (PG fails at run time).
   Collation names are not validated against pg_collation
+- Extensions: `CREATE EXTENSION` in schema.sql merges the extension's dumped catalog (see catalog/README),
+  so its types, functions, operators and casts resolve like pg_catalog's, in the schema it was created in

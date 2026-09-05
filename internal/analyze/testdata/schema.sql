@@ -3,11 +3,18 @@ CREATE DOMAIN yen AS bigint CHECK (VALUE >= 0);
 CREATE DOMAIN email AS text NOT NULL CHECK (VALUE ~ '@');
 CREATE TYPE money_amount AS (amount numeric(12,2), currency char(3));
 
+CREATE EXTENSION citext;
+CREATE EXTENSION pgcrypto;
+CREATE EXTENSION hstore;
+CREATE EXTENSION "uuid-ossp";
+
 CREATE TABLE users (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email      email UNIQUE,
     name       varchar(100),
     alias      varchar(40) COLLATE "C",
+    handle     citext,
+    attrs      hstore,
     nick       character(8),
     tags       text[] NOT NULL DEFAULT '{}',
     balance    yen NOT NULL DEFAULT 0,

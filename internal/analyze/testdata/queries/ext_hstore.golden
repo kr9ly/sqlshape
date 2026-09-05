@@ -1,0 +1,8 @@
+params:
+  $1 text
+columns:
+  v text
+  has boolean
+  ks text[]
+  merged hstore
+  first text

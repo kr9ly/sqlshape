@@ -122,6 +122,13 @@ type StatusPair struct {
 // an enum inside an anonymous record: only decodable once the enum type is registered
 var statusPairs = sqlshape.Query[[]StatusPair, struct{}](`SELECT array_agg(row(o.id, o.status) ORDER BY o.id) FROM orders o`)
 
+// extension types (citext, hstore) decode as text before and after LoadUserTypes
+var extTypes = sqlshape.Query[struct {
+	Handle *string
+	Attrs  *string
+	Tags   []string
+}, struct{ H string }](`SELECT handle, attrs, array_agg(handle) OVER () AS tags FROM users WHERE handle = {{.H}} OR handle IS NULL LIMIT 1`)
+
 var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
 
 func TestRender(t *testing.T) {
@@ -288,8 +295,19 @@ func TestAgainstPostgres(t *testing.T) {
 	if err != nil || pr.Price != nil {
 		t.Errorf("NULL composite column: %v %+v", err, pr.Price)
 	}
+	if _, err := db.Exec(ctx, `UPDATE users SET handle = 'Alice', attrs = 'k=>v'`); err != nil {
+		t.Fatal(err)
+	}
+	et, err := extTypes.First(ctx, db, struct{ H string }{"alice"})
+	if err != nil || et.Handle == nil || *et.Handle != "Alice" || et.Attrs == nil || *et.Attrs != `"k"=>"v"` || len(et.Tags) == 0 {
+		t.Errorf("extension types before LoadUserTypes: %v %+v", err, et)
+	}
 	if err := sqlshape.LoadUserTypes(ctx, db); err != nil {
 		t.Fatalf("LoadUserTypes: %v", err)
+	}
+	et, err = extTypes.First(ctx, db, struct{ H string }{"ALICE"})
+	if err != nil || et.Handle == nil || *et.Handle != "Alice" {
+		t.Errorf("extension types after LoadUserTypes: %v %+v", err, et)
 	}
 	sp, err := statusPairs.First(ctx, db, struct{}{})
 	if err != nil || len(sp) != 2 || sp[1].Status != "paid" {

@@ -16,7 +16,7 @@ import (
 	"sync"
 )
 
-//go:embed data/VERSION data/*.tsv
+//go:embed data/VERSION data/*.tsv data/ext
 var data embed.FS
 
 // OID is a PostgreSQL object identifier.
@@ -80,6 +80,8 @@ type Type struct {
 	RelID       OID // composite: pg_class oid
 	BaseType    OID // domain: underlying type
 	Typmod      int32
+	// Schema is the namespace of an extension's type ("public" usually); "" for pg_catalog.
+	Schema string
 }
 
 // IsArray reports whether t is an array type (has an element type and is not a pseudo type).
@@ -111,6 +113,8 @@ type Func struct {
 	AllArgTypes []OID    // all args incl. OUT/TABLE, nil when same as ArgTypes
 	ArgModes    []byte   // i in, o out, b inout, v variadic, t table; nil when all in
 	ArgNames    []string // nil when unnamed
+	// Schema is the namespace of an extension's function; "" for pg_catalog.
+	Schema string
 }
 
 // Operator is a row of pg_operator.
@@ -126,6 +130,8 @@ type Operator struct {
 	Negate   OID
 	CanMerge bool
 	CanHash  bool
+	// Schema is the namespace of an extension's operator; "" for pg_catalog.
+	Schema string
 }
 
 // Cast is a row of pg_cast.
@@ -156,6 +162,8 @@ type Range struct {
 // Catalog is the loaded bootstrap catalog with lookup indexes.
 type Catalog struct {
 	Version string
+	// Extensions are the extensions merged in (WithExtensions), in load order.
+	Extensions []*Extension
 
 	Types      []Type
 	Funcs      []Func
@@ -212,7 +220,21 @@ func (c *Catalog) CastBetween(source, target OID) *Cast { return c.castByPair[[2
 func (c *Catalog) AggregateByFn(fn OID) *Aggregate { return c.aggByFn[fn] }
 
 func parse() (*Catalog, error) {
-	c := &Catalog{
+	c := newCatalog()
+	v, err := data.ReadFile("data/VERSION")
+	if err != nil {
+		return nil, err
+	}
+	c.Version = strings.TrimSpace(string(v))
+	if err := c.load("data", "", func(o OID) OID { return o }); err != nil {
+		return nil, err
+	}
+	c.index()
+	return c, nil
+}
+
+func newCatalog() *Catalog {
+	return &Catalog{
 		typeByOID:  map[OID]*Type{},
 		typeByName: map[string]*Type{},
 		funcByOID:  map[OID]*Func{},
@@ -222,35 +244,44 @@ func parse() (*Catalog, error) {
 		castByPair: map[[2]OID]*Cast{},
 		aggByFn:    map[OID]*Aggregate{},
 	}
-	v, err := data.ReadFile("data/VERSION")
-	if err != nil {
-		return nil, err
-	}
-	c.Version = strings.TrimSpace(string(v))
+}
 
-	if err := rows("pg_type", 12, func(f []string) error {
-		t := Type{
-			OID: oid(f[0]), Name: f[1], Kind: f[2][0], Category: f[3][0], IsPreferred: f[4] == "t",
-			Len: int16(num(f[5])), ByVal: f[6] == "t", Elem: oid(f[7]), Array: oid(f[8]),
-			RelID: oid(f[9]), BaseType: oid(f[10]), Typmod: int32(num(f[11])),
+// load appends the TSVs under dir. Every OID passes through remap (extension dumps carry
+// the oracle's transient OIDs); ns overrides the namespace column when non-empty.
+func (c *Catalog) load(dir, ns string, remap func(OID) OID) error {
+	r := func(s string) OID { return remap(oid(s)) }
+	rs := func(s, sep string) []OID {
+		out := oids(s, sep)
+		for i := range out {
+			out[i] = remap(out[i])
 		}
-		c.Types = append(c.Types, t)
+		return out
+	}
+	schema := func(f string) string {
+		if ns != "" {
+			return ns
+		}
+		if f == "pg_catalog" {
+			return ""
+		}
+		return f
+	}
+	if err := rows(dir, "pg_type", 13, func(f []string) error {
+		c.Types = append(c.Types, Type{
+			OID: r(f[0]), Name: f[1], Kind: f[2][0], Category: f[3][0], IsPreferred: f[4] == "t",
+			Len: int16(num(f[5])), ByVal: f[6] == "t", Elem: r(f[7]), Array: r(f[8]),
+			RelID: r(f[9]), BaseType: r(f[10]), Typmod: int32(num(f[11])), Schema: schema(f[12]),
+		})
 		return nil
 	}); err != nil {
-		return nil, err
+		return err
 	}
-	for i := range c.Types {
-		t := &c.Types[i]
-		c.typeByOID[t.OID] = t
-		c.typeByName[t.Name] = t
-	}
-
-	if err := rows("pg_proc", 14, func(f []string) error {
+	if err := rows(dir, "pg_proc", 15, func(f []string) error {
 		fn := Func{
-			OID: oid(f[0]), Name: f[1], Kind: f[2][0], RetType: oid(f[3]), RetSet: f[4] == "t",
-			Variadic: oid(f[5]), NArgs: int16(num(f[6])), NArgDefault: int16(num(f[7])),
+			OID: r(f[0]), Name: f[1], Kind: f[2][0], RetType: r(f[3]), RetSet: f[4] == "t",
+			Variadic: r(f[5]), NArgs: int16(num(f[6])), NArgDefault: int16(num(f[7])),
 			IsStrict: f[8] == "t", Volatile: f[9][0],
-			ArgTypes: oids(f[10], " "), AllArgTypes: oids(f[11], " "),
+			ArgTypes: rs(f[10], " "), AllArgTypes: rs(f[11], " "), Schema: schema(f[14]),
 		}
 		if f[12] != "" {
 			fn.ArgModes = []byte(f[12])
@@ -261,62 +292,64 @@ func parse() (*Catalog, error) {
 		c.Funcs = append(c.Funcs, fn)
 		return nil
 	}); err != nil {
-		return nil, err
+		return err
+	}
+	if err := rows(dir, "pg_operator", 12, func(f []string) error {
+		c.Operators = append(c.Operators, Operator{
+			OID: r(f[0]), Name: f[1], Kind: f[2][0], Left: r(f[3]), Right: r(f[4]), Result: r(f[5]),
+			Code: r(f[6]), Com: r(f[7]), Negate: r(f[8]), CanMerge: f[9] == "t", CanHash: f[10] == "t", Schema: schema(f[11]),
+		})
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := rows(dir, "pg_cast", 6, func(f []string) error {
+		c.Casts = append(c.Casts, Cast{
+			OID: r(f[0]), Source: r(f[1]), Target: r(f[2]), Func: r(f[3]), Context: f[4][0], Method: f[5][0],
+		})
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := rows(dir, "pg_aggregate", 4, func(f []string) error {
+		c.Aggregates = append(c.Aggregates, Aggregate{
+			FnOID: r(f[0]), Kind: f[1][0], NDirectArg: int16(num(f[2])), TransType: r(f[3]),
+		})
+		return nil
+	}); err != nil {
+		return err
+	}
+	return rows(dir, "pg_range", 3, func(f []string) error {
+		c.Ranges = append(c.Ranges, Range{OID: r(f[0]), Subtype: r(f[1]), Multi: r(f[2])})
+		return nil
+	})
+}
+
+// index rebuilds the lookup maps over the slices.
+func (c *Catalog) index() {
+	for i := range c.Types {
+		t := &c.Types[i]
+		c.typeByOID[t.OID] = t
+		c.typeByName[t.Name] = t
 	}
 	for i := range c.Funcs {
 		fn := &c.Funcs[i]
 		c.funcByOID[fn.OID] = fn
 		c.funcByName[fn.Name] = append(c.funcByName[fn.Name], fn)
 	}
-
-	if err := rows("pg_operator", 11, func(f []string) error {
-		op := Operator{
-			OID: oid(f[0]), Name: f[1], Kind: f[2][0], Left: oid(f[3]), Right: oid(f[4]), Result: oid(f[5]),
-			Code: oid(f[6]), Com: oid(f[7]), Negate: oid(f[8]), CanMerge: f[9] == "t", CanHash: f[10] == "t",
-		}
-		c.Operators = append(c.Operators, op)
-		return nil
-	}); err != nil {
-		return nil, err
-	}
 	for i := range c.Operators {
 		op := &c.Operators[i]
 		c.opByOID[op.OID] = op
 		c.opByName[op.Name] = append(c.opByName[op.Name], op)
 	}
-
-	if err := rows("pg_cast", 6, func(f []string) error {
-		c.Casts = append(c.Casts, Cast{
-			OID: oid(f[0]), Source: oid(f[1]), Target: oid(f[2]), Func: oid(f[3]), Context: f[4][0], Method: f[5][0],
-		})
-		return nil
-	}); err != nil {
-		return nil, err
-	}
 	for i := range c.Casts {
 		cs := &c.Casts[i]
 		c.castByPair[[2]OID{cs.Source, cs.Target}] = cs
-	}
-
-	if err := rows("pg_aggregate", 4, func(f []string) error {
-		c.Aggregates = append(c.Aggregates, Aggregate{
-			FnOID: oid(f[0]), Kind: f[1][0], NDirectArg: int16(num(f[2])), TransType: oid(f[3]),
-		})
-		return nil
-	}); err != nil {
-		return nil, err
 	}
 	for i := range c.Aggregates {
 		a := &c.Aggregates[i]
 		c.aggByFn[a.FnOID] = a
 	}
-	if err := rows("pg_range", 3, func(f []string) error {
-		c.Ranges = append(c.Ranges, Range{OID: oid(f[0]), Subtype: oid(f[1]), Multi: oid(f[2])})
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return c, nil
 }
 
 // RangeOf returns the pg_range entry of a range type, or nil.
@@ -350,8 +383,8 @@ func (c *Catalog) RangeForSubtype(sub OID) *Range {
 }
 
 // rows streams one embedded TSV (COPY text format) and calls fn per row.
-func rows(name string, ncol int, fn func([]string) error) error {
-	b, err := data.ReadFile("data/" + name + ".tsv")
+func rows(dir, name string, ncol int, fn func([]string) error) error {
+	b, err := data.ReadFile(dir + "/" + name + ".tsv")
 	if err != nil {
 		return err
 	}

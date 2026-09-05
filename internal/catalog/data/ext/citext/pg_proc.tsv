@@ -1,0 +1,50 @@
+13485	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13486	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13487	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16387	citextin	f	16386	f	0	1	0	t	i	2275				public
+16388	citextout	f	2275	f	0	1	0	t	i	16386				public
+16389	citextrecv	f	16386	f	0	1	0	t	s	2281				public
+16390	citextsend	f	17	f	0	1	0	t	s	16386				public
+16392	citext	f	16386	f	0	1	0	t	i	1042				public
+16393	citext	f	16386	f	0	1	0	t	i	16				public
+16394	citext	f	16386	f	0	1	0	t	i	869				public
+16403	citext_eq	f	16	f	0	2	0	t	i	16386 16386				public
+16404	citext_ne	f	16	f	0	2	0	t	i	16386 16386				public
+16405	citext_lt	f	16	f	0	2	0	t	i	16386 16386				public
+16406	citext_le	f	16	f	0	2	0	t	i	16386 16386				public
+16407	citext_gt	f	16	f	0	2	0	t	i	16386 16386				public
+16408	citext_ge	f	16	f	0	2	0	t	i	16386 16386				public
+16415	citext_cmp	f	23	f	0	2	0	t	i	16386 16386				public
+16416	citext_hash	f	23	f	0	1	0	t	i	16386				public
+16429	citext_smaller	f	16386	f	0	2	0	t	i	16386 16386				public
+16430	citext_larger	f	16386	f	0	2	0	t	i	16386 16386				public
+16431	min	a	16386	f	0	1	0	f	i	16386				public
+16432	max	a	16386	f	0	1	0	f	i	16386				public
+16433	texticlike	f	16	f	0	2	0	t	i	16386 16386				public
+16434	texticnlike	f	16	f	0	2	0	t	i	16386 16386				public
+16435	texticregexeq	f	16	f	0	2	0	t	i	16386 16386				public
+16436	texticregexne	f	16	f	0	2	0	t	i	16386 16386				public
+16445	texticlike	f	16	f	0	2	0	t	i	16386 25				public
+16446	texticnlike	f	16	f	0	2	0	t	i	16386 25				public
+16447	texticregexeq	f	16	f	0	2	0	t	i	16386 25				public
+16448	texticregexne	f	16	f	0	2	0	t	i	16386 25				public
+16457	regexp_match	f	1009	f	0	2	0	t	i	16386 16386				public
+16458	regexp_match	f	1009	f	0	3	0	t	i	16386 16386 25				public
+16459	regexp_matches	f	1009	t	0	2	0	t	i	16386 16386				public
+16460	regexp_matches	f	1009	t	0	3	0	t	i	16386 16386 25				public
+16461	regexp_replace	f	25	f	0	3	0	t	i	16386 16386 25				public
+16462	regexp_replace	f	25	f	0	4	0	t	i	16386 16386 25 25				public
+16463	regexp_split_to_array	f	1009	f	0	2	0	t	i	16386 16386				public
+16464	regexp_split_to_array	f	1009	f	0	3	0	t	i	16386 16386 25				public
+16465	regexp_split_to_table	f	25	t	0	2	0	t	i	16386 16386				public
+16466	regexp_split_to_table	f	25	t	0	3	0	t	i	16386 16386 25				public
+16467	strpos	f	23	f	0	2	0	t	i	16386 16386				public
+16468	replace	f	25	f	0	3	0	t	i	16386 16386 16386				public
+16469	split_part	f	25	f	0	3	0	t	i	16386 16386 23				public
+16470	translate	f	25	f	0	3	0	t	i	16386 16386 25				public
+16471	citext_pattern_lt	f	16	f	0	2	0	t	i	16386 16386				public
+16472	citext_pattern_le	f	16	f	0	2	0	t	i	16386 16386				public
+16473	citext_pattern_gt	f	16	f	0	2	0	t	i	16386 16386				public
+16474	citext_pattern_ge	f	16	f	0	2	0	t	i	16386 16386				public
+16479	citext_pattern_cmp	f	23	f	0	2	0	t	i	16386 16386				public
+16488	citext_hash_extended	f	20	f	0	2	0	t	i	16386 20				public
