@@ -147,6 +147,8 @@ type checker struct {
 	bindings map[*types.TypeName]*binding
 	// constDecls: this package's constant declarations, for mapping concatenated templates back to source
 	constDecls map[*types.Const]ast.Expr
+	// declared: Go types that name the PG type they carry (`// sqlshape: type X`), local and imported
+	declared map[*types.TypeName]declaredType
 	// unchecked counts Query / One calls whose template is not a constant (-coverage)
 	unchecked int
 }
@@ -170,8 +172,10 @@ func run(pass *analysis.Pass) (any, error) {
 	calls = append(calls, matviews...)
 	checkRawSQL(pass, all)
 	if len(calls) == 0 {
-		// still export constant sets so packages that use these types in queries can diff them
-		(&checker{pass: pass, bindings: map[*types.TypeName]*binding{}}).exportConstSets()
+		// still export constant sets and declared type bindings so packages that use these types in queries can check them
+		c := &checker{pass: pass, bindings: map[*types.TypeName]*binding{}}
+		c.exportConstSets()
+		c.collectDeclaredTypes()
 		return nil, nil
 	}
 	path, err := findSchema(pass)
@@ -186,6 +190,7 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	s := ls.s
 	c := &checker{pass: pass, s: s, strict: strictFlag, bindings: map[*types.TypeName]*binding{}}
+	c.collectDeclaredTypes()
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}

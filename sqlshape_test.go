@@ -2,7 +2,9 @@ package sqlshape_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -214,6 +216,34 @@ var loadItems = sqlshape.Copy[ItemIn]("order_items", "order_id", "line_no", "sku
 var itemCount = sqlshape.Query[int64, struct{ OrderID int64 }](`SELECT count(*) FROM order_items WHERE order_id = {{.OrderID}}`)
 
 var markPaidOne = sqlshape.One[struct{}, struct{ ID int64 }](`UPDATE orders SET status = 'paid' WHERE id = {{.ID}}`)
+
+// a declared binding: the type owns the wire format through Scan / Value
+//
+// sqlshape: type money_amount
+type PriceTag struct{ Text string }
+
+func (p *PriceTag) Scan(src any) error {
+	switch v := src.(type) {
+	case nil:
+		p.Text = ""
+	case string:
+		p.Text = v
+	case []byte:
+		p.Text = string(v)
+	default:
+		return fmt.Errorf("PriceTag: cannot scan %T", src)
+	}
+	return nil
+}
+
+func (p PriceTag) Value() (driver.Value, error) { return p.Text, nil }
+
+var priceTagOf = sqlshape.One[struct{ Price PriceTag }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
+
+var setPriceTag = sqlshape.Query[struct{}, struct {
+	ID    int64
+	Price PriceTag
+}](`UPDATE orders SET price = {{.Price}} WHERE id = {{.ID}}`)
 
 var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
 
@@ -464,6 +494,19 @@ func TestAgainstPostgres(t *testing.T) {
 	pr, err = priceOf.Get(ctx, db, struct{ ID int64 }{id2})
 	if err != nil || pr.Price != nil {
 		t.Errorf("NULL composite column: %v %+v", err, pr.Price)
+	}
+	// declared binding round trip: Value encodes the composite's text form, Scan receives it
+	if _, err := setPriceTag.Exec(ctx, db, struct {
+		ID    int64
+		Price PriceTag
+	}{id2, PriceTag{"(7.25,USD)"}}); err != nil {
+		t.Fatalf("declared type param: %v", err)
+	}
+	if pt, err := priceTagOf.Get(ctx, db, struct{ ID int64 }{id2}); err != nil || pt.Price.Text != "(7.25,USD)" {
+		t.Errorf("declared type result: %v %+v", err, pt.Price)
+	}
+	if pt, err := priceTagOf.Get(ctx, db, struct{ ID int64 }{id1 + 1000}); !sqlshape.IsNoRows(err) {
+		t.Errorf("declared type missing row: %v %+v", err, pt)
 	}
 	if _, err := db.Exec(ctx, `UPDATE users SET handle = 'Alice', attrs = 'k=>v'`); err != nil {
 		t.Fatal(err)

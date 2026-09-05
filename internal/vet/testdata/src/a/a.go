@@ -1,6 +1,7 @@
 package a
 
 import (
+	"database/sql/driver"
 	"net"
 	"net/netip"
 	"time"
@@ -463,3 +464,46 @@ var quotedAction = sqlshape.Query[OrderRow, struct{ Q string }]("SELECT o.id, o.
 var dollarQuoted = sqlshape.Query[OrderRow, struct{ Q string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.note = $q$ {{.Q}} $q$ /* {{.Q}} */") // want `{{.Q}} is inside a string literal` `{{.Q}} is inside a comment and has no effect`
 
 var bareSort = sqlshape.Query[OrderRow, struct{ Sort string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o ORDER BY {{.Sort}}") // want `ORDER BY {{.Sort}} sorts by a constant, not by the column the value names: branch on it instead`
+
+// declared bindings: a Go type names the PG type it carries and does its own encoding
+
+// sqlshape: type money_amount
+type Price struct { // want Price:`carries money_amount`
+	Currency string // field order differs from the composite: irrelevant, Scan / Value own the wire format
+	Amount   string
+}
+
+func (p *Price) Scan(src any) error          { return nil }
+func (p Price) Value() (driver.Value, error) { return nil, nil }
+
+var declaredResult = sqlshape.Query[struct{ Price Price }, struct{}](`SELECT price FROM orders`)
+
+var declaredArray = sqlshape.Query[struct{ Prices []Price }, struct{}](`SELECT array_agg(price) AS prices FROM orders`)
+
+var declaredParam = sqlshape.Query[struct{}, struct {
+	ID    int64
+	Price Price
+}](`-- sqlshape: expect P0401
+UPDATE orders SET price = {{.Price}} WHERE id = {{.ID}}`)
+
+var declaredMisuse = sqlshape.Query[struct{ Total Price }, struct{}](`SELECT total FROM orders`) // want `field Total is a.Price but column "total" is numeric\(12,2\)`
+
+var declaredNested = sqlshape.Query[struct {
+	ID    int64
+	Price Price
+}, struct{}](`SELECT id, price FROM orders`)
+
+// sqlshape: type yen
+type YenBox struct{ N int64 } // want YenBox:`carries yen`
+
+var yenNoScanner = sqlshape.Query[struct{ Balance YenBox }, struct{}](`SELECT balance FROM users`) // want `field Balance: a.YenBox carries yen but does not implement sql.Scanner: pgx cannot decode into it`
+
+// sqlshape: type nope
+type Nope string // want `type Nope: PostgreSQL type "nope" does not exist in the schema` Nope:`carries nope`
+
+// sqlshape: type citext
+type Handle string // want Handle:`carries citext`
+
+var handleOK = sqlshape.Query[struct{ Handle Handle }, struct{ H Handle }](`SELECT handle FROM users WHERE handle = {{.H}}`)
+
+var handleMisuse = sqlshape.Query[struct{ Name Handle }, struct{}](`SELECT name FROM users`) // want `field Name is a.Handle but column "name" is character varying\(100\)`

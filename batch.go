@@ -95,8 +95,12 @@ func Queue[R, P any](b *Batch, s Stmt[R, P], p P) *Queued[R] {
 		q.err, q.done = err, true
 		return q
 	}
-	qq := b.b.Queue(r.SQL, s.args(r.Args)...)
 	var zero R
+	var formats pgx.QueryResultFormatsByOID
+	if f, ok := formatCache.Load(formatKey{typ: reflect.TypeOf(zero), sql: r.SQL}); ok {
+		formats = f.(pgx.QueryResultFormatsByOID) // known from an earlier Run of the same statement
+	}
+	qq := b.b.Queue(r.SQL, s.args(r.Args, formats)...)
 	if rt := reflect.TypeOf(zero); rt != nil && rt.Kind() == reflect.Struct && rt.NumField() == 0 {
 		// R = struct{}: a statement without rows
 		qq.Exec(func(tag pgconn.CommandTag) error {

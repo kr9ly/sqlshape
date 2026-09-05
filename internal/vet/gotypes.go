@@ -85,6 +85,10 @@ func (c *checker) matchDir(pg schema.TypeRef, t types.Type, param bool) fit {
 	if _, isSlice := inner.Underlying().(*types.Slice); isSlice {
 		nullable = true
 	}
+	// a Scanner sees NULL as Scan(nil) and represents it itself
+	if _, declared := c.declaredOf(inner); declared && implementsScanner(inner) {
+		nullable = true
+	}
 	f.nullable = nullable
 	return f
 }
@@ -110,6 +114,10 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type, param bool) fit {
 			}
 		}
 		return false
+	}
+	// a Go type that declares the PG type it carries (`// sqlshape: type X`) is checked by that alone
+	if dt, ok := c.declaredOf(t); ok {
+		return c.matchDeclared(dt, t, pg.OID, base.OID, param)
 	}
 	// a string encodes as any parameter type (text format)
 	if param && is(types.String) {

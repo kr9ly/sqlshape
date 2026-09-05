@@ -115,9 +115,14 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			yield(zero, err)
 			return
 		}
+		var formats pgx.QueryResultFormatsByOID
+		fkey := formatKey{typ: reflect.TypeOf(zero), sql: r.SQL}
+		if f, ok := formatCache.Load(fkey); ok {
+			formats = f.(pgx.QueryResultFormatsByOID)
+		}
 		var rows pgx.Rows
 		err = withParamTypes(ctx, db, len(r.Args), func() error {
-			rows, err = db.Query(ctx, r.SQL, s.args(r.Args)...)
+			rows, err = db.Query(ctx, r.SQL, s.args(r.Args, formats)...)
 			return err
 		})
 		if err != nil {
@@ -132,17 +137,32 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 				yield(zero, err)
 				return
 			}
-			if rows, err = db.Query(ctx, r.SQL, s.args(r.Args)...); err != nil {
+			if rows, err = db.Query(ctx, r.SQL, s.args(r.Args, formats)...); err != nil {
 				yield(zero, s.wrapErr(err))
 				return
 			}
 		}
-		defer rows.Close()
 		var m *mapper[R]
+		if fds := rows.FieldDescriptions(); len(fds) > 0 { // empty when the statement failed: rows.Err tells
+			if m, err = newMapper[R](fds); err != nil {
+				rows.Close()
+				yield(zero, err)
+				return
+			}
+			// columns a Scanner receives must come as text: remember that for this statement and re-run once
+			if len(m.textOIDs) > 0 && formats == nil {
+				formatCache.Store(fkey, m.textOIDs)
+				rows.Close()
+				if rows, err = db.Query(ctx, r.SQL, s.args(r.Args, m.textOIDs)...); err != nil {
+					yield(zero, s.wrapErr(err))
+					return
+				}
+			}
+		}
+		defer rows.Close()
 		for rows.Next() {
 			if m == nil {
-				m, err = newMapper[R](rows.FieldDescriptions())
-				if err != nil {
+				if m, err = newMapper[R](rows.FieldDescriptions()); err != nil {
 					yield(zero, err)
 					return
 				}
@@ -191,7 +211,7 @@ func (s Stmt[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, er
 	}
 	var tag pgconn.CommandTag
 	err = withParamTypes(ctx, db, len(r.Args), func() error {
-		tag, err = db.Exec(ctx, r.SQL, s.args(r.Args)...)
+		tag, err = db.Exec(ctx, r.SQL, s.args(r.Args, nil)...)
 		return err
 	})
 	return tag, s.wrapErr(err)
@@ -237,12 +257,20 @@ func connOf(db DB) *pgx.Conn {
 	return nil
 }
 
-// args prefixes the exec mode for unprepared statements (pgx reads a QueryExecMode first argument).
-func (s Stmt[R, P]) args(a []any) []any {
-	if !s.unprepared {
+// args prefixes the execution options pgx reads from the first arguments: the exec mode
+// for unprepared statements and the result formats Scanner-receiving columns need.
+func (s Stmt[R, P]) args(a []any, formats pgx.QueryResultFormatsByOID) []any {
+	var opts []any
+	if s.unprepared {
+		opts = append(opts, pgx.QueryExecModeExec)
+	}
+	if len(formats) > 0 {
+		opts = append(opts, formats)
+	}
+	if len(opts) == 0 {
 		return a
 	}
-	return append([]any{pgx.QueryExecModeExec}, a...)
+	return append(opts, a...)
 }
 
 // Get runs the single-row statement and returns its row, or ErrNoRows.
@@ -304,6 +332,10 @@ type mapper[R any] struct {
 	// labelled is whether R contains a type implementing Known (enum labels the
 	// application knows): rows are validated after scanning
 	labelled bool
+	// textOIDs are the result column types received by a sql.Scanner (a declared type
+	// doing its own decoding): pgx hands a Scanner the raw binary of a registered type,
+	// so these columns are requested in text format (QueryResultFormatsByOID).
+	textOIDs pgx.QueryResultFormatsByOID
 }
 
 // Labelled is implemented by a Go enum type (a named string type bound to a PG enum) to
@@ -443,8 +475,62 @@ func newMapper[R any](fds []pgconn.FieldDescription) (*mapper[R], error) {
 			}
 		}
 	}
+	if m.scalar {
+		if userScanner(rt) {
+			m.textOIDs = pgx.QueryResultFormatsByOID{fds[0].DataTypeOID: pgx.TextFormatCode}
+		}
+	} else {
+		for i, idx := range m.fields {
+			if userScanner(fieldByIndexType(rt, idx)) {
+				if m.textOIDs == nil {
+					m.textOIDs = pgx.QueryResultFormatsByOID{}
+				}
+				m.textOIDs[fds[i].DataTypeOID] = pgx.TextFormatCode
+			}
+		}
+	}
 	mapperCache.Store(key, m)
 	return m, nil
+}
+
+// userScanner reports whether t decodes itself through sql.Scanner (pointer receiver
+// included), leaving out the types pgx knows better (pgtype, time, netip).
+func userScanner(t reflect.Type) bool {
+	base := t
+	if base.Kind() == reflect.Pointer {
+		base = base.Elem()
+	}
+	if base.Kind() == reflect.Slice || base.Kind() == reflect.Array {
+		base = base.Elem()
+		if base.Kind() == reflect.Pointer {
+			base = base.Elem()
+		}
+	}
+	if scalarStruct(base) || base.PkgPath() == "" {
+		return false
+	}
+	return reflect.PointerTo(base).Implements(scannerType)
+}
+
+var scannerType = reflect.TypeOf((*interface{ Scan(any) error })(nil)).Elem()
+
+func fieldByIndexType(t reflect.Type, index []int) reflect.Type {
+	for _, i := range index {
+		if t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		t = t.Field(i).Type
+	}
+	return t
+}
+
+// formatCache remembers, per (R, SQL), the result formats a statement needs, so the
+// text-format request rides along from the second execution on.
+var formatCache sync.Map // formatKey → pgx.QueryResultFormatsByOID
+
+type formatKey struct {
+	typ reflect.Type
+	sql string
 }
 
 // flatField is one scan target of a struct: an exported, non-skipped field, with the

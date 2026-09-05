@@ -41,6 +41,9 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 	if !ok {
 		return // matchValue already reported the non-struct
 	}
+	if _, declared := c.declaredOf(inner); declared || implementsScanner(inner) {
+		return // the type decodes the value itself; its fields are not columns
+	}
 	et := c.s.Types.ByOID(elemOID(c, col))
 	named := et != nil && et.Kind == 'c'
 	flat, dups := structFields(st)
