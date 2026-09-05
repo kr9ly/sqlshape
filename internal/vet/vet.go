@@ -523,24 +523,22 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 	if syncComments {
 		c.suggestTypeComment(rType, r)
 	}
-	// struct R: fields ↔ columns both ways
+	// struct R: fields ↔ columns both ways (embedded structs flattened)
+	flat, dups := structFields(st)
+	for _, d := range dups {
+		report(at, "%s: fields %s%s", rType, d, where)
+	}
 	fields := map[string]*types.Var{}
+	fieldName := map[string]string{}
 	notnull := map[string]bool{}
 	order := []string{}
-	for i := 0; i < st.NumFields(); i++ {
-		fv := st.Field(i)
-		if !fv.Exported() {
-			continue
-		}
-		name, opts := columnName(fv, st.Tag(i))
-		if name == "-" {
-			continue
-		}
-		fields[name] = fv
-		order = append(order, name)
-		for _, o := range opts {
+	for _, f := range flat {
+		fields[f.col] = f.v
+		fieldName[f.col] = f.name
+		order = append(order, f.col)
+		for _, o := range f.opts {
 			if o == "notnull" {
-				notnull[name] = true
+				notnull[f.col] = true
 			}
 		}
 	}
@@ -565,23 +563,24 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		if syncComments {
 			c.suggestFieldComment(fv, col)
 		}
-		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fv.Name())
+		fname := fieldName[col.Name]
+		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fname)
 		f := c.match(col.Type, fv.Type())
 		if notnull[col.Name] {
 			col.Nullable = false
 		}
-		c.reportFit(report, at, "field "+fv.Name(), col, fv.Type(), f, where)
+		c.reportFit(report, at, "field "+fname, col, fv.Type(), f, where)
 		if f.ok {
-			c.checkNested(col, fv.Type(), at, "field "+fv.Name(), report, where)
+			c.checkNested(col, fv.Type(), at, "field "+fname, report, where)
 			if msg := c.fidelity(col.Type, fv.Type()); msg != "" && c.strict {
-				report(at, "field %s: %s%s", fv.Name(), msg, where)
+				report(at, "field %s: %s%s", fname, msg, where)
 			}
 		}
 	}
 	missing := map[string]types.Type{}
 	for _, name := range order {
 		if !matched[name] {
-			missing[fields[name].Name()] = fields[name].Type()
+			missing[fieldName[name]] = fields[name].Type()
 		}
 	}
 	return missing
@@ -632,18 +631,13 @@ func (c *checker) resolvePath(t types.Type, p expand.Path) (types.Type, error) {
 			}
 			continue
 		}
-		st, ok := cur.Underlying().(*types.Struct)
-		if !ok {
+		if _, ok := cur.Underlying().(*types.Struct); !ok {
 			return nil, fmt.Errorf("%s is %s, not a struct; cannot select .%s", p[:i].String(), cur, el)
 		}
-		var found *types.Var
-		for j := 0; j < st.NumFields(); j++ {
-			if st.Field(j).Name() == el {
-				found = st.Field(j)
-				break
-			}
-		}
-		if found == nil {
+		// promoted fields of embedded structs resolve too, as text/template (and the runtime) do
+		obj, _, _ := types.LookupFieldOrMethod(cur, true, nil, el)
+		found, _ := obj.(*types.Var)
+		if found == nil || !found.IsField() {
 			return nil, fmt.Errorf("%s has no field %s", cur, el)
 		}
 		cur = found.Type()

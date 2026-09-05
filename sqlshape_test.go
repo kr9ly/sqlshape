@@ -129,6 +129,27 @@ var extTypes = sqlshape.Query[struct {
 	Tags   []string
 }, struct{ H string }](`SELECT handle, attrs, array_agg(handle) OVER () AS tags FROM users WHERE handle = {{.H}} OR handle IS NULL LIMIT 1`)
 
+// embedded structs flatten: OrderBase's columns are scanned into the promoted fields
+type OrderBase struct {
+	ID    int64
+	Total string
+}
+
+type OrderWithNote struct {
+	OrderBase
+	Note *string
+}
+
+type UserNotedOrders struct {
+	ByUser
+	Orders []OrderWithNote
+}
+
+type ByUser struct{ ID int64 }
+
+var embeddedRows = sqlshape.Query[UserNotedOrders, ByUser](`
+SELECT u.id, array_agg(row(o.id, o.total, o.note) ORDER BY o.id) AS orders FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = {{.ID}} GROUP BY u.id`)
+
 var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
 
 func TestRender(t *testing.T) {
@@ -283,6 +304,10 @@ func TestAgainstPostgres(t *testing.T) {
 	ufo, err := userFullOrders.Collect(ctx, db, struct{}{})
 	if err != nil || len(ufo) != 2 || ufo[1].Orders[0].ID != id2 || ufo[1].Orders[0].Status != "paid" || ufo[1].Orders[0].Price != nil || ufo[1].Orders[0].CreatedAt.IsZero() {
 		t.Fatalf("array_agg(o): %v %+v", err, ufo)
+	}
+	eo, err := embeddedRows.First(ctx, db, ByUser{1})
+	if err != nil || eo.ID != 1 || len(eo.Orders) != 1 || eo.Orders[0].ID != id1 || eo.Orders[0].Total != "10.50" || eo.Orders[0].Note == nil || *eo.Orders[0].Note != "first" {
+		t.Errorf("embedded structs: %v %+v", err, eo)
 	}
 	if _, err := db.Exec(ctx, `UPDATE orders SET price = ROW(1.5, 'JPY') WHERE id = $1`, id1); err != nil {
 		t.Fatal(err)

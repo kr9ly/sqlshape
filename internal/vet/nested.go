@@ -40,19 +40,15 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 	}
 	et := c.s.Types.ByOID(elemOID(c, col))
 	named := et != nil && et.Kind == 'c'
-	var fields []*types.Var
-	var names []string
-	for i := 0; i < st.NumFields(); i++ {
-		fv := st.Field(i)
-		if !fv.Exported() {
-			continue
-		}
-		name, _ := columnName(fv, st.Tag(i))
-		if name == "-" {
-			continue
-		}
-		fields = append(fields, fv)
-		names = append(names, name)
+	flat, dups := structFields(st)
+	for _, d := range dups {
+		report(at, "%s: %s: fields %s%s", what, inner, d, where)
+	}
+	fields := make([]*types.Var, len(flat))
+	names := make([]string, len(flat))
+	goNames := make([]string, len(flat))
+	for i, f := range flat {
+		fields[i], names[i], goNames[i] = f.v, f.col, f.name
 	}
 	if len(fields) != len(col.Fields) {
 		report(at, "%s: %s has %d fields but the row type has %d (%s)%s", what, inner, len(fields), len(col.Fields), rowShape(c, col), where)
@@ -60,7 +56,7 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 	}
 	for i, f := range col.Fields {
 		fv := fields[i]
-		sub := what + "." + fv.Name()
+		sub := what + "." + goNames[i]
 		if named && names[i] != f.Name {
 			report(at, "%s is at position %d but the row type's column %d is %q (fields are scanned in order)%s", sub, i+1, i+1, f.Name, where)
 			continue

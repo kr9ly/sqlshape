@@ -229,7 +229,7 @@ func (s Single[R, P]) Render(p P) (Rendered, error) { return s.stmt.Render(p) }
 // mapper binds result columns to the fields of R (or to R itself when it is a scalar).
 type mapper[R any] struct {
 	scalar bool
-	fields []int // field index per column
+	fields [][]int // field index path per column (embedded structs flattened)
 	// labelled is whether R contains a type implementing Known (enum labels the
 	// application knows): rows are validated after scanning
 	labelled bool
@@ -339,21 +339,17 @@ func newMapper[R any](fds []pgconn.FieldDescription) (*mapper[R], error) {
 		}
 		m.scalar = true
 	} else {
+		flat, err := flatFields(rt)
+		if err != nil {
+			return nil, err
+		}
 		byName := map[string]int{}
 		lower := map[string]int{}
-		for i := 0; i < rt.NumField(); i++ {
-			f := rt.Field(i)
-			if !f.IsExported() {
-				continue
-			}
-			name := fieldColumn(f)
-			if name == "-" {
-				continue
-			}
-			byName[name] = i
-			lower[strings.ToLower(name)] = i
+		for i, f := range flat {
+			byName[f.column] = i
+			lower[strings.ToLower(f.column)] = i
 		}
-		m.fields = make([]int, len(fds))
+		m.fields = make([][]int, len(fds))
 		used := map[int]bool{}
 		for i, fd := range fds {
 			idx, ok := byName[fd.Name]
@@ -364,20 +360,117 @@ func newMapper[R any](fds []pgconn.FieldDescription) (*mapper[R], error) {
 				return nil, fmt.Errorf("sqlshape: result column %q has no field in %s", fd.Name, rt)
 			}
 			if used[idx] {
-				return nil, fmt.Errorf("sqlshape: result column %q matches %s.%s twice", fd.Name, rt, rt.Field(idx).Name)
+				return nil, fmt.Errorf("sqlshape: result column %q matches %s.%s twice", fd.Name, rt, flat[idx].name)
 			}
 			used[idx] = true
-			m.fields[i] = idx
+			m.fields[i] = flat[idx].index
 		}
-		for name, idx := range byName {
-			if !used[idx] && !optionalKind(rt.Field(idx).Type) {
+		for i, f := range flat {
+			if !used[i] && !optionalKind(f.typ) {
 				// a nullable field may be left unset by a branch that does not select it
-				return nil, fmt.Errorf("sqlshape: field %s.%s has no result column (%s)", rt.Name(), rt.Field(idx).Name, name)
+				return nil, fmt.Errorf("sqlshape: field %s.%s has no result column (%s)", rt.Name(), f.name, f.column)
 			}
 		}
 	}
 	mapperCache.Store(key, m)
 	return m, nil
+}
+
+// flatField is one scan target of a struct: an exported, non-skipped field, with the
+// fields of embedded structs promoted (flattened) into their parent.
+type flatField struct {
+	index  []int  // for reflect's FieldByIndex
+	name   string // Go name, dotted through embedded structs (Base.ID)
+	column string // result column it binds to
+	typ    reflect.Type
+}
+
+var flatFieldsCache sync.Map // reflect.Type → []flatField or error
+
+// flatFields lists the scan targets of a struct type in declaration order. An embedded
+// struct (anonymous field, no col / db tag) is flattened: its fields are the parent's,
+// so `type Row struct { Base; Extra string }` receives base columns and extra. A named
+// struct field is a nested row instead. Two fields binding the same column is an error.
+func flatFields(t reflect.Type) ([]flatField, error) {
+	if v, ok := flatFieldsCache.Load(t); ok {
+		if err, isErr := v.(error); isErr {
+			return nil, err
+		}
+		return v.([]flatField), nil
+	}
+	var out []flatField
+	seen := map[string]string{}
+	var walk func(st reflect.Type, prefix string, index []int) error
+	walk = func(st reflect.Type, prefix string, index []int) error {
+		for i := 0; i < st.NumField(); i++ {
+			f := st.Field(i)
+			if !f.IsExported() && !f.Anonymous {
+				continue
+			}
+			idx := append(append([]int{}, index...), i)
+			if f.Anonymous && embeddedStruct(f) != nil {
+				if err := walk(embeddedStruct(f), prefix+f.Name+".", idx); err != nil {
+					return err
+				}
+				continue
+			}
+			if !f.IsExported() {
+				continue
+			}
+			col := fieldColumn(f)
+			if col == "-" {
+				continue
+			}
+			if prev, dup := seen[col]; dup {
+				return fmt.Errorf("sqlshape: fields %s.%s and %s.%s both bind to column %q", t, prev, t, prefix+f.Name, col)
+			}
+			seen[col] = prefix + f.Name
+			out = append(out, flatField{index: idx, name: prefix + f.Name, column: col, typ: f.Type})
+		}
+		return nil
+	}
+	if err := walk(t, "", nil); err != nil {
+		flatFieldsCache.Store(t, err)
+		return nil, err
+	}
+	flatFieldsCache.Store(t, out)
+	return out, nil
+}
+
+// embeddedStruct returns the struct type an anonymous field flattens into, or nil when
+// the field is a leaf: not a struct, time.Time, a Scanner, or tagged with a column name.
+func embeddedStruct(f reflect.StructField) reflect.Type {
+	if !f.Anonymous {
+		return nil
+	}
+	if _, ok := f.Tag.Lookup("col"); ok {
+		return nil
+	}
+	if _, ok := f.Tag.Lookup("db"); ok {
+		return nil
+	}
+	t := f.Type
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || !isNested(t) {
+		return nil
+	}
+	return t
+}
+
+// fieldByIndex is reflect.Value.FieldByIndex that allocates nil embedded pointers on the way.
+func fieldByIndex(v reflect.Value, index []int) reflect.Value {
+	for i, x := range index {
+		if i > 0 && v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				v.Set(reflect.New(v.Type().Elem()))
+			}
+			v = v.Elem()
+		}
+		v = v.Field(x)
+	}
+	return v
 }
 
 func (m *mapper[R]) scan(rows pgx.Rows) (R, error) {
@@ -389,7 +482,7 @@ func (m *mapper[R]) scan(rows pgx.Rows) (R, error) {
 		v := reflect.ValueOf(&row).Elem()
 		dests := make([]any, len(m.fields))
 		for i, idx := range m.fields {
-			fv := v.Field(idx)
+			fv := fieldByIndex(v, idx)
 			if isNested(fv.Type()) {
 				dests[i] = nestedDest(fv)
 			} else {

@@ -1,6 +1,7 @@
 package vet
 
 import (
+	"fmt"
 	"go/types"
 	"strings"
 	"unicode"
@@ -183,6 +184,76 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type) fit {
 		return fit{ok: is(types.String)}
 	}
 	return fit{ok: true, unknown: true}
+}
+
+// structField is one column-bearing field of a result struct, embedded structs flattened.
+type structField struct {
+	v    *types.Var
+	name string   // Go name, dotted through embedded structs (Base.ID)
+	col  string   // result column it binds to
+	opts []string // tag options after the name (notnull)
+}
+
+// structFields lists the exported, non-skipped fields of st in declaration order. An
+// embedded struct (anonymous field without a col / db tag) is flattened: its fields count
+// as the parent's, the same way the runtime mapper scans them. A named struct field is a
+// nested row instead. dups lists the columns two fields bind to ("A and B both bind to x").
+// Kept in sync with the runtime's flatFields.
+func structFields(st *types.Struct) (fields []structField, dups []string) {
+	seen := map[string]string{}
+	var walk func(st *types.Struct, prefix string)
+	walk = func(st *types.Struct, prefix string) {
+		for i := 0; i < st.NumFields(); i++ {
+			fv := st.Field(i)
+			if fv.Embedded() {
+				if inner := embeddedStruct(fv, st.Tag(i)); inner != nil {
+					walk(inner, prefix+fv.Name()+".")
+					continue
+				}
+			}
+			if !fv.Exported() {
+				continue
+			}
+			col, opts := columnName(fv, st.Tag(i))
+			if col == "-" {
+				continue
+			}
+			if prev, dup := seen[col]; dup {
+				dups = append(dups, fmt.Sprintf("%s and %s both bind to column %q", prev, prefix+fv.Name(), col))
+				continue
+			}
+			seen[col] = prefix + fv.Name()
+			fields = append(fields, structField{v: fv, name: prefix + fv.Name(), col: col, opts: opts})
+		}
+	}
+	walk(st, "")
+	return fields, dups
+}
+
+// embeddedStruct returns the struct an embedded field flattens into, or nil when it is a
+// leaf: not a struct, time.Time, a Scanner, or tagged with a column name.
+func embeddedStruct(fv *types.Var, tag string) *types.Struct {
+	if _, ok := lookupTag(tag, "col"); ok {
+		return nil
+	}
+	if _, ok := lookupTag(tag, "db"); ok {
+		return nil
+	}
+	t := fv.Type()
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	if isNamed(t, "time", "Time") {
+		return nil
+	}
+	st, ok := t.Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	if types.NewMethodSet(types.NewPointer(t)).Lookup(nil, "Scan") != nil {
+		return nil
+	}
+	return st
 }
 
 // columnName derives the result column a struct field binds to: `col:"name"` / `db:"name"`

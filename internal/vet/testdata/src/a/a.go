@@ -249,3 +249,63 @@ var itemByLine = sqlshape.Query[string, struct {
 	O UserID
 	L LineNo
 }](`SELECT sku FROM order_items WHERE order_id = {{.O}} AND line_no = {{.L}}`) // want `parameter .O is a.UserID, which stands for key users.id elsewhere, but here meets key orders.id`
+
+// embedded structs flatten into the parent: OrderBase's columns are OrderWithNote's columns
+type OrderBase struct {
+	ID    int64
+	Total string
+}
+
+type OrderWithNote struct {
+	OrderBase
+	Note *string
+}
+
+var embeddedRow = sqlshape.Query[OrderWithNote, struct{}](`SELECT id, total, note FROM orders`)
+
+var embeddedMissing = sqlshape.Query[OrderWithNote, struct{}](`SELECT id, note FROM orders`) // want `field OrderWithNote.OrderBase.Total has no result column`
+
+type MistypedRow struct {
+	OrderBase
+	Note int64
+}
+
+var embeddedMistyped = sqlshape.Query[MistypedRow, struct{}](`SELECT id, total, note FROM orders`) // want `field Note is int64 but column "note" is text`
+
+type DupRow struct {
+	OrderBase
+	ID int64
+}
+
+var embeddedDup = sqlshape.Query[DupRow, struct{}](`SELECT id, total FROM orders`) // want `a.DupRow: fields OrderBase.ID and ID both bind to column "id"`
+
+// an embedded struct with a column tag is a nested row, not flattened
+type PriceRow struct {
+	*Money `col:"price"`
+	ID     int64
+}
+
+var embeddedTagged = sqlshape.Query[PriceRow, struct{}](`SELECT id, price FROM orders`) // want `field Money.Currency is at position 1 but the row type's column 1 is "amount"` `field Money.Amount is at position 2 but the row type's column 2 is "currency"`
+
+// embedded structs inside a nested row flatten too
+type BriefWithNote struct {
+	OrderBase
+	Note *string
+}
+
+type UserNotedOrders struct {
+	ID     int64
+	Orders []BriefWithNote
+}
+
+var embeddedNested = sqlshape.Query[UserNotedOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total, o.note)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`)
+
+var embeddedNestedBad = sqlshape.Query[UserNotedOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.note, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders.OrderBase.Total is string but column "f2" may be NULL`
+
+// promoted fields of P resolve in the template, as text/template does
+type ByID struct{ ID int64 }
+
+var embeddedParam = sqlshape.Query[OrderWithNote, struct {
+	ByID
+	Limit int32
+}](`SELECT id, total, note FROM orders WHERE id = {{.ID}} LIMIT {{.Limit}}`)

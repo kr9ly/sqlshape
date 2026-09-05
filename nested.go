@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -63,7 +62,7 @@ func (d *rowDest) ScanIndex(i int) any {
 	if i >= len(fields) {
 		return nil
 	}
-	fv := d.v.Field(fields[i])
+	fv := fieldByIndex(d.v, fields[i])
 	if isNested(fv.Type()) {
 		return nestedDest(fv)
 	}
@@ -109,21 +108,16 @@ func (d *rowsDest) ScanIndexType() any {
 	return nestedDest(reflect.New(d.v.Type().Elem()).Elem())
 }
 
-var scanFieldsCache sync.Map // reflect.Type → []int
-
-// scanFields lists the exported, non-skipped struct fields in declaration order.
-func scanFields(t reflect.Type) []int {
-	if f, ok := scanFieldsCache.Load(t); ok {
-		return f.([]int)
+// scanFields lists the scan targets of a nested-row struct in declaration order,
+// embedded structs flattened (see flatFields). A duplicate column is impossible to reach
+// here: the checker rejects it, and positional scanning never looks at names, so the
+// error is dropped and the fields that did resolve are used.
+func scanFields(t reflect.Type) [][]int {
+	flat, _ := flatFields(t)
+	out := make([][]int, len(flat))
+	for i, f := range flat {
+		out[i] = f.index
 	}
-	var out []int
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.IsExported() && fieldColumn(f) != "-" {
-			out = append(out, i)
-		}
-	}
-	scanFieldsCache.Store(t, out)
 	return out
 }
 
