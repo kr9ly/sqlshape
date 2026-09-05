@@ -1,0 +1,8 @@
+params:
+  $1 bigint
+  $2 order_status
+  $3 numeric
+  $4 text
+columns:
+  id bigint <- orders.id not null
+  created_at timestamp with time zone <- orders.created_at not null

@@ -1,0 +1,5 @@
+params:
+columns:
+  id bigint <- users.id not null
+  orders record[]
+  statuses order_status[]

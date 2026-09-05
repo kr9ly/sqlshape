@@ -165,10 +165,20 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 
 細部で踏みやすいもの:
 
-- `$n` の型推論。PG は `unknown` から文脈解決し、`SELECT $1` は「型を決定できない」になる。
-  鏡写しにしないと偽陰性
+- `$n` の型推論。PG は `unknown` から文脈解決する。オラクル実測（PG 17）: `SELECT $1` は
+  エラーではなく `$1 text` / 結果 `text` に落ちる（unknown → text の最終規則）。鏡写しにしないと偽陰性
 - typmod（`varchar(20)`、`numeric(10,2)`）の伝播規則が関数ごとに違う
 - 集合返却関数と LATERAL、RETURNING、`INSERT ... ON CONFLICT` の列可視性
+
+オラクルの初回実測で分かった限界（internal/oracle/testdata/queries/*.golden が正）:
+
+- Describe の列由来（TableOID / attnum）は**ビューで止まる**。`order_summary.id` の attnotnull は false で
+  基表の NOT NULL が見えない。nullability は自前解析でビュー定義を辿るしかなく、オラクルは
+  ビュー越しの null 判定の正解を持たない
+- `array_agg(row(...))` は `record[]`（匿名複合型）で返る。ネスト構造体の導出は自前の行型推論が必要。
+  名前付き複合型（`CREATE TYPE`）にキャストさせれば PG 側でも型が付く
+- `numeric` の typmod は列直参照なら残る（`numeric(12,2)`）が集約（`sum`）や `$n` では落ちる。
+  typmod 伝播規則が関数ごとに違うことの実例
 
 スコープ外: PL/pgSQL、ルール、トリガー、照合順序、`.dat` に無い拡張の関数。
 拡張は本物の PG から `pg_proc` を dump して同じ形式に落とす経路を残す。
