@@ -551,6 +551,7 @@ func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation
 
 // assign coerces a value expression to a target column in assignment context.
 func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32) *Error {
+	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e})
 	if e.param > 0 {
 		if _, done := a.paramSrc[e.param]; !done {
 			a.paramSrc[e.param] = &Source{Table: relName, Column: col.Name, NotNull: col.NotNull}

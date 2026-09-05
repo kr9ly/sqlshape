@@ -83,4 +83,6 @@ type Result struct {
 	// ManyRowsWhy says what blocks the proof otherwise.
 	AtMostOne   bool
 	ManyRowsWhy string
+	// Violations are the constraints a write may violate (violation.go).
+	Violations []Violation
 }

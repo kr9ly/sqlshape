@@ -15,6 +15,13 @@ values (literals, `$n`, outer refs, uncorrelated scalar subqueries), a single le
 known, outer-join ON clauses only fix their nullable side, views / subqueries / CTEs are proved
 recursively with the outer-fixed output columns as seeds. Covered by `TestCardinality`.
 
+`Result.Violations` lists the constraints a write may violate (`violation.go`): every unique key on
+INSERT, those touching SET columns on UPDATE, referencing FKs with NO ACTION / RESTRICT on DELETE and
+key changes, CHECKs referencing written columns, domain CHECKs, NOT NULL when the value is nullable
+(with the parameter number so the checker can drop it for non-nullable Go types); ON CONFLICT absorbs
+its arbiter. Unnamed constraints are named by `schema.addConstraint` the way PG names them. Covered by
+`TestViolations`.
+
 Implements manual chapter 10: operator resolution (§10.2), function resolution (§10.3) incl.
 variadic / defaults / polymorphic consistency, implicit / assignment / explicit coercion via
 `pg_cast` + array / domain / record rules, `select_common_type` for UNION / CASE / COALESCE /

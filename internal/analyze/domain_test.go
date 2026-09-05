@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -113,6 +114,4 @@ func TestDomainNotes(t *testing.T) {
 	}
 }
 
-func itoa(n int32) string {
-	return strings.TrimSpace(strings.Repeat(" ", 0) + string(rune('0'+n/10)) + string(rune('0'+n%10)))
-}
+func itoa(n int32) string { return strconv.Itoa(int(n)) }

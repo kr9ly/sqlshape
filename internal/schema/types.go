@@ -35,7 +35,7 @@ type Types struct {
 // Domain is the CHECK / NOT NULL side of a domain type; the base type lives in catalog.Type.BaseType.
 type Domain struct {
 	NotNull bool
-	Checks  []Expr
+	Checks  []*Constraint // Kind Check, named <domain>_check like PG
 }
 
 func newTypes(cat *catalog.Catalog) *Types {

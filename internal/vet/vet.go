@@ -230,6 +230,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		pass.Reportf(pos, "sqlshape: %s", msg)
 	}
 	multi := len(res.Expansions) > 1
+	possible := map[string]analyze.Violation{}
+	branch := map[string]string{}
+	analyzedAll := true
 
 	for i := range res.Expansions {
 		e := &res.Expansions[i]
@@ -239,6 +242,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		}
 		r, err := analyze.Analyze(c.s, e.SQL)
 		if err != nil {
+			analyzedAll = false
 			if ae, ok := err.(*analyze.Error); ok {
 				tp := 0
 				if ae.Position > 0 {
@@ -249,6 +253,12 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 				report(lit.pos(0), "%v%s", err, where)
 			}
 			continue
+		}
+		for _, v := range c.possibleViolations(e, r, pType) {
+			if _, seen := possible[v.Key()]; !seen {
+				possible[v.Key()] = v
+				branch[v.Key()] = where
+			}
 		}
 		for _, n := range r.Notes {
 			tp := 0
@@ -262,6 +272,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		}
 		c.checkParams(e, r, pType, lit, report, where)
 		c.checkResult(call.Pos(), r, rType, report, where)
+	}
+	if analyzedAll {
+		c.checkExpectations(lit, possible, branch, report)
 	}
 }
 

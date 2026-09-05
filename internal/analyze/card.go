@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -410,7 +408,7 @@ func (p *prover) resolvesOutside(cr *pg_query.ColumnRef) bool {
 func (p *prover) correlated(sub *pg_query.Node) bool {
 	found := false
 	inner := p.a.fromColumns(sub.GetSelectStmt())
-	walkNodes(sub, func(n *pg_query.Node) {
+	schema.WalkNodes(sub, func(n *pg_query.Node) {
 		cr := n.GetColumnRef()
 		if cr == nil || found {
 			return
@@ -469,33 +467,6 @@ func (a *analyzer) fromColumns(sel *pg_query.SelectStmt) map[string]bool {
 		walk(f)
 	}
 	return out
-}
-
-// walkNodes visits every Node in a protobuf tree.
-func walkNodes(m proto.Message, f func(*pg_query.Node)) {
-	if m == nil {
-		return
-	}
-	if n, ok := m.(*pg_query.Node); ok {
-		if n == nil {
-			return
-		}
-		f(n)
-	}
-	m.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-		if fd.Kind() != protoreflect.MessageKind {
-			return true
-		}
-		if fd.IsList() {
-			l := v.List()
-			for i := 0; i < l.Len(); i++ {
-				walkNodes(l.Get(i).Message().Interface(), f)
-			}
-			return true
-		}
-		walkNodes(v.Message().Interface(), f)
-		return true
-	})
 }
 
 func (p *prover) fixpoint() {

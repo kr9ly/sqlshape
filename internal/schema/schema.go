@@ -6,9 +6,12 @@ package schema
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
 )
@@ -102,6 +105,9 @@ type Constraint struct {
 	Predicate        Expr
 	NullsNotDistinct bool
 	Deferrable       bool
+	// ForeignKey actions (pg_constraint confdeltype / confupdtype):
+	// 'a' NO ACTION, 'r' RESTRICT, 'c' CASCADE, 'n' SET NULL, 'd' SET DEFAULT
+	OnDelete, OnUpdate byte
 }
 
 // Function is a user-defined function / procedure signature (body is not analyzed).
@@ -329,7 +335,18 @@ func (s *Schema) createDomain(st *pg_query.CreateDomainStmt, loc int32) {
 		case pg_query.ConstrType_CONSTR_NOTNULL:
 			d.NotNull = true
 		case pg_query.ConstrType_CONSTR_CHECK:
-			d.Checks = append(d.Checks, c.RawExpr)
+			cn := c.Conname
+			if cn == "" {
+				cn = uniqueName(name+"_check", func(n string) bool {
+					for _, x := range d.Checks {
+						if x.Name == n {
+							return true
+						}
+					}
+					return false
+				})
+			}
+			d.Checks = append(d.Checks, &Constraint{Name: cn, Kind: Check, Expr: c.RawExpr})
 		case pg_query.ConstrType_CONSTR_DEFAULT, pg_query.ConstrType_CONSTR_NULL:
 		default:
 			s.problem(c.GetLocation(), "domain %s: unsupported constraint %v", name, c.GetContype())
@@ -427,15 +444,15 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 			col.Generated = c.RawExpr
 		case pg_query.ConstrType_CONSTR_PRIMARY:
 			col.NotNull = true
-			rel.Constraints = append(rel.Constraints, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: []string{col.Name}})
+			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: []string{col.Name}})
 		case pg_query.ConstrType_CONSTR_UNIQUE:
-			rel.Constraints = append(rel.Constraints, &Constraint{Name: c.Conname, Kind: Unique, Columns: []string{col.Name}, NullsNotDistinct: c.NullsNotDistinct})
+			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: []string{col.Name}, NullsNotDistinct: c.NullsNotDistinct})
 		case pg_query.ConstrType_CONSTR_CHECK:
-			rel.Constraints = append(rel.Constraints, &Constraint{Name: c.Conname, Kind: Check, Columns: []string{col.Name}, Expr: c.RawExpr})
+			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Columns: []string{col.Name}, Expr: c.RawExpr})
 		case pg_query.ConstrType_CONSTR_FOREIGN:
 			fk := s.foreignKey(c)
 			fk.Columns = []string{col.Name}
-			rel.Constraints = append(rel.Constraints, fk)
+			s.addConstraint(rel, fk)
 		case pg_query.ConstrType_CONSTR_ATTR_DEFERRABLE, pg_query.ConstrType_CONSTR_ATTR_NOT_DEFERRABLE,
 			pg_query.ConstrType_CONSTR_ATTR_DEFERRED, pg_query.ConstrType_CONSTR_ATTR_IMMEDIATE:
 		default:
@@ -446,7 +463,13 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 
 func (s *Schema) foreignKey(c *pg_query.Constraint) *Constraint {
 	rs, rn := rangeVar(c.Pktable)
-	fk := &Constraint{Name: c.Conname, Kind: ForeignKey, RefColumns: strs(c.PkAttrs), Deferrable: c.Deferrable}
+	fk := &Constraint{Name: c.Conname, Kind: ForeignKey, RefColumns: strs(c.PkAttrs), Deferrable: c.Deferrable, OnDelete: 'a', OnUpdate: 'a'}
+	if c.FkDelAction != "" {
+		fk.OnDelete = c.FkDelAction[0]
+	}
+	if c.FkUpdAction != "" {
+		fk.OnUpdate = c.FkUpdAction[0]
+	}
 	if rs == "public" {
 		fk.RefTable = rn
 	} else {
@@ -466,15 +489,15 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 				s.problem(c.GetLocation(), "%s: primary key column %q does not exist", rel.Name, n)
 			}
 		}
-		rel.Constraints = append(rel.Constraints, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: cols})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: cols})
 	case pg_query.ConstrType_CONSTR_UNIQUE:
-		rel.Constraints = append(rel.Constraints, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct})
 	case pg_query.ConstrType_CONSTR_CHECK:
-		rel.Constraints = append(rel.Constraints, &Constraint{Name: c.Conname, Kind: Check, Expr: c.RawExpr})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Expr: c.RawExpr})
 	case pg_query.ConstrType_CONSTR_FOREIGN:
 		fk := s.foreignKey(c)
 		fk.Columns = strs(c.FkAttrs)
-		rel.Constraints = append(rel.Constraints, fk)
+		s.addConstraint(rel, fk)
 	case pg_query.ConstrType_CONSTR_EXCLUSION:
 		// no typing consequence
 	default:
@@ -564,7 +587,7 @@ func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
 		}
 		c.Columns = append(c.Columns, ie.GetName())
 	}
-	rel.Constraints = append(rel.Constraints, c)
+	s.addConstraint(rel, c)
 }
 
 // --- functions -------------------------------------------------------------
@@ -653,3 +676,95 @@ func (s *Schema) comment(st *pg_query.CommentStmt, loc int32) {
 
 // ResolveType resolves a TypeName AST node against this schema (exported for the analyzer).
 func (s *Schema) ResolveType(tn *pg_query.TypeName) (TypeRef, error) { return s.resolveType(tn) }
+
+// addConstraint records a table constraint, naming it the way PG does when the schema
+// does not: <table>_pkey, <table>_<cols>_key, <table>_<cols>_fkey, <table>_<cols>_check
+// (a CHECK's columns are the ones its expression references, in order), with a numeric
+// suffix on collision. Errors at runtime carry these names, so they must agree.
+func (s *Schema) addConstraint(rel *Relation, c *Constraint) {
+	if c.Name == "" {
+		var base string
+		switch c.Kind {
+		case PrimaryKey:
+			base = rel.Name + "_pkey"
+		case Unique:
+			base = rel.Name + "_" + strings.Join(c.Columns, "_") + "_key"
+		case ForeignKey:
+			base = rel.Name + "_" + strings.Join(c.Columns, "_") + "_fkey"
+		case Check:
+			cols := c.Columns
+			if len(cols) == 0 {
+				cols = ColumnRefs(c.Expr)
+			}
+			if len(cols) > 0 {
+				base = rel.Name + "_" + strings.Join(cols, "_") + "_check"
+			} else {
+				base = rel.Name + "_check"
+			}
+		}
+		c.Name = uniqueName(base, func(n string) bool {
+			for _, r := range s.Relations {
+				for _, x := range r.Constraints {
+					if x.Name == n {
+						return true
+					}
+				}
+			}
+			return false
+		})
+	}
+	rel.Constraints = append(rel.Constraints, c)
+}
+
+func uniqueName(base string, taken func(string) bool) string {
+	name := base
+	for i := 1; taken(name); i++ {
+		name = base + strconv.Itoa(i)
+	}
+	return name
+}
+
+// ColumnRefs lists the distinct unqualified column names an expression references, in order.
+func ColumnRefs(e Expr) []string {
+	var out []string
+	seen := map[string]bool{}
+	WalkNodes(e, func(n *pg_query.Node) {
+		cr := n.GetColumnRef()
+		if cr == nil || len(cr.Fields) == 0 {
+			return
+		}
+		name := cr.Fields[len(cr.Fields)-1].GetString_().GetSval()
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	})
+	return out
+}
+
+// WalkNodes visits every Node in a protobuf tree.
+func WalkNodes(m proto.Message, f func(*pg_query.Node)) {
+	if m == nil {
+		return
+	}
+	if n, ok := m.(*pg_query.Node); ok {
+		if n == nil {
+			return
+		}
+		f(n)
+	}
+	m.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if fd.Kind() != protoreflect.MessageKind {
+			return true
+		}
+		if fd.IsList() {
+			l := v.List()
+			for i := 0; i < l.Len(); i++ {
+				WalkNodes(l.Get(i).Message().Interface(), f)
+			}
+			return true
+		}
+		WalkNodes(v.Message().Interface(), f)
+		return true
+	})
+}

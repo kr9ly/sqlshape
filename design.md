@@ -590,6 +590,17 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ## 進捗（2026-09-05）
 
+- 失敗モードの共有（analyze/violation.go + vet/expect.go + runtime `ConstraintError`）: 各 DML 展開形が
+  違反し得る制約を列挙する — INSERT は全ユニーク鍵、UPDATE は SET 列に触れる鍵、DELETE / 鍵の更新は
+  NO ACTION / RESTRICT で参照している側の FK、書き込む列を参照する CHECK、ドメイン CHECK、値が NULL になり
+  得るときの NOT NULL（裸の `$n` ならパラメータ番号を持たせ、Go 型が非 nullable なら vet が落とす）。
+  ON CONFLICT はアービタの鍵を吸収。無名制約は schema 側で PG と同じ命名（`users_pkey` /
+  `orders_total_check` / `yen_check`）を付ける — 実行時エラーの制約名と一致させるため。
+  契約はテンプレート内の `-- sqlshape: expect a, b, t.col` 行（言語非依存の置き場）。vet は
+  「違反し得るのに未宣言」と「宣言したが違反し得ない」を両方向で報告。runtime は class 23 の PgError を
+  `ConstraintError{Code, Constraint, Table, Column}` に写し `Violates(err, key)` で判別。
+  NOT NULL 列を省いたデフォルト無し INSERT は「常に失敗」の Note。未対応: トリガーの独自 SQLSTATE
+  （`-- sqlshape: error XX001 = Name`）、EXCLUDE 制約、DEFAULT 式が CHECK を破るケース
 - カーディナリティの裏付け（analyze/card.go + `sqlshape.One`）: FROM の各葉について「ユニーク制約の全列が
   既知値〔リテラル・`$n`・外側参照・非相関スカラサブクエリ・それらのキャスト/演算〕と等値束縛されている」
   を関数従属の不動点で証明する。single になった葉の全列は既知になり JOIN の等値で他の葉へ伝播。

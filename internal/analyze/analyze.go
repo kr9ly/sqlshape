@@ -16,6 +16,7 @@ type analyzer struct {
 	paramSrc map[int32]*Source
 	maxParam int32
 	notes    []Note
+	assigned []assignment // values stored into columns (violation.go)
 
 	viewCache  map[*schema.Relation][]rteCol
 	viewScopes map[*schema.Relation]*subquery
@@ -79,8 +80,9 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	for _, c := range cols {
 		res.Columns = append(res.Columns, Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src})
 	}
-	res.Notes = a.notes
 	res.AtMostOne, res.ManyRowsWhy = a.cardinality(tree.Stmts[0].Stmt, sc)
+	res.Violations = a.violations(tree.Stmts[0].Stmt)
+	res.Notes = a.notes
 	return res, nil
 }
 

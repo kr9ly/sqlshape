@@ -57,6 +57,9 @@ type NewOrder struct {
 	Note   *string
 }
 
+// The expect line is the statement's failure contract: the checker requires it to list
+// exactly the constraints the schema says this INSERT can violate.
 var InsertOrder = sqlshape.Query[int64, NewOrder](`
+-- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check
 INSERT INTO orders (user_id, total, note) VALUES ({{.UserID}}, {{.Total}}, {{.Note}}) RETURNING id
 `)

@@ -2,6 +2,7 @@ package sqlshape_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -46,6 +47,7 @@ type NewOrder struct {
 }
 
 var insertOrder = sqlshape.Query[int64, NewOrder](`
+-- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check
 INSERT INTO orders (user_id, total, note) VALUES ({{.UserID}}, {{.Total}}, {{.Note}}) RETURNING id`)
 
 var markPaid = sqlshape.Query[struct{}, struct{ ID int64 }](`UPDATE orders SET status = 'paid' WHERE id = {{.ID}}`)
@@ -138,6 +140,20 @@ func TestAgainstPostgres(t *testing.T) {
 	rows, err = listOrders.Collect(ctx, db, ListParams{IDs: []int64{id1}, Limit: 5})
 	if err != nil || len(rows) != 1 || rows[0].ID != id2 {
 		t.Errorf("range + with: %v %+v", err, rows)
+	}
+
+	_, err = insertOrder.First(ctx, db, NewOrder{UserID: 999, Total: "1"})
+	if !sqlshape.Violates(err, "orders_user_id_fkey") {
+		t.Errorf("fk violation not mapped: %v", err)
+	}
+	_, err = insertOrder.First(ctx, db, NewOrder{UserID: 1, Total: "1", Note: &note})
+	var ce *sqlshape.ConstraintError
+	if !errors.As(err, &ce) || ce.Code != "23505" || ce.Constraint != "orders_user_note_key" || ce.Table != "orders" {
+		t.Errorf("unique violation not mapped: %v", err)
+	}
+	_, err = insertOrder.First(ctx, db, NewOrder{UserID: 1, Total: "-1"})
+	if !sqlshape.Violates(err, "orders_total_check") {
+		t.Errorf("check violation not mapped: %v", err)
 	}
 
 	one, err := orderByID.Get(ctx, db, struct{ ID int64 }{id2})

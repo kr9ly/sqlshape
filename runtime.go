@@ -23,6 +23,53 @@ type DB interface {
 // ErrNoRows is returned by First and Get when the query produced no row.
 var ErrNoRows = pgx.ErrNoRows
 
+// ConstraintError is a constraint violation (SQLSTATE class 23) mapped back to the
+// schema: Constraint is the PG constraint name (the same one the checker lists and the
+// template's `-- sqlshape: expect` line names), Column the NOT NULL column.
+type ConstraintError struct {
+	Code       string // SQLSTATE
+	Constraint string // "" for NOT NULL
+	Table      string
+	Column     string
+	Detail     string
+	Err        *pgconn.PgError
+}
+
+func (e *ConstraintError) Error() string {
+	switch {
+	case e.Constraint != "":
+		return "sqlshape: constraint " + e.Constraint + " violated: " + e.Err.Message
+	case e.Column != "":
+		return "sqlshape: " + e.Table + "." + e.Column + " NOT NULL violated: " + e.Err.Message
+	}
+	return "sqlshape: " + e.Err.Message
+}
+
+func (e *ConstraintError) Unwrap() error { return e.Err }
+
+// Key is the violation as the expect line spells it: the constraint name, or table.column for NOT NULL.
+func (e *ConstraintError) Key() string {
+	if e.Constraint != "" {
+		return e.Constraint
+	}
+	return e.Table + "." + e.Column
+}
+
+// Violates reports whether err is a violation of the named constraint (or table.column NOT NULL).
+func Violates(err error, key string) bool {
+	var ce *ConstraintError
+	return errors.As(err, &ce) && ce.Key() == key
+}
+
+// wrapErr maps integrity-constraint errors to ConstraintError; other errors pass through.
+func wrapErr(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "23") {
+		return &ConstraintError{Code: pgErr.Code, Constraint: pgErr.ConstraintName, Table: pgErr.TableName, Column: pgErr.ColumnName, Detail: pgErr.Detail, Err: pgErr}
+	}
+	return err
+}
+
 // ErrManyRows is returned by Get / Find when a statement declared with One produced
 // more than one row: the schema no longer backs the proof the checker made.
 var ErrManyRows = errors.New("sqlshape: statement declared with One returned more than one row")
@@ -39,7 +86,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 		}
 		rows, err := db.Query(ctx, r.SQL, r.Args...)
 		if err != nil {
-			yield(zero, err)
+			yield(zero, wrapErr(err))
 			return
 		}
 		defer rows.Close()
@@ -62,7 +109,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			}
 		}
 		if err := rows.Err(); err != nil {
-			yield(zero, err)
+			yield(zero, wrapErr(err))
 		}
 	}
 }
@@ -94,7 +141,8 @@ func (s Stmt[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, er
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
-	return db.Exec(ctx, r.SQL, r.Args...)
+	tag, err := db.Exec(ctx, r.SQL, r.Args...)
+	return tag, wrapErr(err)
 }
 
 // Get runs the single-row statement and returns its row, or ErrNoRows.
