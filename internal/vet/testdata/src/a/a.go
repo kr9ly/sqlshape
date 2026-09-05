@@ -130,12 +130,12 @@ var insertUserOK = sqlshape.Query[int64, NewUser]("-- sqlshape: expect users_ema
 
 var nullableEmail = sqlshape.Query[int64, struct{ Email *string }]("-- sqlshape: expect users_email_key, email_check, users_pkey\nINSERT INTO users (email) VALUES ({{.Email}}) RETURNING id") // want "may violate users.email \\(NOT NULL on users.email, SQLSTATE 23502\\)"
 
-var staleExpect = sqlshape.Query[struct{}, struct{ ID int64 }]("-- sqlshape: expect orders_user_note_key\nUPDATE orders SET status = 'paid' WHERE id = {{.ID}}") // want "expects orders_user_note_key but no expansion can violate it"
+var staleExpect = sqlshape.Query[struct{}, struct{ ID int64 }]("-- sqlshape: expect orders_user_note_key, P0401\nUPDATE orders SET status = 'paid' WHERE id = {{.ID}}") // want "expects orders_user_note_key but no expansion can violate it"
 
 var branchViolation = sqlshape.Query[struct{}, struct {
 	ID   int64
 	Note *string
-}](`UPDATE orders SET status = 'paid' {{if .Note}}, note = {{.Note}} {{end}} WHERE id = {{.ID}}`) // want "may violate orders_user_note_key \\(UNIQUE \\(user_id, note\\) on orders, SQLSTATE 23505\\); add `-- sqlshape: expect orders_user_note_key` to the template or make it impossible \\[if@\\d+:then\\]"
+}](`UPDATE orders SET status = 'paid' {{if .Note}}, note = {{.Note}} {{end}} WHERE id = {{.ID}}`) // want `may violate P0401 \(raised by trigger orders_size on orders as OrderTooLarge, SQLSTATE P0401\)` "may violate orders_user_note_key \\(UNIQUE \\(user_id, note\\) on orders, SQLSTATE 23505\\); add `-- sqlshape: expect orders_user_note_key` to the template or make it impossible \\[if@\\d+:then\\]"
 
 // nested rows: array_agg(row(...)) is positional, array_agg(t) / composite columns follow the type's column order
 type OrderBrief struct {

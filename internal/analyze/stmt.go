@@ -35,6 +35,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	if err := a.boolClause(sel.WhereClause, sc, "WHERE"); err != nil {
 		return nil, err
 	}
+	a.recordFixed(sc, sel.WhereClause)
 	// target list
 	var cols []rteCol
 	for _, tn := range sel.TargetList {
@@ -721,6 +722,7 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 	if err := a.boolClause(upd.WhereClause, sc, "WHERE"); err != nil {
 		return nil, err
 	}
+	a.recordFixed(sc, upd.WhereClause)
 	return a.returning(upd.ReturningList, sc)
 }
 
@@ -745,6 +747,7 @@ func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *E
 	if err := a.boolClause(del.WhereClause, sc, "WHERE"); err != nil {
 		return nil, err
 	}
+	a.recordFixed(sc, del.WhereClause)
 	return a.returning(del.ReturningList, sc)
 }
 

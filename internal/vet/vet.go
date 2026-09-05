@@ -42,12 +42,14 @@ var (
 	strictFlag  bool
 	noTables    bool
 	schemasFlag string
+	requireCols string
 )
 
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql (default: nearest schema.sql above the package directory)")
 	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
 	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
+	Analyzer.Flags.StringVar(&requireCols, "require-columns", "", "comma-separated columns (e.g. tenant_id) every statement must pin by equality on each table that has them (row ownership); INSERTs must assign them")
 	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report advisory findings: enum / domain / key columns carried by unnamed Go types, timestamp / date received as time.Time, non-pointer enum parameters (zero value is no label), parameters that always override a column DEFAULT, LIMIT without ORDER BY, enum ordering")
 }
 
@@ -583,6 +585,32 @@ func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit li
 		}
 		if allowed != nil && !allowed[ref.Schema] {
 			report(at, "%s is outside the schemas this code may reference (%s)%s", name, schemasFlag, where)
+		}
+		if requireCols != "" && ref.Kind == 'r' {
+			c.checkRequiredColumns(ref, r, at, report, where)
+		}
+	}
+}
+
+// checkRequiredColumns enforces -require-columns on one referenced table.
+func (c *checker) checkRequiredColumns(ref analyze.RelationRef, r *analyze.Result, at token.Pos, report func(token.Pos, string, ...any), where string) {
+	rel := c.s.Relation(ref.Schema, ref.Name)
+	if rel == nil {
+		return
+	}
+	for _, col := range strings.Split(requireCols, ",") {
+		col = strings.TrimSpace(col)
+		if col == "" || rel.Column(col) == nil {
+			continue
+		}
+		fixed := false
+		for _, f := range r.Fixed {
+			if f.Table == rel.FullName() && f.Column == col {
+				fixed = true
+			}
+		}
+		if !fixed {
+			report(at, "%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name, col, rel.Name, col, where)
 		}
 	}
 }

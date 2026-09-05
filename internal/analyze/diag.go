@@ -94,6 +94,10 @@ type Result struct {
 	// Relations are the tables and views the statement references directly (FROM, JOIN,
 	// DML target, subqueries; views are listed but not expanded). Each once, in order.
 	Relations []RelationRef
+	// Fixed are the table columns the statement pins to one value: by equality with a
+	// literal / parameter / outer reference in WHERE or ON (at any select level), or by
+	// assignment in an INSERT (Assigned set). Row-ownership policies check against it.
+	Fixed []Source
 }
 
 // RelationRef is a direct reference to a relation, with its position in the SQL.

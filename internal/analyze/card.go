@@ -660,3 +660,30 @@ func (p *prover) describe(r *rte) string {
 	}
 	return "function " + name + " may return many rows"
 }
+
+// recordFixed notes which table columns of this level are pinned to a known value by
+// the predicate (WHERE plus join conditions), for Result.Fixed. View bodies are skipped.
+func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
+	if a.inView > 0 || len(sc.items) == 0 {
+		return
+	}
+	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+	for _, it := range sc.items {
+		p.addItem(it)
+	}
+	p.addQuals(where, nil)
+	for changed := true; changed; {
+		changed = false
+		for _, e := range p.edges {
+			if p.known[e.from] && !p.known[e.to] {
+				p.known[e.to] = true
+				changed = true
+			}
+		}
+	}
+	for k := range p.known {
+		if k.r.rel != nil {
+			a.fixed = append(a.fixed, Source{Table: k.r.rel.FullName(), Column: k.r.cols[k.i].name, NotNull: k.r.cols[k.i].src != nil && k.r.cols[k.i].src.NotNull})
+		}
+	}
+}

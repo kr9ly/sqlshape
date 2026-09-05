@@ -1,6 +1,8 @@
 package analyze
 
 import (
+	"strings"
+
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 
 	"github.com/kr9ly/sqlshape/internal/schema"
@@ -29,6 +31,9 @@ type Violation struct {
 	Columns    []string // constrained columns
 	RefTable   string   // FK: referenced table
 	Param      int32    // NOT NULL: the bare parameter whose NULL would violate (0 otherwise)
+	// Trigger / Name: a custom SQLSTATE raised by a trigger function (Constraint holds the code)
+	Trigger string
+	Name    string
 }
 
 // Key identifies a violation the way the expect line spells it.
@@ -60,15 +65,45 @@ type assignment struct {
 func (a *analyzer) violations(stmt *pg_query.Node) []Violation {
 	switch st := stmt.Node.(type) {
 	case *pg_query.Node_InsertStmt:
-		return a.insertViolations(st.InsertStmt)
+		rel := a.s.Relation(st.InsertStmt.Relation.Schemaname, st.InsertStmt.Relation.Relname)
+		return append(a.insertViolations(st.InsertStmt), a.triggerViolations(rel, 'i')...)
 	case *pg_query.Node_UpdateStmt:
 		rel := a.s.Relation(st.UpdateStmt.Relation.Schemaname, st.UpdateStmt.Relation.Relname)
-		return a.updateViolations(rel, a.assignedColumns(rel), nil)
+		return append(a.updateViolations(rel, a.assignedColumns(rel), nil), a.triggerViolations(rel, 'u')...)
 	case *pg_query.Node_DeleteStmt:
 		rel := a.s.Relation(st.DeleteStmt.Relation.Schemaname, st.DeleteStmt.Relation.Relname)
-		return a.referencingViolations(rel, nil, true)
+		return append(a.referencingViolations(rel, nil, true), a.triggerViolations(rel, 'd')...)
 	}
 	return nil
+}
+
+// triggerViolations lists the custom SQLSTATEs the table's triggers for the event raise
+// (declared with `-- sqlshape: error XX001 = Name` on the trigger function).
+func (a *analyzer) triggerViolations(rel *schema.Relation, event byte) []Violation {
+	if rel == nil {
+		return nil
+	}
+	var out []Violation
+	for _, tg := range a.s.Triggers {
+		if tg.Table != rel.FullName() {
+			continue
+		}
+		if (event == 'i' && !tg.Insert) || (event == 'u' && !tg.Update) || (event == 'd' && !tg.Delete) {
+			continue
+		}
+		fs, fname := "", tg.Function
+		if i := strings.LastIndex(fname, "."); i >= 0 {
+			fs, fname = fname[:i], fname[i+1:]
+		}
+		fn := a.s.Function(fs, fname)
+		if fn == nil {
+			continue
+		}
+		for _, r := range fn.Raises {
+			out = append(out, Violation{Code: r.Code, Constraint: r.Code, Table: rel.Name, Trigger: tg.Name, Name: r.Name})
+		}
+	}
+	return dedupe(out)
 }
 
 func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {

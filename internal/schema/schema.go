@@ -27,6 +27,7 @@ type Schema struct {
 
 	Relations []*Relation
 	Functions []*Function
+	Triggers  []*Trigger
 	Comments  map[string]string // "table" / "table.column" / "type:name" → comment
 
 	// Problems are statements the loader could not apply. Loading continues past them.
@@ -127,6 +128,25 @@ type Function struct {
 	// NotNull is the `-- sqlshape: not null` annotation: the result is never NULL (PG
 	// cannot tell; the schema author asserts it).
 	NotNull bool
+	// Raises are the `-- sqlshape: error XX001 = Name` annotations: SQLSTATEs the function
+	// (typically a trigger function) raises on purpose.
+	Raises []RaisedError
+}
+
+// RaisedError is a custom SQLSTATE a function raises, with its application-side name.
+type RaisedError struct {
+	Code string
+	Name string
+}
+
+// Trigger is a row / statement trigger on a table.
+type Trigger struct {
+	Name     string
+	Table    string // FullName of the table
+	Insert   bool
+	Update   bool
+	Delete   bool
+	Function string // schema-qualified unless public
 }
 
 // FuncArg is one parameter.
@@ -254,8 +274,10 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		s.createFunction(st.CreateFunctionStmt, loc)
 	case *pg_query.Node_CommentStmt:
 		s.comment(st.CommentStmt, loc)
+	case *pg_query.Node_CreateTrigStmt:
+		s.createTrigger(st.CreateTrigStmt, loc)
 	case *pg_query.Node_CreateSeqStmt, *pg_query.Node_CreateExtensionStmt, *pg_query.Node_CreateSchemaStmt,
-		*pg_query.Node_CreateTrigStmt, *pg_query.Node_GrantStmt, *pg_query.Node_VariableSetStmt,
+		*pg_query.Node_GrantStmt, *pg_query.Node_VariableSetStmt,
 		*pg_query.Node_AlterSeqStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt:
 		// No effect on typing. (Extensions' functions need a dumped catalog: not yet.)
 	default:
@@ -638,9 +660,20 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 	fn := &Function{OID: s.nextOID, Schema: schema, Name: name, IsProc: st.IsProcedure, Volatile: 'v'}
 	s.nextOID++
 	for _, d := range s.pending {
-		switch strings.ToLower(strings.Join(strings.Fields(d), " ")) {
-		case "not null":
+		norm := strings.Join(strings.Fields(d), " ")
+		switch {
+		case strings.EqualFold(norm, "not null"):
 			fn.NotNull = true
+		case len(norm) > 6 && strings.EqualFold(norm[:6], "error "):
+			// error XX001 = Name
+			rest := strings.TrimSpace(norm[6:])
+			code, errName, _ := strings.Cut(rest, "=")
+			code = strings.TrimSpace(code)
+			if len(code) != 5 {
+				s.problem(loc, "function %s: directive %q: SQLSTATE must be 5 characters", name, d)
+				continue
+			}
+			fn.Raises = append(fn.Raises, RaisedError{Code: code, Name: strings.TrimSpace(errName)})
 		default:
 			s.problem(loc, "function %s: unknown directive %q", name, d)
 		}
@@ -813,4 +846,38 @@ func WalkNodes(m proto.Message, f func(*pg_query.Node)) {
 		WalkNodes(v.Message().Interface(), f)
 		return true
 	})
+}
+
+// createTrigger records which events on which table run which function (trigger.h bits).
+func (s *Schema) createTrigger(st *pg_query.CreateTrigStmt, loc int32) {
+	schema, name := rangeVar(st.Relation)
+	rel := s.relByName[schema+"."+name]
+	if rel == nil {
+		s.problem(loc, "CREATE TRIGGER %s: relation %q does not exist", st.Trigname, name)
+		return
+	}
+	fs, fn := qualified(strs(st.Funcname))
+	if fs == "" || fs == "public" {
+		fs = ""
+	} else {
+		fs += "."
+	}
+	s.Triggers = append(s.Triggers, &Trigger{
+		Name: st.Trigname, Table: rel.FullName(),
+		Insert: st.Events&(1<<2) != 0, Delete: st.Events&(1<<3) != 0, Update: st.Events&(1<<4) != 0,
+		Function: fs + fn,
+	})
+}
+
+// Function finds a user function by (schema, name); schema "" means public.
+func (s *Schema) Function(schema, name string) *Function {
+	if schema == "" {
+		schema = "public"
+	}
+	for _, f := range s.Functions {
+		if f.Schema == schema && f.Name == name {
+			return f
+		}
+	}
+	return nil
 }

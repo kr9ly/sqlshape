@@ -31,7 +31,7 @@ type NewOrder struct {
 	Status OrderStatus
 }
 
-var defaultOwner = sqlshape.Query[OrderID, NewOrder]("-- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check\nINSERT INTO orders (user_id, total, status) VALUES ({{.UserID}}, {{.Total}}, {{.Status}}) RETURNING id") // want `parameter .Status always sends a value into orders.status, so its DEFAULT never applies` `parameter .Status is a non-pointer strict.OrderStatus`
+var defaultOwner = sqlshape.Query[OrderID, NewOrder]("-- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check, P0401\nINSERT INTO orders (user_id, total, status) VALUES ({{.UserID}}, {{.Total}}, {{.Status}}) RETURNING id") // want `parameter .Status always sends a value into orders.status, so its DEFAULT never applies` `parameter .Status is a non-pointer strict.OrderStatus`
 
 var unorderedLimit = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders LIMIT 10`) // want `LIMIT without ORDER BY: which rows are returned is unspecified`
 

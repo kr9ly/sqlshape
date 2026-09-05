@@ -120,6 +120,13 @@ func describeViolation(v analyze.Violation) string {
 	case "23502":
 		return "NOT NULL on " + v.Table + "." + cols + ", SQLSTATE 23502"
 	}
+	if v.Trigger != "" {
+		s := "raised by trigger " + v.Trigger + " on " + v.Table
+		if v.Name != "" {
+			s += " as " + v.Name
+		}
+		return s + ", SQLSTATE " + v.Code
+	}
 	return "SQLSTATE " + v.Code
 }
 

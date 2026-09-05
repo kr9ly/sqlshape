@@ -28,6 +28,7 @@ type analyzer struct {
 	// inCall is set while analyzing the FuncCall of a CALL statement (procedures allowed)
 	inCall bool
 	refs   []RelationRef
+	fixed  []Source
 	// inView is the depth of view definitions being analyzed: their references are the
 	// view's, not the statement's
 	inView int
@@ -94,6 +95,12 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	}
 	res.Violations = a.violations(tree.Stmts[0].Stmt)
 	res.Relations = a.refs
+	for _, as := range a.assigned {
+		if as.rel != nil {
+			a.fixed = append(a.fixed, Source{Table: as.rel.FullName(), Column: as.col.Name, NotNull: as.col.NotNull, Assigned: true})
+		}
+	}
+	res.Fixed = a.fixed
 	res.Notes = a.notes
 	return res, nil
 }

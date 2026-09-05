@@ -56,7 +56,7 @@ type NewOrder struct {
 }
 
 var insertOrder = sqlshape.Query[int64, NewOrder](`
--- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check
+-- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check, P0401
 INSERT INTO orders (user_id, total, note) VALUES ({{.UserID}}, {{.Total}}, {{.Note}}) RETURNING id`)
 
 var markPaid = sqlshape.Query[struct{}, struct{ ID int64 }](`UPDATE orders SET status = 'paid' WHERE id = {{.ID}}`)
@@ -218,6 +218,10 @@ func TestAgainstPostgres(t *testing.T) {
 	_, err = insertOrder.First(ctx, db, NewOrder{UserID: 1, Total: "-1"})
 	if !sqlshape.Violates(err, "orders_total_check") {
 		t.Errorf("check violation not mapped: %v", err)
+	}
+	_, err = insertOrder.First(ctx, db, NewOrder{UserID: 1, Total: "2000000"})
+	if !sqlshape.Violates(err, "P0401") {
+		t.Errorf("trigger SQLSTATE not mapped: %v", err)
 	}
 
 	one, err := orderByID.Get(ctx, db, struct{ ID int64 }{id2})

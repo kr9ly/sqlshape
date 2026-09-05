@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,13 +63,34 @@ func Violates(err error, key string) bool {
 	return errors.As(err, &ce) && ce.Key() == key
 }
 
-// wrapErr maps integrity-constraint errors to ConstraintError; other errors pass through.
-func wrapErr(err error) error {
+// wrapErr maps integrity-constraint errors (SQLSTATE class 23) and the custom SQLSTATEs
+// the template's expect line names to ConstraintError; other errors pass through.
+func (s Stmt[R, P]) wrapErr(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "23") {
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	if strings.HasPrefix(pgErr.Code, "23") {
 		return &ConstraintError{Code: pgErr.Code, Constraint: pgErr.ConstraintName, Table: pgErr.TableName, Column: pgErr.ColumnName, Detail: pgErr.Detail, Err: pgErr}
 	}
+	if s.expects(pgErr.Code) {
+		return &ConstraintError{Code: pgErr.Code, Constraint: pgErr.Code, Detail: pgErr.Detail, Err: pgErr}
+	}
 	return err
+}
+
+var expectRe = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*expect[ \t]+(.+?)[ \t]*$`)
+
+// expects reports whether the template's `-- sqlshape: expect` line names the SQLSTATE.
+func (s Stmt[R, P]) expects(code string) bool {
+	for _, m := range expectRe.FindAllStringSubmatch(s.Template, -1) {
+		for _, item := range strings.Split(m[1], ",") {
+			if strings.TrimSpace(item) == code {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ErrManyRows is returned by Get / Find when a statement declared with One produced
@@ -87,7 +109,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 		}
 		rows, err := db.Query(ctx, r.SQL, r.Args...)
 		if err != nil {
-			yield(zero, wrapErr(err))
+			yield(zero, s.wrapErr(err))
 			return
 		}
 		// result types the connection cannot decode yet (user enums, composites): load them and re-run
@@ -99,7 +121,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 				return
 			}
 			if rows, err = db.Query(ctx, r.SQL, r.Args...); err != nil {
-				yield(zero, wrapErr(err))
+				yield(zero, s.wrapErr(err))
 				return
 			}
 		}
@@ -123,7 +145,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			}
 		}
 		if err := rows.Err(); err != nil {
-			yield(zero, wrapErr(err))
+			yield(zero, s.wrapErr(err))
 		}
 	}
 }
@@ -156,7 +178,7 @@ func (s Stmt[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, er
 		return pgconn.CommandTag{}, err
 	}
 	tag, err := db.Exec(ctx, r.SQL, r.Args...)
-	return tag, wrapErr(err)
+	return tag, s.wrapErr(err)
 }
 
 // Get runs the single-row statement and returns its row, or ErrNoRows.

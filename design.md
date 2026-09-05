@@ -666,6 +666,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ⬜ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | 今はシグネチャだけ信用 |
 | ⬜ | EXPLAIN 系 lint（seq scan、ビューへの述語押し込み不可、ネスト内 LIMIT 無し） | 統計非依存に限定する方針のみ |
 | ⬜ | 拡張の `pg_proc` を dump して取り込む経路 | 生成器は同形式なので経路は開いている |
+| ⬜ | 述語ポリシー（`deleted_at IS NULL` を常に通す等）| 列ポリシーは等値のみ |
 
 ### テンプレートと展開（internal/expand）
 
@@ -689,7 +690,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 🔶 | 表現の忠実さ: `timestamp`（tz 無し）、`date` の tz | `-strict`。`varchar(n)` 長さは静的に見えないので対象外、citext は string で受ける |
 | ✅ | 既定値と生成値の所有者（P 非ポインタ ⇔ DEFAULT / identity 列） | `-strict`。GENERATED / identity ALWAYS への明示挿入は PG 自身のエラー |
 | 🔶 | LIMIT の ORDER BY 無し警告 | analyzer の advisory Note、`-strict`。`First` は呼び出し箇所なので vet からは見えない。`array_agg` ネスト側の 1:1 / 1:N 突合は未 |
-| ⬜ | 行の所属（`tenant_id` / `deleted_at` の列ポリシー lint） | |
+| ✅ | 行の所属（列ポリシー lint） | `-require-columns=tenant_id`: その列を持つテーブルへの全文が等値で固定（INSERT は代入）していることを `Result.Fixed`（全 select レベルの等値束縛）で検査。`deleted_at IS NULL` のような述語ポリシーは未 |
 | ✅ | テーブル直参照禁止 lint（`-no-tables`）、サービス境界（`-schemas=a_api,b_private`） | analyzer が `Result.Relations`（直接参照した関係、ビューは展開しない）を出す。DROP 影響分析 / 死んだスキーマ検出の土台 |
 | ⬜ | `COMMENT ON` を Go doc / gopls hover へ | `schema.Comments` に取り込み済み、出力先が無い |
 | 🔶 | MV: REFRESH CONCURRENTLY に要るユニークインデックス | `-strict` のスキーマ advisory。依存元テーブル一覧は `Result.Relations` を MV 定義に掛ければ出るが出力先が未定 |
@@ -704,7 +705,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | ドメインの不透明化（演算・比較・CASE/COALESCE/UNION・代入） | |
 | ✅ | カーディナリティ: `One` のユニーク鍵証明（JOIN・ビュー・サブクエリ・CTE 越し） | |
 | ✅ | 失敗モード: 違反し得る制約の列挙 + `-- sqlshape: expect` + `ConstraintError` | |
-| ⬜ | トリガーの独自 SQLSTATE（`-- sqlshape: error XX001 = Name`）→ 型付きエラー | |
+| ✅ | トリガーの独自 SQLSTATE（`-- sqlshape: error XX001 = Name`）→ 型付きエラー | schema が CREATE TRIGGER を取り込み、トリガー関数の directive を DML の失敗モードに載せる。expect 行にはコードを書く（名前は診断文のみ）。runtime は expect 行にあるコードの PgError を ConstraintError に写す |
 | ⬜ | 複合キー（複数列 PK / FK）の同一性 | |
 | ⬜ | `One` の既知値に関数呼び出しを含める（volatility 判定が要る）、GROUP BY 列がすべて既知のケース | |
 
@@ -736,7 +737,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 状態 | 項目 | 備考 |
 |---|---|---|
 | ⬜ | example プロジェクト（ビュー / 関数 / 複合型 / enum / lookup を含む schema.sql、読み・書き・動的絞り込みの 3 形） | ゴール `sqlshape/example-app` |
-| ⬜ | DB 側ロジックのテスト作法（embedded PG 上で Go テストから叩く土台の公開） | `internal/oracle` を公開 API に切る形か |
+| ✅ | DB 側ロジックのテスト作法 | `pgtest.Start(ctx, schemaSQL)` — オラクルと同じ embedded PG に schema.sql を流した `*pgx.Conn` を返す |
 | 🔶 | 言語非依存化 | analyze / expand / schema は Go 非依存。vet / runtime が Go フロントエンド。契約（expect 行）は SQL 側に置く方針で揃えた |
 
 ### 本文と実装のズレ（本文側を直すか判断が要るもの）

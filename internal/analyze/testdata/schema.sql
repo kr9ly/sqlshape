@@ -79,3 +79,13 @@ LANGUAGE sql AS $$ UPDATE orders SET status = 'paid' WHERE id = p_order; SELECT 
 COMMENT ON TABLE orders IS 'One purchase.';
 COMMENT ON COLUMN orders.status IS 'Lifecycle state; see order_status.';
 COMMENT ON TYPE order_status IS 'Order lifecycle.';
+
+-- sqlshape: error P0401 = OrderTooLarge
+CREATE FUNCTION check_order_size() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.total > 1000000 THEN
+    RAISE EXCEPTION 'order too large' USING ERRCODE = 'P0401';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER orders_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
