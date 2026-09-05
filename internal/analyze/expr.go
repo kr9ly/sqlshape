@@ -72,7 +72,7 @@ func (a *analyzer) bindArgs(es []*expr, c *candidate, loc int32) *Error {
 	for i, e := range es {
 		actual[i] = e.oid()
 	}
-	var elem catalog.OID
+	var elem, rng, multi catalog.OID
 	for i, d := range c.args {
 		if i >= len(actual) || actual[i] == catalog.Unknown {
 			continue
@@ -84,6 +84,31 @@ func (a *analyzer) bindArgs(es []*expr, c *candidate, loc int32) *Error {
 			if t := a.typ(a.baseType(actual[i])); t != nil {
 				elem = t.Elem
 			}
+		case catalog.AnyRange, catalog.AnyCompatibleRange:
+			rng = a.baseType(actual[i])
+		case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
+			multi = a.baseType(actual[i])
+		}
+	}
+	// a range and its multirange (or subtype) determine each other
+	if rng == 0 && multi != 0 {
+		if r := a.s.Types.RangeOfMulti(multi); r != nil {
+			rng = r.OID
+		}
+	}
+	if rng == 0 && elem != 0 {
+		if r := a.s.Types.RangeForSubtype(elem); r != nil {
+			rng = r.OID
+		}
+	}
+	if rng != 0 {
+		if r := a.s.Types.RangeOf(rng); r != nil {
+			if multi == 0 {
+				multi = r.Multi
+			}
+			if elem == 0 {
+				elem = r.Subtype
+			}
 		}
 	}
 	for i, e := range es {
@@ -92,7 +117,14 @@ func (a *analyzer) bindArgs(es []*expr, c *candidate, loc int32) *Error {
 		}
 		to := c.args[i]
 		if t := a.typ(to); t != nil && t.IsPolymorphic() {
-			to = a.polymorphicArgType(to, 0, elem)
+			switch to {
+			case catalog.AnyRange, catalog.AnyCompatibleRange:
+				to = rng
+			case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
+				to = multi
+			default:
+				to = a.polymorphicArgType(to, 0, elem)
+			}
 			if to == 0 {
 				if e.oid() == catalog.Unknown {
 					to = catalog.Text // PG resolves unknown at an unresolvable polymorphic slot to text
@@ -804,7 +836,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	case c.ufn != nil:
 		a.funcVolatility[f] = c.ufn.Volatile
 	}
-	if c.fn != nil && c.fn.Kind == 'a' && f.Over == nil {
+	if (c.fn != nil && c.fn.Kind == 'a' || c.ufn != nil && c.ufn.IsAgg) && f.Over == nil {
 		sc.agg = true
 	}
 	res := c.result()
@@ -848,6 +880,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			}
 		}
 	case c.fn != nil && !c.fn.IsStrict && res == catalog.Bool:
+	case c.ufn != nil && c.ufn.IsAgg:
 	case c.ufn != nil && c.ufn.NotNull:
 		nullable = false
 	case c.ufn != nil && c.ufn.Strict:

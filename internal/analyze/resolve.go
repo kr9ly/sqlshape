@@ -70,7 +70,15 @@ func (a *analyzer) canCoerce(from, to catalog.OID, ctx coercionContext) bool {
 	if fb != from || tb != to {
 		return a.canCoerce(fb, tb, ctx)
 	}
-	if c := a.s.Catalog.CastBetween(from, to); c != nil {
+	c := a.s.Catalog.CastBetween(from, to)
+	if c == nil {
+		for _, uc := range a.s.Casts {
+			if uc.Source == from && uc.Target == to {
+				c = uc
+			}
+		}
+	}
+	if c != nil {
 		switch ctx {
 		case explicitCoercion:
 			return true
@@ -336,6 +344,11 @@ func (a *analyzer) selectCandidate(actual []catalog.OID, cands []candidate) (*ca
 // resolveOperator implements §10.2 for a binary (left != 0) or prefix operator.
 func (a *analyzer) resolveOperator(name string, left, right catalog.OID) *candidate {
 	ops := a.s.Catalog.OperatorsByName(name)
+	for _, op := range a.s.Operators {
+		if op.Name == name {
+			ops = append(ops, op)
+		}
+	}
 	binary := left != 0
 	// 2a: unknown on one side of a binary operator is assumed to be the other side's type for the exact-match test
 	if binary {
@@ -396,7 +409,7 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 			}
 			switch schemaName {
 			case "":
-				if fn.Schema != "" && fn.Schema != "public" {
+				if !a.s.OnSearchPath(fn.Schema) {
 					continue
 				}
 				if fn.Schema == "" {
@@ -429,7 +442,10 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 	}
 	if schemaName != "pg_catalog" {
 		for _, fn := range a.s.Functions {
-			if fn.Name != name || (schemaName != "" && fn.Schema != schemaName) || (schemaName == "" && fn.Schema != "public") {
+			if fn.Name != name || (schemaName != "" && fn.Schema != schemaName) || (schemaName == "" && !a.s.OnSearchPath(fn.Schema)) {
+				continue
+			}
+			if fn.IsAgg && withinGroup {
 				continue
 			}
 			var in []catalog.OID
@@ -550,12 +566,12 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 	}
 	// ranges: anyrange ↔ anyelement ↔ anymultirange through pg_range
 	if mrng != 0 && rng == 0 {
-		if r := a.s.Catalog.RangeOfMulti(a.baseType(mrng)); r != nil {
+		if r := a.s.Types.RangeOfMulti(a.baseType(mrng)); r != nil {
 			rng = r.OID
 		}
 	}
 	if rng != 0 {
-		if r := a.s.Catalog.RangeOf(a.baseType(rng)); r != nil {
+		if r := a.s.Types.RangeOf(a.baseType(rng)); r != nil {
 			if elem == 0 {
 				elem = r.Subtype
 			} else if elem != r.Subtype {
@@ -566,7 +582,7 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 			}
 		}
 	} else if elem != 0 {
-		if r := a.s.Catalog.RangeForSubtype(elem); r != nil {
+		if r := a.s.Types.RangeForSubtype(elem); r != nil {
 			rng, mrng = r.OID, r.Multi
 		}
 	}

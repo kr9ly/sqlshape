@@ -1,0 +1,5 @@
+params:
+  $1 bigint
+columns:
+  role text <- users.role not null
+  total bigint

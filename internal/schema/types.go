@@ -29,7 +29,12 @@ type Types struct {
 	Enums   map[catalog.OID][]string // enum oid → labels in sort order
 	Domains map[catalog.OID]*Domain  // domain oid → details
 	Schemas map[catalog.OID]string   // user type oid → schema name
-	nextOID catalog.OID
+	// Collations declared with CREATE COLLATION (name → true).
+	Collations map[string]bool
+	// Ranges are user range types (CREATE TYPE ... AS RANGE) with their multirange.
+	Ranges     []catalog.Range
+	nextOID    catalog.OID
+	searchPath []string
 }
 
 // Domain is the CHECK / NOT NULL side of a domain type; the base type lives in catalog.Type.BaseType.
@@ -42,7 +47,8 @@ func newTypes(cat *catalog.Catalog) *Types {
 	return &Types{
 		cat: cat, byOID: map[catalog.OID]*catalog.Type{}, byName: map[string]*catalog.Type{},
 		Enums: map[catalog.OID][]string{}, Domains: map[catalog.OID]*Domain{}, Schemas: map[catalog.OID]string{},
-		nextOID: FirstUserOID,
+		Collations: map[string]bool{},
+		nextOID:    FirstUserOID,
 	}
 }
 
@@ -57,8 +63,14 @@ func (ts *Types) ByOID(oid catalog.OID) *catalog.Type {
 // Lookup resolves a possibly qualified type name against the search path (public, pg_catalog).
 func (ts *Types) Lookup(schema, name string) *catalog.Type {
 	if schema == "" {
-		if t := ts.byName["public."+name]; t != nil {
-			return t
+		path := ts.searchPath
+		if len(path) == 0 {
+			path = []string{"public"}
+		}
+		for _, p := range path {
+			if t := ts.byName[p+"."+name]; t != nil {
+				return t
+			}
 		}
 		return ts.cat.TypeByName(name)
 	}
@@ -171,7 +183,7 @@ func (ts *Types) Format(r TypeRef) string {
 	case catalog.TimeTZ:
 		return "time" + precision(m) + " with time zone"
 	case catalog.Interval:
-		return "interval" // typmod spelling (fields + precision) not reproduced yet
+		return formatInterval(m)
 	}
 	switch t.Name {
 	case "bit":
@@ -233,6 +245,8 @@ func typmodFor(t *catalog.Type, mods []int64) (int32, error) {
 		return int32((p<<16)|(s&0xffff)) + 4, nil
 	case catalog.Timestamp, catalog.TimestampTZ, catalog.Time, catalog.TimeTZ:
 		return int32(mods[0]), nil
+	case catalog.Interval:
+		return intervalTypmod(mods), nil
 	}
 	switch t.Name {
 	case "bit", "varbit":
@@ -256,4 +270,149 @@ func (ts *Types) BaseOf(r TypeRef) TypeRef {
 		}
 		r = TypeRef{OID: t.BaseType, Typmod: typmod}
 	}
+}
+
+// addRange registers CREATE TYPE name AS RANGE (subtype = sub) and its multirange
+// (<name>multirange when name ends in "range", <name>_multirange otherwise, as PG).
+func (ts *Types) addRange(schema, name string, sub catalog.OID) *catalog.Type {
+	r := ts.addUser(schema, name, 'r', 'R', 0, 0)
+	mname := name + "_multirange"
+	if strings.HasSuffix(name, "range") {
+		mname = strings.TrimSuffix(name, "range") + "multirange"
+	}
+	m := ts.addUser(schema, mname, 'm', 'R', 0, 0)
+	ts.Ranges = append(ts.Ranges, catalog.Range{OID: r.OID, Subtype: sub, Multi: m.OID})
+	return r
+}
+
+// RangeOf is the pg_range row of a range type, user-defined or catalog.
+func (ts *Types) RangeOf(rng catalog.OID) *catalog.Range {
+	for i := range ts.Ranges {
+		if ts.Ranges[i].OID == rng {
+			return &ts.Ranges[i]
+		}
+	}
+	return ts.cat.RangeOf(rng)
+}
+
+// RangeOfMulti is the pg_range row of a multirange type.
+func (ts *Types) RangeOfMulti(multi catalog.OID) *catalog.Range {
+	for i := range ts.Ranges {
+		if ts.Ranges[i].Multi == multi {
+			return &ts.Ranges[i]
+		}
+	}
+	return ts.cat.RangeOfMulti(multi)
+}
+
+// RangeForSubtype is the (first) range type over sub.
+func (ts *Types) RangeForSubtype(sub catalog.OID) *catalog.Range {
+	if r := ts.cat.RangeForSubtype(sub); r != nil {
+		return r
+	}
+	for i := range ts.Ranges {
+		if ts.Ranges[i].Subtype == sub {
+			return &ts.Ranges[i]
+		}
+	}
+	return nil
+}
+
+// renameUser renames a user type (and its array type).
+func (ts *Types) renameUser(oid catalog.OID, name string) {
+	t := ts.byOID[oid]
+	if t == nil {
+		return
+	}
+	schema := ts.Schemas[oid]
+	delete(ts.byName, schema+"."+t.Name)
+	t.Name = name
+	ts.byName[schema+"."+name] = t
+	if arr := ts.byOID[t.Array]; arr != nil {
+		delete(ts.byName, schema+"."+arr.Name)
+		arr.Name = "_" + name
+		ts.byName[schema+"."+arr.Name] = arr
+	}
+}
+
+// removeUser forgets a user type and its array type.
+func (ts *Types) removeUser(oid catalog.OID) {
+	t := ts.byOID[oid]
+	if t == nil {
+		return
+	}
+	schema := ts.Schemas[oid]
+	for _, x := range []*catalog.Type{t, ts.byOID[t.Array]} {
+		if x == nil {
+			continue
+		}
+		delete(ts.byName, schema+"."+x.Name)
+		delete(ts.byOID, x.OID)
+		delete(ts.Schemas, x.OID)
+	}
+	delete(ts.Enums, oid)
+	delete(ts.Domains, oid)
+	var kept []*catalog.Type
+	for _, u := range ts.user {
+		if u.OID != oid && u.OID != t.Array {
+			kept = append(kept, u)
+		}
+	}
+	ts.user = kept
+	var ranges []catalog.Range
+	for _, r := range ts.Ranges {
+		if r.OID != oid {
+			ranges = append(ranges, r)
+		}
+	}
+	ts.Ranges = ranges
+}
+
+// Interval typmods (utils/datetime.h): the field mask in the high half, the seconds
+// precision in the low half (0xFFFF = none).
+const (
+	intervalMonth  = 1 << 1
+	intervalYear   = 1 << 2
+	intervalDay    = 1 << 3
+	intervalHour   = 1 << 10
+	intervalMinute = 1 << 11
+	intervalSecond = 1 << 12
+	intervalFull   = 0x7FFF
+)
+
+var intervalFields = map[int32]string{
+	intervalYear: " year", intervalMonth: " month", intervalDay: " day", intervalHour: " hour", intervalMinute: " minute", intervalSecond: " second",
+	intervalYear | intervalMonth: " year to month", intervalDay | intervalHour: " day to hour",
+	intervalDay | intervalHour | intervalMinute: " day to minute", intervalDay | intervalHour | intervalMinute | intervalSecond: " day to second",
+	intervalHour | intervalMinute: " hour to minute", intervalHour | intervalMinute | intervalSecond: " hour to second",
+	intervalMinute | intervalSecond: " minute to second",
+}
+
+func intervalTypmod(mods []int64) int32 {
+	rng := int64(intervalFull)
+	prec := int64(0xFFFF)
+	if len(mods) > 0 {
+		rng = mods[0]
+	}
+	if len(mods) > 1 {
+		prec = mods[1]
+	}
+	return int32((rng&0x7FFF)<<16 | (prec & 0xFFFF))
+}
+
+// formatInterval spells an interval typmod the way intervaltypmodout does.
+func formatInterval(m int32) string {
+	if m < 0 {
+		return "interval"
+	}
+	fields := (m >> 16) & 0x7FFF
+	prec := m & 0xFFFF
+	out := "interval"
+	if fields != intervalFull {
+		out += intervalFields[fields]
+	}
+	if prec != 0xFFFF {
+		out += "(" + strconv.Itoa(int(prec)) + ")"
+	}
+	return out
 }

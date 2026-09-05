@@ -657,7 +657,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 状態 | 項目 | 備考 |
 |---|---|---|
 | ✅ | §10 型変換（演算子・関数・多相・キャスト・select_common_type）、スコープ、DML + RETURNING、`$n` 推論、リテラル検証 | golden 57 本でオラクル一致 |
-| ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | |
+| ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | schema/ddl.go: パーティション・INHERITS・LIKE・RENAME・DROP・ALTER TYPE / DOMAIN・CREATE TYPE AS RANGE・CREATE COLLATION〔照合名検証〕・CREATE AGGREGATE / OPERATOR / CAST・search_path・interval typmod。2026-09-05 の DDL probe 26 群で残った穴は全部埋めた |
 | 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則 + null 除外述語（`IS NOT NULL`、strict 演算子での比較、内部結合の ON）で結果列を not null に。外部結合の null 側に述語が掛かれば基表の NOT NULL 列も戻る。残: CASE 全分岐、非 strict 関数の個別規則 |
 | ✅ | `-- sqlshape: not null` 注釈 | schema.sql では CREATE FUNCTION 直前のコメントで戻り値を NOT NULL に、テンプレートでは `-- sqlshape: not null col, col` で結果列を上書き。STRICT なユーザー関数も引数から伝播 |
 | ✅ | GROUP BY 妥当性（42803） | analyze/grouping.go: deparse 一致・集約引数・PK による関数従属、GROUPING SETS は未検査。golden 5 本 |
@@ -731,7 +731,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ⬜ | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、ドリフト検出、sqldef DROP ゲート | analyzer は列参照を全部見ているが、集計して出す層が無い |
 | ⬜ | 意図宣言 `@migrate`（rename / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
 | ⬜ | 固定値テーブルの `@data` 宣言 → 差分適用 + ドリフト検出、値集合としての読み取り | 本命 |
-| ⬜ | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | |
+| 🔶 | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | CREATE EXTENSION と SET search_path は schema 層が読む。ロール・PG 版は未 |
 | ⬜ | psqldef の CREATE FUNCTION / MV 差分の対応確認 | 対応が薄ければ全量再適用の分担 |
 
 ### 周辺・同梱物

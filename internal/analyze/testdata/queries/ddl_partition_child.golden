@@ -1,0 +1,6 @@
+params:
+  $1 text
+columns:
+  id bigint
+  ts timestamp with time zone
+  kind text

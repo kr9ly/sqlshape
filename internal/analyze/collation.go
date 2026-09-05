@@ -198,6 +198,9 @@ func (a *analyzer) explicitCollate(e *expr, name []string, at int32) *Error {
 	if !a.collatable(e.oid()) {
 		return errAt(codeDatatypeMismatch, at, "collations are not supported by type %s", a.s.Types.Format(e.typ))
 	}
+	if n := collName(name); !a.s.KnownCollation(n) {
+		return errAt(codeUndefinedObject, at, "collation %q for encoding \"UTF8\" does not exist", n)
+	}
 	e.coll = collation{strength: collExplicit, name: collName(name), loc: at}
 	e.src = nil // Describe reports no source column through a COLLATE clause
 	return nil

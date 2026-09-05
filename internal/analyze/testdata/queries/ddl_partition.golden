@@ -1,0 +1,7 @@
+params:
+  $1 timestamp with time zone
+  $2 text
+columns:
+  id bigint <- events.id not null
+  ts timestamp with time zone <- events.ts not null
+  kind text <- events.kind not null

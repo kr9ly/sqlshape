@@ -1,0 +1,7 @@
+params:
+  $1 bigint
+columns:
+  id bigint <- users_history.id not null
+  email text <- users_history.email null
+  nickname character(8) <- users_history.nickname null
+  archived_at timestamp with time zone <- users_history.archived_at not null

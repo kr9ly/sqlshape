@@ -1,0 +1,6 @@
+params:
+  $1 integer
+columns:
+  id integer <- note_doc.id not null
+  title text <- note_doc.title not null
+  body text <- note_doc.body null

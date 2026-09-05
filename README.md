@@ -71,6 +71,6 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 
 ## Status
 
-First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 83 golden
-statements (contrib extensions included) and the checker reports type / column / nullability
+First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 152 golden
+statements (contrib extensions, SQL/JSON, MERGE, GROUPING SETS and a schema full of DDL included) and the checker reports type / column / nullability
 findings on real Go code. Not yet: the migration side.

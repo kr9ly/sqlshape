@@ -243,33 +243,45 @@ SELECT t.oid, n.nspname, t.typname, t.typarray
 	return nil
 }
 
-// LoadUserTypes registers every user-defined enum, composite and domain type of the
+// LoadUserTypes registers every user-defined enum, composite, domain, range and multirange type of the
 // database (and their array types) with conn, so records containing them decode.
 // Use it from pgxpool's AfterConnect; Run also loads result types lazily, but cannot
 // see types nested inside an anonymous record before scanning it.
 func LoadUserTypes(ctx context.Context, conn *pgx.Conn) error {
 	rows, err := conn.Query(ctx, `
-SELECT n.nspname, t.typname
+SELECT n.nspname, t.typname, t.typtype
   FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
- WHERE t.typtype IN ('e', 'c', 'd')
+ WHERE t.typtype IN ('e', 'c', 'd', 'r', 'm')
    AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
    AND (t.typrelid = 0 OR EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind IN ('c', 'r', 'v', 'm', 'p')))
  ORDER BY t.oid`)
 	if err != nil {
 		return err
 	}
-	var names []string
+	// a multirange needs its range type registered first, a composite its field types:
+	// enums, domains and ranges, then multiranges, then composites
+	byKind := map[byte][]string{}
 	for rows.Next() {
-		var nsp, name string
-		if err := rows.Scan(&nsp, &name); err != nil {
+		var nsp, name, kind string
+		if err := rows.Scan(&nsp, &name, &kind); err != nil {
 			rows.Close()
 			return err
 		}
-		names = append(names, qualify(nsp, name), qualify(nsp, "_"+name))
+		byKind[kind[0]] = append(byKind[kind[0]], qualify(nsp, name), qualify(nsp, "_"+name))
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return registerTypes(ctx, conn, names)
+	// pgx orders one LoadTypes call by oid internally, so dependents go in later calls
+	for _, phase := range [][]byte{{'e', 'd', 'r'}, {'m'}, {'c'}} {
+		var names []string
+		for _, k := range phase {
+			names = append(names, byKind[k]...)
+		}
+		if err := registerTypes(ctx, conn, names); err != nil {
+			return err
+		}
+	}
+	return nil
 }

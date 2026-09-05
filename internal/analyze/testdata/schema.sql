@@ -113,3 +113,64 @@ CREATE TABLE memos (
     deleted_at timestamptz
 );
 CREATE VIEW live_memos AS SELECT id, user_id, body FROM memos WHERE deleted_at IS NULL;
+
+-- DDL coverage: partitions, inheritance, LIKE, renames / drops, range types, collations,
+-- user-defined aggregate / operator / cast, search_path, interval typmods
+CREATE TABLE events (
+    id   bigint GENERATED ALWAYS AS IDENTITY,
+    ts   timestamptz NOT NULL,
+    kind text NOT NULL DEFAULT 'click',
+    PRIMARY KEY (id, ts)
+) PARTITION BY RANGE (ts);
+CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE events_default PARTITION OF events DEFAULT;
+
+CREATE TABLE base_doc (id int PRIMARY KEY, title text NOT NULL);
+CREATE TABLE note_doc (body text) INHERITS (base_doc);
+
+CREATE TABLE users_archive (LIKE users INCLUDING DEFAULTS INCLUDING CONSTRAINTS, archived_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE users_archive DROP COLUMN attrs;
+ALTER TABLE users_archive RENAME COLUMN nick TO nickname;
+ALTER TABLE users_archive RENAME TO users_history;
+ALTER TABLE users_history ADD CONSTRAINT users_history_email_len CHECK (length(email) < 200);
+ALTER TABLE users_history DROP CONSTRAINT users_history_email_len;
+
+CREATE TABLE tmp_drop (id int);
+DROP TABLE tmp_drop;
+
+CREATE TYPE priority AS ENUM ('low', 'high');
+ALTER TYPE priority ADD VALUE 'mid' BEFORE 'high';
+ALTER TYPE priority RENAME VALUE 'low' TO 'lowest';
+
+CREATE DOMAIN code AS text;
+ALTER DOMAIN code ADD CONSTRAINT code_len CHECK (length(VALUE) = 3);
+ALTER DOMAIN code SET NOT NULL;
+
+CREATE TYPE floatrange AS RANGE (subtype = float8);
+CREATE COLLATION mycoll FROM "C";
+
+CREATE TABLE spans (
+    id    int PRIMARY KEY,
+    fr    floatrange,
+    mr    floatmultirange,
+    label text COLLATE mycoll,
+    prio  priority NOT NULL DEFAULT 'mid',
+    cd    code,
+    every interval hour to minute,
+    lag3  interval(3),
+    d2s   interval day to second(2)
+);
+
+CREATE FUNCTION yen_sum_step(bigint, yen) RETURNS bigint LANGUAGE sql IMMUTABLE AS $$ SELECT $1 + $2 $$;
+CREATE AGGREGATE yen_sum (yen) (sfunc = yen_sum_step, stype = bigint, initcond = '0');
+
+CREATE FUNCTION approx_eq(numeric, numeric) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT abs($1 - $2) < 0.01 $$;
+CREATE OPERATOR ~= (leftarg = numeric, rightarg = numeric, function = approx_eq);
+
+CREATE FUNCTION money_text(money_amount) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT ($1).currency $$;
+CREATE CAST (money_amount AS text) WITH FUNCTION money_text(money_amount) AS ASSIGNMENT;
+
+CREATE SCHEMA app;
+SET search_path TO app, public;
+CREATE TABLE settings (k text PRIMARY KEY, v text);
+SET search_path TO public;

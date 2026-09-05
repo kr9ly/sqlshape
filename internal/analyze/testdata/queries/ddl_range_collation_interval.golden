@@ -1,0 +1,15 @@
+params:
+  $1 floatrange
+columns:
+  fr floatrange <- spans.fr null
+  hi double precision
+  ov boolean
+  mr floatmultirange <- spans.mr null
+  agg floatmultirange
+  label text <- spans.label null
+  lc text
+  cd text <- spans.cd null
+  every interval hour to minute <- spans.every null
+  lag3 interval(3) <- spans.lag3 null
+  d2s interval day to second(2) <- spans.d2s null
+  sum interval

@@ -1,0 +1,5 @@
+params:
+  $1 text
+columns:
+  k text <- app.settings.k not null
+  v text <- app.settings.v null

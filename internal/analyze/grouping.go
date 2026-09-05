@@ -166,6 +166,11 @@ func (a *analyzer) isAggregateName(names []string) bool {
 			return true
 		}
 	}
+	for _, f := range a.s.Functions {
+		if f.Name == name && f.IsAgg {
+			return true
+		}
+	}
 	return false
 }
 
