@@ -146,6 +146,13 @@ type Aggregate struct {
 	TransType  OID
 }
 
+// Range is a range type with its subtype and multirange type (pg_range).
+type Range struct {
+	OID     OID
+	Subtype OID
+	Multi   OID
+}
+
 // Catalog is the loaded bootstrap catalog with lookup indexes.
 type Catalog struct {
 	Version string
@@ -155,6 +162,7 @@ type Catalog struct {
 	Operators  []Operator
 	Casts      []Cast
 	Aggregates []Aggregate
+	Ranges     []Range
 
 	typeByOID  map[OID]*Type
 	typeByName map[string]*Type
@@ -302,7 +310,43 @@ func parse() (*Catalog, error) {
 		a := &c.Aggregates[i]
 		c.aggByFn[a.FnOID] = a
 	}
+	if err := rows("pg_range", 3, func(f []string) error {
+		c.Ranges = append(c.Ranges, Range{OID: oid(f[0]), Subtype: oid(f[1]), Multi: oid(f[2])})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// RangeOf returns the pg_range entry of a range type, or nil.
+func (c *Catalog) RangeOf(rng OID) *Range {
+	for i := range c.Ranges {
+		if c.Ranges[i].OID == rng {
+			return &c.Ranges[i]
+		}
+	}
+	return nil
+}
+
+// RangeOfMulti returns the pg_range entry whose multirange type is multi, or nil.
+func (c *Catalog) RangeOfMulti(multi OID) *Range {
+	for i := range c.Ranges {
+		if c.Ranges[i].Multi == multi {
+			return &c.Ranges[i]
+		}
+	}
+	return nil
+}
+
+// RangeForSubtype returns the (first) range type over subtype, or nil.
+func (c *Catalog) RangeForSubtype(sub OID) *Range {
+	for i := range c.Ranges {
+		if c.Ranges[i].Subtype == sub {
+			return &c.Ranges[i]
+		}
+	}
+	return nil
 }
 
 // rows streams one embedded TSV (COPY text format) and calls fn per row.

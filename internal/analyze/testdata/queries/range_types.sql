@@ -1,0 +1,1 @@
+SELECT lower(int4range(1, 5)) AS lo, upper(daterange('2024-01-01', '2024-02-01')) AS up, int4range(1, 5) @> 3 AS c, range_merge(int4range(1, 2), int4range(4, 5)) AS m, int4multirange(int4range(1, 2)) AS mr, lower(int4multirange(int4range(1, 2))) AS mlo, range_agg(numrange(1, 2)) AS agg, numrange(1, 2) * numrange(1.5, 3) AS isect, upper_inc(tstzrange(now(), NULL)) AS ui

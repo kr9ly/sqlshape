@@ -1,0 +1,11 @@
+params:
+columns:
+  lo integer
+  up date
+  c boolean
+  m int4range
+  mr int4multirange
+  mlo integer
+  agg nummultirange
+  isect numrange
+  ui boolean

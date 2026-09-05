@@ -477,9 +477,9 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 				return 0, false
 			}
 			arr = act
-		case catalog.AnyRange:
+		case catalog.AnyRange, catalog.AnyCompatibleRange:
 			rng = act
-		case catalog.AnyMultirange:
+		case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
 			mrng = act
 		case catalog.AnyCompatible, catalog.AnyCompatibleNonArray:
 			compatElems = append(compatElems, act)
@@ -503,8 +503,27 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 	if elem != 0 && arr == 0 {
 		arr = a.s.Types.ArrayOf(elem)
 	}
-	if rng != 0 && elem == 0 {
-		// range subtype: not tracked in the dumped catalog yet
+	// ranges: anyrange ↔ anyelement ↔ anymultirange through pg_range
+	if mrng != 0 && rng == 0 {
+		if r := a.s.Catalog.RangeOfMulti(a.baseType(mrng)); r != nil {
+			rng = r.OID
+		}
+	}
+	if rng != 0 {
+		if r := a.s.Catalog.RangeOf(a.baseType(rng)); r != nil {
+			if elem == 0 {
+				elem = r.Subtype
+			} else if elem != r.Subtype {
+				return 0, false
+			}
+			if mrng == 0 {
+				mrng = r.Multi
+			}
+		}
+	} else if elem != 0 {
+		if r := a.s.Catalog.RangeForSubtype(elem); r != nil {
+			rng, mrng = r.OID, r.Multi
+		}
 	}
 	var compat catalog.OID
 	if len(compatElems) > 0 {
@@ -529,12 +548,12 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 			return 0, false
 		}
 		return arr, true
-	case catalog.AnyRange:
+	case catalog.AnyRange, catalog.AnyCompatibleRange:
 		if rng == 0 {
 			return 0, false
 		}
 		return rng, true
-	case catalog.AnyMultirange:
+	case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
 		if mrng == 0 {
 			return 0, false
 		}

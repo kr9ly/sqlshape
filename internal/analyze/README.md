@@ -36,4 +36,4 @@ DELETE with RETURNING and ON CONFLICT.
 - GROUP BY validity (`grouping.go`): grouping expressions matched by deparsed text, aggregate arguments
   exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS unchecked
 - Nullability is refined by null-rejecting predicates (IS NOT NULL, strict comparisons, inner-join ON)
-- Not yet: collation, range types' subtypes
+- Not yet: collation

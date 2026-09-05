@@ -49,6 +49,10 @@ var dumps = map[string]string{
 		SELECT a.aggfnoid::oid, a.aggkind, a.aggnumdirectargs, a.aggtranstype
 		  FROM pg_aggregate a
 		 ORDER BY a.aggfnoid::oid`,
+	"pg_range": `
+		SELECT r.rngtypid, r.rngsubtype, r.rngmultitypid
+		  FROM pg_range r
+		 ORDER BY r.rngtypid`,
 }
 
 func main() {
