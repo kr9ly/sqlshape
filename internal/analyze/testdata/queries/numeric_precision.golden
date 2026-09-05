@@ -1,0 +1,13 @@
+params:
+columns:
+  total numeric(12,2) <- orders.total not null
+  ti integer
+  r1 numeric
+  d numeric
+  s numeric
+  aq numeric
+  at numeric
+  mx numeric
+  f numeric
+  intdiv integer
+  pow double precision

@@ -650,3 +650,6 @@ func (s *Schema) comment(st *pg_query.CommentStmt, loc int32) {
 	key = strings.TrimPrefix(key, "public.")
 	s.Comments[key] = st.Comment
 }
+
+// ResolveType resolves a TypeName AST node against this schema (exported for the analyzer).
+func (s *Schema) ResolveType(tn *pg_query.TypeName) (TypeRef, error) { return s.resolveType(tn) }

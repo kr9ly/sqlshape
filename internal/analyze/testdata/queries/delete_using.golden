@@ -1,0 +1,6 @@
+params:
+  $1 text
+  $2 timestamp with time zone
+columns:
+  id bigint <- orders.id not null
+  email text <- users.email null

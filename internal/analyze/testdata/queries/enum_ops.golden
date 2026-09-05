@@ -1,0 +1,7 @@
+params:
+  $1 order_status
+columns:
+  status order_status <- orders.status not null
+  st text
+  early boolean
+  all_statuses order_status[]

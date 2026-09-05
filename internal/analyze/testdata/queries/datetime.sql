@@ -1,0 +1,1 @@
+SELECT o.created_at, o.created_at + interval '1 day' AS tomorrow, o.created_at::date AS d, date_trunc('day', o.created_at) AS day, extract(epoch FROM o.created_at) AS epoch, now() - o.created_at AS age, born, age(born) AS howold, wake FROM users u JOIN orders o ON o.user_id = u.id

@@ -1,0 +1,6 @@
+params:
+  $1 bigint
+columns:
+  uid bigint <- orders.user_id not null
+  n bigint
+  total numeric

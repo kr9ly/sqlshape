@@ -1,0 +1,1 @@
+SELECT u.id, (SELECT max(total) FROM orders o WHERE o.user_id = u.id) AS max_total, EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id) AS has, u.id IN (SELECT user_id FROM orders) AS in_orders FROM users u

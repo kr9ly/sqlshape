@@ -1,0 +1,9 @@
+params:
+  $1 jsonb
+columns:
+  meta jsonb <- orders.meta null
+  a jsonb
+  b text
+  contains boolean
+  obj jsonb
+  js jsonb

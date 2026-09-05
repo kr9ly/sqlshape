@@ -1,0 +1,13 @@
+params:
+columns:
+  u users
+  id bigint <- orders.id not null
+  user_id bigint <- orders.user_id not null
+  status order_status <- orders.status not null
+  total numeric(12,2) <- orders.total not null
+  price money_amount <- orders.price null
+  note text <- orders.note null
+  meta jsonb <- orders.meta null
+  uid uuid <- orders.uid null
+  matrix integer[] <- orders.matrix null
+  created_at timestamp with time zone <- orders.created_at not null

@@ -1,0 +1,8 @@
+params:
+  $1 order_status
+columns:
+  order_id bigint <- order_items.order_id not null
+  line_no smallint <- order_items.line_no not null
+  sku character varying(32) <- order_items.sku not null
+  qty integer <- order_items.qty not null
+  status order_status <- orders.status not null

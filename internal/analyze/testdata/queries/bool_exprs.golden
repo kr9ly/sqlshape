@@ -1,0 +1,9 @@
+params:
+  $1 boolean
+  $2 boolean
+columns:
+  id bigint <- orders.id not null
+  paid boolean
+  small boolean
+  both boolean
+  p boolean

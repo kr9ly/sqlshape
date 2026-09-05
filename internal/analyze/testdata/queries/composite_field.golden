@@ -1,0 +1,5 @@
+params:
+columns:
+  amt numeric(12,2)
+  cur character(3)
+  price money_amount <- orders.price null

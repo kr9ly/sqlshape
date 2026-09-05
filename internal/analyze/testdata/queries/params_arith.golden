@@ -1,0 +1,9 @@
+params:
+  $1 numeric
+  $2 integer
+  $3 bigint
+columns:
+  id bigint <- orders.id not null
+  t2 numeric
+  t3 numeric
+  n integer

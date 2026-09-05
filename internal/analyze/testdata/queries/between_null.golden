@@ -1,0 +1,6 @@
+params:
+  $1 numeric
+  $2 numeric
+  $3 order_status
+columns:
+  id bigint <- orders.id not null

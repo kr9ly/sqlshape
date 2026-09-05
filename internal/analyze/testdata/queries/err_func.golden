@@ -1,0 +1,1 @@
+error: 42883: function nosuch(bigint) does not exist (at 8)

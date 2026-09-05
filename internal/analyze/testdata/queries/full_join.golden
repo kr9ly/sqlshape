@@ -1,0 +1,5 @@
+params:
+columns:
+  id bigint <- users.id not null
+  oid bigint <- orders.id not null
+  total numeric(12,2) <- orders.total not null

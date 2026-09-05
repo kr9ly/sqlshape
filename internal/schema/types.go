@@ -107,7 +107,7 @@ func (ts *Types) Format(r TypeRef) string {
 	if t == nil {
 		return fmt.Sprintf("???(%d)", r.OID)
 	}
-	if t.IsArray() && t.OID != catalog.AnyArray && t.Elem != 0 {
+	if t.Elem != 0 && strings.HasPrefix(t.Name, "_") {
 		// format_type prints arrays as elem[] with the typmod applied to the element
 		return ts.Format(TypeRef{t.Elem, r.Typmod}) + "[]"
 	}
@@ -137,7 +137,7 @@ func (ts *Types) Format(r TypeRef) string {
 		if m >= 4 {
 			return fmt.Sprintf("character(%d)", m-4)
 		}
-		return "character"
+		return "bpchar" // format_type with an explicit typmod of -1 (as Describe reports) prints the raw name
 	case catalog.Varchar:
 		if m >= 4 {
 			return fmt.Sprintf("character varying(%d)", m-4)
@@ -164,7 +164,7 @@ func (ts *Types) Format(r TypeRef) string {
 		if m >= 1 {
 			return fmt.Sprintf("bit(%d)", m)
 		}
-		return "bit"
+		return `"bit"` // same TYPEMOD_GIVEN rule: bare bit is quoted so it is not read as bit(1)
 	case "varbit":
 		if m >= 1 {
 			return fmt.Sprintf("bit varying(%d)", m)

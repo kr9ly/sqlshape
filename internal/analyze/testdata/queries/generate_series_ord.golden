@@ -1,0 +1,4 @@
+params:
+columns:
+  generate_series integer
+  ordinality bigint

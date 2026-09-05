@@ -1,0 +1,8 @@
+params:
+  $1 order_status
+  $2 bigint[]
+columns:
+  id bigint <- orders.id not null
+  status order_status <- orders.status not null
+  total numeric(12,2) <- orders.total not null
+  email text <- users.email null

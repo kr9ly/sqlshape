@@ -1,0 +1,6 @@
+params:
+  $1 numeric
+columns:
+  note text
+  g numeric
+  l integer

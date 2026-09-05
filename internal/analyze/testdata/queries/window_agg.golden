@@ -1,0 +1,6 @@
+params:
+columns:
+  id bigint <- orders.id not null
+  rn bigint
+  running numeric
+  paid bigint

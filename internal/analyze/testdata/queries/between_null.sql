@@ -1,0 +1,1 @@
+SELECT id FROM orders WHERE total BETWEEN $1 AND $2 AND note IS NOT NULL AND (status IS DISTINCT FROM $3)

@@ -1,0 +1,1 @@
+SELECT total, total::int AS ti, round(total, 1) AS r1, total / 3 AS d, sum(total) AS s, avg(qty) AS aq, avg(total) AS at, max(total) AS mx, 1 + 1.5 AS f, 10 / 4 AS intdiv, 2^10 AS pow FROM orders, order_items GROUP BY total

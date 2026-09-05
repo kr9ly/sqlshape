@@ -154,7 +154,7 @@ func (o *Oracle) Describe(ctx context.Context, sql string) (*Description, error)
 			return nil, err
 		}
 		c := Column{Name: f.Name, Type: t}
-		if f.TableOID != 0 {
+		if f.TableOID != 0 && f.TableAttributeNumber != 0 { // attnum 0 = whole-row reference
 			src, err := o.source(ctx, f.TableOID, f.TableAttributeNumber)
 			if err != nil {
 				return nil, err

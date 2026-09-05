@@ -1,0 +1,7 @@
+params:
+  $1 bigint
+  $2 bigint
+  $3 bigint[]
+  $4 text
+columns:
+  id bigint <- orders.id not null

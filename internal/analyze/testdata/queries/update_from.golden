@@ -1,0 +1,7 @@
+params:
+  $1 integer
+  $2 order_status
+columns:
+  order_id bigint <- order_items.order_id not null
+  qty integer <- order_items.qty not null
+  status order_status <- orders.status not null

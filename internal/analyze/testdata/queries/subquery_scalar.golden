@@ -1,0 +1,6 @@
+params:
+columns:
+  id bigint <- users.id not null
+  max_total numeric
+  has boolean
+  in_orders boolean

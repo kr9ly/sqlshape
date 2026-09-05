@@ -1,0 +1,7 @@
+params:
+  $1 bigint
+columns:
+  id bigint <- users.id not null
+  email text <- users.email null
+  name character varying(100) <- users.name null
+  created_at timestamp with time zone <- users.created_at not null

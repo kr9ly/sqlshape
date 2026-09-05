@@ -1,0 +1,15 @@
+params:
+  $1 uuid
+columns:
+  i integer
+  n numeric
+  s text
+  b boolean
+  nul text
+  big bigint
+  e numeric
+  d date
+  iv interval
+  bits "bit"
+  u uuid
+  tx text

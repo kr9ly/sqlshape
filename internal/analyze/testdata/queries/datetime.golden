@@ -1,0 +1,11 @@
+params:
+columns:
+  created_at timestamp with time zone <- orders.created_at not null
+  tomorrow timestamp with time zone
+  d date
+  day timestamp with time zone
+  epoch numeric
+  age interval
+  born date <- users.born null
+  howold interval
+  wake time(3) without time zone <- users.wake null

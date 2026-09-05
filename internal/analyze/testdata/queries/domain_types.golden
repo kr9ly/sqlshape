@@ -1,0 +1,9 @@
+params:
+  $1 bigint
+  $2 text
+columns:
+  balance bigint <- users.balance not null
+  b1 bigint
+  b2 bigint
+  email text <- users.email null
+  le text

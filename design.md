@@ -184,6 +184,14 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
   RowDescription は基底型 OID を送る仕様なので、オラクルからはドメインが見えない。式の型検査では
   ドメインとして扱い、オラクル照合の直前で基底型に潰す（`Types.BaseOf`）。ドメインの NOT NULL も
   attnotnull には現れない
+- **列由来はサブクエリと CTE は透過し、ビューで止まる**。`markTargetListOrigins` が解析時に走り、
+  ビューはまだ RTE_RELATION のため。アナライザーは同じ規則を鏡写しにしている
+- **select_common_type の typmod**: 入力に untyped literal / `$n` が 1 つでもあると typmod は落ちる
+  （`coalesce($1, total)` は `numeric`、`CASE ... THEN total ELSE total` は `numeric(12,2)`）
+- **`format_type(oid, -1)` は TYPEMOD_GIVEN 扱い**: typmod 無しの `bpchar` は `bpchar`、`bit` は `"bit"` と出る
+- **`text[] || 'x'` は array_cat に解決される**（anycompatiblearray || anycompatiblearray）。多相型の
+  整合検査（check_generic_type_consistency）を候補選別に入れないと array_append 側に誤解決する。
+  `array || 'literal'` が実行時に "malformed array literal" になる有名な罠の正体
 - `numeric` の typmod は列直参照なら残る（`numeric(12,2)`）が集約（`sum`）や `$n` では落ちる。
   typmod 伝播規則が関数ごとに違うことの実例
 
@@ -579,6 +587,13 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 5. nullability は NOT NULL / JOIN 種別 / COALESCE の伝播で推論し、`col:"name,nullable"` で上書き可
 
 一番面倒なのは PG 型 → Go 型の対応表と、typmod / 多相型の解決。
+
+## 進捗（2026-09-05）
+
+- oracle / catalog / schema / analyze の 4 パッケージが動作。analyze はオラクル golden 57 本
+  （SELECT / JOIN / CTE / 集合演算 / VALUES / 関数 in FROM / DML + RETURNING / エラー 10 種）と一致
+- 未実装: GROUP BY 妥当性検査（42803）、照合順序、range 型の subtype、ROWS FROM、データ変更 CTE、
+  nullability の精緻化（現状は NOT NULL + 外部結合 + 主要な式規則のみ）
 
 ## 未解決
 

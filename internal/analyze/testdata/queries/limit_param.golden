@@ -1,0 +1,5 @@
+params:
+  $1 bigint
+  $2 bigint
+columns:
+  id bigint <- users.id not null

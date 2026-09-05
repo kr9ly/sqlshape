@@ -1,0 +1,6 @@
+params:
+columns:
+  id bigint <- users.id not null
+  ids bigint[]
+  totals numeric[]
+  notes text

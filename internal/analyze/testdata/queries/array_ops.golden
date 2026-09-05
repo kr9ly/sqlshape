@@ -1,0 +1,12 @@
+params:
+  $1 text[]
+  $2 text
+columns:
+  tags text[] <- users.tags not null
+  first text
+  n integer
+  more text[]
+  app text[]
+  ints integer[]
+  strs text[]
+  tag text

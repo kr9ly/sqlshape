@@ -1,0 +1,6 @@
+params:
+  $1 numeric
+columns:
+  user_id bigint
+  total numeric
+  n bigint

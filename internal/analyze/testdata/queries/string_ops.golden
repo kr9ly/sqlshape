@@ -1,0 +1,8 @@
+params:
+  $1 text
+columns:
+  e text
+  greet text
+  len integer
+  xy text
+  up text
