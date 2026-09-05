@@ -109,6 +109,14 @@ func (c *checker) checkExpectations(lit literal, possible map[string]analyze.Vio
 }
 
 func describeViolation(v analyze.Violation) string {
+	s := describeViolationAt(v)
+	if v.Function != "" {
+		s += ", through " + v.Function + "()"
+	}
+	return s
+}
+
+func describeViolationAt(v analyze.Violation) string {
 	cols := strings.Join(v.Columns, ", ")
 	switch v.Code {
 	case "23505":
@@ -126,6 +134,9 @@ func describeViolation(v analyze.Violation) string {
 			s += " as " + v.Name
 		}
 		return s + ", SQLSTATE " + v.Code
+	}
+	if v.Name != "" {
+		return "raised as " + v.Name + ", SQLSTATE " + v.Code
 	}
 	return "SQLSTATE " + v.Code
 }

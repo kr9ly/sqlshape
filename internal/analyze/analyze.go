@@ -38,7 +38,10 @@ type analyzer struct {
 	inView int
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
-	lastCatFunc  *catalog.Func
+	// calledFuncs are the user functions the statement calls (with their arguments): their
+	// bodies' failure modes are the statement's too
+	calledFuncs []calledFunc
+	lastCatFunc *catalog.Func
 	// funcParams: when analyzing a SQL function body, its parameters (by name and position)
 	funcParams []funcParam
 	// funcVolatility remembers the volatility of each resolved function call (card.go)
@@ -233,6 +236,12 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 	res.Violations = a.violations(tree.Stmts[0].Stmt)
 	for _, dml := range a.dmlCTEs {
 		res.Violations = dedupe(append(res.Violations, a.violations(dml)...))
+	}
+	// a call into a user function may fail the way its body can: the writes go through
+	// functions when the database is the API, and the caller declares their failure modes
+	visited := map[*schema.Function]bool{}
+	for _, cf := range a.calledFuncs {
+		res.Violations = dedupe(append(res.Violations, functionViolations(s, cf, visited)...))
 	}
 	res.Relations = a.refs
 	for _, as := range a.assigned {

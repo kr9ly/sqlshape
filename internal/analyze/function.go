@@ -29,27 +29,14 @@ const codeInvalidFunctionDefinition = "42P13"
 // AnalyzeFunction checks a LANGUAGE sql function's body against its signature. Functions
 // without an analyzable body return an empty result.
 func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, error) {
-	var stmts []*pg_query.Node
-	switch {
-	case fn.SQLBody != nil:
-		stmts = flattenLists(fn.SQLBody)
-	case fn.Body != "" && strings.EqualFold(fn.Language, "sql"):
-		tree, err := pg_query.Parse(fn.Body)
-		if err != nil {
-			return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
-		}
-		for _, raw := range tree.Stmts {
-			stmts = append(stmts, raw.Stmt)
-		}
-	default:
+	stmts, err := functionBody(fn)
+	if err != nil {
+		return nil, err
+	}
+	if stmts == nil {
 		return &FunctionResult{}, nil
 	}
-	var fp []funcParam
-	for _, arg := range fn.Args {
-		if arg.Mode == 'i' || arg.Mode == 'b' || arg.Mode == 'v' {
-			fp = append(fp, funcParam{name: arg.Name, typ: arg.Type})
-		}
-	}
+	fp := functionParams(fn)
 	out := &FunctionResult{}
 	var last *Result
 	for i, st := range stmts {
@@ -101,6 +88,103 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 		}
 	}
 	return out, nil
+}
+
+// functionBody parses a SQL function's statements (nil for other languages).
+func functionBody(fn *schema.Function) ([]*pg_query.Node, error) {
+	switch {
+	case fn.SQLBody != nil:
+		return flattenLists(fn.SQLBody), nil
+	case fn.Body != "" && strings.EqualFold(fn.Language, "sql"):
+		tree, err := pg_query.Parse(fn.Body)
+		if err != nil {
+			return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
+		}
+		var stmts []*pg_query.Node
+		for _, raw := range tree.Stmts {
+			stmts = append(stmts, raw.Stmt)
+		}
+		return stmts, nil
+	}
+	return nil, nil
+}
+
+func functionParams(fn *schema.Function) []funcParam {
+	var fp []funcParam
+	for _, arg := range fn.Args {
+		if arg.Mode == 'i' || arg.Mode == 'b' || arg.Mode == 'v' {
+			fp = append(fp, funcParam{name: arg.Name, typ: arg.Type})
+		}
+	}
+	return fp
+}
+
+// calledFunc is a user function a statement calls, with the call's argument expressions.
+type calledFunc struct {
+	fn   *schema.Function
+	args []*pg_query.Node
+}
+
+// functionViolations lists what a call to fn may violate: the SQLSTATEs it declares with
+// `-- sqlshape: error` and, for a SQL function, whatever its body's statements may violate
+// (functions they call included; visited guards recursion). A NOT NULL violation the body
+// blames on a parameter is translated to the call: a STRICT function is not even called
+// with a NULL, a non-null literal cannot violate, a $n parameter of the statement keeps
+// the blame (so the Go type decides), any other argument leaves it possible.
+func functionViolations(s *schema.Schema, cf calledFunc, visited map[*schema.Function]bool) []Violation {
+	fn := cf.fn
+	if visited[fn] {
+		return nil
+	}
+	visited[fn] = true
+	var out []Violation
+	for _, r := range fn.Raises {
+		out = append(out, Violation{Code: r.Code, Constraint: r.Code, Name: r.Name, Function: fn.Name})
+	}
+	stmts, err := functionBody(fn)
+	if err != nil {
+		return out
+	}
+	positional := true
+	for _, a := range cf.args {
+		if a.GetNamedArgExpr() != nil {
+			positional = false
+		}
+	}
+	fp := functionParams(fn)
+	for _, st := range stmts {
+		if st.GetReturnStmt() != nil {
+			continue
+		}
+		r, err := analyzeStmt(s, st, fp, nil)
+		if err != nil {
+			continue
+		}
+		for _, v := range r.Violations {
+			if v.Function == "" {
+				v.Function = fn.Name
+			}
+			if v.Param > 0 {
+				if fn.Strict {
+					continue
+				}
+				pos := int(v.Param)
+				v.Param = 0
+				if positional && pos <= len(cf.args) {
+					switch arg := cf.args[pos-1].Node.(type) {
+					case *pg_query.Node_ParamRef:
+						v.Param = arg.ParamRef.Number
+					case *pg_query.Node_AConst:
+						if !arg.AConst.Isnull {
+							continue
+						}
+					}
+				}
+			}
+			out = append(out, v)
+		}
+	}
+	return dedupe(out)
 }
 
 func relByRowType(s *schema.Schema, oid catalog.OID) *schema.Relation {

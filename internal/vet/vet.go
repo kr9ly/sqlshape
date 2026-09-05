@@ -633,6 +633,14 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			report(lit.pos(off), "not null: the query has no result column %q%s", name, where)
 		}
 	}
+	// a void column (SELECT some_procedure_like_function(...)) carries nothing: it binds to no field
+	cols := r.Columns[:0:0]
+	for _, col := range r.Columns {
+		if col.Type.OID != catalog.Void {
+			cols = append(cols, col)
+		}
+	}
+	r.Columns = cols
 	st, isStruct := rType.Underlying().(*types.Struct)
 	if !isStruct || isNamed(rType, "time", "Time") {
 		// scalar R: exactly one column

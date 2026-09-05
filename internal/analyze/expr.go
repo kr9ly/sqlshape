@@ -18,6 +18,9 @@ type expr struct {
 	node     *pg_query.Node
 	// param is the parameter number when the expression is a bare $n
 	param int32
+	// fparam is the 1-based position of the SQL function parameter this expression is,
+	// while a function body is analyzed (a NOT NULL violation blames it on the call's argument)
+	fparam int32
 	// lit marks a constant (or an expression built only from constants and parameters):
 	// it carries no domain of its own, see domain.go
 	lit bool
@@ -510,9 +513,9 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 				return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 			}
 			// a SQL function's parameter (a column of the same name takes precedence)
-			for _, p := range a.funcParams {
+			for i, p := range a.funcParams {
 				if p.name == col {
-					return &expr{typ: p.typ, nullable: true, node: nodeOf(c)}, nil
+					return &expr{typ: p.typ, nullable: true, node: nodeOf(c), fparam: int32(i + 1)}, nil
 				}
 			}
 		} else if r := sc.wholeRow(tbl); r != nil {
@@ -828,6 +831,9 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		return nil, err
 	}
 	a.lastUserFunc = c.ufn
+	if c.ufn != nil {
+		a.calledFuncs = append(a.calledFuncs, calledFunc{fn: c.ufn, args: f.Args})
+	}
 	a.lastCatFunc = c.fn
 	a.lastFuncRetSet = (c.fn != nil && c.fn.RetSet) || (c.ufn != nil && c.ufn.RetSet)
 	switch {
@@ -973,7 +979,10 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
 		}
-		return &expr{typ: cols[0].typ, nullable: true, node: self, coll: cols[0].coll.asVar()}, nil
+		// a scalar subquery is NULL when it yields no row; an aggregate without GROUP BY
+		// always yields one, so its column's own nullability stands (coalesce(max(x), 0))
+		nullable := cols[0].nullable || !a.plainAggregate(sel)
+		return &expr{typ: cols[0].typ, nullable: nullable, node: self, coll: cols[0].coll.asVar()}, nil
 	case pg_query.SubLinkType_ARRAY_SUBLINK:
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
@@ -1229,4 +1238,30 @@ var zeroArgNullable = map[string]bool{
 	"inet_client_addr": true, "inet_client_port": true, "inet_server_addr": true, "inet_server_port": true,
 	"pg_last_wal_receive_lsn": true, "pg_last_wal_replay_lsn": true, "pg_last_xact_replay_timestamp": true,
 	"pg_current_xact_id_if_assigned": true, "current_query": true, "pg_current_logfile": true,
+}
+
+// plainAggregate reports whether sel is a single aggregate query without GROUP BY / HAVING /
+// LIMIT / set operations: it returns exactly one row.
+func (a *analyzer) plainAggregate(sel *pg_query.SelectStmt) bool {
+	if sel.Op != pg_query.SetOperation_SETOP_NONE || len(sel.GroupClause) > 0 || sel.HavingClause != nil ||
+		sel.LimitCount != nil || sel.LimitOffset != nil || len(sel.ValuesLists) > 0 || len(sel.DistinctClause) > 0 {
+		return false
+	}
+	agg := false
+	for _, tn := range sel.TargetList {
+		schema.WalkNodes(tn, func(n *pg_query.Node) {
+			if f := n.GetFuncCall(); f != nil && f.Over == nil && a.isAggregateName(funcNames(f)) {
+				agg = true
+			}
+		})
+	}
+	return agg
+}
+
+func funcNames(f *pg_query.FuncCall) []string {
+	var names []string
+	for _, n := range f.Funcname {
+		names = append(names, n.GetString_().GetSval())
+	}
+	return names
 }

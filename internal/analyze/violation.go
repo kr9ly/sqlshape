@@ -34,6 +34,9 @@ type Violation struct {
 	// Trigger / Name: a custom SQLSTATE raised by a trigger function (Constraint holds the code)
 	Trigger string
 	Name    string
+	// Function is the user function whose body (or `-- sqlshape: error` annotation) this
+	// violation comes from, when the statement reaches it through a call.
+	Function string
 }
 
 // Key identifies a violation the way the expect line spells it.
@@ -271,6 +274,9 @@ func (a *analyzer) columnViolations(rel *schema.Relation, c *schema.Column) []Vi
 			if as.rel == rel && as.col == c && as.e.nullable {
 				v := Violation{Code: codeNotNullViolation, Table: rel.Name, Columns: []string{c.Name}}
 				v.Param = as.e.param
+				if v.Param == 0 {
+					v.Param = as.e.fparam
+				}
 				out = append(out, v)
 				break
 			}
