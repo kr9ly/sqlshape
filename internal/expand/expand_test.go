@@ -1,6 +1,7 @@
 package expand
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -70,5 +71,35 @@ func TestRejectsPipelines(t *testing.T) {
 	}
 	if _, err := Expand(`SELECT {{template "x"}}`); err == nil {
 		t.Error("expected error")
+	}
+}
+
+// TestSparse: beyond MaxExpansions the expander falls back to all-off / all-on / each-alone.
+func TestSparse(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("SELECT id FROM t WHERE true")
+	for i := 0; i < 10; i++ {
+		fmt.Fprintf(&b, " {{if .C%d}} AND c%d = {{.C%d}} {{end}}", i, i, i)
+	}
+	b.WriteString(" {{range .IDs}} AND id <> {{.}} {{end}}")
+	res, err := Expand(b.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Sparse || res.Combinations <= MaxExpansions {
+		t.Fatalf("expected sparse fallback: sparse=%v combos=%d", res.Sparse, res.Combinations)
+	}
+	// 1 all-off + 1 all-on + 11 alone
+	if len(res.Expansions) != 13 {
+		t.Fatalf("expansions: %d", len(res.Expansions))
+	}
+	if strings.Contains(res.Expansions[0].SQL, "c0 =") {
+		t.Errorf("all-off should have no predicates: %s", res.Expansions[0].SQL)
+	}
+	if !strings.Contains(res.Expansions[1].SQL, "c9 = $10") || !strings.Contains(res.Expansions[1].SQL, "id <> $12") {
+		t.Errorf("all-on should have every predicate and two iterations: %s", res.Expansions[1].SQL)
+	}
+	if got := res.Expansions[2].SQL; !strings.Contains(got, "c0 = $1") || strings.Contains(got, "c1 =") {
+		t.Errorf("first alone form: %s", got)
 	}
 }

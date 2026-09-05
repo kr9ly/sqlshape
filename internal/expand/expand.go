@@ -11,7 +11,11 @@ import (
 	"text/template/parse"
 )
 
-// MaxExpansions caps the branch product; templates beyond it must be split.
+// MaxExpansions caps the full branch product. Beyond it the expansion falls back to a
+// sparse set (Result.Sparse): every branch off, every branch on, and each branch on
+// alone. Independent AND predicates are then still fully type-checked; a fragment that
+// depends on another (a JOIN one `if` introduces, a column another `if` uses) shows up
+// as an error in its "alone" form, which is the cue to restructure the template.
 const MaxExpansions = 256
 
 // Path is a field path from the parameter struct root: each element is a field
@@ -74,6 +78,11 @@ type Result struct {
 	Expansions []Expansion
 	// Controls are the paths read by if / with / range conditions (they must exist on P).
 	Controls []Path
+	// Sparse is set when the branch product exceeded MaxExpansions and Expansions holds
+	// the sparse set instead of every combination (see MaxExpansions).
+	Sparse bool
+	// Combinations is the size of the full branch product.
+	Combinations int
 }
 
 // Error is a template problem with a template byte offset.
@@ -90,18 +99,91 @@ func Expand(tmpl string) (*Result, error) {
 	if err != nil {
 		return nil, &Error{Pos: 0, Msg: strings.TrimPrefix(err.Error(), "template: q:")}
 	}
-	x := &expander{res: &Result{}}
-	states := []*state{{dot: Path{}, vars: map[string]Path{"$": {}}}}
-	out, err := x.list(trees["q"].Root, states)
-	if err != nil {
-		return nil, err
+	root := trees["q"].Root
+	branches := branchNodes(root)
+	combos := 1
+	for _, b := range branches {
+		if b.kind == 'r' {
+			combos *= 3
+		} else {
+			combos *= 2
+		}
+		if combos > MaxExpansions {
+			break
+		}
 	}
+	res := &Result{Combinations: combos}
+	if combos <= MaxExpansions {
+		x := &expander{res: res}
+		out, err := x.list(root, []*state{{dot: Path{}, vars: map[string]Path{"$": {}}}})
+		if err != nil {
+			return nil, err
+		}
+		x.emit(out)
+		return res, nil
+	}
+	// sparse: all off, all on, each on alone
+	res.Sparse = true
+	policies := []map[parse.Pos]int{{}, {}}
+	for _, b := range branches {
+		on := 1
+		if b.kind == 'r' {
+			on = 2
+		}
+		policies[1][b.pos] = on
+		policies = append(policies, map[parse.Pos]int{b.pos: 1})
+	}
+	for _, pol := range policies {
+		x := &expander{res: res, choose: func(pos parse.Pos) int { return pol[pos] }}
+		out, err := x.list(root, []*state{{dot: Path{}, vars: map[string]Path{"$": {}}}})
+		if err != nil {
+			return nil, err
+		}
+		x.emit(out)
+	}
+	return res, nil
+}
+
+func (x *expander) emit(out []*state) {
 	for _, st := range out {
 		x.res.Expansions = append(x.res.Expansions, Expansion{
 			SQL: st.sql.String(), Params: st.params, Branch: strings.TrimSpace(st.branch), segs: st.segs,
 		})
 	}
-	return x.res, nil
+}
+
+type branchNode struct {
+	pos  parse.Pos
+	kind byte // 'i' if, 'w' with, 'r' range
+}
+
+// branchNodes lists the control nodes of a tree in source order.
+func branchNodes(l *parse.ListNode) []branchNode {
+	var out []branchNode
+	var walk func(l *parse.ListNode)
+	walk = func(l *parse.ListNode) {
+		if l == nil {
+			return
+		}
+		for _, n := range l.Nodes {
+			switch v := n.(type) {
+			case *parse.IfNode:
+				out = append(out, branchNode{v.Pos, 'i'})
+				walk(v.List)
+				walk(v.ElseList)
+			case *parse.WithNode:
+				out = append(out, branchNode{v.Pos, 'w'})
+				walk(v.List)
+				walk(v.ElseList)
+			case *parse.RangeNode:
+				out = append(out, branchNode{v.Pos, 'r'})
+				walk(v.List)
+				walk(v.ElseList)
+			}
+		}
+	}
+	walk(l)
+	return out
 }
 
 // builtins lets conditions use the usual comparison / boolean helpers. They are never evaluated.
@@ -112,6 +194,9 @@ var builtins = map[string]any{
 
 type expander struct {
 	res *Result
+	// choose, when set (sparse mode), picks the single alternative to take at a control
+	// node: 0 else / no iteration, 1 then / one iteration, 2 two iterations
+	choose func(pos parse.Pos) int
 }
 
 // state is one partial expansion being built.
@@ -165,7 +250,7 @@ func (s *state) param(p Path, tmplPos int) {
 }
 
 func (x *expander) list(l *parse.ListNode, states []*state) ([]*state, error) {
-	if l == nil {
+	if l == nil || len(states) == 0 {
 		return states, nil
 	}
 	var err error
@@ -231,6 +316,11 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 // branches expands then/else lists. withDot, if set, becomes dot inside the then-branch.
 func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, withDot *Path) ([]*state, error) {
 	var out []*state
+	takeThen, takeElse := true, true
+	if x.choose != nil {
+		takeThen = x.choose(b.Pos) >= 1
+		takeElse = !takeThen
+	}
 	then := make([]*state, 0, len(states))
 	for _, s := range states {
 		c := s.clone()
@@ -239,6 +329,9 @@ func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, w
 			c.dot = x.rebase(*withDot, s)
 		}
 		then = append(then, c)
+	}
+	if !takeThen {
+		then = nil
 	}
 	then, err := x.list(b.List, then)
 	if err != nil {
@@ -250,6 +343,9 @@ func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, w
 		}
 	}
 	out = append(out, then...)
+	if !takeElse {
+		return out, nil
+	}
 	els := make([]*state, 0, len(states))
 	for _, s := range states {
 		c := s.clone()
@@ -271,7 +367,11 @@ func (x *expander) rangeNode(r *parse.RangeNode, states []*state) ([]*state, err
 	}
 	x.res.Controls = append(x.res.Controls, p)
 	var out []*state
-	for _, count := range []int{0, 1, 2} {
+	counts := []int{0, 1, 2}
+	if x.choose != nil {
+		counts = []int{x.choose(r.Pos)}
+	}
+	for _, count := range counts {
 		batch := make([]*state, 0, len(states))
 		for _, s := range states {
 			c := s.clone()

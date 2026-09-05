@@ -52,6 +52,9 @@ func (s Stmt[R, P]) checkAgainstExpansion(ev *evaluator, r Rendered) error {
 	if err != nil {
 		return err
 	}
+	if exps.Sparse {
+		return nil // the checker saw a sparse set; no combination to compare against
+	}
 	sig := strings.TrimSpace(ev.branch.String())
 	for i := range exps.Expansions {
 		e := &exps.Expansions[i]

@@ -322,6 +322,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		pass.Reportf(pos, "sqlshape: %s", msg)
 	}
 	multi := len(res.Expansions) > 1
+	if res.Sparse && c.strict {
+		pass.Reportf(lit.pos(0), "sqlshape: %d branch combinations exceed %d: checked sparsely (all branches off, all on, each on alone); the runtime cannot compare renderings with the checked set", res.Combinations, expand.MaxExpansions)
+	}
 	possible := map[string]analyze.Violation{}
 	branch := map[string]string{}
 	analyzedAll := true
