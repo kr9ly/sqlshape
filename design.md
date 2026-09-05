@@ -180,6 +180,10 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
   ビュー越しの null 判定の正解を持たない
 - `array_agg(row(...))` は `record[]`（匿名複合型）で返る。ネスト構造体の導出は自前の行型推論が必要。
   名前付き複合型（`CREATE TYPE`）にキャストさせれば PG 側でも型が付く
+- **ドメイン型の列は Describe に基底型で出る**（`email` ドメイン → `text`、`yen` → `bigint`）。
+  RowDescription は基底型 OID を送る仕様なので、オラクルからはドメインが見えない。式の型検査では
+  ドメインとして扱い、オラクル照合の直前で基底型に潰す（`Types.BaseOf`）。ドメインの NOT NULL も
+  attnotnull には現れない
 - `numeric` の typmod は列直参照なら残る（`numeric(12,2)`）が集約（`sum`）や `$n` では落ちる。
   typmod 伝播規則が関数ごとに違うことの実例
 
