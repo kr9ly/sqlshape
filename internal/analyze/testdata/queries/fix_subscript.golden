@@ -1,0 +1,12 @@
+params:
+  $1 integer
+columns:
+  ja jsonb
+  jab jsonb
+  ja0 jsonb
+  m12 integer
+  m1 integer
+  msl integer[]
+  msl2 integer[]
+  t1 text
+  tp text

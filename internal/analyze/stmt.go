@@ -448,6 +448,17 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 	items := rf.Functions[0].GetList().GetItems()
 	fnode := items[0]
 	fc := fnode.GetFuncCall()
+	if fc != nil && len(fc.Args) > 1 && len(rf.Coldeflist) == 0 && (len(items) == 1 || len(items[1].GetList().GetItems()) == 0) {
+		if names := strs(fc.Funcname); names[len(names)-1] == "unnest" && (len(names) == 1 || names[0] == "pg_catalog") {
+			// unnest(a, b, ...) in FROM is shorthand for ROWS FROM (unnest(a), unnest(b), ...)
+			multi := &pg_query.RangeFunction{Alias: rf.Alias, Ordinality: rf.Ordinality, Lateral: rf.Lateral}
+			for _, arg := range fc.Args {
+				one := &pg_query.FuncCall{Funcname: fc.Funcname, Args: []*pg_query.Node{arg}, Location: fc.Location}
+				multi.Functions = append(multi.Functions, &pg_query.Node{Node: &pg_query.Node_List{List: &pg_query.List{Items: []*pg_query.Node{{Node: &pg_query.Node_FuncCall{FuncCall: one}}}}}})
+			}
+			return a.rangeFunction(multi, sc)
+		}
+	}
 	r := &rte{}
 	var cols []rteCol
 	coldefs := rf.Coldeflist

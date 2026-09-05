@@ -1,0 +1,1 @@
+error: 42809: WITHIN GROUP is required for ordered-set aggregate percentile_cont (at 8)

@@ -1,0 +1,7 @@
+params:
+  $1 integer[]
+  $2 text[]
+columns:
+  a integer
+  b text
+  n bigint

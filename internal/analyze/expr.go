@@ -659,12 +659,18 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 	}
 	for _, n := range f.AggOrder {
-		if _, err := a.analyzeExpr(n.GetSortBy().GetNode(), sc); err != nil {
+		e, err := a.analyzeExpr(n.GetSortBy().GetNode(), sc)
+		if err != nil {
 			return nil, err
+		}
+		if f.AggWithinGroup {
+			// an ordered-set aggregate's signature is its direct arguments followed by the
+			// WITHIN GROUP (ORDER BY ...) expressions
+			args = append(args, e)
 		}
 	}
 	actual := a.argOIDs(args)
-	c, ambiguous := a.resolveFunction(schemaName, name, actual)
+	c, ambiguous := a.resolveFunction(schemaName, name, actual, f.AggWithinGroup)
 	if c == nil {
 		// type-name(x) is a cast
 		if len(args) == 1 {
@@ -681,6 +687,17 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 		if ambiguous {
 			return nil, errAt(codeAmbiguousFunction, f.Location, "function %s(%s) is not unique", name, a.typeNames(actual))
+		}
+		// an ordered-set aggregate called without WITHIN GROUP (the other way round is 42883 in PG)
+		for _, fn := range a.s.Catalog.FuncsByName(name) {
+			if fn.Kind != 'a' || (schemaName != "" && schemaName != "pg_catalog" && fn.Schema != schemaName) {
+				continue
+			}
+			agg := a.s.Catalog.AggregateByFn(fn.OID)
+			ordered := agg != nil && agg.Kind != 'n'
+			if ordered && !f.AggWithinGroup {
+				return nil, errAt(codeWrongObjectType, f.Location, "WITHIN GROUP is required for ordered-set aggregate %s", name)
+			}
 		}
 		return nil, errAt(codeUndefinedFunction, f.Location, "function %s(%s) does not exist", name, a.typeNames(actual))
 	}
@@ -833,16 +850,38 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		}
 		return &expr{typ: ref(arr), nullable: false, node: self}, nil
 	case pg_query.SubLinkType_ANY_SUBLINK, pg_query.SubLinkType_ALL_SUBLINK:
+		name := "="
+		if len(s.OperName) > 0 {
+			name = a.opName(s.OperName)
+		}
+		if row := s.Testexpr.GetRowExpr(); row != nil {
+			// (a, b) IN (SELECT x, y ...): compared column by column
+			if len(row.Args) != len(cols) {
+				if len(row.Args) > len(cols) {
+					return nil, errAt(codeSyntaxError, s.Location, "subquery has too few columns")
+				}
+				return nil, errAt(codeSyntaxError, s.Location, "subquery has too many columns")
+			}
+			nullable := false
+			for i, n := range row.Args {
+				l, err := a.analyzeExpr(n, sc)
+				if err != nil {
+					return nil, err
+				}
+				r := &expr{typ: cols[i].typ, nullable: cols[i].nullable, coll: cols[i].coll.asVar()}
+				if _, err := a.applyOperator(name, l, r, s.Location, nil); err != nil {
+					return nil, err
+				}
+				nullable = nullable || l.nullable || r.nullable
+			}
+			return &expr{typ: ref(catalog.Bool), nullable: nullable, node: self}, nil
+		}
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery has too many columns")
 		}
 		l, err := a.analyzeExpr(s.Testexpr, sc)
 		if err != nil {
 			return nil, err
-		}
-		name := "="
-		if len(s.OperName) > 0 {
-			name = a.opName(s.OperName)
 		}
 		r := &expr{typ: cols[0].typ, nullable: cols[0].nullable, coll: cols[0].coll.asVar()}
 		if _, err := a.applyOperator(name, l, r, s.Location, nil); err != nil {
@@ -861,27 +900,60 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 		return nil, err
 	}
 	cur := e.typ
-	for _, ind := range x.Indirection {
+	for i := 0; i < len(x.Indirection); i++ {
+		ind := x.Indirection[i]
 		switch v := ind.Node.(type) {
 		case *pg_query.Node_AIndices:
 			t := a.typ(a.baseType(cur.OID))
-			if t == nil || !t.IsArray() {
+			switch {
+			case t != nil && t.OID == catalog.JSONB:
+				// jsonb subscripting (PG 14): each subscript is a key (text) or an array index
+				// (integer) and yields jsonb
+				for _, idx := range []*pg_query.Node{v.AIndices.Lidx, v.AIndices.Uidx} {
+					if idx == nil {
+						continue
+					}
+					ie, err := a.analyzeExpr(idx, sc)
+					if err != nil {
+						return nil, err
+					}
+					if err := a.bind(ie, catalog.Text, loc(idx)); err != nil {
+						return nil, err
+					}
+					if o := a.baseType(ie.oid()); o != catalog.Text && o != catalog.Int4 && !a.canCoerce(o, catalog.Text, implicitCoercion) {
+						return nil, errAt(codeDatatypeMismatch, loc(idx), "subscript type %s is not supported for jsonb", a.s.Types.Format(ie.typ))
+					}
+				}
+				cur = ref(catalog.JSONB)
+			case t != nil && t.IsArray():
+				// a run of subscripts is one operation: a[1][2] on int[][] (which is _int4) is
+				// an int, any slice in the run keeps the array type
+				slice := false
+				for ; i < len(x.Indirection); i++ {
+					ai := x.Indirection[i].GetAIndices()
+					if ai == nil {
+						break
+					}
+					slice = slice || ai.IsSlice
+					for _, idx := range []*pg_query.Node{ai.Lidx, ai.Uidx} {
+						if idx == nil {
+							continue
+						}
+						ie, err := a.analyzeExpr(idx, sc)
+						if err != nil {
+							return nil, err
+						}
+						if err := a.bind(ie, catalog.Int4, loc(idx)); err != nil {
+							return nil, err
+						}
+					}
+				}
+				i--
+				if !slice {
+					cur = ref(t.Elem)
+				}
+			default:
 				return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(cur))
-			}
-			for _, idx := range []*pg_query.Node{v.AIndices.Lidx, v.AIndices.Uidx} {
-				if idx == nil {
-					continue
-				}
-				ie, err := a.analyzeExpr(idx, sc)
-				if err != nil {
-					return nil, err
-				}
-				if err := a.bind(ie, catalog.Int4, loc(idx)); err != nil {
-					return nil, err
-				}
-			}
-			if !v.AIndices.IsSlice {
-				cur = ref(t.Elem)
 			}
 		case *pg_query.Node_String_:
 			t := a.typ(cur.OID)

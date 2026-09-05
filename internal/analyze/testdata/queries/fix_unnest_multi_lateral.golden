@@ -1,0 +1,5 @@
+params:
+columns:
+  id bigint <- users.id not null
+  tag text
+  m integer

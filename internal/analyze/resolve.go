@@ -1,6 +1,9 @@
 package analyze
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -365,34 +368,63 @@ func (a *analyzer) resolveOperator(name string, left, right catalog.OID) *candid
 	return c
 }
 
-// resolveFunction implements §10.3 over catalog + user functions named name.
-func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID) (*candidate, bool) {
+// resolveFunction implements §10.3 over catalog + user functions named name. withinGroup
+// selects the ordered-set / hypothetical-set aggregates (they are only callable with
+// WITHIN GROUP, and nothing else is).
+func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID, withinGroup bool) (*candidate, bool) {
 	var cands []candidate
 	ambiguousExact := false
 	add := func(c candidate) {
 		cands = append(cands, c)
 	}
-	// bootstrap functions are pg_catalog, an extension's live in the schema it was created in
-	for _, fn := range a.s.Catalog.FuncsByName(name) {
-		if fn.Kind == 'p' {
-			continue
+	// bootstrap functions are pg_catalog, an extension's live in the schema it was created in.
+	// Unqualified, pg_catalog comes first on the search path: a public function with the
+	// same signature is hidden.
+	sigs := map[string]bool{}
+	sig := func(args []catalog.OID) string {
+		var b strings.Builder
+		for _, o := range args {
+			fmt.Fprintf(&b, "%d,", o)
 		}
-		switch schemaName {
-		case "":
-			if fn.Schema != "" && fn.Schema != "public" {
+		return b.String()
+	}
+	fns := a.s.Catalog.FuncsByName(name)
+	for pass := 0; pass < 2; pass++ {
+		for _, fn := range fns {
+			if fn.Kind == 'p' || (pass == 0) != (fn.Schema == "") {
 				continue
 			}
-		case "pg_catalog":
-			if fn.Schema != "" {
+			switch schemaName {
+			case "":
+				if fn.Schema != "" && fn.Schema != "public" {
+					continue
+				}
+				if fn.Schema == "" {
+					sigs[sig(fn.ArgTypes)] = true
+				} else if sigs[sig(fn.ArgTypes)] {
+					continue
+				}
+			case "pg_catalog":
+				if fn.Schema != "" {
+					continue
+				}
+			default:
+				if fn.Schema != schemaName {
+					continue
+				}
+			}
+			if fn.Kind == 'a' {
+				agg := a.s.Catalog.AggregateByFn(fn.OID)
+				ordered := agg != nil && agg.Kind != 'n'
+				if ordered != withinGroup {
+					continue
+				}
+			} else if withinGroup {
 				continue
 			}
-		default:
-			if fn.Schema != schemaName {
-				continue
+			if c, ok := expandArgs(fn.ArgTypes, int(fn.NArgDefault), fn.Variadic, len(actual)); ok {
+				add(candidate{fn: fn, args: c, nargs: len(fn.ArgTypes), variadicElem: fn.Variadic})
 			}
-		}
-		if c, ok := expandArgs(fn.ArgTypes, int(fn.NArgDefault), fn.Variadic, len(actual)); ok {
-			add(candidate{fn: fn, args: c, nargs: len(fn.ArgTypes), variadicElem: fn.Variadic})
 		}
 	}
 	if schemaName != "pg_catalog" {
