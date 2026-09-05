@@ -11,8 +11,8 @@
 //	     LIMIT {{.Limit}}
 //	`)
 //
-// The runtime half (executing a Stmt against pgx) is not implemented yet; the
-// analyzer in cmd/sqlshape checks every expansion of every Query in a program.
+// Stmt runs against pgx (Run / Collect / First / Exec); the analyzer in
+// cmd/sqlshape checks every expansion of every Query in a program.
 package sqlshape
 
 // Stmt is a checked SQL template. R is the result row type, P the parameter type.
