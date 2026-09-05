@@ -6,6 +6,7 @@ package schema
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,7 @@ type Schema struct {
 	Problems []Problem
 
 	relByName map[string]*Relation
+	pending   []string // directives preceding the statement being applied
 	nextOID   catalog.OID
 }
 
@@ -122,6 +124,9 @@ type Function struct {
 	Language string
 	Volatile byte // i / s / v (default v)
 	Strict   bool
+	// NotNull is the `-- sqlshape: not null` annotation: the result is never NULL (PG
+	// cannot tell; the schema author asserts it).
+	NotNull bool
 }
 
 // FuncArg is one parameter.
@@ -154,10 +159,43 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 		relByName: map[string]*Relation{},
 		nextOID:   FirstUserOID + 100000, // relations / functions live in a separate range from types
 	}
+	prev := int32(0)
 	for _, raw := range tree.Stmts {
+		// `-- sqlshape: ...` comment lines in front of a statement annotate it (a statement's
+		// span starts right after the previous semicolon, so the comments sit inside it)
+		end := raw.StmtLocation + raw.StmtLen
+		if raw.StmtLen == 0 {
+			end = int32(len(schemaSQL))
+		}
+		s.pending = directives(leadingComments(schemaSQL[prev:end]))
 		s.apply(raw.Stmt, raw.StmtLocation)
+		prev = end
 	}
 	return s, nil
+}
+
+// leadingComments returns the run of blank and `--` comment lines that opens text.
+func leadingComments(text string) string {
+	end := 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		t := strings.Trim(line, "; \t\r\n") // the previous statement's semicolon opens the span
+		if t != "" && !strings.HasPrefix(t, "--") {
+			break
+		}
+		end += len(line)
+	}
+	return text[:end]
+}
+
+var directiveLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[ \t]*$`)
+
+// directives extracts the `-- sqlshape: <text>` comment lines of a text.
+func directives(text string) []string {
+	var out []string
+	for _, m := range directiveLine.FindAllStringSubmatch(text, -1) {
+		out = append(out, m[1])
+	}
+	return out
 }
 
 // Relation finds a table or view by (schema, name); schema "" means public.
@@ -599,6 +637,14 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 	}
 	fn := &Function{OID: s.nextOID, Schema: schema, Name: name, IsProc: st.IsProcedure, Volatile: 'v'}
 	s.nextOID++
+	for _, d := range s.pending {
+		switch strings.ToLower(strings.Join(strings.Fields(d), " ")) {
+		case "not null":
+			fn.NotNull = true
+		default:
+			s.problem(loc, "function %s: unknown directive %q", name, d)
+		}
+	}
 	var tableCols []FuncArg
 	for _, pn := range st.Parameters {
 		p := pn.GetFunctionParameter()

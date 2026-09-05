@@ -275,7 +275,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
 		}
 		c.checkParams(e, r, pType, lit, report, where)
-		c.checkResult(call.Pos(), r, rType, report, where)
+		c.checkResult(call.Pos(), r, rType, lit, report, where)
 	}
 	if analyzedAll {
 		c.checkExpectations(lit, possible, branch, report)
@@ -350,8 +350,22 @@ func (c *checker) fidelity(pg schema.TypeRef, gt types.Type) string {
 }
 
 // checkResult matches result columns against R.
-func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.Type, report func(token.Pos, string, ...any), where string) {
+func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) {
 	at := callPos
+	// `-- sqlshape: not null a, b` in the template overrides the analyzer's nullability
+	overrides, _ := notNullOverrides(lit.text)
+	for name, off := range overrides {
+		found := false
+		for i := range r.Columns {
+			if r.Columns[i].Name == name {
+				r.Columns[i].Nullable = false
+				found = true
+			}
+		}
+		if !found {
+			report(lit.pos(off), "not null: the query has no result column %q%s", name, where)
+		}
+	}
 	st, isStruct := rType.Underlying().(*types.Struct)
 	if !isStruct || isNamed(rType, "time", "Time") {
 		// scalar R: exactly one column

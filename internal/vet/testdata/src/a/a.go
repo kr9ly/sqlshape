@@ -184,3 +184,15 @@ type MoneyOK struct {
 }
 
 var compositeOK = sqlshape.Query[struct{ Price *MoneyOK }, struct{}](`SELECT price FROM orders`)
+
+// -- sqlshape: not null in the template overrides the analyzer's nullability for named result columns
+type NotedOrder struct {
+	ID   int64
+	Note string
+}
+
+var notNullOverride = sqlshape.Query[NotedOrder, struct{}]("-- sqlshape: not null note\nSELECT id, note FROM orders WHERE note IS NOT NULL")
+
+var notNullTypo = sqlshape.Query[NotedOrder, struct{}]("-- sqlshape: not null note, nope\nSELECT id, note FROM orders") // want `not null: the query has no result column "nope"`
+
+var countByFunc = sqlshape.Query[int64, struct{ U int64 }](`SELECT order_count({{.U}})`)

@@ -63,6 +63,13 @@ LANGUAGE sql AS $$ SELECT user_id, sum(total) FROM orders GROUP BY user_id $$;
 
 CREATE FUNCTION user_ids() RETURNS SETOF bigint LANGUAGE sql AS $$ SELECT id FROM users $$;
 
+-- sqlshape: not null
+CREATE FUNCTION order_count(p_user bigint) RETURNS bigint
+LANGUAGE sql STABLE AS $$ SELECT count(*) FROM orders WHERE user_id = p_user $$;
+
+CREATE FUNCTION nick_of(p_user bigint) RETURNS text
+LANGUAGE sql STABLE STRICT AS $$ SELECT name FROM users WHERE id = p_user $$;
+
 COMMENT ON TABLE orders IS 'One purchase.';
 COMMENT ON COLUMN orders.status IS 'Lifecycle state; see order_status.';
 COMMENT ON TYPE order_status IS 'Order lifecycle.';

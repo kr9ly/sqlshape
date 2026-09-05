@@ -21,14 +21,24 @@ import (
 // a declared impossible one means the schema no longer backs the handling. The runtime
 // turns the PG error into a ConstraintError keyed by the same names.
 
-var expectLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*expect[ \t]+(.+?)[ \t]*$`)
+var expectLine = directive("expect")
+
+// directive matches `-- sqlshape: <verb> a, b, c` lines; group 1 is the list.
+func directive(verb string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*` + verb + `[ \t]+(.+?)[ \t]*$`)
+}
 
 // expectations parses the expect lines of a template: key → offset of its mention,
 // and the offset of the first expect line (0 when there is none).
 func expectations(text string) (map[string]int, int) {
+	return directiveItems(text, expectLine)
+}
+
+// directiveItems parses the comma-separated items of a directive's lines.
+func directiveItems(text string, re *regexp.Regexp) (map[string]int, int) {
 	out := map[string]int{}
 	first := 0
-	for i, m := range expectLine.FindAllStringSubmatchIndex(text, -1) {
+	for i, m := range re.FindAllStringSubmatchIndex(text, -1) {
 		if i == 0 {
 			first = m[0]
 		}
@@ -111,4 +121,12 @@ func describeViolation(v analyze.Violation) string {
 		return "NOT NULL on " + v.Table + "." + cols + ", SQLSTATE 23502"
 	}
 	return "SQLSTATE " + v.Code
+}
+
+var notNullLine = directive("not null")
+
+// notNullOverrides parses `-- sqlshape: not null col, col` lines: result columns the
+// template author asserts are never NULL (the SQL-side twin of the `col:",notnull"` tag).
+func notNullOverrides(text string) (map[string]int, int) {
+	return directiveItems(text, notNullLine)
 }

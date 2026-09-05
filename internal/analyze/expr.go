@@ -699,6 +699,15 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			}
 		}
 	case c.fn != nil && !c.fn.IsStrict && res == catalog.Bool:
+	case c.ufn != nil && c.ufn.NotNull:
+		nullable = false
+	case c.ufn != nil && c.ufn.Strict:
+		nullable = false
+		for _, e := range args {
+			if e.nullable {
+				nullable = true
+			}
+		}
 	}
 	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields}, nil
 }

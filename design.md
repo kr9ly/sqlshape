@@ -659,7 +659,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | §10 型変換（演算子・関数・多相・キャスト・select_common_type）、スコープ、DML + RETURNING、`$n` 推論、リテラル検証 | golden 57 本でオラクル一致 |
 | ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | |
 | 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則まで。関数戻り値・CASE 全分岐等の精緻化が残 |
-| ⬜ | `-- sqlshape: not null` 注釈（SQL 側で nullability を上書き） | 現状は Go 側 `col:",notnull"` タグのみ |
+| ✅ | `-- sqlshape: not null` 注釈 | schema.sql では CREATE FUNCTION 直前のコメントで戻り値を NOT NULL に、テンプレートでは `-- sqlshape: not null col, col` で結果列を上書き。STRICT なユーザー関数も引数から伝播 |
 | ⬜ | GROUP BY 妥当性（42803）、照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
 | ⬜ | `CALL procedure(...)` | statement として未対応 |
 | ⬜ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | 今はシグネチャだけ信用 |

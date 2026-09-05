@@ -43,3 +43,35 @@ func TestAdvisoryNotes(t *testing.T) {
 		}
 	}
 }
+
+// TestFunctionNullability: `-- sqlshape: not null` on a schema function and STRICT user functions.
+func TestFunctionNullability(t *testing.T) {
+	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
+	s, err := schema.Load(string(schemaSQL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range s.Problems {
+		t.Fatalf("schema problem: %s", p)
+	}
+	cases := []struct {
+		sql      string
+		nullable bool
+	}{
+		{"SELECT order_count(1)", false},
+		{"SELECT nick_of(1)", false},
+		{"SELECT nick_of(o.user_id) FROM orders o", false},
+		{"SELECT nick_of(u.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id", false},
+		{"SELECT nick_of(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id", true},
+		{"SELECT list_totals(1)", true},
+	}
+	for _, c := range cases {
+		r, err := Analyze(s, c.sql)
+		if err != nil {
+			t.Fatalf("%s: %v", c.sql, err)
+		}
+		if r.Columns[0].Nullable != c.nullable {
+			t.Errorf("%s: nullable = %v, want %v", c.sql, r.Columns[0].Nullable, c.nullable)
+		}
+	}
+}
