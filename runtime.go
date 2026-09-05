@@ -89,6 +89,19 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			yield(zero, wrapErr(err))
 			return
 		}
+		// result types the connection cannot decode yet (user enums, composites): load them and re-run
+		if oids := unknownTypes(rows.Conn(), rows.FieldDescriptions()); len(oids) > 0 {
+			conn := rows.Conn()
+			rows.Close()
+			if err := loadTypes(ctx, conn, oids); err != nil {
+				yield(zero, err)
+				return
+			}
+			if rows, err = db.Query(ctx, r.SQL, r.Args...); err != nil {
+				yield(zero, wrapErr(err))
+				return
+			}
+		}
 		defer rows.Close()
 		var m *mapper[R]
 		for rows.Next() {
@@ -264,7 +277,12 @@ func (m *mapper[R]) scan(rows pgx.Rows) (R, error) {
 	v := reflect.ValueOf(&row).Elem()
 	dests := make([]any, len(m.fields))
 	for i, idx := range m.fields {
-		dests[i] = v.Field(idx).Addr().Interface()
+		fv := v.Field(idx)
+		if isNested(fv.Type()) {
+			dests[i] = nestedDest(fv)
+		} else {
+			dests[i] = fv.Addr().Interface()
+		}
 	}
 	return row, rows.Scan(dests...)
 }

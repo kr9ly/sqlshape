@@ -21,6 +21,9 @@ type expr struct {
 	// lit marks a constant (or an expression built only from constants and parameters):
 	// it carries no domain of its own, see domain.go
 	lit bool
+	// fields describes an anonymous record (row(...), whole-row reference) or an array of
+	// them, so nested Go structs can be checked positionally
+	fields []rteCol
 }
 
 func unknownRef() schema.TypeRef         { return schema.TypeRef{OID: catalog.Unknown, Typmod: -1} }
@@ -238,10 +241,20 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		}
 		return &expr{typ: ref(arr), node: n}, nil
 	case *pg_query.Node_RowExpr:
-		if _, err := a.analyzeList(v.RowExpr.Args, sc); err != nil {
+		args, err := a.analyzeList(v.RowExpr.Args, sc)
+		if err != nil {
 			return nil, err
 		}
-		return &expr{typ: ref(catalog.Record), node: n}, nil
+		var fields []rteCol
+		for i, e := range args {
+			if e.oid() == catalog.Unknown {
+				if err := a.bind(e, catalog.Text, loc(v.RowExpr.Args[i])); err != nil {
+					return nil, err
+				}
+			}
+			fields = append(fields, rteCol{name: "f" + strconv.Itoa(i+1), typ: e.typ, nullable: e.nullable, src: e.src, fields: e.fields})
+		}
+		return &expr{typ: ref(catalog.Record), node: n, fields: fields}, nil
 	case *pg_query.Node_SubLink:
 		return a.subLink(v.SubLink, sc)
 	case *pg_query.Node_AIndirection:
@@ -364,14 +377,14 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	if err != nil {
 		if tbl == "" {
 			if r := sc.wholeRow(col); r != nil && r.rowType != 0 {
-				return &expr{typ: ref(r.rowType), node: nodeOf(c)}, nil
+				return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 			}
 		} else if r := sc.wholeRow(tbl); r != nil {
 			// t.field where field is a composite column's field? not supported; fall through
 		}
 		return nil, err
 	}
-	return &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c)}, nil
+	return &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields}, nil
 }
 
 func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
@@ -656,6 +669,16 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	} else {
 		res = a.domainFunc(name, args, res)
 	}
+	// an aggregate / function returning the record shape of its argument keeps the field list
+	var fields []rteCol
+	if rt := a.typ(res); rt != nil && (res == catalog.Record || rt.Elem == catalog.Record) {
+		for _, e := range args {
+			if len(e.fields) > 0 {
+				fields = e.fields
+				break
+			}
+		}
+	}
 	nullable := true
 	switch {
 	case c.fn != nil && c.fn.Kind == 'a':
@@ -671,7 +694,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 	case c.fn != nil && !c.fn.IsStrict && res == catalog.Bool:
 	}
-	return &expr{typ: ref(res), nullable: nullable, node: self}, nil
+	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields}, nil
 }
 
 func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {

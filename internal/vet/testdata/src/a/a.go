@@ -136,3 +136,51 @@ var branchViolation = sqlshape.Query[struct{}, struct {
 	ID   int64
 	Note *string
 }](`UPDATE orders SET status = 'paid' {{if .Note}}, note = {{.Note}} {{end}} WHERE id = {{.ID}}`) // want "may violate orders_user_note_key \\(UNIQUE \\(user_id, note\\) on orders, SQLSTATE 23505\\); add `-- sqlshape: expect orders_user_note_key` to the template or make it impossible \\[if@\\d+:then\\]"
+
+// nested rows: array_agg(row(...)) is positional, array_agg(t) / composite columns follow the type's column order
+type OrderBrief struct {
+	ID    int64
+	Total string
+}
+
+type UserOrders struct {
+	ID     int64
+	Orders []OrderBrief
+}
+
+var userOrders = sqlshape.Query[UserOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`)
+
+type ShortBrief struct{ ID int64 }
+
+type UserShortOrders struct {
+	ID     int64
+	Orders []ShortBrief
+}
+
+var badArity = sqlshape.Query[UserShortOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders: a.ShortBrief has 1 fields but the row type has 2 \("f1 bigint, f2 numeric\(12,2\)"\)`
+
+type BadBrief struct {
+	ID    int32
+	Total string
+}
+
+type UserBadOrders struct {
+	ID     int64
+	Orders []BadBrief
+}
+
+var badNestedType = sqlshape.Query[UserBadOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders.ID: bigint into int32`
+
+type Money struct {
+	Currency string
+	Amount   string
+}
+
+var badOrder = sqlshape.Query[struct{ Price *Money }, struct{}](`SELECT price FROM orders`) // want `field Price.Currency is at position 1 but the row type's column 1 is "amount" \(fields are scanned in order\)` `field Price.Amount is at position 2 but the row type's column 2 is "currency"`
+
+type MoneyOK struct {
+	Amount   *string
+	Currency *string
+}
+
+var compositeOK = sqlshape.Query[struct{ Price *MoneyOK }, struct{}](`SELECT price FROM orders`)

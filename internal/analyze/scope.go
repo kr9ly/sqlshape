@@ -13,7 +13,8 @@ type rteCol struct {
 	typ      schema.TypeRef
 	nullable bool
 	src      *Source
-	lit      bool // a constant target column, see expr.lit
+	lit      bool     // a constant target column, see expr.lit
+	fields   []rteCol // record shape, see expr.fields
 }
 
 // rte is a FROM item: a table / view / CTE / subquery / function, or a join of two.

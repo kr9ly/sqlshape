@@ -78,7 +78,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		res.ParamSources = append(res.ParamSources, a.paramSrc[i])
 	}
 	for _, c := range cols {
-		res.Columns = append(res.Columns, Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src})
+		res.Columns = append(res.Columns, a.column(c))
 	}
 	res.AtMostOne, res.ManyRowsWhy = a.cardinality(tree.Stmts[0].Stmt, sc)
 	res.Violations = a.violations(tree.Stmts[0].Stmt)
@@ -107,4 +107,26 @@ func (r *Result) String(types *schema.Types) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// column converts a range-table column to a result column, describing record shapes.
+func (a *analyzer) column(c rteCol) Column {
+	col := Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src}
+	fields := c.fields
+	if len(fields) == 0 {
+		// a named composite (or an array of one): its declared columns
+		oid := c.typ.OID
+		if t := a.typ(oid); t != nil && t.IsArray() {
+			oid = t.Elem
+		}
+		if rel := a.relByRowType(oid); rel != nil {
+			for _, rc := range rel.Columns {
+				fields = append(fields, rteCol{name: rc.Name, typ: rc.Type, nullable: !rc.NotNull})
+			}
+		}
+	}
+	for _, f := range fields {
+		col.Fields = append(col.Fields, a.column(f))
+	}
+	return col
 }

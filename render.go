@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"text/template/parse"
+
+	"github.com/kr9ly/sqlshape/internal/expand"
 )
 
 // Rendered is one concrete execution of a template: the SQL with $n placeholders
@@ -30,7 +32,57 @@ func (s Stmt[R, P]) Render(p P) (Rendered, error) {
 	if err := ev.list(tree.Root, root); err != nil {
 		return Rendered{}, err
 	}
-	return Rendered{SQL: ev.sql.String(), Args: ev.args}, nil
+	r := Rendered{SQL: ev.sql.String(), Args: ev.args}
+	if err := s.checkAgainstExpansion(ev, r); err != nil {
+		return Rendered{}, err
+	}
+	return r, nil
+}
+
+// checkAgainstExpansion refuses to run SQL the checker never saw. The static expander
+// and this evaluator are two implementations of the template semantics; the branch
+// signature of a rendering names the expansion the checker analyzed for it, and the SQL
+// must be byte-identical (a range with more than two iterations has no static twin and
+// is trusted by its two-iteration shape).
+func (s Stmt[R, P]) checkAgainstExpansion(ev *evaluator, r Rendered) error {
+	if ev.unchecked {
+		return nil
+	}
+	exps, err := s.expansions()
+	if err != nil {
+		return err
+	}
+	sig := strings.TrimSpace(ev.branch.String())
+	for i := range exps.Expansions {
+		e := &exps.Expansions[i]
+		if e.Branch != sig {
+			continue
+		}
+		if e.SQL != r.SQL || len(e.Params) != len(r.Args) {
+			return fmt.Errorf("sqlshape: rendered SQL differs from the checked expansion [%s]: the runtime evaluator and the checker disagree; please report this", sig)
+		}
+		return nil
+	}
+	return fmt.Errorf("sqlshape: rendering took a branch the checker never analyzed [%s]; please report this", sig)
+}
+
+var (
+	expMu    sync.Mutex
+	expCache = map[string]*expand.Result{}
+)
+
+func (s Stmt[R, P]) expansions() (*expand.Result, error) {
+	expMu.Lock()
+	defer expMu.Unlock()
+	if r, ok := expCache[s.Template]; ok {
+		return r, nil
+	}
+	r, err := expand.Expand(s.Template)
+	if err != nil {
+		return nil, fmt.Errorf("sqlshape: %w", err)
+	}
+	expCache[s.Template] = r
+	return r, nil
 }
 
 var (
@@ -65,6 +117,10 @@ type evaluator struct {
 	keys map[string]int
 	iter []int
 	path []string // static path of dot, for placeholder dedupe keys
+	// branch is the control-flow signature in the static expander's format; unchecked is
+	// set when a range ran more than twice (no static expansion matches)
+	branch    strings.Builder
+	unchecked bool
 }
 
 func (ev *evaluator) list(l *parse.ListNode, dot reflect.Value) error {
@@ -99,8 +155,10 @@ func (ev *evaluator) node(n parse.Node, dot reflect.Value) error {
 			return err
 		}
 		if isTrue(cond) {
+			fmt.Fprintf(&ev.branch, " if@%d:then", v.Pos)
 			return ev.list(v.List, dot)
 		}
+		fmt.Fprintf(&ev.branch, " if@%d:else", v.Pos)
 		return ev.list(v.ElseList, dot)
 	case *parse.WithNode:
 		val, path, err := ev.valueAction(v.Pipe, dot)
@@ -108,12 +166,14 @@ func (ev *evaluator) node(n parse.Node, dot reflect.Value) error {
 			return err
 		}
 		if isTrue(val) {
+			fmt.Fprintf(&ev.branch, " with@%d:then", v.Pos)
 			saved := ev.path
 			ev.path = path
 			err := ev.list(v.List, val)
 			ev.path = saved
 			return err
 		}
+		fmt.Fprintf(&ev.branch, " with@%d:else", v.Pos)
 		return ev.list(v.ElseList, dot)
 	case *parse.RangeNode:
 		return ev.rangeNode(v, dot)
@@ -138,6 +198,10 @@ func (ev *evaluator) rangeNode(r *parse.RangeNode, dot reflect.Value) error {
 	default:
 		return fmt.Errorf("sqlshape: range over %s", val.Type())
 	}
+	if n > 2 {
+		ev.unchecked = true
+	}
+	fmt.Fprintf(&ev.branch, " range@%d:x%d", r.Pos, n)
 	if n == 0 {
 		return ev.list(r.ElseList, dot)
 	}

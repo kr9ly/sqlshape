@@ -590,6 +590,16 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ## 進捗（2026-09-05）
 
+- runtime の穴 2 件: ① ネスト行 — analyzer が `row(...)` / 行全体参照 / 複合型列の形を `Column.Fields` に
+  出し、vet は受け側の struct を位置で照合（名前付き複合型は名前と順序、匿名 record は位置のみ）、runtime は
+  `CompositeIndexScanner` / `ArraySetter` を実装した位置ベースの dest で pgx のバイナリ複合デコードに乗せる。
+  ユーザー型（enum・複合型・配列）は接続の TypeMap に無いと復号できないので、Run が結果列の未知 OID を
+  見つけたら pg_type で名前を引いて `LoadTypes` → 再実行（接続ごとに一度）。匿名 record の中の enum は
+  スキャン前に見えないので `LoadUserTypes(ctx, conn)`（pool の AfterConnect 用）で全ユーザー型を一括登録。
+  ② 未検査展開形 — 「vet が通した集合を埋め込む」のは生成物が要るので採らず、runtime が `Render` ごとに
+  分岐シグネチャ（`if@POS:then` 等、静的 expander と同一書式）を組み、同じ署名の静的展開形と SQL を
+  バイト一致で照合する。expander と evaluator という 2 つのテンプレート実装の乖離を実行時に検出できる。
+  range 3 回以上は静的な双子が無いので照合をスキップ
 - 失敗モードの共有（analyze/violation.go + vet/expect.go + runtime `ConstraintError`）: 各 DML 展開形が
   違反し得る制約を列挙する — INSERT は全ユニーク鍵、UPDATE は SET 列に触れる鍵、DELETE / 鍵の更新は
   NO ACTION / RESTRICT で参照している側の FK、書き込む列を参照する CHECK、ドメイン CHECK、値が NULL になり

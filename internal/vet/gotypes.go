@@ -69,6 +69,10 @@ func (c *checker) match(pg schema.TypeRef, t types.Type) fit {
 		return fit{ok: true, nullable: true}
 	}
 	f := c.matchValue(pg, inner)
+	// a nil slice receives a NULL array / record[] without a pointer
+	if _, isSlice := inner.Underlying().(*types.Slice); isSlice {
+		nullable = true
+	}
 	f.nullable = nullable
 	return f
 }

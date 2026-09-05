@@ -317,6 +317,9 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		c.meet(rType, col.Type, col.Source, at, "R")
 		f := c.match(col.Type, rType)
 		c.reportFit(report, at, "column "+col.Name, col, rType, f, where)
+		if f.ok {
+			c.checkNested(col, rType, at, "R", report, where)
+		}
 		return
 	}
 	// struct R: fields ↔ columns both ways
@@ -364,6 +367,9 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			col.Nullable = false
 		}
 		c.reportFit(report, at, "field "+fv.Name(), col, fv.Type(), f, where)
+		if f.ok {
+			c.checkNested(col, fv.Type(), at, "field "+fv.Name(), report, where)
+		}
 	}
 	missing := []string{}
 	for _, name := range order {

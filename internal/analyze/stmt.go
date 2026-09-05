@@ -61,7 +61,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if name == "" {
 			name = a.figureColname(t.Val)
 		}
-		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e)})
+		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields})
 	}
 	for _, g := range sel.GroupClause {
 		if err := a.orderOrGroupItem(g, sc, cols); err != nil {

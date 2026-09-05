@@ -67,6 +67,9 @@ type Column struct {
 	Nullable bool
 	// Source mirrors what PG's Describe reports (stops at views), for oracle parity.
 	Source *Source
+	// Fields describes a record / composite column (or an array of them): the columns of
+	// the row type, or the positional f1.. fields of an anonymous row(...). Nil otherwise.
+	Fields []Column
 }
 
 // Result is the analysis of one statement.

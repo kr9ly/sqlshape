@@ -60,6 +60,57 @@ var countByStatus = sqlshape.Query[struct {
 	N      int64
 }, struct{}](`SELECT status, count(*) AS n FROM orders GROUP BY status ORDER BY status`)
 
+// nested rows
+type OrderBrief struct {
+	ID    int64
+	Total string
+}
+
+type UserOrders struct {
+	ID     int64
+	Orders []OrderBrief
+}
+
+var userOrders = sqlshape.Query[UserOrders, struct{}](`
+SELECT u.id, array_agg(row(o.id, o.total) ORDER BY o.id) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id ORDER BY u.id`)
+
+type FullOrder struct {
+	ID        int64
+	UserID    int64
+	Status    OrderStatus
+	Total     string
+	Price     *Money
+	Note      *string
+	Meta      *string
+	UID       *string
+	Matrix    [][]int32
+	CreatedAt time.Time
+}
+
+type Money struct {
+	Amount   *string
+	Currency *string
+}
+
+type UserFullOrders struct {
+	ID     int64
+	Orders []FullOrder
+}
+
+// array_agg(o) is orders[]: a user composite type the connection must load first
+var userFullOrders = sqlshape.Query[UserFullOrders, struct{}](`
+SELECT u.id, array_agg(o ORDER BY o.id) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id ORDER BY u.id`)
+
+type StatusPair struct {
+	ID     int64
+	Status OrderStatus
+}
+
+// an enum inside an anonymous record: only decodable once the enum type is registered
+var statusPairs = sqlshape.Query[[]StatusPair, struct{}](`SELECT array_agg(row(o.id, o.status) ORDER BY o.id) FROM orders o`)
+
+var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
+
 func TestRender(t *testing.T) {
 	st := OrderStatus("paid")
 	r, err := listOrders.Render(ListParams{Status: &st, IDs: []int64{7, 8}, Sort: "total", Limit: 10})
@@ -165,6 +216,34 @@ func TestAgainstPostgres(t *testing.T) {
 	}
 	if _, ok, err := orderByID.Find(ctx, db, struct{ ID int64 }{id2 + 100}); err != nil || ok {
 		t.Errorf("One.Find missing: %v %v", ok, err)
+	}
+
+	// nested rows
+	uo, err := userOrders.Collect(ctx, db, struct{}{})
+	if err != nil || len(uo) != 2 || len(uo[0].Orders) != 1 || uo[0].Orders[0].ID != id1 || uo[0].Orders[0].Total != "10.50" {
+		t.Fatalf("array_agg(row): %v %+v", err, uo)
+	}
+	ufo, err := userFullOrders.Collect(ctx, db, struct{}{})
+	if err != nil || len(ufo) != 2 || ufo[1].Orders[0].ID != id2 || ufo[1].Orders[0].Status != "paid" || ufo[1].Orders[0].Price != nil || ufo[1].Orders[0].CreatedAt.IsZero() {
+		t.Fatalf("array_agg(o): %v %+v", err, ufo)
+	}
+	if _, err := db.Exec(ctx, `UPDATE orders SET price = ROW(1.5, 'JPY') WHERE id = $1`, id1); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := priceOf.Get(ctx, db, struct{ ID int64 }{id1})
+	if err != nil || pr.Price == nil || *pr.Price.Amount != "1.50" || *pr.Price.Currency != "JPY" {
+		t.Errorf("composite column: %v %+v", err, pr.Price)
+	}
+	pr, err = priceOf.Get(ctx, db, struct{ ID int64 }{id2})
+	if err != nil || pr.Price != nil {
+		t.Errorf("NULL composite column: %v %+v", err, pr.Price)
+	}
+	if err := sqlshape.LoadUserTypes(ctx, db); err != nil {
+		t.Fatalf("LoadUserTypes: %v", err)
+	}
+	sp, err := statusPairs.First(ctx, db, struct{}{})
+	if err != nil || len(sp) != 2 || sp[1].Status != "paid" {
+		t.Errorf("enum in record: %v %+v", err, sp)
 	}
 
 	first, err := listOrders.First(ctx, db, ListParams{IDs: []int64{id1, id2}})
