@@ -54,9 +54,10 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 - a Go named type that meets a **domain** is bound to it; mixing domains is reported
 - inside SQL a domain is an **opaque unit**: `price_yen + weight_g` or `balance > total` is reported even though PG accepts it; literals and parameters adopt the unit, `yen + yen`, `yen * n`, `abs(yen)`, `coalesce(yen, 0)` stay yen, and an explicit cast to the base type drops it
 - `-strict` also reports such columns carried by unnamed Go types (which cannot be checked)
+- `sqlshape.One[R, P]` asserts **at most one row**, and the checker proves it: every FROM item must have a unique key (PK / UNIQUE / unique index, partial ones when the predicate is repeated) fixed by equality to a literal, parameter, outer reference or uncorrelated scalar subquery, following equalities through joins (an outer join's ON only fixes its nullable side), views, subqueries and CTEs; aggregates without GROUP BY, constant `LIMIT 1` and single-row `INSERT ... RETURNING` are single too. Each expansion is proved separately, so `{{if .ID}} AND id = {{.ID}} {{end}}` fails on its else branch. `Get` returns `ErrNoRows`, `Find` reports presence, and both return `ErrManyRows` if the database ever contradicts the proof
 
 ## Status
 
 First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 57 golden
 statements and the checker reports type / column / nullability findings on real Go code.
-Not yet: GROUP BY validation, collations, uniqueness-proven One, constraint → typed error.
+Not yet: GROUP BY validation, collations, constraint → typed error, ORDER BY-less First.

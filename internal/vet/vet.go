@@ -130,7 +130,7 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// isQueryCall recognizes sqlshape.Query[R, P](...).
+// isQueryCall recognizes sqlshape.Query[R, P](...) and sqlshape.One[R, P](...).
 func isQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	var fun ast.Expr = call.Fun
 	switch f := fun.(type) {
@@ -147,7 +147,7 @@ func isQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	if !ok || obj.Pkg() == nil {
 		return false
 	}
-	return obj.Pkg().Path() == sqlshapePkg && obj.Name() == "Query"
+	return obj.Pkg().Path() == sqlshapePkg && (obj.Name() == "Query" || obj.Name() == "One")
 }
 
 // literal is where diagnostics about the template text land.
@@ -176,9 +176,10 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		fun = f.X
 	}
 	ident := fun.(*ast.SelectorExpr).Sel
+	single := ident.Name == "One"
 	inst, ok := pass.TypesInfo.Instances[ident]
 	if !ok || inst.TypeArgs.Len() != 2 {
-		pass.Reportf(call.Pos(), "sqlshape: Query must be instantiated as Query[R, P]")
+		pass.Reportf(call.Pos(), "sqlshape: %s must be instantiated as %s[R, P]", ident.Name, ident.Name)
 		return
 	}
 	rType, pType := inst.TypeArgs.At(0), inst.TypeArgs.At(1)
@@ -255,6 +256,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 				tp = e.TemplatePos(int(n.Position) - 1)
 			}
 			report(lit.pos(tp), "%s%s", n.Message, where)
+		}
+		if single && !r.AtMostOne {
+			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
 		}
 		c.checkParams(e, r, pType, lit, report, where)
 		c.checkResult(call.Pos(), r, rType, report, where)

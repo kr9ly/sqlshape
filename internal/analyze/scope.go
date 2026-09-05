@@ -25,12 +25,18 @@ type rte struct {
 	join *joinInfo
 	// unqualified-lookup hiding: names merged away by USING on the right side
 	hidden map[string]bool
+	// cardinality (card.go): the table, or the defining query, or "a scalar function"
+	rel    *schema.Relation
+	sub    *subquery
+	single bool
 }
 
 type joinInfo struct {
 	left, right *rte
 	using       []string
 	usingCols   []rteCol
+	jointype    pg_query.JoinType
+	quals       *pg_query.Node
 }
 
 // leaves returns the leaf rtes (the ones that can be referenced by alias).
@@ -94,13 +100,15 @@ type scope struct {
 	parent *scope
 	items  []*rte
 	ctes   map[string]*cte
-	// lateral: items visible to a FROM item being analyzed (set while walking FROM)
+	// agg: this level's target list / HAVING has an aggregate (one row without GROUP BY)
+	agg bool
 }
 
 type cte struct {
 	name      string
 	cols      []rteCol
 	recursive bool
+	sub       *subquery // defining query for cardinality proofs (nil when recursive)
 }
 
 func newScope(parent *scope) *scope {
@@ -189,6 +197,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 	var cols []rteCol
 	switch rel.Kind {
 	case schema.Table, 'c':
+		r.rel = rel
 		for _, c := range rel.Columns {
 			cols = append(cols, rteCol{
 				name: c.Name, typ: c.Type, nullable: !c.NotNull && !a.domainNotNull(c.Type.OID),
@@ -200,6 +209,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 		if err != nil {
 			return nil, err
 		}
+		r.sub = a.viewScopes[rel]
 		for _, c := range vc {
 			cols = append(cols, rteCol{
 				name: c.name, typ: c.typ, nullable: c.nullable,
@@ -233,7 +243,8 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 	if sel == nil {
 		return nil, errAt(codeFeatureNotSupported, -1, "view %s: unsupported defining query", rel.Name)
 	}
-	cols, err := a.selectStmt(sel, newScope(nil))
+	vsc := newScope(nil)
+	cols, err := a.selectStmt(sel, vsc)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +254,7 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 		}
 	}
 	a.viewCache[rel] = cols
+	a.viewScopes[rel] = &subquery{what: "view", sel: sel, sc: vsc}
 	return cols, nil
 }
 

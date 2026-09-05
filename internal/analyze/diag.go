@@ -79,4 +79,8 @@ type Result struct {
 	ParamSources []*Source
 	// Notes are findings PG itself would accept, e.g. mixing domains (domain.go).
 	Notes []Note
+	// AtMostOne is whether the statement provably returns at most one row (card.go);
+	// ManyRowsWhy says what blocks the proof otherwise.
+	AtMostOne   bool
+	ManyRowsWhy string
 }

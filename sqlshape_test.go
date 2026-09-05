@@ -50,6 +50,9 @@ INSERT INTO orders (user_id, total, note) VALUES ({{.UserID}}, {{.Total}}, {{.No
 
 var markPaid = sqlshape.Query[struct{}, struct{ ID int64 }](`UPDATE orders SET status = 'paid' WHERE id = {{.ID}}`)
 
+var orderByID = sqlshape.One[OrderRow, struct{ ID int64 }](`
+SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.id = {{.ID}}`)
+
 var countByStatus = sqlshape.Query[struct {
 	Status OrderStatus
 	N      int64
@@ -135,6 +138,17 @@ func TestAgainstPostgres(t *testing.T) {
 	rows, err = listOrders.Collect(ctx, db, ListParams{IDs: []int64{id1}, Limit: 5})
 	if err != nil || len(rows) != 1 || rows[0].ID != id2 {
 		t.Errorf("range + with: %v %+v", err, rows)
+	}
+
+	one, err := orderByID.Get(ctx, db, struct{ ID int64 }{id2})
+	if err != nil || one.ID != id2 || one.Status != "paid" {
+		t.Errorf("One.Get: %v %+v", err, one)
+	}
+	if _, err := orderByID.Get(ctx, db, struct{ ID int64 }{id2 + 100}); !sqlshape.IsNoRows(err) {
+		t.Errorf("One.Get missing: %v", err)
+	}
+	if _, ok, err := orderByID.Find(ctx, db, struct{ ID int64 }{id2 + 100}); err != nil || ok {
+		t.Errorf("One.Find missing: %v %v", ok, err)
 	}
 
 	first, err := listOrders.First(ctx, db, ListParams{IDs: []int64{id1, id2}})

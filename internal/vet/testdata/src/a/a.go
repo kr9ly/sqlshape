@@ -107,3 +107,12 @@ var mixedUnits = sqlshape.Query[int64, struct{}](`SELECT u.id FROM users u JOIN 
 var unitsOK = sqlshape.Query[Yen, struct{ Min Yen }](`SELECT coalesce(max(balance), 0) FROM users WHERE balance > {{.Min}}`)
 
 var unitsCast = sqlshape.Query[int64, struct{}](`SELECT u.balance::bigint + o.user_id FROM users u JOIN orders o ON o.user_id = u.id`)
+
+// One: the checker proves "at most one row" from unique keys fixed by equality
+var userByEmail = sqlshape.One[int64, struct{ Email string }](`SELECT id FROM users WHERE email = {{.Email}}`)
+
+var orderByUID = sqlshape.One[int64, struct{ UID string }](`SELECT id FROM orders WHERE uid = {{.UID}}`) // want `One: cannot prove at most one row: orders: no unique key is fixed by equality \(keys: \(id\), \(user_id, note\), \(uid\) WHERE \.\.\.\)`
+
+var orderMaybeByID = sqlshape.One[int64, struct{ ID *int64 }](`SELECT id FROM orders WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`) // want `One: cannot prove at most one row: orders: no unique key is fixed by equality \(keys: .*\) \[if@\d+:else\]`
+
+var summaryByID = sqlshape.One[int64, struct{ ID int64 }](`SELECT id FROM order_summary WHERE id = {{.ID}}`)

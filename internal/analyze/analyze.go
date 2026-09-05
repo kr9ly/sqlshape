@@ -17,8 +17,13 @@ type analyzer struct {
 	maxParam int32
 	notes    []Note
 
-	viewCache map[*schema.Relation][]rteCol
-	viewBusy  map[*schema.Relation]bool
+	viewCache  map[*schema.Relation][]rteCol
+	viewScopes map[*schema.Relation]*subquery
+	viewBusy   map[*schema.Relation]bool
+	// insertSelScope is the scope of INSERT ... SELECT's query (for cardinality)
+	insertSelScope *scope
+	// lastFuncRetSet is whether the most recent funcCall resolved a set-returning function
+	lastFuncRetSet bool
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
 }
@@ -34,11 +39,12 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		return nil, fmt.Errorf("expected exactly one statement, got %d", len(tree.Stmts))
 	}
 	a := &analyzer{
-		s:         s,
-		params:    map[int32]catalog.OID{},
-		paramSrc:  map[int32]*Source{},
-		viewCache: map[*schema.Relation][]rteCol{},
-		viewBusy:  map[*schema.Relation]bool{},
+		s:          s,
+		params:     map[int32]catalog.OID{},
+		paramSrc:   map[int32]*Source{},
+		viewCache:  map[*schema.Relation][]rteCol{},
+		viewScopes: map[*schema.Relation]*subquery{},
+		viewBusy:   map[*schema.Relation]bool{},
 	}
 	sc := newScope(nil)
 	var cols []rteCol
@@ -74,6 +80,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		res.Columns = append(res.Columns, Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src})
 	}
 	res.Notes = a.notes
+	res.AtMostOne, res.ManyRowsWhy = a.cardinality(tree.Stmts[0].Stmt, sc)
 	return res, nil
 }
 

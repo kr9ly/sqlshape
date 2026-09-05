@@ -590,6 +590,16 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ## 進捗（2026-09-05）
 
+- カーディナリティの裏付け（analyze/card.go + `sqlshape.One`）: FROM の各葉について「ユニーク制約の全列が
+  既知値〔リテラル・`$n`・外側参照・非相関スカラサブクエリ・それらのキャスト/演算〕と等値束縛されている」
+  を関数従属の不動点で証明する。single になった葉の全列は既知になり JOIN の等値で他の葉へ伝播。
+  LEFT/RIGHT JOIN の ON は null 側だけを縛る（左側の列を既知にしない）、FULL JOIN は不可、
+  部分ユニークインデックスは述語が WHERE に構造一致で再現されているときだけ使う。ビュー・サブクエリ・CTE は
+  外から束縛された出力列を種にして定義クエリを再帰的に証明。集約 + GROUP BY 無し・定数 LIMIT 0/1・FROM 無し・
+  1 行 VALUES・UPDATE/DELETE の WHERE も同じ枝。`Result.AtMostOne` / `ManyRowsWhy`、vet は `One` 宣言の
+  各展開形で証明できなければ理由つきで報告。runtime は `Single.Get`（ErrNoRows）/ `Find` / `Exec`、
+  2 行目が来たら `ErrManyRows`（スキーマが証明を裏切った検知）。未対応: 関数呼び出しを既知値に含める
+  （volatility 判定が要る）、GROUP BY 列がすべて既知のケース、`First` / LIMIT の ORDER BY 無し警告
 - ドメインの不透明化（analyze/domain.go）: PG が基底型で解決する演算・比較・CASE/COALESCE/UNION・代入を
   名目的に検査し、`Result.Notes` として返す（PG は通す文なので `Error` とは別レーン。golden 側は
   Notes ゼロを断言）。リテラル・定数・`$n` は単位を継承、`yen + yen` / `yen * n` / `yen / n` / `-yen` /

@@ -191,11 +191,13 @@ func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
 			}
 			continue
 		}
-		cols, err := a.selectStmt(sel, newScope(sc))
+		csc := newScope(sc)
+		cols, err := a.selectStmt(sel, csc)
 		if err != nil {
 			return err
 		}
 		def.cols = a.aliasCols(cols, c.Aliascolnames)
+		def.sub = &subquery{what: "CTE", sel: sel, sc: csc}
 		sc.ctes[c.Ctename] = def
 	}
 	return nil
@@ -303,7 +305,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		rv := v.RangeVar
 		if rv.Schemaname == "" {
 			if c := sc.findCTE(rv.Relname); c != nil {
-				r := &rte{alias: rv.Relname, cols: append([]rteCol{}, c.cols...)}
+				r := &rte{alias: rv.Relname, cols: append([]rteCol{}, c.cols...), sub: c.sub}
 				if rv.Alias != nil {
 					if rv.Alias.Aliasname != "" {
 						r.alias = rv.Alias.Aliasname
@@ -344,7 +346,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		if sub.Alias == nil {
 			return nil, errAt(codeSyntaxError, -1, "subquery in FROM must have an alias")
 		}
-		r := &rte{alias: sub.Alias.Aliasname}
+		r := &rte{alias: sub.Alias.Aliasname, sub: &subquery{what: "subquery", sel: sub.Subquery.GetSelectStmt(), sc: child}}
 		for i, c := range cols {
 			// PG traces column origins through subqueries and CTEs (but not views)
 			if i < len(sub.Alias.Colnames) {
@@ -389,6 +391,7 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		if err != nil {
 			return nil, err
 		}
+		r.single = !a.lastFuncRetSet
 		names := strs(fc.Funcname)
 		fname := names[len(names)-1]
 		r.alias = fname
@@ -468,7 +471,7 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 		markNullable(left)
 		markNullable(right)
 	}
-	r := &rte{join: &joinInfo{left: left, right: right}}
+	r := &rte{join: &joinInfo{left: left, right: right, jointype: j.Jointype, quals: j.Quals}}
 	// qualification / USING / NATURAL are checked in a scope holding both sides
 	both := newScope(sc)
 	both.items = []*rte{left, right}
@@ -617,7 +620,8 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 				}
 			}
 		} else {
-			src, err := a.selectStmt(sel, newScope(sc))
+			a.insertSelScope = newScope(sc)
+			src, err := a.selectStmt(sel, a.insertSelScope)
 			if err != nil {
 				return nil, err
 			}

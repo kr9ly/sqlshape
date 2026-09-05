@@ -642,6 +642,10 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		return nil, err
 	}
 	a.lastUserFunc = c.ufn
+	a.lastFuncRetSet = (c.fn != nil && c.fn.RetSet) || (c.ufn != nil && c.ufn.RetSet)
+	if c.fn != nil && c.fn.Kind == 'a' && f.Over == nil {
+		sc.agg = true
+	}
 	res := c.result()
 	if t := a.typ(res); t != nil && t.IsPolymorphic() {
 		rr, ok := a.resolvePolymorphic(c.args, a.argOIDs(args), res)

@@ -20,8 +20,12 @@ type DB interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// ErrNoRows is returned by First when the query produced no row.
+// ErrNoRows is returned by First and Get when the query produced no row.
 var ErrNoRows = pgx.ErrNoRows
+
+// ErrManyRows is returned by Get / Find when a statement declared with One produced
+// more than one row: the schema no longer backs the proof the checker made.
+var ErrManyRows = errors.New("sqlshape: statement declared with One returned more than one row")
 
 // Run executes the statement and yields each row mapped into R. Iteration stops at
 // the first error, which is yielded with a zero R. Breaking out early closes the rows.
@@ -92,6 +96,41 @@ func (s Stmt[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, er
 	}
 	return db.Exec(ctx, r.SQL, r.Args...)
 }
+
+// Get runs the single-row statement and returns its row, or ErrNoRows.
+func (s Single[R, P]) Get(ctx context.Context, db DB, p P) (R, error) {
+	row, ok, err := s.Find(ctx, db, p)
+	if err == nil && !ok {
+		return row, ErrNoRows
+	}
+	return row, err
+}
+
+// Find runs the single-row statement and reports whether a row was found.
+func (s Single[R, P]) Find(ctx context.Context, db DB, p P) (R, bool, error) {
+	var found R
+	var zero R
+	n := 0
+	for row, err := range s.stmt.Run(ctx, db, p) {
+		if err != nil {
+			return zero, false, err
+		}
+		n++
+		if n > 1 {
+			return zero, false, ErrManyRows
+		}
+		found = row
+	}
+	return found, n == 1, nil
+}
+
+// Exec runs a single-row statement that returns no rows (e.g. UPDATE ... WHERE id = $1).
+func (s Single[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, error) {
+	return s.stmt.Exec(ctx, db, p)
+}
+
+// Render renders the template for p.
+func (s Single[R, P]) Render(p P) (Rendered, error) { return s.stmt.Render(p) }
 
 // --- row mapping -----------------------------------------------------------
 

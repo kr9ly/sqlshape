@@ -9,6 +9,12 @@ with another domain or the plain base type is a note; unit-preserving operations
 their result so the check follows the value). Covered by `TestDomainNotes`; the golden test asserts
 that parity fixtures produce no notes.
 
+`Result.AtMostOne` / `ManyRowsWhy` is the cardinality proof (`card.go`): a functional-dependency
+fixpoint over the FROM leaves — a leaf is single once a unique key is fixed by equalities to known
+values (literals, `$n`, outer refs, uncorrelated scalar subqueries), a single leaf makes its columns
+known, outer-join ON clauses only fix their nullable side, views / subqueries / CTEs are proved
+recursively with the outer-fixed output columns as seeds. Covered by `TestCardinality`.
+
 Implements manual chapter 10: operator resolution (§10.2), function resolution (§10.3) incl.
 variadic / defaults / polymorphic consistency, implicit / assignment / explicit coercion via
 `pg_cast` + array / domain / record rules, `select_common_type` for UNION / CASE / COALESCE /
