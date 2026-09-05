@@ -121,3 +121,49 @@ func renderAnalyzer(s *schema.Schema, sql string) string {
 	}
 	return r.String(s.Types)
 }
+
+// TestUtilityErrors: PG only parses utility statements when it prepares them, so a
+// missing relation surfaces at execution; the analyzer reports it up front (no golden).
+func TestUtilityErrors(t *testing.T) {
+	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
+	s, err := schema.Load(string(schemaSQL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"TRUNCATE nope":                    "42P01",
+		"LOCK TABLE nope":                  "42P01",
+		"REFRESH MATERIALIZED VIEW orders": "42809",
+	}
+	for sql, code := range cases {
+		_, err := Analyze(s, sql)
+		var aerr *Error
+		if !errors.As(err, &aerr) || aerr.Code != code {
+			t.Errorf("%s: want %s, got %v", sql, code, err)
+		}
+	}
+}
+
+// TestGroupingSetsNullable: a column grouped by GROUPING SETS is NULL in the sets that
+// leave it out, so it is nullable even when the table column is NOT NULL; count(*) is not.
+func TestGroupingSetsNullable(t *testing.T) {
+	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
+	s, err := schema.Load(string(schemaSQL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Analyze(s, "SELECT user_id, count(*) AS n, sum(total) AS t FROM orders GROUP BY ROLLUP (user_id)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Columns[0].Nullable || r.Columns[1].Nullable || !r.Columns[2].Nullable {
+		t.Errorf("nullability: user_id %v, n %v, t %v", r.Columns[0].Nullable, r.Columns[1].Nullable, r.Columns[2].Nullable)
+	}
+	r, err = Analyze(s, "SELECT user_id, count(*) AS n FROM orders GROUP BY user_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Columns[0].Nullable {
+		t.Error("plain GROUP BY keeps NOT NULL")
+	}
+}

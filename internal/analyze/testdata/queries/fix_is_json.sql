@@ -1,0 +1,1 @@
+SELECT note IS JSON AS j, note IS NOT JSON OBJECT AS nj, meta IS JSON ARRAY AS ja FROM orders

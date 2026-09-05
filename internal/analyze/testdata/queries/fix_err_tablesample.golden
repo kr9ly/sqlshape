@@ -1,0 +1,1 @@
+error: 0A000: TABLESAMPLE clause can only be applied to tables and materialized views (at 16)

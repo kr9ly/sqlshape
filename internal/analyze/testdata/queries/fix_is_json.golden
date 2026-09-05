@@ -1,0 +1,5 @@
+params:
+columns:
+  j boolean
+  nj boolean
+  ja boolean

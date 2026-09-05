@@ -1,0 +1,6 @@
+params:
+  $1 numeric
+  $2 bigint
+columns:
+  note text <- orders.note null
+  total numeric(12,2) <- orders.total not null

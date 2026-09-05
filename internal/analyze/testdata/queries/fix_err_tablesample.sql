@@ -1,0 +1,1 @@
+SELECT id FROM order_summary TABLESAMPLE SYSTEM (10)

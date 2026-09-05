@@ -278,6 +278,20 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		return a.analyzeExpr(v.NamedArgExpr.Arg, sc)
 	case *pg_query.Node_GroupingFunc:
 		return &expr{typ: ref(catalog.Int4), node: n}, nil
+	case *pg_query.Node_JsonIsPredicate:
+		e, err := a.analyzeExpr(v.JsonIsPredicate.Expr, sc)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.bind(e, catalog.Text, v.JsonIsPredicate.Location); err != nil {
+			return nil, err
+		}
+		switch a.baseType(e.oid()) {
+		case catalog.Text, catalog.JSON, catalog.JSONB, catalog.Bytea, catalog.Varchar, catalog.BPChar, catalog.Name:
+		default:
+			return nil, errAt(codeDatatypeMismatch, v.JsonIsPredicate.Location, "cannot use type %s in IS JSON predicate", a.s.Types.Format(e.typ))
+		}
+		return &expr{typ: ref(catalog.Bool), nullable: e.nullable, node: n}, nil
 	case *pg_query.Node_SetToDefault:
 		return &expr{typ: unknownRef(), nullable: true, node: n}, nil
 	case *pg_query.Node_List:

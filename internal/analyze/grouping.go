@@ -12,8 +12,8 @@ import (
 // GROUP BY validity (parse_agg.c's check_ungrouped_columns): in a grouped query every
 // output, HAVING and ORDER BY expression must be built from grouping expressions,
 // aggregates and constants. A column that is not grouped is still fine when its table's
-// primary key is entirely grouped (functional dependency). GROUPING SETS / ROLLUP / CUBE
-// are not checked.
+// primary key is entirely grouped (functional dependency). With GROUPING SETS / ROLLUP /
+// CUBE the check runs against the union of every set's expressions, as PG does.
 
 // checkGrouping reports an ungrouped column in a grouped SELECT level.
 func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *Error {
@@ -21,10 +21,7 @@ func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rte
 		return nil
 	}
 	var groups []*pg_query.Node
-	for _, g := range sel.GroupClause {
-		if g.GetGroupingSet() != nil {
-			return nil
-		}
+	for _, g := range groupingLeaves(sel.GroupClause) {
 		groups = append(groups, a.groupExpr(g, sel, sc, cols))
 	}
 	g := &grouping{a: a, p: &prover{a: a, sc: sc}, keys: map[string]bool{}}
@@ -214,4 +211,31 @@ func deparse(n *pg_query.Node) string {
 		return ""
 	}
 	return s
+}
+
+// groupingLeaves flattens GROUPING SETS / ROLLUP / CUBE into the expressions they group by.
+func groupingLeaves(items []*pg_query.Node) []*pg_query.Node {
+	var out []*pg_query.Node
+	for _, n := range items {
+		if gs := n.GetGroupingSet(); gs != nil {
+			out = append(out, groupingLeaves(gs.Content)...)
+			continue
+		}
+		if l := n.GetList(); l != nil {
+			out = append(out, groupingLeaves(l.Items)...)
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// hasGroupingSets reports whether GROUP BY uses GROUPING SETS / ROLLUP / CUBE.
+func hasGroupingSets(items []*pg_query.Node) bool {
+	for _, n := range items {
+		if n.GetGroupingSet() != nil {
+			return true
+		}
+	}
+	return false
 }

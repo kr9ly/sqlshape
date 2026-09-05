@@ -34,7 +34,7 @@ DELETE with RETURNING and ON CONFLICT.
   the default run compares the analyzer to them without starting PG
 - Error fixtures agree on SQLSTATE; the message text is informative only
 - GROUP BY validity (`grouping.go`): grouping expressions matched by deparsed text, aggregate arguments
-  exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS unchecked
+  exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS / ROLLUP / CUBE checked against the union of their expressions, grouped columns become nullable
 - Nullability is refined by null-rejecting predicates (IS NOT NULL, strict comparisons, inner-join ON)
 - Collations (`collation.go`): explicit / implicit derivation per §24.2.2; conflicting COLLATE clauses and
   UNION / INTERSECT / EXCEPT over conflicting implicit collations are the PG errors (42P21), an indeterminate

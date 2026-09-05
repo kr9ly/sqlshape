@@ -1,0 +1,5 @@
+params:
+columns:
+  user_id bigint <- orders.user_id not null
+  status order_status <- orders.status not null
+  max timestamp with time zone

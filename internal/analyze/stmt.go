@@ -64,9 +64,22 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		}
 		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll})
 	}
-	for _, g := range sel.GroupClause {
+	for _, g := range groupingLeaves(sel.GroupClause) {
 		if err := a.orderOrGroupItem(g, sc, cols, "GROUP BY"); err != nil {
 			return nil, err
+		}
+	}
+	if hasGroupingSets(sel.GroupClause) {
+		// GROUPING SETS / ROLLUP / CUBE: a grouped column is NULL in the sets it is not part
+		// of, so every output column is nullable except count(...), which is never NULL
+		for i, tn := range sel.TargetList {
+			if i >= len(cols) {
+				break
+			}
+			if fc := tn.GetResTarget().GetVal().GetFuncCall(); fc != nil && strings.HasPrefix(strs(fc.Funcname)[len(fc.Funcname)-1], "count") {
+				continue
+			}
+			cols[i].nullable = true
 		}
 	}
 	if err := a.boolClause(sel.HavingClause, sc, "HAVING"); err != nil {
@@ -401,6 +414,37 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		return a.rangeFunction(v.RangeFunction, sc)
 	case *pg_query.Node_JoinExpr:
 		return a.joinExpr(v.JoinExpr, sc)
+	case *pg_query.Node_RangeTableSample:
+		ts := v.RangeTableSample
+		r, err := a.fromItem(ts.Relation, sc)
+		if err != nil {
+			return nil, err
+		}
+		if r.rel == nil || (r.rel.Kind != schema.Table && r.rel.Kind != schema.MatView) {
+			return nil, errAt(codeFeatureNotSupported, loc(ts.Relation), "TABLESAMPLE clause can only be applied to tables and materialized views")
+		}
+		// the built-in methods take a real (percentage / limit); REPEATABLE takes a double
+		for i, arg := range append(append([]*pg_query.Node{}, ts.Args...), ts.Repeatable) {
+			if arg == nil {
+				continue
+			}
+			want := catalog.Float4
+			if i == len(ts.Args) {
+				want = catalog.Float8
+			}
+			e, err := a.analyzeExpr(arg, sc)
+			if err != nil {
+				return nil, err
+			}
+			if err := a.bind(e, want, loc(arg)); err != nil {
+				return nil, err
+			}
+			if !a.canCoerce(e.oid(), want, assignmentCoercion) {
+				return nil, errAt(codeDatatypeMismatch, loc(arg), "TABLESAMPLE argument must be of type %s, not type %s", a.s.Types.Format(ref(want)), a.s.Types.Format(e.typ))
+			}
+		}
+		r.single = false
+		return r, nil
 	}
 	return nil, errAt(codeFeatureNotSupported, -1, "unsupported FROM item %T", n.Node)
 }
@@ -773,24 +817,66 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 }
 
 func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc *scope) *Error {
+	// SET (a, b) = (x, y) / (SELECT ...): one source, analyzed once, one value per column
+	sources := map[*pg_query.Node][]*expr{}
 	for _, tn := range targets {
 		t := tn.GetResTarget()
 		col := rel.Column(t.Name)
 		if col == nil {
 			return errAt(codeUndefinedColumn, t.Location, "column %q of relation %q does not exist", t.Name, rel.Name)
 		}
-		if t.Val.GetMultiAssignRef() != nil {
-			return errAt(codeFeatureNotSupported, t.Location, "multi-column SET is not supported yet")
-		}
-		e, err := a.analyzeExpr(t.Val, sc)
-		if err != nil {
-			return err
+		var e *expr
+		if ma := t.Val.GetMultiAssignRef(); ma != nil {
+			vals, ok := sources[ma.Source]
+			if !ok {
+				var err *Error
+				if vals, err = a.multiAssignSource(ma.Source, int(ma.Ncolumns), sc); err != nil {
+					return err
+				}
+				sources[ma.Source] = vals
+			}
+			e = vals[ma.Colno-1]
+		} else {
+			var err *Error
+			if e, err = a.analyzeExpr(t.Val, sc); err != nil {
+				return err
+			}
 		}
 		if err := a.assign(e, col, rel.FullName(), loc(t.Val)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// multiAssignSource types the right-hand side of SET (a, b, ...) = source: a row of
+// expressions, or a subquery whose columns are taken as the values.
+func (a *analyzer) multiAssignSource(src *pg_query.Node, n int, sc *scope) ([]*expr, *Error) {
+	if row := src.GetRowExpr(); row != nil {
+		if len(row.Args) != n {
+			return nil, errAt(codeSyntaxError, loc(src), "number of columns does not match number of values")
+		}
+		return a.analyzeList(row.Args, sc)
+	}
+	if sl := src.GetSubLink(); sl != nil {
+		sel := sl.Subselect.GetSelectStmt()
+		if sel == nil {
+			return nil, errAt(codeFeatureNotSupported, sl.Location, "unsupported subquery")
+		}
+		cols, err := a.selectStmt(sel, newScope(sc))
+		if err != nil {
+			return nil, err
+		}
+		if len(cols) != n {
+			return nil, errAt(codeSyntaxError, sl.Location, "number of columns does not match number of values")
+		}
+		out := make([]*expr, len(cols))
+		for i, c := range cols {
+			out[i] = &expr{typ: c.typ, nullable: true, coll: c.coll.asVar(), lit: c.lit}
+		}
+		return out, nil
+	}
+	return nil, errAt(codeFeatureNotSupported, loc(src), "unsupported multi-column assignment source %T", src.Node)
 }
 
 func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *Error) {

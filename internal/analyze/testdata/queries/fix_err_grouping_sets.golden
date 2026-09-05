@@ -1,0 +1,1 @@
+error: 42803: column "orders.note" must appear in the GROUP BY clause or be used in an aggregate function (at 17)

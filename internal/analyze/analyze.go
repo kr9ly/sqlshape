@@ -115,6 +115,31 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 		cols, aerr = a.deleteStmt(st.DeleteStmt, sc)
 	case *pg_query.Node_CallStmt:
 		cols, aerr = a.callStmt(st.CallStmt, sc)
+	case *pg_query.Node_TruncateStmt:
+		for _, rv := range st.TruncateStmt.Relations {
+			if _, _, err := a.targetRTE(rv.GetRangeVar(), sc); err != nil {
+				return nil, err
+			}
+		}
+	case *pg_query.Node_LockStmt:
+		for _, rv := range st.LockStmt.Relations {
+			if _, _, err := a.targetRTE(rv.GetRangeVar(), sc); err != nil {
+				return nil, err
+			}
+		}
+	case *pg_query.Node_RefreshMatViewStmt:
+		rel, _, err := a.targetRTE(st.RefreshMatViewStmt.Relation, sc)
+		if err != nil {
+			return nil, err
+		}
+		if rel.Kind != schema.MatView {
+			return nil, errAt(codeWrongObjectType, st.RefreshMatViewStmt.Relation.Location, "%q is not a materialized view", rel.Name)
+		}
+	case *pg_query.Node_NotifyStmt, *pg_query.Node_ListenStmt, *pg_query.Node_UnlistenStmt,
+		*pg_query.Node_VariableSetStmt, *pg_query.Node_DiscardStmt:
+		// no parameters, no result
+	case *pg_query.Node_VariableShowStmt:
+		cols = []rteCol{{name: st.VariableShowStmt.Name, typ: ref(catalog.Text)}}
 	default:
 		return nil, &Error{Code: codeFeatureNotSupported, Message: fmt.Sprintf("unsupported statement %T", tree.Stmts[0].Stmt.Node)}
 	}
