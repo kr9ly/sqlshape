@@ -249,6 +249,13 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			}
 			continue
 		}
+		for _, n := range r.Notes {
+			tp := 0
+			if n.Position > 0 {
+				tp = e.TemplatePos(int(n.Position) - 1)
+			}
+			report(lit.pos(tp), "%s%s", n.Message, where)
+		}
 		c.checkParams(e, r, pType, lit, report, where)
 		c.checkResult(call.Pos(), r, rType, report, where)
 	}

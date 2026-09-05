@@ -3,6 +3,12 @@
 Pure-Go PostgreSQL semantic analyzer. `Analyze(schema, sql)` → parameter types, result columns
 (type, nullability, provenance) or a PG-style `*Error` (SQLSTATE + position). No PostgreSQL at lint time.
 
+`Result.Notes` carries findings PG itself would accept and so never appear in a golden: domains as
+opaque units (`domain.go` — a domain value only meets the same domain or a literal / parameter; mixing
+with another domain or the plain base type is a note; unit-preserving operations keep the domain on
+their result so the check follows the value). Covered by `TestDomainNotes`; the golden test asserts
+that parity fixtures produce no notes.
+
 Implements manual chapter 10: operator resolution (§10.2), function resolution (§10.3) incl.
 variadic / defaults / polymorphic consistency, implicit / assignment / explicit coercion via
 `pg_cast` + array / domain / record rules, `select_common_type` for UNION / CASE / COALESCE /

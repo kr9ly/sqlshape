@@ -52,10 +52,11 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 - a Go named type that meets a **key column** (PK, or FK-derived) is bound to that identity;
   `UserID` passed where `orders.id` is expected is reported even though both are `bigint`
 - a Go named type that meets a **domain** is bound to it; mixing domains is reported
+- inside SQL a domain is an **opaque unit**: `price_yen + weight_g` or `balance > total` is reported even though PG accepts it; literals and parameters adopt the unit, `yen + yen`, `yen * n`, `abs(yen)`, `coalesce(yen, 0)` stay yen, and an explicit cast to the base type drops it
 - `-strict` also reports such columns carried by unnamed Go types (which cannot be checked)
 
 ## Status
 
 First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 57 golden
 statements and the checker reports type / column / nullability findings on real Go code.
-Not yet: the runtime (pgx), GROUP BY validation, collations, opaque domains as units inside SQL, uniqueness-proven One.
+Not yet: GROUP BY validation, collations, uniqueness-proven One, constraint → typed error.

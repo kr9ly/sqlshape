@@ -16,8 +16,11 @@ type expr struct {
 	nullable bool
 	src      *Source
 	node     *pg_query.Node
-	// unknownParam is the parameter number when the expression is a bare, still-untyped $n
+	// param is the parameter number when the expression is a bare $n
 	param int32
+	// lit marks a constant (or an expression built only from constants and parameters):
+	// it carries no domain of its own, see domain.go
+	lit bool
 }
 
 func unknownRef() schema.TypeRef         { return schema.TypeRef{OID: catalog.Unknown, Typmod: -1} }
@@ -305,30 +308,31 @@ func (a *analyzer) unify(es []*expr, at int32, context string) (schema.TypeRef, 
 			return schema.TypeRef{}, err
 		}
 	}
+	t = a.domainUnify(es, t, at, context)
 	return schema.TypeRef{OID: t, Typmod: typmod}, nil
 }
 
 func (a *analyzer) constExpr(c *pg_query.A_Const, n *pg_query.Node) *expr {
 	if c.Isnull {
-		return &expr{typ: unknownRef(), nullable: true, node: n}
+		return &expr{typ: unknownRef(), nullable: true, node: n, lit: true}
 	}
 	switch v := c.Val.(type) {
 	case *pg_query.A_Const_Ival:
-		return &expr{typ: ref(catalog.Int4), node: n}
+		return &expr{typ: ref(catalog.Int4), node: n, lit: true}
 	case *pg_query.A_Const_Fval:
 		s := v.Fval.GetFval()
 		if !strings.ContainsAny(s, ".eE") {
 			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
-				return &expr{typ: ref(catalog.Int8), node: n}
+				return &expr{typ: ref(catalog.Int8), node: n, lit: true}
 			}
 		}
-		return &expr{typ: ref(catalog.Numeric), node: n}
+		return &expr{typ: ref(catalog.Numeric), node: n, lit: true}
 	case *pg_query.A_Const_Boolval:
-		return &expr{typ: ref(catalog.Bool), node: n}
+		return &expr{typ: ref(catalog.Bool), node: n, lit: true}
 	case *pg_query.A_Const_Bsval:
-		return &expr{typ: ref(a.s.Types.Lookup("pg_catalog", "bit").OID), node: n}
+		return &expr{typ: ref(a.s.Types.Lookup("pg_catalog", "bit").OID), node: n, lit: true}
 	default: // string
-		return &expr{typ: unknownRef(), node: n}
+		return &expr{typ: unknownRef(), node: n, lit: true}
 	}
 }
 
@@ -390,7 +394,8 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 	} else if !a.canCoerce(e.oid(), target.OID, explicitCoercion) {
 		return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type %s to %s", a.s.Types.Format(e.typ), a.s.Types.Format(target))
 	}
-	return &expr{typ: target, nullable: e.nullable, node: nodeOf(tc)}, nil
+	// `$1::bigint` is still a unitless value; `$1::yen` asserts the unit
+	return &expr{typ: target, nullable: e.nullable, node: nodeOf(tc), lit: isLit(e) && a.domainType(target.OID) == nil}, nil
 }
 
 func (a *analyzer) opName(nodes []*pg_query.Node) string {
@@ -441,7 +446,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			}
 			elem = rt.Elem
 		}
-		re := &expr{typ: ref(elem), nullable: true, src: r.src}
+		re := &expr{typ: ref(elem), nullable: true, src: r.src, lit: isLit(r)}
 		_, err = a.applyOperator(name, l, re, x.Location, self)
 		if err != nil {
 			return nil, err
@@ -558,8 +563,9 @@ func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_que
 		}
 		res = rr
 	}
+	res = a.domainOp(name, l, r, res, at)
 	nullable := r.nullable || (l != nil && l.nullable)
-	return &expr{typ: ref(res), nullable: nullable, node: self}, nil
+	return &expr{typ: ref(res), nullable: nullable, node: self, lit: isLit(l) && isLit(r)}, nil
 }
 
 func firstParam(es ...*expr) int32 {
@@ -643,6 +649,8 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			return nil, errAt(codeDatatypeMismatch, f.Location, "could not determine polymorphic type because input has type unknown")
 		}
 		res = rr
+	} else {
+		res = a.domainFunc(name, args, res)
 	}
 	nullable := true
 	switch {

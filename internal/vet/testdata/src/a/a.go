@@ -98,3 +98,12 @@ type OrderIDRow struct {
 }
 
 var wrongKeyResult = sqlshape.Query[OrderIDRow, struct{}](`SELECT id FROM orders`) // want `field ID is a.UserID, which stands for key users.id elsewhere, but here meets key orders.id`
+
+// domains are opaque units: yen (users.balance) does not meet plain bigint / numeric
+type Yen int64 // want Yen:`bound d yen`
+
+var mixedUnits = sqlshape.Query[int64, struct{}](`SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.balance > o.total`) // want `domain mismatch: yen > numeric\(12,2\): operands must share the domain`
+
+var unitsOK = sqlshape.Query[Yen, struct{ Min Yen }](`SELECT coalesce(max(balance), 0) FROM users WHERE balance > {{.Min}}`)
+
+var unitsCast = sqlshape.Query[int64, struct{}](`SELECT u.balance::bigint + o.user_id FROM users u JOIN orders o ON o.user_id = u.id`)

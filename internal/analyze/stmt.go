@@ -61,7 +61,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if name == "" {
 			name = a.figureColname(t.Val)
 		}
-		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src})
+		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e)})
 	}
 	for _, g := range sel.GroupClause {
 		if err := a.orderOrGroupItem(g, sc, cols); err != nil {
@@ -235,7 +235,8 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 		if l.typ.OID == r.typ.OID && l.typ.Typmod == r.typ.Typmod {
 			typmod = l.typ.Typmod
 		}
-		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable}
+		t = a.domainUnify([]*expr{{typ: l.typ, lit: l.lit}, {typ: r.typ, lit: r.lit}}, t, -1, setOpName(sel.Op))
+		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit}
 	}
 	// ORDER BY / LIMIT on the whole set operation
 	for _, lim := range []*pg_query.Node{sel.LimitCount, sel.LimitOffset} {
@@ -558,6 +559,7 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 	if !a.canCoerce(e.oid(), col.Type.OID, assignmentCoercion) {
 		return errAt(codeDatatypeMismatch, at, "column %q is of type %s but expression is of type %s", col.Name, a.s.Types.Format(col.Type), a.s.Types.Format(e.typ))
 	}
+	a.domainAssign(e, col.Type.OID, relName, col.Name, at)
 	return nil
 }
 

@@ -76,6 +76,10 @@ func TestGolden(t *testing.T) {
 			} else {
 				pass++
 			}
+			// goldens exercise PG parity; sqlshape's own findings are covered by TestDomainNotes
+			if r, err := Analyze(s, sql); err == nil && len(r.Notes) > 0 {
+				t.Errorf("unexpected notes: %v", r.Notes)
+			}
 		})
 	}
 	t.Logf("%d pass, %d fail", pass, fail)

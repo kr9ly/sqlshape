@@ -590,6 +590,13 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ## 進捗（2026-09-05）
 
+- ドメインの不透明化（analyze/domain.go）: PG が基底型で解決する演算・比較・CASE/COALESCE/UNION・代入を
+  名目的に検査し、`Result.Notes` として返す（PG は通す文なので `Error` とは別レーン。golden 側は
+  Notes ゼロを断言）。リテラル・定数・`$n` は単位を継承、`yen + yen` / `yen * n` / `yen / n` / `-yen` /
+  `abs` `max` `round` 等の単位保存関数 / `coalesce(yen, 0)` は結果も `yen` のまま流れ、`yen / yen` は無次元、
+  `sum(yen)` は PG どおり numeric（単位喪失は黙認）。`::bigint` で明示的に落とす、`::yen` で主張する。
+  代入はドメイン列だけを守る（素の列は単位を宣言していないので何でも受ける）。vet は Notes を
+  テンプレート位置に写して診断
 - 解釈の共有（vet/binding.go）: enum / ドメイン / キー同一性〔単一列 PK、単一列 FK を根まで辿る〕への
   バインディングを使用箇所から推論し、衝突を報告。enum はラベル集合と typed const を両方向で diff
   （パッケージ跨ぎは ConstSetFact / BindingFact）、`T("typo")` 変換と switch の網羅性も検査。

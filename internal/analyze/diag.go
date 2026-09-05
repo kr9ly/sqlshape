@@ -77,4 +77,6 @@ type Result struct {
 	// with or assigned to (nil when it met an expression). It carries "which identity"
 	// a value stands for, beyond its type.
 	ParamSources []*Source
+	// Notes are findings PG itself would accept, e.g. mixing domains (domain.go).
+	Notes []Note
 }

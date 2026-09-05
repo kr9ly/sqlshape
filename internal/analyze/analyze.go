@@ -15,6 +15,7 @@ type analyzer struct {
 	params   map[int32]catalog.OID
 	paramSrc map[int32]*Source
 	maxParam int32
+	notes    []Note
 
 	viewCache map[*schema.Relation][]rteCol
 	viewBusy  map[*schema.Relation]bool
@@ -72,6 +73,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	for _, c := range cols {
 		res.Columns = append(res.Columns, Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src})
 	}
+	res.Notes = a.notes
 	return res, nil
 }
 
