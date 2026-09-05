@@ -222,3 +222,6 @@ func freePort() (int, error) {
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
+
+// Conn exposes the underlying connection for tooling (catalog dump). Tests use Describe.
+func (o *Oracle) Conn() *pgx.Conn { return o.conn }

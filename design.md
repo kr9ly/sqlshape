@@ -157,8 +157,11 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 
 - 初日にオラクルを作る。本物の PG を差分テストの正解役に置き、クエリ生成 → 自前推論と
   PREPARE / Describe の突き合わせ → 不一致を fixture 化、のループで収束させる
-- カタログ生成も初日。`pg_type.dat` / `pg_proc.dat` / `pg_operator.dat` / `pg_cast.dat` /
-  `pg_aggregate.dat` を Go のテーブルに吐く
+- カタログ生成も初日。実装は `.dat` の Perl 形式を解析するのではなく、**オラクル PG から
+  pg_type / pg_proc / pg_operator / pg_cast / pg_aggregate を COPY で dump** して TSV を embed する
+  （`go run ./internal/catalog/gen`）。デフォルト値が解決済み・OID 確定・パーサ不要で、拡張の
+  `pg_proc` 取り込みと同じ経路になる。PG 17.5 で 469 型 / 3319 関数 / 799 演算子 / 229 キャスト /
+  157 集約、TSV 合計 230KB、ロード 10ms
 - マニュアル §10（型変換）を先に、構文カバレッジは後に。演算子解決・関数解決・暗黙キャスト・
   多相型・UNION/CASE の統一が本体。JOIN / サブクエリ / CTE / 集合演算 / ウィンドウは
   スコープと列可視性の問題で型推論より単純
