@@ -590,6 +590,8 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ## 進捗（2026-09-05）
 
+- expand / vet / cmd/sqlshape で縦に通った: `go run ./cmd/sqlshape ./examples/...` が実 Go コードに対して
+  型・列・nullability の指摘を出す。診断はテンプレート内の位置に写す（raw string 前提）
 - oracle / catalog / schema / analyze の 4 パッケージが動作。analyze はオラクル golden 57 本
   （SELECT / JOIN / CTE / 集合演算 / VALUES / 関数 in FROM / DML + RETURNING / エラー 10 種）と一致
 - 未実装: GROUP BY 妥当性検査（42803）、照合順序、range 型の subtype、ROWS FROM、データ変更 CTE、

@@ -190,7 +190,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 	case schema.Table, 'c':
 		for _, c := range rel.Columns {
 			cols = append(cols, rteCol{
-				name: c.Name, typ: c.Type, nullable: !c.NotNull,
+				name: c.Name, typ: c.Type, nullable: !c.NotNull && !a.domainNotNull(c.Type.OID),
 				src: &Source{Table: rel.FullName(), Column: c.Name, NotNull: c.NotNull},
 			})
 		}
@@ -243,4 +243,18 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 	}
 	a.viewCache[rel] = cols
 	return cols, nil
+}
+
+// domainNotNull reports whether oid is (or wraps) a domain declared NOT NULL.
+func (a *analyzer) domainNotNull(oid catalog.OID) bool {
+	for {
+		t := a.s.Types.ByOID(oid)
+		if t == nil || t.Kind != 'd' {
+			return false
+		}
+		if d := a.s.Types.Domains[oid]; d != nil && d.NotNull {
+			return true
+		}
+		oid = t.BaseType
+	}
 }

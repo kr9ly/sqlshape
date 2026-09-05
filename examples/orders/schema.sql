@@ -1,0 +1,68 @@
+CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
+CREATE DOMAIN yen AS bigint CHECK (VALUE >= 0);
+CREATE DOMAIN email AS text NOT NULL CHECK (VALUE ~ '@');
+CREATE TYPE money_amount AS (amount numeric(12,2), currency char(3));
+
+CREATE TABLE users (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email      email UNIQUE,
+    name       varchar(100),
+    nick       character(8),
+    tags       text[] NOT NULL DEFAULT '{}',
+    balance    yen NOT NULL DEFAULT 0,
+    score      real,
+    ratio      double precision,
+    flags      bit(4),
+    vflags     bit varying(8),
+    born       date,
+    wake       time(3),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamp(0) without time zone
+);
+
+CREATE TABLE orders (
+    id         bigserial PRIMARY KEY,
+    user_id    bigint NOT NULL REFERENCES users(id),
+    status     order_status NOT NULL DEFAULT 'pending',
+    total      numeric(12,2) NOT NULL CHECK (total >= 0),
+    price      money_amount,
+    note       text,
+    meta       jsonb,
+    uid        uuid DEFAULT gen_random_uuid(),
+    matrix     integer[][],
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT orders_user_note_key UNIQUE (user_id, note)
+);
+
+CREATE TABLE order_items (
+    order_id   bigint NOT NULL,
+    line_no    smallint NOT NULL,
+    sku        varchar(32) NOT NULL,
+    qty        integer NOT NULL DEFAULT 1,
+    PRIMARY KEY (order_id, line_no)
+);
+ALTER TABLE order_items ADD CONSTRAINT order_items_order_fk FOREIGN KEY (order_id) REFERENCES orders(id);
+ALTER TABLE order_items ADD COLUMN discount numeric(5,2);
+ALTER TABLE order_items ALTER COLUMN discount SET NOT NULL;
+
+CREATE UNIQUE INDEX orders_uid_active ON orders (uid) WHERE status <> 'cancelled';
+CREATE INDEX orders_user_idx ON orders (user_id);
+
+CREATE VIEW order_summary AS
+SELECT o.id, o.status, o.total, u.email
+  FROM orders o JOIN users u ON u.id = o.user_id;
+
+CREATE MATERIALIZED VIEW order_stats AS
+SELECT user_id, count(*) AS n, sum(total) AS total FROM orders GROUP BY user_id;
+
+CREATE FUNCTION save_order(p money_amount, items order_items[]) RETURNS bigint
+LANGUAGE sql STABLE STRICT AS $$ SELECT 1::bigint $$;
+
+CREATE FUNCTION list_totals(min_total numeric) RETURNS TABLE (user_id bigint, total numeric)
+LANGUAGE sql AS $$ SELECT user_id, sum(total) FROM orders GROUP BY user_id $$;
+
+CREATE FUNCTION user_ids() RETURNS SETOF bigint LANGUAGE sql AS $$ SELECT id FROM users $$;
+
+COMMENT ON TABLE orders IS 'One purchase.';
+COMMENT ON COLUMN orders.status IS 'Lifecycle state; see order_status.';
+COMMENT ON TYPE order_status IS 'Order lifecycle.';
