@@ -32,6 +32,21 @@ func TestNullRejection(t *testing.T) {
 		{"SELECT o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE o.total > 0", false},
 		{"SELECT o.note FROM users u JOIN orders o ON o.note = u.name", false},
 		{"SELECT s.note FROM (SELECT note FROM orders WHERE note IS NOT NULL) s", false},
+		// a searched CASE branch runs where its condition held
+		{"SELECT CASE WHEN note IS NOT NULL THEN note ELSE '' END FROM orders", false},
+		{"SELECT CASE WHEN note = 'x' THEN note ELSE 'y' END FROM orders", false},
+		{"SELECT CASE WHEN note IS NOT NULL THEN note END FROM orders", true},
+		{"SELECT CASE WHEN id > 1 THEN note ELSE 'y' END FROM orders", true},
+		{"SELECT CASE WHEN note IS NOT NULL THEN upper(note) ELSE 'y' END FROM orders", false},
+		{"SELECT CASE WHEN note IS NOT NULL THEN 1 END, note FROM orders WHERE true", true},
+		// non-strict built-ins that never return NULL, and nullary ones
+		{"SELECT concat(note, 'x') FROM orders", false},
+		{"SELECT format('%s', note) FROM orders", false},
+		{"SELECT upper(note) FROM orders", true},
+		{"SELECT now()", false},
+		{"SELECT gen_random_uuid()", false},
+		{"SELECT inet_client_addr()", true},
+		{"SELECT nullif(id, 1) FROM orders", true},
 	}
 	for _, c := range cases {
 		r, err := Analyze(s, c.sql)

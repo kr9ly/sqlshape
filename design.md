@@ -658,7 +658,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 |---|---|---|
 | ✅ | §10 型変換（演算子・関数・多相・キャスト・select_common_type）、スコープ、DML + RETURNING、`$n` 推論、リテラル検証 | golden 57 本でオラクル一致 |
 | ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | schema/ddl.go: パーティション・INHERITS・LIKE・RENAME・DROP・ALTER TYPE / DOMAIN・CREATE TYPE AS RANGE・CREATE COLLATION〔照合名検証〕・CREATE AGGREGATE / OPERATOR / CAST・search_path・interval typmod。2026-09-05 の DDL probe 26 群で残った穴は全部埋めた |
-| 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則 + null 除外述語（`IS NOT NULL`、strict 演算子での比較、内部結合の ON）で結果列を not null に。外部結合の null 側に述語が掛かれば基表の NOT NULL 列も戻る。残: CASE 全分岐、非 strict 関数の個別規則 |
+| ✅ | nullability | NOT NULL / JOIN 種別 / 式規則 + null 除外述語（`IS NOT NULL`、strict 演算子での比較、内部結合の ON）で結果列を not null に。外部結合の null 側に述語が掛かれば基表の NOT NULL 列も戻る。searched CASE の分岐は WHEN 条件が除外する NULL を踏まえて型付け、非 strict でも NULL を返さない組み込み（concat / format / json_build_*）と引数無し関数（now / gen_random_uuid …、inet_client_addr 等の例外あり）は not null |
 | ✅ | `-- sqlshape: not null` 注釈 | schema.sql では CREATE FUNCTION 直前のコメントで戻り値を NOT NULL に、テンプレートでは `-- sqlshape: not null col, col` で結果列を上書き。STRICT なユーザー関数も引数から伝播 |
 | ✅ | GROUP BY 妥当性（42803） | analyze/grouping.go: deparse 一致・集約引数・PK による関数従属、GROUPING SETS は未検査。golden 5 本 |
 | ✅ | ROWS FROM、データ変更 CTE | ROWS FROM は関数ごとの列を横並び（列定義リスト・WITH ORDINALITY・別名込み）、データ変更 CTE は RETURNING 列を CTE の列にし失敗モードも合算 |

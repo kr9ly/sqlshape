@@ -727,6 +727,22 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 // compared with a strict operator, in WHERE or an inner join's ON cannot be NULL in the
 // rows that survive. (An outer join's ON does not count: the join reintroduces NULLs.)
 func (a *analyzer) rejectNulls(p *prover) {
+	for _, k := range a.nullRejected(p) {
+		k.r.cols[k.i].nullable = false
+		if k.r.outerNullable {
+			// the null-extended rows of an outer join are gone: base NOT NULL columns hold again
+			for i := range k.r.cols {
+				if src := k.r.cols[i].src; src != nil && src.NotNull {
+					k.r.cols[i].nullable = false
+				}
+			}
+		}
+	}
+}
+
+// nullRejected lists the columns the prover's unconditional conjuncts prove non-NULL.
+func (a *analyzer) nullRejected(p *prover) []colKey {
+	var out []colKey
 	for _, c := range p.conjuncts {
 		if c.allow != nil {
 			continue
@@ -752,18 +768,33 @@ func (a *analyzer) rejectNulls(p *prover) {
 		}
 		for _, o := range operands {
 			if k, ok := p.resolve(o); ok {
-				k.r.cols[k.i].nullable = false
-				if k.r.outerNullable {
-					// the null-extended rows of an outer join are gone: base NOT NULL columns hold again
-					for i := range k.r.cols {
-						if src := k.r.cols[i].src; src != nil && src.NotNull {
-							k.r.cols[i].nullable = false
-						}
-					}
-				}
+				out = append(out, k)
 			}
 		}
 	}
+	return out
+}
+
+// underCondition analyzes n as if cond held: the columns cond proves non-NULL are not
+// nullable while n is typed (CASE WHEN x IS NOT NULL THEN x ...).
+func (a *analyzer) underCondition(cond, n *pg_query.Node, sc *scope) (*expr, *Error) {
+	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+	for _, it := range sc.items {
+		p.addItem(it)
+	}
+	p.addQuals(cond, nil)
+	var restore []colKey
+	for _, k := range a.nullRejected(p) {
+		if k.r.cols[k.i].nullable {
+			k.r.cols[k.i].nullable = false
+			restore = append(restore, k)
+		}
+	}
+	e, err := a.analyzeExpr(n, sc)
+	for _, k := range restore {
+		k.r.cols[k.i].nullable = true
+	}
+	return e, err
 }
 
 // checkVisibility enforces `-- sqlshape: visible where ...` policies: every table leaf with

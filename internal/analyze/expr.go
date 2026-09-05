@@ -879,6 +879,12 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 				nullable = true
 			}
 		}
+	case c.fn != nil && neverNullFunc[name]:
+		nullable = false
+	case c.fn != nil && len(c.fn.ArgTypes) == 0 && !c.fn.RetSet && !zeroArgNullable[name]:
+		// a nullary function (now(), random(), gen_random_uuid(), ...) has nothing to be
+		// NULL about, apart from the few that report an absent value
+		nullable = false
 	case c.fn != nil && !c.fn.IsStrict && res == catalog.Bool:
 	case c.ufn != nil && c.ufn.IsAgg:
 	case c.ufn != nil && c.ufn.NotNull:
@@ -922,7 +928,13 @@ func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {
 				return nil, errAt(codeDatatypeMismatch, loc(w.Expr), "argument of CASE/WHEN must be type boolean, not type %s", a.s.Types.Format(cond.typ))
 			}
 		}
-		r, err := a.analyzeExpr(w.Result, sc)
+		var r *expr
+		if arg == nil {
+			// a searched CASE: the branch runs where its condition held
+			r, err = a.underCondition(w.Expr, w.Result, sc)
+		} else {
+			r, err = a.analyzeExpr(w.Result, sc)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1202,4 +1214,19 @@ func (a *analyzer) noteParamSource(e, other *expr) {
 			a.paramSrc[e.param] = other.src
 		}
 	}
+}
+
+// neverNullFunc lists the non-strict built-ins whose result is never NULL: they treat
+// NULL inputs as absent or as the string "" instead of propagating them.
+var neverNullFunc = map[string]bool{
+	"concat": true, "concat_ws": true, "format": true, "num_nonnulls": true, "num_nulls": true,
+	"json_build_object": true, "json_build_array": true, "jsonb_build_object": true, "jsonb_build_array": true,
+	"json_object": true, "jsonb_object": true, "row_to_json": true,
+}
+
+// zeroArgNullable lists the nullary built-ins that do return NULL (no value to report).
+var zeroArgNullable = map[string]bool{
+	"inet_client_addr": true, "inet_client_port": true, "inet_server_addr": true, "inet_server_port": true,
+	"pg_last_wal_receive_lsn": true, "pg_last_wal_replay_lsn": true, "pg_last_xact_replay_timestamp": true,
+	"pg_current_xact_id_if_assigned": true, "current_query": true, "pg_current_logfile": true,
 }
