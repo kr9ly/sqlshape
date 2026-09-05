@@ -31,6 +31,7 @@ type Note struct {
 const (
 	noteDomainMismatch = "domain-mismatch"
 	noteAlwaysFails    = "always-fails"
+	notePolicy         = "policy"
 	// advisory notes (the checker reports them with -strict)
 	noteUnorderedLimit = "unordered-limit"
 	noteEnumOrder      = "enum-order"

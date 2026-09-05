@@ -69,6 +69,10 @@ type Relation struct {
 	Query Expr
 	// ColumnAliases are explicit column names given to a view (CREATE VIEW v (a, b) AS ...).
 	ColumnAliases []string
+	// Visible is the `-- sqlshape: visible where <predicate>` policy: rows of the table are
+	// only meant to be seen through this predicate, so every statement reading it (and
+	// every view over it) must carry the predicate. Nil when none.
+	Visible Expr
 }
 
 // Column is one attribute.
@@ -466,6 +470,20 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		s.problem(loc, "table %s: inheritance / partitions are not supported", name)
 	}
 	rel := s.newRelation(schema, name, Table)
+	for _, d := range s.pending {
+		norm := strings.Join(strings.Fields(d), " ")
+		switch {
+		case len(norm) > 14 && strings.EqualFold(norm[:14], "visible where "):
+			pred, err := parseExpr(norm[14:])
+			if err != nil {
+				s.problem(loc, "table %s: directive %q: %v", name, d, err)
+				continue
+			}
+			rel.Visible = pred
+		default:
+			s.problem(loc, "table %s: unknown directive %q", name, d)
+		}
+	}
 	for _, elt := range st.TableElts {
 		switch e := elt.Node.(type) {
 		case *pg_query.Node_ColumnDef:
@@ -950,4 +968,20 @@ func (s *Schema) Function(schema, name string) *Function {
 		}
 	}
 	return nil
+}
+
+// parseExpr parses a standalone SQL expression.
+func parseExpr(text string) (Expr, error) {
+	tree, err := pg_query.Parse("SELECT " + text)
+	if err != nil {
+		return nil, err
+	}
+	if len(tree.Stmts) != 1 {
+		return nil, fmt.Errorf("one expression expected")
+	}
+	targets := tree.Stmts[0].Stmt.GetSelectStmt().GetTargetList()
+	if len(targets) != 1 {
+		return nil, fmt.Errorf("one expression expected")
+	}
+	return targets[0].GetResTarget().GetVal(), nil
 }

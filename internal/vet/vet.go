@@ -88,6 +88,22 @@ func loadSchema(path string) (*loadedSchema, error) {
 			ls.problems = append(ls.problems, fmt.Sprintf("function %s: %v", fn.Name, err))
 		}
 	}
+	// view bodies: sqlshape's own findings (policies, domains) are the view's
+	for _, rel := range s.Relations {
+		if rel.Kind != schema.View && rel.Kind != schema.MatView {
+			continue
+		}
+		r, err := analyze.AnalyzeView(s, rel)
+		if err != nil {
+			ls.problems = append(ls.problems, fmt.Sprintf("view %s: %v", rel.Name, err))
+			continue
+		}
+		for _, n := range r.Notes {
+			if !n.Advisory() {
+				ls.problems = append(ls.problems, fmt.Sprintf("view %s: %s", rel.Name, n.Message))
+			}
+		}
+	}
 	schemaCache[path] = ls
 	return ls, nil
 }

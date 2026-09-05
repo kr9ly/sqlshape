@@ -258,7 +258,9 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 		return nil, errAt(codeFeatureNotSupported, -1, "view %s: unsupported defining query", rel.Name)
 	}
 	vsc := newScope(nil)
+	savedNotes := a.notes
 	cols, err := a.selectStmt(sel, vsc)
+	a.notes = savedNotes // a view body's findings belong to the view (AnalyzeView), not to its readers
 	if err != nil {
 		return nil, err
 	}

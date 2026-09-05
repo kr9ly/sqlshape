@@ -666,7 +666,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | analyze/function.go: 引数を名前と `$n` で見せて各文を解析（同名列が優先、PG と同じ）、最終文の形を RETURNS と照合（代入キャスト許容、42P13）。vet はスキーマ読込時に全関数を検査。`FunctionResult.Relations` が関数越しの依存 |
 | ⬜ | EXPLAIN 系 lint（seq scan、ビューへの述語押し込み不可、ネスト内 LIMIT 無し） | 統計非依存に限定する方針のみ |
 | ⬜ | 拡張の `pg_proc` を dump して取り込む経路 | 生成器は同形式なので経路は開いている |
-| ⬜ | 述語ポリシー（`deleted_at IS NULL` を常に通す等）| 列ポリシーは等値のみ |
+| ✅ | 述語ポリシー | schema.sql でテーブル直前に `-- sqlshape: visible where deleted_at IS NULL`。全 select レベルで葉ごとに述語の構造一致（WHERE / その葉を縛る ON）を要求、ビュー本体は AnalyzeView でスキーマ問題として一度だけ報告、テンプレートは `-- sqlshape: unfiltered t` で明示的に外す。vet フラグ案は棄却（ポリシーはスキーマの知識） |
 
 ### テンプレートと展開（internal/expand）
 

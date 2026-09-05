@@ -214,3 +214,12 @@ const (
 )
 
 var byRole = sqlshape.Query[int64, struct{ R Role }](`SELECT id FROM users WHERE role = {{.R}}`) // want `value set of users.role \(CHECK\) has label "owner" but Role has no constant for it` `Role has constant "guest" which is not a label of value set of users.role \(CHECK\)`
+
+// visibility policy: memos rows are visible where deleted_at IS NULL
+var liveMemos = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM memos WHERE user_id = {{.U}} AND deleted_at IS NULL`)
+
+var allMemos = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM memos WHERE user_id = {{.U}}`) // want "rows of memos are visible where deleted_at IS NULL: add that predicate for memos, or opt out with `-- sqlshape: unfiltered memos`"
+
+var trashMemos = sqlshape.Query[int64, struct{ U int64 }]("-- sqlshape: unfiltered memos\nSELECT id FROM memos WHERE user_id = {{.U}} AND deleted_at IS NOT NULL")
+
+var viaLiveView = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM live_memos WHERE user_id = {{.U}}`)

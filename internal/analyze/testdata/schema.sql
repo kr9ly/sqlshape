@@ -90,3 +90,12 @@ BEGIN
   RETURN NEW;
 END $$;
 CREATE TRIGGER orders_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
+
+-- sqlshape: visible where deleted_at IS NULL
+CREATE TABLE memos (
+    id         bigserial PRIMARY KEY,
+    user_id    bigint NOT NULL REFERENCES users(id),
+    body       text NOT NULL,
+    deleted_at timestamptz
+);
+CREATE VIEW live_memos AS SELECT id, user_id, body FROM memos WHERE deleted_at IS NULL;

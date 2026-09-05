@@ -51,11 +51,11 @@ func TestViolations(t *testing.T) {
 		{sql: "UPDATE orders SET total = 0 WHERE id = $1", want: "23514 orders_total_check, P0401 P0401"},
 		{sql: "UPDATE orders SET user_id = $1 WHERE id = $2", want: "23502 orders.user_id@1, 23503 orders_user_id_fkey, 23505 orders_user_note_key, P0401 P0401"},
 		{sql: "UPDATE orders SET id = $1 WHERE id = $2", want: "23502 orders.id@1, 23503 order_items_order_fk, 23505 orders_pkey, P0401 P0401"},
-		{sql: "UPDATE users SET id = 5 WHERE id = $1", want: "23503 orders_user_id_fkey, 23505 users_pkey"},
+		{sql: "UPDATE users SET id = 5 WHERE id = $1", want: "23503 memos_user_id_fkey, 23503 orders_user_id_fkey, 23505 users_pkey"},
 		{sql: "UPDATE users SET balance = $1 WHERE id = $2", want: "23502 users.balance@1, 23514 yen_check"},
 		{sql: "UPDATE users SET name = $1 WHERE id = $2", want: ""},
 		// DELETE: referencing FKs with NO ACTION / RESTRICT
-		{sql: "DELETE FROM users WHERE id = $1", want: "23503 orders_user_id_fkey"},
+		{sql: "DELETE FROM users WHERE id = $1", want: "23503 memos_user_id_fkey, 23503 orders_user_id_fkey"},
 		{sql: "DELETE FROM orders WHERE id = $1", want: "23503 order_items_order_fk"},
 		{sql: "DELETE FROM order_items WHERE order_id = $1", want: ""},
 		{sql: "SELECT id FROM users", want: ""},

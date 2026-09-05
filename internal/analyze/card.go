@@ -718,4 +718,30 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 			a.fixed = append(a.fixed, Source{Table: k.r.rel.FullName(), Column: k.r.cols[k.i].name, NotNull: k.r.cols[k.i].src != nil && k.r.cols[k.i].src.NotNull})
 		}
 	}
+	a.checkVisibility(p, loc(where))
+}
+
+// checkVisibility enforces `-- sqlshape: visible where ...` policies: every table leaf with
+// a policy must carry the predicate as a conjunct restricting it, unless the template
+// opts out with `-- sqlshape: unfiltered <table>`.
+func (a *analyzer) checkVisibility(p *prover, at int32) {
+	for _, l := range p.leaves {
+		if l.rel == nil || l.rel.Visible == nil || a.unfiltered[l.rel.Name] || a.unfiltered[l.rel.FullName()] {
+			continue
+		}
+		found := false
+		for _, c := range p.conjuncts {
+			if (c.allow == nil || c.allow[l]) && sameExpr(l.rel.Visible, c.n, l) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			alias := l.alias
+			if alias != l.rel.Name {
+				alias = l.rel.Name + " " + alias
+			}
+			a.note(notePolicy, at, "rows of "+l.rel.Name+" are visible where "+deparse(l.rel.Visible)[len("SELECT "):]+": add that predicate for "+alias+", or opt out with `-- sqlshape: unfiltered "+l.rel.Name+"`")
+		}
+	}
 }

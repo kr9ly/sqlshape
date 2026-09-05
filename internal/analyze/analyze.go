@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -38,6 +39,9 @@ type analyzer struct {
 	funcParams []funcParam
 	// funcVolatility remembers the volatility of each resolved function call (card.go)
 	funcVolatility map[*pg_query.FuncCall]byte
+	// unfiltered are tables the template exempts from their visibility policy
+	// (`-- sqlshape: unfiltered t1, t2` in the SQL text)
+	unfiltered map[string]bool
 }
 
 // Analyze analyzes exactly one SQL statement against s.
@@ -50,7 +54,26 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if len(tree.Stmts) != 1 {
 		return nil, fmt.Errorf("expected exactly one statement, got %d", len(tree.Stmts))
 	}
-	return analyzeStmt(s, tree.Stmts[0].Stmt, nil)
+	r, aerr := analyzeStmt(s, tree.Stmts[0].Stmt, nil, sqlDirectives(sql, "unfiltered"))
+	return r, aerr
+}
+
+var sqlDirective = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*([a-z ]+?)[ \t]+(.+?)[ \t]*$`)
+
+// sqlDirectives reads the comma-separated items of `-- sqlshape: <verb> a, b` lines in a statement.
+func sqlDirectives(sql, verb string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range sqlDirective.FindAllStringSubmatch(sql, -1) {
+		if m[1] != verb {
+			continue
+		}
+		for _, it := range strings.Split(m[2], ",") {
+			if it = strings.TrimSpace(it); it != "" {
+				out[it] = true
+			}
+		}
+	}
+	return out
 }
 
 // funcParam is a SQL-function parameter visible in its body by name and as $n.
@@ -60,7 +83,7 @@ type funcParam struct {
 }
 
 // analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
-func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam) (*Result, error) {
+func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool) (*Result, error) {
 	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
 	a := &analyzer{
 		s:              s,
@@ -71,6 +94,7 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam) (*Result
 		viewBusy:       map[*schema.Relation]bool{},
 		funcParams:     fp,
 		funcVolatility: map[*pg_query.FuncCall]byte{},
+		unfiltered:     unfiltered,
 	}
 	for i, p := range fp {
 		a.params[int32(i+1)] = p.typ.OID

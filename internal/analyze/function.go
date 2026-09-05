@@ -59,7 +59,7 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 				TargetList: []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: rs.Returnval}}}},
 			}}}
 		}
-		r, err := analyzeStmt(s, st, fp)
+		r, err := analyzeStmt(s, st, fp, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -123,4 +123,13 @@ func flattenLists(n *pg_query.Node) []*pg_query.Node {
 		out = append(out, flattenLists(it)...)
 	}
 	return out
+}
+
+// AnalyzeView analyzes a view's defining query as a statement of its own, so its findings
+// (policy, domain mixing) are reported once at the view rather than at every reader.
+func AnalyzeView(s *schema.Schema, rel *schema.Relation) (*Result, error) {
+	if rel.Query == nil {
+		return &Result{}, nil
+	}
+	return analyzeStmt(s, rel.Query, nil, nil)
 }
