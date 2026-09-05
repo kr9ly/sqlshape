@@ -38,11 +38,13 @@ var Analyzer = &analysis.Analyzer{
 }
 
 var (
-	schemaPath  string
-	strictFlag  bool
-	noTables    bool
-	schemasFlag string
-	requireCols string
+	schemaPath   string
+	strictFlag   bool
+	noTables     bool
+	schemasFlag  string
+	requireCols  string
+	coverageFlag bool
+	syncComments bool
 )
 
 func init() {
@@ -50,6 +52,8 @@ func init() {
 	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
 	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
 	Analyzer.Flags.StringVar(&requireCols, "require-columns", "", "comma-separated columns (e.g. tenant_id) every statement must pin by equality on each table that has them (row ownership); INSERTs must assign them")
+	Analyzer.Flags.BoolVar(&coverageFlag, "coverage", false, "report per package how many Query / One declarations were checked and how many could not be (non-constant templates)")
+	Analyzer.Flags.BoolVar(&syncComments, "sync-comments", false, "suggest doc comments for result struct fields and types from the schema's COMMENT ON (applied as quick fixes by gopls)")
 	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report advisory findings: enum / domain / key columns carried by unnamed Go types, timestamp / date received as time.Time, non-pointer enum parameters (zero value is no label), parameters that always override a column DEFAULT, LIMIT without ORDER BY, enum ordering")
 }
 
@@ -134,6 +138,8 @@ type checker struct {
 	s        *schema.Schema
 	strict   bool
 	bindings map[*types.TypeName]*binding
+	// unchecked counts Query / One calls whose template is not a constant (-coverage)
+	unchecked int
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -173,6 +179,10 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
+	}
+	if coverageFlag {
+		n := len(calls) - len(matviews)
+		pass.Reportf(calls[0].Pos(), "sqlshape: coverage: %d of %d statements checked, %d unchecked (non-constant templates)", n-c.unchecked, n, c.unchecked)
 	}
 	for _, call := range matviews {
 		c.checkMatView(call)
@@ -281,6 +291,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	}
 	tv, ok := pass.TypesInfo.Types[call.Args[0]]
 	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		c.unchecked++
 		pass.Reportf(call.Args[0].Pos(), "sqlshape: query template must be a string constant")
 		return
 	}
@@ -509,6 +520,9 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		}
 		return nil
 	}
+	if syncComments {
+		c.suggestTypeComment(rType, r)
+	}
 	// struct R: fields ↔ columns both ways
 	fields := map[string]*types.Var{}
 	notnull := map[string]bool{}
@@ -548,6 +562,9 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			continue
 		}
 		matched[col.Name] = true
+		if syncComments {
+			c.suggestFieldComment(fv, col)
+		}
 		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fv.Name())
 		f := c.match(col.Type, fv.Type())
 		if notnull[col.Name] {

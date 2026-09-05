@@ -247,6 +247,11 @@ func TestAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// unprepared execution (custom plan every time)
+	if rows, err := listOrders.Unprepared().Collect(ctx, db, ListParams{}); err != nil || len(rows) != 2 {
+		t.Errorf("unprepared: %v %d", err, len(rows))
+	}
+
 	// materialized view refresh
 	if err := sqlshape.MatView("order_stats").Refresh(ctx, db); err != nil {
 		t.Errorf("refresh: %v", err)

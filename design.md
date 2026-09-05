@@ -685,7 +685,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 |---|---|---|
 | ✅ | 結果列 ↔ R、`$n` ↔ P、方向つき精度損失、nullable ラッパ、schema.sql 探索、分岐名つき診断 | |
 | ✅ | ネスト行（`array_agg(row(...))` / `array_agg(t)` / 複合型列 ↔ struct の位置照合） | |
-| 🔶 | 未検査クエリ | 非定数引数はエラー。「検査カバレッジを数値で出す」は未 |
+| ✅ | 未検査クエリ | 非定数引数はエラー、`-coverage` でパッケージごとに「N of M checked」を報告 |
 | ✅ | enum の零値警告（P の非ポインタ enum フィールド） | `-strict` |
 | ✅ | enum の宣言順比較 info（`ORDER BY status`、`status < 'x'`） | analyzer の advisory Note、`-strict` |
 | 🔶 | 表現の忠実さ: `timestamp`（tz 無し）、`date` の tz | `-strict`。`varchar(n)` 長さは静的に見えないので対象外、citext は string で受ける |
@@ -693,7 +693,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 🔶 | LIMIT の ORDER BY 無し警告 | analyzer の advisory Note、`-strict`。`First` は呼び出し箇所なので vet からは見えない。`array_agg` ネスト側の 1:1 / 1:N 突合は未 |
 | ✅ | 行の所属（列ポリシー lint） | `-require-columns=tenant_id`: その列を持つテーブルへの全文が等値で固定（INSERT は代入）していることを `Result.Fixed`（全 select レベルの等値束縛）で検査。`deleted_at IS NULL` のような述語ポリシーは未 |
 | ✅ | テーブル直参照禁止 lint（`-no-tables`）、サービス境界（`-schemas=a_api,b_private`） | analyzer が `Result.Relations`（直接参照した関係、ビューは展開しない）を出す。DROP 影響分析 / 死んだスキーマ検出の土台 |
-| ⬜ | `COMMENT ON` を Go doc / gopls hover へ | `schema.Comments` に取り込み済み、出力先が無い |
+| ✅ | `COMMENT ON` を Go doc / gopls hover へ | `-sync-comments`: 列 / テーブルの COMMENT を、doc コメントの無い受け側フィールド / 型への SuggestedFix として提案（gopls の quick fix で適用 → hover に出る） |
 | 🔶 | MV: REFRESH CONCURRENTLY に要るユニークインデックス | `-strict` のスキーマ advisory。依存元テーブル一覧は `Result.Relations` を MV 定義に掛ければ出るが出力先が未定 |
 | 🔶 | 値集合の CHECK IN / lookup テーブル対応 | `CHECK (col IN (...))` / `= ANY(ARRAY[...])` を列の値集合として enum と同じ両方向 diff・変換・switch 検査に載せた。lookup は `@data` 宣言（マイグレーション側）待ち |
 
@@ -719,7 +719,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | `ConstraintError` / `Violates`、`Single.Get` / `Find` / `ErrManyRows` | |
 | ↪ | 未検査展開形の実行時 panic | 「vet が通した集合の埋め込み」は生成物が要るので採らず、分岐シグネチャで静的展開形と SQL をバイト一致照合し error にする |
 | ✅ | 未知 enum ラベル受信の型付きエラー | Go の enum 型が `Known() bool`（`Labelled`）を実装していれば行マッパーが検証し `*UnknownLabelError`。実装しなければ素通し。panic モードは置かない |
-| ⬜ | 展開形ごとの statement キャッシュ制御、毎回 custom plan フラグ | pgx の自動 prepare に委ねている |
+| ✅ | 毎回 custom plan フラグ | `Stmt.Unprepared()` / `Single.Unprepared()`: pgx の `QueryExecModeExec` で prepared statement を作らず実行。展開形ごとのキャッシュ制御は pgx に委ねたまま |
 | ✅ | MV の型付き `Refresh` ハンドル | `sqlshape.MatView("name").Refresh / RefreshConcurrently`、vet が名前と種別を検査 |
 
 ### スキーマ / マイグレーション（ゴール `sqlshape/migration`）

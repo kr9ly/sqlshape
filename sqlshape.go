@@ -34,6 +34,23 @@ import (
 // Stmt is a checked SQL template. R is the result row type, P the parameter type.
 type Stmt[R, P any] struct {
 	Template string
+	// unprepared: run without a prepared statement (see Unprepared)
+	unprepared bool
+}
+
+// Unprepared returns a copy that runs without a server-side prepared statement, so the
+// planner makes a custom plan for the actual parameter values every time. Use it for
+// statements whose parameters have skewed value distributions, where pgx's automatic
+// statement cache would switch to a generic plan after a few executions.
+func (s Stmt[R, P]) Unprepared() Stmt[R, P] {
+	s.unprepared = true
+	return s
+}
+
+// Unprepared returns a copy that runs without a prepared statement (see Stmt.Unprepared).
+func (s Single[R, P]) Unprepared() Single[R, P] {
+	s.stmt.unprepared = true
+	return s
 }
 
 // Query declares a statement. The argument must be a string literal so the

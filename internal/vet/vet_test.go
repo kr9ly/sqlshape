@@ -50,3 +50,27 @@ func TestRequireColumns(t *testing.T) {
 	defer Analyzer.Flags.Set("require-columns", "")
 	analysistest.Run(t, td, Analyzer, "owner")
 }
+
+func TestSyncComments(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("sync-comments", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("sync-comments", "false")
+	analysistest.Run(t, td, Analyzer, "docs")
+}
+
+func TestCoverage(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("coverage", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("coverage", "false")
+	analysistest.Run(t, td, Analyzer, "cov")
+}

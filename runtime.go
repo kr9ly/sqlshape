@@ -107,7 +107,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			yield(zero, err)
 			return
 		}
-		rows, err := db.Query(ctx, r.SQL, r.Args...)
+		rows, err := db.Query(ctx, r.SQL, s.args(r.Args)...)
 		if err != nil {
 			yield(zero, s.wrapErr(err))
 			return
@@ -120,7 +120,7 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 				yield(zero, err)
 				return
 			}
-			if rows, err = db.Query(ctx, r.SQL, r.Args...); err != nil {
+			if rows, err = db.Query(ctx, r.SQL, s.args(r.Args)...); err != nil {
 				yield(zero, s.wrapErr(err))
 				return
 			}
@@ -177,8 +177,16 @@ func (s Stmt[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, er
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
-	tag, err := db.Exec(ctx, r.SQL, r.Args...)
+	tag, err := db.Exec(ctx, r.SQL, s.args(r.Args)...)
 	return tag, s.wrapErr(err)
+}
+
+// args prefixes the exec mode for unprepared statements (pgx reads a QueryExecMode first argument).
+func (s Stmt[R, P]) args(a []any) []any {
+	if !s.unprepared {
+		return a
+	}
+	return append([]any{pgx.QueryExecModeExec}, a...)
 }
 
 // Get runs the single-row statement and returns its row, or ErrNoRows.
