@@ -30,6 +30,8 @@ type rte struct {
 	rel    *schema.Relation
 	sub    *subquery
 	single bool
+	// outerNullable: an outer join made every column nullable (null-extended rows)
+	outerNullable bool
 }
 
 type joinInfo struct {

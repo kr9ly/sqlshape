@@ -720,6 +720,50 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 	}
 	a.checkVisibility(p, loc(where))
 	a.advisePlans(p)
+	a.rejectNulls(p)
+}
+
+// rejectNulls refines nullability from the predicate: a column tested IS NOT NULL, or
+// compared with a strict operator, in WHERE or an inner join's ON cannot be NULL in the
+// rows that survive. (An outer join's ON does not count: the join reintroduces NULLs.)
+func (a *analyzer) rejectNulls(p *prover) {
+	for _, c := range p.conjuncts {
+		if c.allow != nil {
+			continue
+		}
+		var operands []*pg_query.Node
+		switch v := c.n.Node.(type) {
+		case *pg_query.Node_NullTest:
+			if v.NullTest.Nulltesttype == pg_query.NullTestType_IS_NOT_NULL {
+				operands = []*pg_query.Node{v.NullTest.Arg}
+			}
+		case *pg_query.Node_AExpr:
+			switch v.AExpr.Kind {
+			case pg_query.A_Expr_Kind_AEXPR_OP, pg_query.A_Expr_Kind_AEXPR_LIKE, pg_query.A_Expr_Kind_AEXPR_ILIKE,
+				pg_query.A_Expr_Kind_AEXPR_BETWEEN, pg_query.A_Expr_Kind_AEXPR_IN, pg_query.A_Expr_Kind_AEXPR_OP_ANY:
+				// strict operators: NULL operands yield NULL, which WHERE rejects (IS DISTINCT FROM is not strict)
+				if v.AExpr.Lexpr != nil {
+					operands = append(operands, v.AExpr.Lexpr)
+				}
+				if v.AExpr.Kind == pg_query.A_Expr_Kind_AEXPR_OP {
+					operands = append(operands, v.AExpr.Rexpr)
+				}
+			}
+		}
+		for _, o := range operands {
+			if k, ok := p.resolve(o); ok {
+				k.r.cols[k.i].nullable = false
+				if k.r.outerNullable {
+					// the null-extended rows of an outer join are gone: base NOT NULL columns hold again
+					for i := range k.r.cols {
+						if src := k.r.cols[i].src; src != nil && src.NotNull {
+							k.r.cols[i].nullable = false
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 // checkVisibility enforces `-- sqlshape: visible where ...` policies: every table leaf with

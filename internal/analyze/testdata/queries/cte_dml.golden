@@ -1,0 +1,7 @@
+params:
+  $1 bigint
+  $2 numeric
+columns:
+  id bigint <- orders.id not null
+  total numeric(12,2) <- orders.total not null
+  email text <- users.email null

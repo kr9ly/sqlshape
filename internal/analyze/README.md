@@ -27,7 +27,7 @@ variadic / defaults / polymorphic consistency, implicit / assignment / explicit 
 `pg_cast` + array / domain / record rules, `select_common_type` for UNION / CASE / COALESCE /
 ARRAY / IN / VALUES (§10.5), `$n` inference from context with `text` fallback, parse-time literal
 validation (22P02). Scopes: JOIN (USING / NATURAL / LATERAL), subqueries, CTEs (incl. recursive),
-set operations, VALUES, functions in FROM, views (analyzed once), whole-row refs, CALL, INSERT / UPDATE /
+set operations, VALUES, functions in FROM, views (analyzed once), whole-row refs, ROWS FROM, data-modifying CTEs, CALL, INSERT / UPDATE /
 DELETE with RETURNING and ON CONFLICT.
 
 - `testdata/queries/*.sql` + `.golden`: goldens come from the real PG (`go test ./internal/analyze -update`);
@@ -35,4 +35,5 @@ DELETE with RETURNING and ON CONFLICT.
 - Error fixtures agree on SQLSTATE; the message text is informative only
 - GROUP BY validity (`grouping.go`): grouping expressions matched by deparsed text, aggregate arguments
   exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS unchecked
-- Not yet: collation, range types' subtypes, ROWS FROM, data-modifying CTEs
+- Nullability is refined by null-rejecting predicates (IS NOT NULL, strict comparisons, inner-join ON)
+- Not yet: collation, range types' subtypes

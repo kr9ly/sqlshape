@@ -658,10 +658,11 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 |---|---|---|
 | ✅ | §10 型変換（演算子・関数・多相・キャスト・select_common_type）、スコープ、DML + RETURNING、`$n` 推論、リテラル検証 | golden 57 本でオラクル一致 |
 | ✅ | 生成カタログ（COPY dump → TSV embed）、schema.sql の取り込み | |
-| 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則まで。関数戻り値・CASE 全分岐等の精緻化が残 |
+| 🔶 | nullability | NOT NULL / JOIN 種別 / 主要な式規則 + null 除外述語（`IS NOT NULL`、strict 演算子での比較、内部結合の ON）で結果列を not null に。外部結合の null 側に述語が掛かれば基表の NOT NULL 列も戻る。残: CASE 全分岐、非 strict 関数の個別規則 |
 | ✅ | `-- sqlshape: not null` 注釈 | schema.sql では CREATE FUNCTION 直前のコメントで戻り値を NOT NULL に、テンプレートでは `-- sqlshape: not null col, col` で結果列を上書き。STRICT なユーザー関数も引数から伝播 |
 | ✅ | GROUP BY 妥当性（42803） | analyze/grouping.go: deparse 一致・集約引数・PK による関数従属、GROUPING SETS は未検査。golden 5 本 |
-| ⬜ | 照合順序、range の subtype、ROWS FROM、データ変更 CTE | README「Not yet」と同じ |
+| ✅ | ROWS FROM、データ変更 CTE | ROWS FROM は関数ごとの列を横並び（列定義リスト・WITH ORDINALITY・別名込み）、データ変更 CTE は RETURNING 列を CTE の列にし失敗モードも合算 |
+| ⬜ | 照合順序、range の subtype | |
 | ✅ | `CALL procedure(...)` | 引数は関数と同じ経路（OUT も渡す）、INOUT / OUT が結果行、関数の CALL / プロシージャの SELECT は 42809。オラクルは拡張プロトコルの Parse で CALL を Describe できた |
 | ✅ | `LANGUAGE sql` / `BEGIN ATOMIC` 関数本体の検査と、関数越しのテーブル依存 | analyze/function.go: 引数を名前と `$n` で見せて各文を解析（同名列が優先、PG と同じ）、最終文の形を RETURNS と照合（代入キャスト許容、42P13）。vet はスキーマ読込時に全関数を検査。`FunctionResult.Relations` が関数越しの依存 |
 | ↪ | EXPLAIN 系 lint | lint 時に PG を起動しない方針を維持し、統計非依存の構造的 advisory に置換（`-strict`）: ① 述語列に先頭一致するインデックス / 鍵が無いテーブル述語（schema が全インデックスを保持）② ビューへ押し込めない述語（LIMIT/OFFSET・集合演算・ウィンドウ関数・GROUP BY ビューの非グループ列）。「ネスト内に上限なし」は構造的に決められないので不採用。EXPLAIN 本体はオラクル上でも統計が違うため採らない |
@@ -706,7 +707,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | カーディナリティ: `One` のユニーク鍵証明（JOIN・ビュー・サブクエリ・CTE 越し） | |
 | ✅ | 失敗モード: 違反し得る制約の列挙 + `-- sqlshape: expect` + `ConstraintError` | |
 | ✅ | トリガーの独自 SQLSTATE（`-- sqlshape: error XX001 = Name`）→ 型付きエラー | schema が CREATE TRIGGER を取り込み、トリガー関数の directive を DML の失敗モードに載せる。expect 行にはコードを書く（名前は診断文のみ）。runtime は expect 行にあるコードの PgError を ConstraintError に写す |
-| ⬜ | 複合キー（複数列 PK / FK）の同一性 | |
+| ✅ | 複合キー（複数列 PK / FK）の同一性 | 複合 FK は位置で参照先の列へ、複合 PK の各列はそれぞれ同一性 |
 | ✅ | `One` の既知値に関数呼び出しを含める、GROUP BY 列がすべて既知のケース | 解析時に関数呼び出しごとの volatility を記録し、stable / immutable かつ引数が既知なら既知。GROUP BY は全グループ式が固定されていれば 1 グループ（ビュー `order_stats WHERE user_id = $1` が One になる） |
 
 ### runtime

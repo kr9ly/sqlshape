@@ -240,3 +240,11 @@ type DetailRowBad struct {
 var optionalTotalBad = sqlshape.Query[DetailRowBad, struct{ Detailed bool }](`SELECT id {{if .Detailed}}, total {{end}} FROM orders`) // want `field DetailRowBad.Total is not selected in every branch \[if@\d+:else\]: make it a pointer so those branches leave it nil`
 
 var neverSelected = sqlshape.Query[DetailRow, struct{ Detailed bool }](`SELECT id FROM orders`) // want `field DetailRow.Total has no result column`
+
+// composite keys: each column of order_items' primary key is an identity; order_id follows its FK to orders.id
+type LineNo int16 // want LineNo:`bound k order_items.line_no`
+
+var itemByLine = sqlshape.Query[string, struct {
+	O UserID
+	L LineNo
+}](`SELECT sku FROM order_items WHERE order_id = {{.O}} AND line_no = {{.L}}`) // want `parameter .O is a.UserID, which stands for key users.id elsewhere, but here meets key orders.id`

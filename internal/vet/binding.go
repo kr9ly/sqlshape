@@ -105,27 +105,44 @@ func (c *checker) identity(table, column string, depth int) (string, bool) {
 		return "", false
 	}
 	for _, con := range rel.Constraints {
-		if con.Kind == schema.ForeignKey && len(con.Columns) == 1 && con.Columns[0] == column {
-			refCol := ""
-			if len(con.RefColumns) == 1 {
-				refCol = con.RefColumns[0]
-			} else if ref := c.relByFullName(con.RefTable); ref != nil {
+		if con.Kind != schema.ForeignKey {
+			continue
+		}
+		pos := -1
+		for i, col := range con.Columns {
+			if col == column {
+				pos = i
+			}
+		}
+		if pos < 0 {
+			continue
+		}
+		// a composite FK maps its columns to the referenced key by position
+		refCols := con.RefColumns
+		if len(refCols) == 0 {
+			if ref := c.relByFullName(con.RefTable); ref != nil {
 				for _, rc := range ref.Constraints {
-					if rc.Kind == schema.PrimaryKey && len(rc.Columns) == 1 {
-						refCol = rc.Columns[0]
+					if rc.Kind == schema.PrimaryKey {
+						refCols = rc.Columns
 					}
 				}
 			}
-			if refCol != "" {
-				if id, ok := c.identity(con.RefTable, refCol, depth+1); ok {
-					return id, true
-				}
+		}
+		if pos < len(refCols) {
+			if id, ok := c.identity(con.RefTable, refCols[pos], depth+1); ok {
+				return id, true
 			}
 		}
 	}
 	for _, con := range rel.Constraints {
-		if con.Kind == schema.PrimaryKey && len(con.Columns) == 1 && con.Columns[0] == column {
-			return table + "." + column, true
+		if con.Kind != schema.PrimaryKey {
+			continue
+		}
+		for _, col := range con.Columns {
+			if col == column {
+				// each column of a (possibly composite) primary key is an identity of its own
+				return table + "." + column, true
+			}
 		}
 	}
 	return "", false

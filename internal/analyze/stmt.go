@@ -172,7 +172,26 @@ func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
 		c := cn.GetCommonTableExpr()
 		sel := c.Ctequery.GetSelectStmt()
 		if sel == nil {
-			return errAt(codeFeatureNotSupported, c.Location, "data-modifying CTEs are not supported yet")
+			// data-modifying CTE: its RETURNING rows are the CTE's columns
+			csc := newScope(sc)
+			var cols []rteCol
+			var err *Error
+			switch st := c.Ctequery.Node.(type) {
+			case *pg_query.Node_InsertStmt:
+				cols, err = a.insertStmt(st.InsertStmt, csc)
+			case *pg_query.Node_UpdateStmt:
+				cols, err = a.updateStmt(st.UpdateStmt, csc)
+			case *pg_query.Node_DeleteStmt:
+				cols, err = a.deleteStmt(st.DeleteStmt, csc)
+			default:
+				return errAt(codeFeatureNotSupported, c.Location, "unsupported CTE query %T", c.Ctequery.Node)
+			}
+			if err != nil {
+				return err
+			}
+			a.dmlCTEs = append(a.dmlCTEs, c.Ctequery)
+			sc.ctes[c.Ctename] = &cte{name: c.Ctename, cols: a.aliasCols(cols, c.Aliascolnames)}
+			continue
 		}
 		def := &cte{name: c.Ctename, recursive: w.Recursive}
 		if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION {
@@ -376,14 +395,47 @@ func qualName(rv *pg_query.RangeVar) string {
 }
 
 func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *Error) {
-	if len(rf.Functions) != 1 {
-		return nil, errAt(codeFeatureNotSupported, -1, "ROWS FROM with multiple functions is not supported")
+	if len(rf.Functions) > 1 {
+		// ROWS FROM (f1(), f2() AS (...)): the functions run in lockstep, columns side by side
+		r := &rte{alias: "rows_from"}
+		for _, fn := range rf.Functions {
+			items := fn.GetList().GetItems()
+			one := &pg_query.RangeFunction{Functions: []*pg_query.Node{fn}, Ordinality: false}
+			if len(items) > 1 {
+				one.Coldeflist = items[1].GetList().GetItems() // per-function column definition list
+			}
+			sub, err := a.rangeFunction(one, sc)
+			if err != nil {
+				return nil, err
+			}
+			r.cols = append(r.cols, sub.cols...)
+			r.single = r.single && sub.single
+		}
+		if rf.Alias != nil {
+			if rf.Alias.Aliasname != "" {
+				r.alias = rf.Alias.Aliasname
+			}
+			for i, cn := range rf.Alias.Colnames {
+				if i < len(r.cols) {
+					r.cols[i].name = cn.GetString_().GetSval()
+				}
+			}
+		}
+		if rf.Ordinality {
+			r.cols = append(r.cols, rteCol{name: "ordinality", typ: ref(catalog.Int8)})
+			applyColnames(r.cols, rf.Alias)
+		}
+		return r, nil
 	}
 	items := rf.Functions[0].GetList().GetItems()
 	fnode := items[0]
 	fc := fnode.GetFuncCall()
 	r := &rte{}
 	var cols []rteCol
+	coldefs := rf.Coldeflist
+	if len(items) > 1 && len(coldefs) == 0 {
+		coldefs = items[1].GetList().GetItems()
+	}
 	if fc == nil {
 		// e.g. a bare column reference or sublink used as a function-in-FROM (unnest of array column etc.)
 		e, err := a.analyzeExpr(fnode, sc)
@@ -416,14 +468,14 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 					}
 				}
 			}
-			if len(cols) == 0 && len(rf.Coldeflist) == 0 {
+			if len(cols) == 0 && len(coldefs) == 0 {
 				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is required for functions returning \"record\"")
 			}
 		default:
 			cols = []rteCol{{name: fname, typ: e.typ, nullable: true}}
 		}
 	}
-	for _, cd := range rf.Coldeflist {
+	for _, cd := range coldefs {
 		def := cd.GetColumnDef()
 		tr, err := a.s.ResolveType(def.TypeName)
 		if err != nil {
@@ -449,9 +501,22 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 	}
 	if rf.Ordinality {
 		cols = append(cols, rteCol{name: "ordinality", typ: ref(catalog.Int8)})
+		applyColnames(cols, rf.Alias)
 	}
 	r.cols = cols
 	return r, nil
+}
+
+// applyColnames renames columns after an alias column list (AS t(a, b, c)).
+func applyColnames(cols []rteCol, alias *pg_query.Alias) {
+	if alias == nil {
+		return
+	}
+	for i, cn := range alias.Colnames {
+		if i < len(cols) {
+			cols[i].name = cn.GetString_().GetSval()
+		}
+	}
 }
 
 func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
@@ -535,6 +600,7 @@ func markNullable(r *rte) {
 		}
 		return
 	}
+	r.outerNullable = true
 	for i := range r.cols {
 		r.cols[i].nullable = true
 	}

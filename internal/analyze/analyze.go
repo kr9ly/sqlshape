@@ -39,6 +39,8 @@ type analyzer struct {
 	funcParams []funcParam
 	// funcVolatility remembers the volatility of each resolved function call (card.go)
 	funcVolatility map[*pg_query.FuncCall]byte
+	// dmlCTEs are the data-modifying statements inside WITH (their failure modes count)
+	dmlCTEs []*pg_query.Node
 	// unfiltered are tables the template exempts from their visibility policy
 	// (`-- sqlshape: unfiltered t1, t2` in the SQL text)
 	unfiltered map[string]bool
@@ -142,6 +144,9 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 		a.note(noteUnorderedLimit, loc(sel.LimitCount), "LIMIT without ORDER BY: which rows are returned is unspecified")
 	}
 	res.Violations = a.violations(tree.Stmts[0].Stmt)
+	for _, dml := range a.dmlCTEs {
+		res.Violations = dedupe(append(res.Violations, a.violations(dml)...))
+	}
 	res.Relations = a.refs
 	for _, as := range a.assigned {
 		if as.rel != nil {

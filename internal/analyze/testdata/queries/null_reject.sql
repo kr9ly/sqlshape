@@ -1,0 +1,1 @@
+SELECT o.note, o.uid FROM orders o WHERE o.note IS NOT NULL AND o.uid = $1

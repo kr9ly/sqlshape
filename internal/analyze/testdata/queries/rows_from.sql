@@ -1,0 +1,1 @@
+SELECT * FROM ROWS FROM (generate_series(1, 3), unnest(ARRAY['a', 'b'])) WITH ORDINALITY AS t(n, s, i)

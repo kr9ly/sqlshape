@@ -1,0 +1,5 @@
+params:
+columns:
+  n integer
+  s text
+  i bigint

@@ -59,6 +59,8 @@ func TestViolations(t *testing.T) {
 		{sql: "DELETE FROM orders WHERE id = $1", want: "23503 order_items_order_fk"},
 		{sql: "DELETE FROM order_items WHERE order_id = $1", want: ""},
 		{sql: "SELECT id FROM users", want: ""},
+		// data-modifying CTEs contribute their failure modes
+		{sql: "WITH d AS (DELETE FROM orders WHERE id = $1 RETURNING id) SELECT id FROM d", want: "23503 order_items_order_fk"},
 	}
 	for _, c := range cases {
 		t.Run(c.sql, func(t *testing.T) {

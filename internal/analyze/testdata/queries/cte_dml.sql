@@ -1,0 +1,1 @@
+WITH ins AS (INSERT INTO orders (user_id, total) VALUES ($1, $2) RETURNING id, total) SELECT ins.id, ins.total, u.email FROM ins JOIN users u ON u.id = $1
