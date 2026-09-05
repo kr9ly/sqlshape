@@ -4,13 +4,28 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/kr9ly/sqlshape"
 )
 
-// Checkout places an order through the database's functions. The limit on open orders is
-// enforced by a trigger; the application only has to name the outcome.
-func Checkout(ctx context.Context, db sqlshape.DB, customerID int64, shipping Yen, lines []NewLine) (int64, error) {
-	id, err := PlaceOrder.Get(ctx, db, NewOrder{CustomerID: customerID, Shipping: shipping})
+// Beginner starts transactions: pgx.Conn and pgxpool.Pool both do.
+type Beginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+// Checkout places an order with its lines through the database's functions, in one
+// transaction: a rejected line leaves no half-built order behind. pgx.Tx satisfies
+// sqlshape.DB, so the statements run on the transaction unchanged. The limit on open
+// orders is enforced by a trigger; the application only has to name the outcome.
+func Checkout(ctx context.Context, db Beginner, customerID int64, shipping Yen, lines []NewLine) (int64, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) // a no-op after Commit
+
+	id, err := PlaceOrder.Get(ctx, tx, NewOrder{CustomerID: customerID, Shipping: shipping})
 	switch {
 	case sqlshape.Violates(err, "OS001"):
 		return 0, fmt.Errorf("customer %d has too many open orders", customerID)
@@ -21,14 +36,14 @@ func Checkout(ctx context.Context, db sqlshape.DB, customerID int64, shipping Ye
 	}
 	for _, l := range lines {
 		l.OrderID = *id
-		if _, err := AddLine.Get(ctx, db, l); err != nil {
+		if _, err := AddLine.Get(ctx, tx, l); err != nil {
 			if sqlshape.Violates(err, "order_items_qty_check") {
 				return 0, fmt.Errorf("%s: quantity must be positive", l.Sku)
 			}
 			return 0, err
 		}
 	}
-	return *id, nil
+	return *id, tx.Commit(ctx)
 }
 
 // Label is the customer-facing tier name; the switch must cover every value of the set.

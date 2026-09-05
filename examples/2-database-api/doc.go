@@ -21,6 +21,8 @@
 //   - `-- sqlshape: not null` on open_orders tells the checker a function result is never
 //     NULL, so Go can receive an int64 rather than a *int64.
 //   - sqlshape.MatView("sales_by_day").Refresh is checked against the schema.
+//   - Transactions are pgx's: Checkout runs place_order and add_line on one pgx.Tx, which
+//     satisfies sqlshape.DB like a connection or a pool does.
 //   - Run the checker with -no-tables to enforce the boundary: `go run ../../cmd/sqlshape
 //     -no-tables .` reports any statement that reads or writes a table directly.
 package dbapi
