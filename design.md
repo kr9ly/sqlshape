@@ -82,6 +82,7 @@ sqldef で表現できないもの（データマイグレーション / 順序�
 
 テンプレート構文は text/template を借用（`text/template/parse` を流用、実行器は自前）。
 規則は 3 つ: `{{.X}}` が式位置なら バインド、`if` 条件なら制御、両方なら省略可能。
+分岐は `if` / `else if` / `with` / `range` のみ（`switch` は text/template に無いので `else if eq` で書く）。
 
 ```go
 type OrderSummary struct {
@@ -96,10 +97,9 @@ var listOrders = sqlshape.Query[OrderSummary, ListOrdersParams](`
     WHERE true
       {{if .Status}}  AND o.status = {{.Status}}        {{end}}
       {{if .UserIDs}} AND o.user_id = ANY({{.UserIDs}}) {{end}}
-    ORDER BY {{switch .Sort}}
-      {{case "newest"}} o.created_at DESC
-      {{case "total"}}  o.total DESC
-    {{end}}
+    ORDER BY {{if eq .Sort "newest"}} o.created_at DESC
+             {{else if eq .Sort "total"}} o.total DESC
+             {{else}} o.id {{end}}
     LIMIT {{.Limit}}
 `)
 
@@ -109,7 +109,7 @@ for row, err := range listOrders.Run(ctx, db, ListOrdersParams{Status: &s}) { ..
 - 基本形は `iter.Seq2[R, error]`。`Collect` / `First` はヘルパー
 - 1 対多は SQL 側で `array_agg(row(...))` に書かせ、PG の複合型からネスト構造体を導出
 - 可変長 IN は `= ANY($1)` に統一
-- 展開形にハッシュを振り、検査器が通した集合に無い形が実行時に出たら panic
+- 実行時は各レンダリングを分岐シグネチャで静的展開形と突き合わせ、検査器が見ていない SQL は error で拒む（「進捗」参照）
 
 ## アーキテクチャ
 
@@ -672,10 +672,10 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 状態 | 項目 | 備考 |
 |---|---|---|
 | ✅ | if / else / with / range 0・1・2、`{{.X}}` → `$n`、同一パス同一番号、位置写像、256 上限 | |
-| ⬜ | `{{switch .Sort}} {{case ...}}` | 書き味の例に書いたが text/template に無い。今は `{{if eq .Sort "x"}}` で書く。独自構文にするか本文を直すか |
+| ↪ | `{{switch .Sort}} {{case ...}}` | text/template に無く、前処理で書き換えると位置写像が崩れる。`{{if eq .Sort "x"}} ... {{else if eq .Sort "y"}} ... {{end}}` で書く方針に決め、書き味の例を直した |
 | ⬜ | 分岐爆発の退避路（独立 AND 述語は「外側 true 1 本 + 全 false 1 本」） | 今は上限超過をエラー |
 | ⬜ | 分岐ごとに結果型が変わるクエリを sum 型で返す | 今は全展開形が同じ R に合うことを要求 |
-| ⬜ | interpreted string リテラルの位置写像 | raw string 前提。診断は先頭にフォールバック |
+| ✅ | interpreted string リテラルの位置写像 | エスケープを復号しながら源位置を辿る |
 
 ### 照合（internal/vet）
 
@@ -690,9 +690,9 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | 既定値と生成値の所有者（P 非ポインタ ⇔ DEFAULT / identity 列） | `-strict`。GENERATED / identity ALWAYS への明示挿入は PG 自身のエラー |
 | 🔶 | LIMIT の ORDER BY 無し警告 | analyzer の advisory Note、`-strict`。`First` は呼び出し箇所なので vet からは見えない。`array_agg` ネスト側の 1:1 / 1:N 突合は未 |
 | ⬜ | 行の所属（`tenant_id` / `deleted_at` の列ポリシー lint） | |
-| ⬜ | テーブル直参照禁止 lint（public / private 境界、`a_api.*` のサービス境界） | schema はスキーマ名を持っているので土台はある |
+| ✅ | テーブル直参照禁止 lint（`-no-tables`）、サービス境界（`-schemas=a_api,b_private`） | analyzer が `Result.Relations`（直接参照した関係、ビューは展開しない）を出す。DROP 影響分析 / 死んだスキーマ検出の土台 |
 | ⬜ | `COMMENT ON` を Go doc / gopls hover へ | `schema.Comments` に取り込み済み、出力先が無い |
-| ⬜ | MV: REFRESH CONCURRENTLY に要るユニークインデックス、依存元テーブル一覧 | |
+| 🔶 | MV: REFRESH CONCURRENTLY に要るユニークインデックス | `-strict` のスキーマ advisory。依存元テーブル一覧は `Result.Relations` を MV 定義に掛ければ出るが出力先が未定 |
 | ⬜ | 値集合の CHECK IN / lookup テーブル対応 | enum のみ。lookup は `@data` 宣言（マイグレーション側）待ち |
 
 ### 解釈の共有
@@ -716,7 +716,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | ネスト行の位置スキャン、ユーザー型の遅延 `LoadTypes`、`LoadUserTypes` | |
 | ✅ | `ConstraintError` / `Violates`、`Single.Get` / `Find` / `ErrManyRows` | |
 | ↪ | 未検査展開形の実行時 panic | 「vet が通した集合の埋め込み」は生成物が要るので採らず、分岐シグネチャで静的展開形と SQL をバイト一致照合し error にする |
-| ⬜ | 未知 enum ラベル受信の型付きエラー（panic / error / 素通しを設定） | |
+| ✅ | 未知 enum ラベル受信の型付きエラー | Go の enum 型が `Known() bool`（`Labelled`）を実装していれば行マッパーが検証し `*UnknownLabelError`。実装しなければ素通し。panic モードは置かない |
 | ⬜ | 展開形ごとの statement キャッシュ制御、毎回 custom plan フラグ | pgx の自動 prepare に委ねている |
 | ⬜ | MV の型付き `Refresh` ハンドル | |
 
@@ -741,8 +741,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 
 ### 本文と実装のズレ（本文側を直すか判断が要るもの）
 
-- 書き味の例にある `{{switch}}` / `{{case}}` は未実装（上記）
-- 「展開形にハッシュを振り…実行時に panic」は分岐シグネチャ照合 + error に置き換えた
+- 書き味の例と「展開形にハッシュ…panic」の記述は 2026-09-05 に本文側を実装に合わせて修正済み
 - prober は方式 2（生成カタログ + §10 仕様実装）で確定、embedded PG はオラクル。カタログは `.dat` 解析ではなく COPY dump
 - 「runtime が接続時に検査で見た enum 型を全部 LoadType」は、結果列の未知 OID を見つけたときの遅延ロード +
   `LoadUserTypes` の一括登録に置き換えた（runtime は検査結果を持たないため）

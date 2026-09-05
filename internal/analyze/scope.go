@@ -191,6 +191,17 @@ func (sc *scope) wholeRow(name string) *rte {
 
 // relationRTE builds a leaf rte for a table / view.
 func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc int32) (*rte, *Error) {
+	if a.inView == 0 && rel.Kind != 'c' {
+		dup := false
+		for _, ref := range a.refs {
+			if ref.Schema == rel.Schema && ref.Name == rel.Name {
+				dup = true
+			}
+		}
+		if !dup {
+			a.refs = append(a.refs, RelationRef{Schema: rel.Schema, Name: rel.Name, Kind: byte(rel.Kind), Position: loc + 1})
+		}
+	}
 	r := &rte{alias: rel.Name, rowType: rel.RowType}
 	if alias != nil && alias.Aliasname != "" {
 		r.alias = alias.Aliasname
@@ -240,6 +251,8 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 	}
 	a.viewBusy[rel] = true
 	defer delete(a.viewBusy, rel)
+	a.inView++
+	defer func() { a.inView-- }()
 	sel := rel.Query.GetSelectStmt()
 	if sel == nil {
 		return nil, errAt(codeFeatureNotSupported, -1, "view %s: unsupported defining query", rel.Name)

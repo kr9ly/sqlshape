@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -36,12 +38,16 @@ var Analyzer = &analysis.Analyzer{
 }
 
 var (
-	schemaPath string
-	strictFlag bool
+	schemaPath  string
+	strictFlag  bool
+	noTables    bool
+	schemasFlag string
 )
 
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql (default: nearest schema.sql above the package directory)")
+	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
+	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
 	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report advisory findings: enum / domain / key columns carried by unnamed Go types, timestamp / date received as time.Time, non-pointer enum parameters (zero value is no label), parameters that always override a column DEFAULT, LIMIT without ORDER BY, enum ordering")
 }
 
@@ -124,6 +130,9 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, p := range s.Problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
+	if strictFlag {
+		c.adviseSchema(calls[0].Pos())
+	}
 	for _, call := range calls {
 		c.checkCall(call)
 	}
@@ -160,10 +169,51 @@ type literal struct {
 }
 
 func (l literal) pos(tmplOff int) token.Pos {
-	if l.lit != nil && l.raw && tmplOff >= 0 && tmplOff <= len(l.text) {
+	if l.lit == nil || tmplOff < 0 || tmplOff > len(l.text) {
+		return l.fallback
+	}
+	if l.raw {
 		return l.lit.Pos() + token.Pos(1+tmplOff)
 	}
-	return l.fallback
+	// interpreted string: walk the source, decoding escapes, until the template offset
+	src := l.lit.Value
+	decoded := 0
+	for i := 1; i < len(src)-1; {
+		if decoded >= tmplOff {
+			return l.lit.Pos() + token.Pos(i)
+		}
+		if src[i] != '\\' {
+			_, size := utf8.DecodeRuneInString(src[i:])
+			decoded += size
+			i += size
+			continue
+		}
+		// an escape sequence: find its source length and decoded length
+		var n, d int
+		switch src[i+1] {
+		case 'x':
+			n, d = 4, 1
+		case 'u':
+			n, d = 6, utf8.RuneLen(runeOfHex(src[i+2:i+6]))
+		case 'U':
+			n, d = 10, utf8.RuneLen(runeOfHex(src[i+2:i+10]))
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			n, d = 4, 1
+		default:
+			n, d = 2, 1
+		}
+		decoded += d
+		i += n
+	}
+	return l.lit.Pos() + token.Pos(len(src)-1)
+}
+
+func runeOfHex(s string) rune {
+	r, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return utf8.RuneError
+	}
+	return rune(r)
 }
 
 func (c *checker) checkCall(call *ast.CallExpr) {
@@ -255,6 +305,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			}
 			continue
 		}
+		c.checkReferences(e, r, lit, report, where)
 		for _, v := range c.possibleViolations(e, r, pType) {
 			if _, seen := possible[v.Key()]; !seen {
 				possible[v.Key()] = v
@@ -508,4 +559,48 @@ func (c *checker) resolvePath(t types.Type, p expand.Path) (types.Type, error) {
 		cur = found.Type()
 	}
 	return cur, nil
+}
+
+// checkReferences enforces the reference policy flags on the relations an expansion reads or writes.
+func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit literal, report func(token.Pos, string, ...any), where string) {
+	var allowed map[string]bool
+	if schemasFlag != "" {
+		allowed = map[string]bool{}
+		for _, s := range strings.Split(schemasFlag, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				allowed[s] = true
+			}
+		}
+	}
+	for _, ref := range r.Relations {
+		at := lit.pos(e.TemplatePos(int(ref.Position) - 1))
+		name := ref.Name
+		if ref.Schema != "public" {
+			name = ref.Schema + "." + name
+		}
+		if noTables && ref.Kind == 'r' {
+			report(at, "table %s is referenced directly; with -no-tables application code reads views and calls functions only%s", name, where)
+		}
+		if allowed != nil && !allowed[ref.Schema] {
+			report(at, "%s is outside the schemas this code may reference (%s)%s", name, schemasFlag, where)
+		}
+	}
+}
+
+// adviseSchema reports advisory findings about the schema itself (-strict).
+func (c *checker) adviseSchema(at token.Pos) {
+	for _, rel := range c.s.Relations {
+		if rel.Kind != schema.MatView {
+			continue
+		}
+		unique := false
+		for _, con := range rel.Constraints {
+			if con.Kind == schema.Unique && con.Predicate == nil {
+				unique = true
+			}
+		}
+		if !unique {
+			c.pass.Reportf(at, "sqlshape: schema: materialized view %s has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible", rel.FullName())
+		}
+	}
 }

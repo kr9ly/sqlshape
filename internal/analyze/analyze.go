@@ -27,6 +27,10 @@ type analyzer struct {
 	lastFuncRetSet bool
 	// inCall is set while analyzing the FuncCall of a CALL statement (procedures allowed)
 	inCall bool
+	refs   []RelationRef
+	// inView is the depth of view definitions being analyzed: their references are the
+	// view's, not the statement's
+	inView int
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
 }
@@ -89,6 +93,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		a.note(noteUnorderedLimit, loc(sel.LimitCount), "LIMIT without ORDER BY: which rows are returned is unspecified")
 	}
 	res.Violations = a.violations(tree.Stmts[0].Stmt)
+	res.Relations = a.refs
 	res.Notes = a.notes
 	return res, nil
 }

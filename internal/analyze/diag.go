@@ -91,4 +91,15 @@ type Result struct {
 	ManyRowsWhy string
 	// Violations are the constraints a write may violate (violation.go).
 	Violations []Violation
+	// Relations are the tables and views the statement references directly (FROM, JOIN,
+	// DML target, subqueries; views are listed but not expanded). Each once, in order.
+	Relations []RelationRef
+}
+
+// RelationRef is a direct reference to a relation, with its position in the SQL.
+type RelationRef struct {
+	Schema   string
+	Name     string
+	Kind     byte // 'r' table, 'v' view, 'm' materialized view
+	Position int32
 }

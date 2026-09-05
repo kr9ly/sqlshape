@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -199,6 +200,85 @@ func (s Single[R, P]) Render(p P) (Rendered, error) { return s.stmt.Render(p) }
 type mapper[R any] struct {
 	scalar bool
 	fields []int // field index per column
+	// labelled is whether R contains a type implementing Known (enum labels the
+	// application knows): rows are validated after scanning
+	labelled bool
+}
+
+// Labelled is implemented by a Go enum type (a named string type bound to a PG enum) to
+// say which labels the application knows. When a scanned value answers false the row is
+// rejected with an *UnknownLabelError: the database has a label this build predates.
+//
+//	func (s OrderStatus) Known() bool { switch s { case Pending, Paid: return true }; return false }
+type Labelled interface{ Known() bool }
+
+// UnknownLabelError reports a scanned enum value the application does not know.
+type UnknownLabelError struct {
+	Type  reflect.Type
+	Value string
+}
+
+func (e *UnknownLabelError) Error() string {
+	return "sqlshape: unknown " + e.Type.String() + " label " + strconv.Quote(e.Value) + " received (the database has a value this build does not know)"
+}
+
+var labelledType = reflect.TypeOf((*Labelled)(nil)).Elem()
+
+// hasLabelled reports whether t (or anything it contains) implements Labelled.
+func hasLabelled(t reflect.Type, seen map[reflect.Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	if t.Implements(labelledType) {
+		return true
+	}
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return hasLabelled(t.Elem(), seen)
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			if t.Field(i).IsExported() && hasLabelled(t.Field(i).Type, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkLabels validates every Labelled value inside v.
+func checkLabels(v reflect.Value) error {
+	if !v.IsValid() {
+		return nil
+	}
+	if v.Type().Implements(labelledType) && v.Kind() == reflect.String {
+		if s := v.String(); s != "" && !v.Interface().(Labelled).Known() {
+			return &UnknownLabelError{Type: v.Type(), Value: s}
+		}
+		return nil
+	}
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return nil
+		}
+		return checkLabels(v.Elem())
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if err := checkLabels(v.Index(i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() {
+				if err := checkLabels(v.Field(i)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 var mapperCache sync.Map // mapperKey → *mapper
@@ -222,7 +302,7 @@ func newMapper[R any](fds []pgconn.FieldDescription) (*mapper[R], error) {
 	if m, ok := mapperCache.Load(key); ok {
 		return m.(*mapper[R]), nil
 	}
-	m := &mapper[R]{}
+	m := &mapper[R]{labelled: hasLabelled(rt, map[reflect.Type]bool{})}
 	if rt.Kind() != reflect.Struct || rt.PkgPath() == "time" {
 		if len(fds) != 1 {
 			return nil, fmt.Errorf("sqlshape: R is %s but the query returns %d columns", rt, len(fds))
@@ -271,20 +351,26 @@ func newMapper[R any](fds []pgconn.FieldDescription) (*mapper[R], error) {
 
 func (m *mapper[R]) scan(rows pgx.Rows) (R, error) {
 	var row R
+	var err error
 	if m.scalar {
-		return row, rows.Scan(&row)
-	}
-	v := reflect.ValueOf(&row).Elem()
-	dests := make([]any, len(m.fields))
-	for i, idx := range m.fields {
-		fv := v.Field(idx)
-		if isNested(fv.Type()) {
-			dests[i] = nestedDest(fv)
-		} else {
-			dests[i] = fv.Addr().Interface()
+		err = rows.Scan(&row)
+	} else {
+		v := reflect.ValueOf(&row).Elem()
+		dests := make([]any, len(m.fields))
+		for i, idx := range m.fields {
+			fv := v.Field(idx)
+			if isNested(fv.Type()) {
+				dests[i] = nestedDest(fv)
+			} else {
+				dests[i] = fv.Addr().Interface()
+			}
 		}
+		err = rows.Scan(dests...)
 	}
-	return row, rows.Scan(dests...)
+	if err == nil && m.labelled {
+		err = checkLabels(reflect.ValueOf(row))
+	}
+	return row, err
 }
 
 // fieldColumn is the column a struct field binds to: `col:"name"` / `db:"name"`, else snake_case.

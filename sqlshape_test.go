@@ -13,6 +13,15 @@ import (
 
 type OrderStatus string
 
+// Known lists the labels this build knows; the row mapper rejects others.
+func (s OrderStatus) Known() bool {
+	switch s {
+	case "pending", "paid", "shipped":
+		return true
+	}
+	return false
+}
+
 type OrderRow struct {
 	ID        int64
 	Status    OrderStatus
@@ -220,6 +229,18 @@ func TestAgainstPostgres(t *testing.T) {
 	}
 	if _, ok, err := orderByID.Find(ctx, db, struct{ ID int64 }{id2 + 100}); err != nil || ok {
 		t.Errorf("One.Find missing: %v %v", ok, err)
+	}
+
+	// unknown enum label: the database knows 'cancelled', this build's Known() does not
+	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'cancelled' WHERE id = $1`, id1); err != nil {
+		t.Fatal(err)
+	}
+	var ule *sqlshape.UnknownLabelError
+	if _, err := listOrders.Collect(ctx, db, ListParams{}); !errors.As(err, &ule) || ule.Value != "cancelled" {
+		t.Errorf("unknown label: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'pending' WHERE id = $1`, id1); err != nil {
+		t.Fatal(err)
 	}
 
 	// procedures
