@@ -57,6 +57,9 @@ type Source struct {
 	Table   string
 	Column  string
 	NotNull bool
+	// Assigned is set when a parameter was stored into the column (INSERT / UPDATE), as
+	// opposed to compared with it.
+	Assigned bool
 }
 
 // Column is one result column.

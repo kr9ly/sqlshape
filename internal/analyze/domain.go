@@ -28,7 +28,18 @@ type Note struct {
 	Position int32 // 1-based, 0 if none
 }
 
-const noteDomainMismatch = "domain-mismatch"
+const (
+	noteDomainMismatch = "domain-mismatch"
+	noteAlwaysFails    = "always-fails"
+	// advisory notes (the checker reports them with -strict)
+	noteUnorderedLimit = "unordered-limit"
+	noteEnumOrder      = "enum-order"
+)
+
+// Advisory reports whether a note is advice rather than a likely bug.
+func (n Note) Advisory() bool {
+	return n.Code == noteUnorderedLimit || n.Code == noteEnumOrder
+}
 
 func (a *analyzer) note(code string, loc int32, msg string) {
 	pos := int32(0)

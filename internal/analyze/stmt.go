@@ -75,6 +75,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if err := a.orderOrGroupItem(s.GetSortBy().GetNode(), sc, cols); err != nil {
 			return nil, err
 		}
+		a.noteEnumSort(s.GetSortBy().GetNode(), sc, cols)
 	}
 	for _, d := range sel.DistinctClause {
 		if d.Node == nil {
@@ -554,7 +555,7 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e})
 	if e.param > 0 {
 		if _, done := a.paramSrc[e.param]; !done {
-			a.paramSrc[e.param] = &Source{Table: relName, Column: col.Name, NotNull: col.NotNull}
+			a.paramSrc[e.param] = &Source{Table: relName, Column: col.Name, NotNull: col.NotNull, Assigned: true}
 		}
 	}
 	if e.oid() == catalog.Unknown {
@@ -825,4 +826,32 @@ func (a *analyzer) figureColnameInternal(n *pg_query.Node) string {
 		return a.figureColnameInternal(v.NamedArgExpr.Arg)
 	}
 	return ""
+}
+
+// noteEnumSort flags ORDER BY on an enum: it sorts by declaration order, which surprises
+// readers expecting the labels' alphabetical order (advisory).
+func (a *analyzer) noteEnumSort(n *pg_query.Node, sc *scope, cols []rteCol) {
+	var typ schema.TypeRef
+	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
+		name := cr.Fields[0].GetString_().GetSval()
+		for _, c := range cols {
+			if c.name == name {
+				typ = c.typ
+			}
+		}
+	}
+	if typ.OID == 0 {
+		if cr := n.GetColumnRef(); cr != nil {
+			saved := len(a.notes)
+			e, err := a.columnRef(cr, sc)
+			a.notes = a.notes[:saved]
+			if err != nil {
+				return
+			}
+			typ = e.typ
+		}
+	}
+	if t := a.typ(a.baseType(typ.OID)); t != nil && t.Kind == 'e' {
+		a.note(noteEnumOrder, loc(n), "ORDER BY enum "+t.Name+" sorts in declaration order, not alphabetically")
+	}
 }

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
+	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/expand"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -41,7 +42,7 @@ var (
 
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql (default: nearest schema.sql above the package directory)")
-	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report enum / domain / key columns carried by unnamed Go types (not checkable)")
+	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report advisory findings: enum / domain / key columns carried by unnamed Go types, timestamp / date received as time.Time, non-pointer enum parameters (zero value is no label), parameters that always override a column DEFAULT, LIMIT without ORDER BY, enum ordering")
 }
 
 var (
@@ -261,6 +262,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			}
 		}
 		for _, n := range r.Notes {
+			if n.Advisory() && !c.strict {
+				continue
+			}
 			tp := 0
 			if n.Position > 0 {
 				tp = e.TemplatePos(int(n.Position) - 1)
@@ -300,7 +304,49 @@ func (c *checker) checkParams(e *expand.Expansion, r *analyze.Result, pType type
 		case f.unknown:
 			report(lit.pos(p.Pos), "parameter %s: no known Go mapping for %s, not checked%s", p.Path, c.s.Types.Format(pg), where)
 		}
+		if c.strict && f.ok {
+			c.adviseParam(p, gt, pg, r.ParamSources[p.N-1], lit, report, where)
+		}
 	}
+}
+
+// adviseParam reports advisory findings about a parameter (-strict).
+func (c *checker) adviseParam(p expand.Param, gt types.Type, pg schema.TypeRef, src *analyze.Source, lit literal, report func(token.Pos, string, ...any), where string) {
+	inner, nullable := unwrapNullable(gt)
+	if msg := c.fidelity(pg, gt); msg != "" {
+		report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, msg, where)
+	}
+	if t := c.s.Types.ByOID(c.s.Types.BaseOf(pg).OID); t != nil && t.Kind == 'e' && !nullable && inner != nil {
+		report(lit.pos(p.Pos), "parameter %s is a non-pointer %s: its zero value \"\" is not a label of enum %s and fails at runtime (SQLSTATE 22P02) when unset%s", p.Path, gt, t.Name, where)
+	}
+	if src != nil && src.Assigned && !nullable {
+		if rel := c.relByFullName(src.Table); rel != nil {
+			if col := rel.Column(src.Column); col != nil {
+				switch {
+				case col.Default != nil:
+					report(lit.pos(p.Pos), "parameter %s always sends a value into %s.%s, so its DEFAULT never applies: decide which side owns the default (make the column conditional with {{if}} to use the database's)%s", p.Path, rel.Name, col.Name, where)
+				case col.Identity != 0:
+					report(lit.pos(p.Pos), "parameter %s sends a value into %s.%s, which the database generates%s", p.Path, rel.Name, col.Name, where)
+				}
+			}
+		}
+	}
+}
+
+// fidelity says where a Go type receives a PG type faithfully but with an implicit
+// interpretation the application then owns (advisory).
+func (c *checker) fidelity(pg schema.TypeRef, gt types.Type) string {
+	inner, _ := unwrapNullable(gt)
+	if inner == nil || !isNamed(inner, "time", "Time") {
+		return ""
+	}
+	switch c.s.Types.BaseOf(pg).OID {
+	case catalog.Timestamp:
+		return "timestamp without time zone into time.Time: which zone the value is in becomes the application's implicit choice (prefer timestamptz)"
+	case catalog.Date:
+		return "date into time.Time: a zone conversion can move the day (keep it at UTC midnight or use a civil date type)"
+	}
+	return ""
 }
 
 // checkResult matches result columns against R.
@@ -369,6 +415,9 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		c.reportFit(report, at, "field "+fv.Name(), col, fv.Type(), f, where)
 		if f.ok {
 			c.checkNested(col, fv.Type(), at, "field "+fv.Name(), report, where)
+			if msg := c.fidelity(col.Type, fv.Type()); msg != "" && c.strict {
+				report(at, "field %s: %s%s", fv.Name(), msg, where)
+			}
 		}
 	}
 	missing := []string{}

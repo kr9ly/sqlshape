@@ -81,6 +81,9 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		res.Columns = append(res.Columns, a.column(c))
 	}
 	res.AtMostOne, res.ManyRowsWhy = a.cardinality(tree.Stmts[0].Stmt, sc)
+	if sel := tree.Stmts[0].Stmt.GetSelectStmt(); sel != nil && sel.LimitCount != nil && len(sel.SortClause) == 0 && !res.AtMostOne {
+		a.note(noteUnorderedLimit, loc(sel.LimitCount), "LIMIT without ORDER BY: which rows are returned is unspecified")
+	}
 	res.Violations = a.violations(tree.Stmts[0].Stmt)
 	res.Notes = a.notes
 	return res, nil

@@ -577,6 +577,12 @@ func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_que
 		res = rr
 	}
 	res = a.domainOp(name, l, r, res, at)
+	switch name {
+	case "<", ">", "<=", ">=":
+		if t := a.typ(a.baseType(r.oid())); l != nil && t != nil && t.Kind == 'e' {
+			a.note(noteEnumOrder, at, "enum "+t.Name+" compares in declaration order, not alphabetically")
+		}
+	}
 	nullable := r.nullable || (l != nil && l.nullable)
 	return &expr{typ: ref(res), nullable: nullable, node: self, lit: isLit(l) && isLit(r)}, nil
 }

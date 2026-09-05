@@ -683,11 +683,11 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | 結果列 ↔ R、`$n` ↔ P、方向つき精度損失、nullable ラッパ、schema.sql 探索、分岐名つき診断 | |
 | ✅ | ネスト行（`array_agg(row(...))` / `array_agg(t)` / 複合型列 ↔ struct の位置照合） | |
 | 🔶 | 未検査クエリ | 非定数引数はエラー。「検査カバレッジを数値で出す」は未 |
-| ⬜ | enum の零値警告（P の非ポインタ enum フィールド） | |
-| ⬜ | enum の宣言順比較 info（`ORDER BY status`、`status < 'x'`） | |
-| ⬜ | 表現の忠実さ: `timestamp`（tz 無し）info、`date` の tz、`varchar(n)` 長さ、citext | 数値の精度損失のみ実装 |
-| ⬜ | 既定値と生成値の所有者（P 非ポインタ ⇔ DEFAULT / GENERATED 列、identity 列への明示挿入） | |
-| ⬜ | `First` / LIMIT の ORDER BY 無し警告、`array_agg` ネスト側の 1:1 / 1:N と slice / 単体の突合 | |
+| ✅ | enum の零値警告（P の非ポインタ enum フィールド） | `-strict` |
+| ✅ | enum の宣言順比較 info（`ORDER BY status`、`status < 'x'`） | analyzer の advisory Note、`-strict` |
+| 🔶 | 表現の忠実さ: `timestamp`（tz 無し）、`date` の tz | `-strict`。`varchar(n)` 長さは静的に見えないので対象外、citext は string で受ける |
+| ✅ | 既定値と生成値の所有者（P 非ポインタ ⇔ DEFAULT / identity 列） | `-strict`。GENERATED / identity ALWAYS への明示挿入は PG 自身のエラー |
+| 🔶 | LIMIT の ORDER BY 無し警告 | analyzer の advisory Note、`-strict`。`First` は呼び出し箇所なので vet からは見えない。`array_agg` ネスト側の 1:1 / 1:N 突合は未 |
 | ⬜ | 行の所属（`tenant_id` / `deleted_at` の列ポリシー lint） | |
 | ⬜ | テーブル直参照禁止 lint（public / private 境界、`a_api.*` のサービス境界） | schema はスキーマ名を持っているので土台はある |
 | ⬜ | `COMMENT ON` を Go doc / gopls hover へ | `schema.Comments` に取り込み済み、出力先が無い |

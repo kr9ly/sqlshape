@@ -142,7 +142,7 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 	for _, c := range rel.Columns {
 		if !inserted[c.Name] {
 			if c.NotNull && c.Default == nil && c.Identity == 0 && c.Generated == nil {
-				a.note("always-fails", ins.Relation.Location, "INSERT omits "+rel.Name+"."+c.Name+", which is NOT NULL without a default: every execution fails")
+				a.note(noteAlwaysFails, ins.Relation.Location, "INSERT omits "+rel.Name+"."+c.Name+", which is NOT NULL without a default: every execution fails")
 			}
 			continue
 		}
