@@ -182,6 +182,33 @@ var hostByAddr = sqlshape.One[Host, struct {
 	Span pgtype.Range[int32]
 }](`SELECT * FROM hosts WHERE addr = {{.Addr}} AND span && {{.Span}}`)
 
+// composite parameters: a struct encodes as the composite, a slice of structs as its array;
+// the connection loads the types lazily on the first use
+type MoneyIn struct {
+	Amount   string
+	Currency string
+}
+
+type ItemIn struct {
+	OrderID  int64
+	LineNo   int16
+	Sku      string
+	Qty      int32
+	Discount string
+}
+
+var saveOrder = sqlshape.Query[*int64, struct {
+	Price MoneyIn
+	Items []ItemIn
+}](`SELECT save_order({{.Price}}, {{.Items}})`)
+
+var setPrice = sqlshape.Query[struct{}, struct {
+	ID    int64
+	Price *MoneyIn
+}](`UPDATE orders SET price = {{.Price}} WHERE id = {{.ID}}`)
+
+var itemSkus = sqlshape.Query[string, struct{ Items []ItemIn }](`SELECT sku FROM unnest({{.Items}}::order_items[]) ORDER BY line_no`)
+
 var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
 
 func TestRender(t *testing.T) {
@@ -293,6 +320,33 @@ func TestAgainstPostgres(t *testing.T) {
 	}
 	if _, ok, err := orderByID.Find(ctx, db, struct{ ID int64 }{id2 + 100}); err != nil || ok {
 		t.Errorf("One.Find missing: %v %v", ok, err)
+	}
+
+	// composite parameters, before any type is loaded (lazy registration on encode failure)
+	items := []ItemIn{{OrderID: id1, LineNo: 2, Sku: "B", Qty: 1, Discount: "0.00"}, {OrderID: id1, LineNo: 1, Sku: "A", Qty: 2, Discount: "1.50"}}
+	if n, err := saveOrder.First(ctx, db, struct {
+		Price MoneyIn
+		Items []ItemIn
+	}{MoneyIn{"1.00", "JPY"}, items}); err != nil || n == nil || *n != 1 {
+		t.Fatalf("composite params: %v %d", err, n)
+	}
+	if skus, err := itemSkus.Collect(ctx, db, struct{ Items []ItemIn }{items}); err != nil || len(skus) != 2 || skus[0] != "A" || skus[1] != "B" {
+		t.Errorf("composite[] param round trip: %v %v", err, skus)
+	}
+	if _, err := setPrice.Exec(ctx, db, struct {
+		ID    int64
+		Price *MoneyIn
+	}{id2, &MoneyIn{"7.25", "USD"}}); err != nil {
+		t.Fatalf("composite param in UPDATE: %v", err)
+	}
+	if pr, err := priceOf.Get(ctx, db, struct{ ID int64 }{id2}); err != nil || pr.Price == nil || *pr.Price.Amount != "7.25" || *pr.Price.Currency != "USD" {
+		t.Errorf("composite param read back: %v %+v", err, pr.Price)
+	}
+	if _, err := setPrice.Exec(ctx, db, struct {
+		ID    int64
+		Price *MoneyIn
+	}{id2, nil}); err != nil {
+		t.Fatalf("NULL composite param: %v", err)
 	}
 
 	// unknown enum label: the database knows 'cancelled', this build's Known() does not

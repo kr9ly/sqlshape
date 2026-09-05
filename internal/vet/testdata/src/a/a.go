@@ -369,3 +369,43 @@ var badHostParams = sqlshape.Query[struct{ ID int32 }, struct {
 	Addr int64
 	Span pgtype.Range[time.Time]
 }](`SELECT id FROM hosts WHERE addr = {{.Addr}} AND span && {{.Span}}`) // want `parameter .Addr is int64 but SQL expects inet` `parameter .Span is github.com/jackc/pgx/v5/pgtype.Range\[time.Time\] but SQL expects int4range`
+
+// composite parameters: the struct's fields line up with the type's columns, by name and order
+type MoneyIn struct {
+	Amount   string
+	Currency string
+}
+
+type ItemIn struct {
+	OrderID  int64
+	LineNo   int16
+	Sku      string
+	Qty      int32
+	Discount string
+}
+
+var saveOrder = sqlshape.Query[*int64, struct {
+	Price MoneyIn
+	Items []ItemIn
+}](`SELECT save_order({{.Price}}, {{.Items}})`)
+
+type ItemShort struct {
+	OrderID int64
+	Sku     string
+}
+
+var badSaveOrder = sqlshape.Query[*int64, struct {
+	Price *Money
+	Items []ItemShort
+}](`SELECT save_order({{.Price}}, {{.Items}})`) // want `parameter .Price.Currency is at position 1 but the row type's column 1 is "amount"` `parameter .Price.Amount is at position 2 but the row type's column 2 is "currency"` `parameter .Items: a.ItemShort has 2 fields but the row type has 5`
+
+var badItemType = sqlshape.Query[*int64, struct {
+	Price MoneyIn
+	Items []struct {
+		OrderID  int64
+		LineNo   bool
+		Sku      string
+		Qty      int32
+		Discount string
+	}
+}](`SELECT save_order({{.Price}}, {{.Items}})`) // want `parameter .Items.LineNo is bool but column "line_no" is smallint`

@@ -7,6 +7,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // Nested rows. A record / composite column (or an array of them) is received by a Go
@@ -15,8 +16,10 @@ import (
 // order: for a named composite the names must agree too; for an anonymous row(...)
 // only the position exists (PG calls the fields f1, f2, ...).
 
-// checkNested matches the fields of a record column against the Go struct receiving it.
-func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, what string, report func(token.Pos, string, ...any), where string) {
+// checkNested matches the fields of a record column against the Go struct receiving it
+// (param = false), or of a composite parameter against the struct passed for it (param =
+// true: the runtime encodes the struct's fields positionally as pgtype.CompositeFields).
+func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, what string, report func(token.Pos, string, ...any), where string, param bool) {
 	if len(col.Fields) == 0 {
 		return
 	}
@@ -62,10 +65,42 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 			continue
 		}
 		c.meet(fv.Type(), f.Type, f.Source, at, sub)
-		fit := c.match(f.Type, fv.Type())
+		fit := c.matchDir(f.Type, fv.Type(), param)
 		c.reportFit(report, at, sub, f, fv.Type(), fit, where)
-		c.checkNested(f, fv.Type(), at, sub, report, where)
+		c.checkNested(f, fv.Type(), at, sub, report, where, param)
 	}
+}
+
+// paramColumn describes a composite parameter (or an array of composites) like a result
+// column, so checkNested can match the struct passed for it: the fields are the declared
+// columns of the relation whose row type it is, recursively. Nil for other types.
+func (c *checker) paramColumn(pg schema.TypeRef) *analyze.Column {
+	oid := c.s.Types.BaseOf(pg).OID
+	if t := c.s.Types.ByOID(oid); t != nil && t.IsArray() {
+		oid = t.Elem
+	}
+	rel := c.relByRowType(oid)
+	if rel == nil {
+		return nil
+	}
+	col := &analyze.Column{Type: pg}
+	for _, rc := range rel.Columns {
+		f := analyze.Column{Name: rc.Name, Type: rc.Type}
+		if sub := c.paramColumn(rc.Type); sub != nil {
+			f.Fields = sub.Fields
+		}
+		col.Fields = append(col.Fields, f)
+	}
+	return col
+}
+
+func (c *checker) relByRowType(oid catalog.OID) *schema.Relation {
+	for _, r := range c.s.Relations {
+		if r.RowType == oid {
+			return r
+		}
+	}
+	return nil
 }
 
 func elemOID(c *checker, col analyze.Column) catalog.OID {

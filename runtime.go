@@ -107,7 +107,11 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			yield(zero, err)
 			return
 		}
-		rows, err := db.Query(ctx, r.SQL, s.args(r.Args)...)
+		var rows pgx.Rows
+		err = withParamTypes(ctx, db, len(r.Args), func() error {
+			rows, err = db.Query(ctx, r.SQL, s.args(r.Args)...)
+			return err
+		})
 		if err != nil {
 			yield(zero, s.wrapErr(err))
 			return
@@ -177,8 +181,52 @@ func (s Stmt[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, er
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
-	tag, err := db.Exec(ctx, r.SQL, s.args(r.Args)...)
+	var tag pgconn.CommandTag
+	err = withParamTypes(ctx, db, len(r.Args), func() error {
+		tag, err = db.Exec(ctx, r.SQL, s.args(r.Args)...)
+		return err
+	})
 	return tag, s.wrapErr(err)
+}
+
+// unknownParamRe matches pgx's client-side encode failure for a parameter whose type the
+// connection has not registered ("... for unknown type (OID 16847): ...").
+var unknownParamRe = regexp.MustCompile(`unknown type \(OID (\d+)\)`)
+
+// withParamTypes runs a statement, and when a parameter has a user type (composite,
+// range, enum) the connection has not registered yet, loads that type on the connection
+// and runs again. pgx reports one unknown parameter per attempt, so this repeats, at most
+// once per argument. With a pool there is no single connection to register on, so the
+// error is returned with the advice to LoadUserTypes in AfterConnect.
+func withParamTypes(ctx context.Context, db DB, nargs int, run func() error) error {
+	err := run()
+	for i := 0; err != nil && i < nargs; i++ {
+		m := unknownParamRe.FindStringSubmatch(err.Error())
+		if m == nil {
+			return err
+		}
+		oid, _ := strconv.ParseUint(m[1], 10, 32)
+		conn := connOf(db)
+		if conn == nil {
+			return fmt.Errorf("%w (sqlshape: a parameter has a user-defined type this connection has not loaded; call sqlshape.LoadUserTypes from the pool's AfterConnect)", err)
+		}
+		if lerr := loadTypes(ctx, conn, []uint32{uint32(oid)}); lerr != nil {
+			return lerr
+		}
+		err = run()
+	}
+	return err
+}
+
+// connOf is the single connection behind db, or nil (a pool).
+func connOf(db DB) *pgx.Conn {
+	switch d := db.(type) {
+	case *pgx.Conn:
+		return d
+	case interface{ Conn() *pgx.Conn }: // pgx.Tx, pgxpool.Conn
+		return d.Conn()
+	}
+	return nil
 }
 
 // args prefixes the exec mode for unprepared statements (pgx reads a QueryExecMode first argument).

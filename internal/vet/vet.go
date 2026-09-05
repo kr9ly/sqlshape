@@ -439,6 +439,12 @@ func (c *checker) checkParams(e *expand.Expansion, r *analyze.Result, pType type
 		case f.unknown:
 			report(lit.pos(p.Pos), "parameter %s: no known Go mapping for %s, not checked%s", p.Path, c.s.Types.Format(pg), where)
 		}
+		if f.ok {
+			// a composite (or composite[]) parameter: the struct's fields must line up with the type's columns
+			if col := c.paramColumn(pg); col != nil {
+				c.checkNested(*col, gt, lit.pos(p.Pos), "parameter "+p.Path.String(), report, where, true)
+			}
+		}
 		if c.strict && f.ok {
 			c.adviseParam(p, gt, pg, r.ParamSources[p.N-1], lit, report, where)
 		}
@@ -516,7 +522,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		f := c.match(col.Type, rType)
 		c.reportFit(report, at, "column "+col.Name, col, rType, f, where)
 		if f.ok {
-			c.checkNested(col, rType, at, "R", report, where)
+			c.checkNested(col, rType, at, "R", report, where, false)
 		}
 		return nil
 	}
@@ -571,7 +577,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		}
 		c.reportFit(report, at, "field "+fname, col, fv.Type(), f, where)
 		if f.ok {
-			c.checkNested(col, fv.Type(), at, "field "+fname, report, where)
+			c.checkNested(col, fv.Type(), at, "field "+fname, report, where, false)
 			if msg := c.fidelity(col.Type, fv.Type()); msg != "" && c.strict {
 				report(at, "field %s: %s%s", fname, msg, where)
 			}

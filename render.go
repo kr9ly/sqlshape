@@ -1,6 +1,7 @@
 package sqlshape
 
 import (
+	"database/sql/driver"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"text/template/parse"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kr9ly/sqlshape/internal/expand"
 )
 
@@ -549,7 +551,9 @@ func isFloatKind(v reflect.Value) bool {
 
 // normalizeArg turns a template value into something pgx encodes for any target OID:
 // named string types (enums) become string, slices of them become []string; nil
-// pointers become nil. Everything else is passed through.
+// pointers become nil; a struct that receives a composite (see isNested) becomes
+// pgtype.CompositeFields in the order the checker verified (embedded structs flattened,
+// `col:"-"` skipped), a slice of them a slice of those. Everything else is passed through.
 func normalizeArg(v reflect.Value) any {
 	if !v.IsValid() {
 		return nil
@@ -570,8 +574,37 @@ func normalizeArg(v reflect.Value) any {
 			out[i] = v.Index(i).String()
 		}
 		return out
+	case t.Kind() == reflect.Struct && isNested(t) && !v.Type().Implements(valuerType):
+		return compositeArg(v)
+	case t.Kind() == reflect.Slice && isNested(t) && !t.Elem().Implements(valuerType):
+		if v.IsNil() {
+			return nil
+		}
+		out := make([]pgtype.CompositeFields, v.Len())
+		for i := range out {
+			out[i] = compositeArg(v.Index(i))
+		}
+		return out
 	}
 	return v.Interface()
+}
+
+var valuerType = reflect.TypeOf((*driver.Valuer)(nil)).Elem()
+
+// compositeArg lays a struct (or *struct) out as the fields of a composite value.
+func compositeArg(v reflect.Value) pgtype.CompositeFields {
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	flat, _ := flatFields(v.Type())
+	out := make(pgtype.CompositeFields, len(flat))
+	for i, f := range flat {
+		out[i] = normalizeArg(v.FieldByIndex(f.index))
+	}
+	return out
 }
 
 func stub() {}
