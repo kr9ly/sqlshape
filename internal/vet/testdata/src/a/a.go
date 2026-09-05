@@ -409,3 +409,15 @@ var badItemType = sqlshape.Query[*int64, struct {
 		Discount string
 	}
 }](`SELECT save_order({{.Price}}, {{.Items}})`) // want `parameter .Items.LineNo is bool but column "line_no" is smallint`
+
+// result columns must be named and distinct to bind to fields
+type Sum struct{ N int64 }
+
+var unnamedCol = sqlshape.Query[Sum, struct{}](`SELECT 1 + 1`) // want `result column 1 has no name: give it an alias \(\.\.\. AS name\) so it can bind to a field of a.Sum` `field Sum.N has no result column`
+
+type TwoIDs struct {
+	ID     int64
+	UserID int64
+}
+
+var dupCol = sqlshape.Query[TwoIDs, struct{}](`SELECT o.id, u.id FROM orders o JOIN users u ON u.id = o.user_id`) // want `result columns 1 and 2 are both named "id": alias one of them \(\.\.\. AS other_name\)` `field TwoIDs.UserID has no result column`

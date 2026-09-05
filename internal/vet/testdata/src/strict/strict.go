@@ -38,3 +38,12 @@ var unorderedLimit = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders LI
 var orderedLimit = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders ORDER BY id LIMIT 10`)
 
 var enumOrder = sqlshape.Query[OrderID, struct{}](`SELECT id FROM orders WHERE status > 'paid' ORDER BY status`) // want `enum order_status compares in declaration order, not alphabetically` `ORDER BY enum order_status sorts in declaration order, not alphabetically` `no index on orders leads with any of \(status\)`
+
+// a field of P the template never reads is dead or a typo
+type SearchParams struct {
+	ID     OrderID
+	Limit  int32
+	Unused string
+}
+
+var search = sqlshape.Query[struct{ ID OrderID }, SearchParams](`SELECT id FROM orders WHERE id = {{.ID}} ORDER BY id LIMIT {{.Limit}}`) // want `parameter field Unused is never used by the template`

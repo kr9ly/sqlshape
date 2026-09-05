@@ -316,6 +316,9 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			pass.Reportf(lit.pos(0), "sqlshape: %v", err)
 		}
 	}
+	if c.strict {
+		c.reportUnusedParams(pType, res, call.Pos())
+	}
 
 	// One diagnostic per distinct message; the branch suffix (after " [") does not count
 	// towards distinctness, so a problem shared by many expansions is reported once.
@@ -529,7 +532,20 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 	if syncComments {
 		c.suggestTypeComment(rType, r)
 	}
-	// struct R: fields ↔ columns both ways (embedded structs flattened)
+	// struct R: every column needs a distinct name to bind to a field
+	byName := map[string]int{}
+	for i, col := range r.Columns {
+		if col.Name == "?column?" {
+			report(at, "result column %d has no name: give it an alias (... AS name) so it can bind to a field of %s%s", i+1, rType, where)
+			continue
+		}
+		if j, dup := byName[col.Name]; dup {
+			report(at, "result columns %d and %d are both named %q: alias one of them (... AS other_name)%s", j+1, i+1, col.Name, where)
+			continue
+		}
+		byName[col.Name] = i
+	}
+	// fields ↔ columns both ways (embedded structs flattened)
 	flat, dups := structFields(st)
 	for _, d := range dups {
 		report(at, "%s: fields %s%s", rType, d, where)
@@ -562,7 +578,9 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			}
 		}
 		if !ok {
-			report(at, "result column %q has no field in %s%s", col.Name, rType, where)
+			if col.Name != "?column?" {
+				report(at, "result column %q has no field in %s%s", col.Name, rType, where)
+			}
 			continue
 		}
 		matched[col.Name] = true
@@ -749,4 +767,50 @@ func (c *checker) checkMatView(call *ast.CallExpr) {
 	case rel.Kind != schema.MatView:
 		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: %q is not a materialized view", name)
 	}
+}
+
+// reportUnusedParams (advisory) names the fields of P no expansion reads, as a value
+// action or in a condition: a parameter the SQL never sees is a dead field or a typo.
+func (c *checker) reportUnusedParams(pType types.Type, res *expand.Result, at token.Pos) {
+	inner, _ := unwrapNullable(pType)
+	if inner == nil {
+		return
+	}
+	st, ok := inner.Underlying().(*types.Struct)
+	if !ok {
+		return
+	}
+	used := map[string]bool{}
+	mark := func(p expand.Path) {
+		for _, el := range p {
+			if el != "" && el != "[]" && el != "#index" && el[0] != '$' {
+				used[el] = true
+				return
+			}
+		}
+	}
+	for _, e := range res.Expansions {
+		for _, p := range e.Params {
+			mark(p.Path)
+		}
+	}
+	for _, p := range res.Controls {
+		mark(p)
+	}
+	var walk func(st *types.Struct)
+	walk = func(st *types.Struct) {
+		for i := 0; i < st.NumFields(); i++ {
+			f := st.Field(i)
+			if f.Embedded() {
+				if inner := embeddedStruct(f, st.Tag(i)); inner != nil {
+					walk(inner) // promoted fields are referenced by their own name
+					continue
+				}
+			}
+			if f.Exported() && !used[f.Name()] {
+				c.pass.Reportf(at, "sqlshape: parameter field %s is never used by the template", f.Name())
+			}
+		}
+	}
+	walk(st)
 }
