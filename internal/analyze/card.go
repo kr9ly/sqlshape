@@ -77,9 +77,9 @@ func (a *analyzer) cardinality(stmt *pg_query.Node, sc *scope) (bool, string) {
 		}
 		return a.selectSingle(sel, a.insertSelScope, nil)
 	case *pg_query.Node_UpdateStmt:
-		return a.fromSingle(sc, st.UpdateStmt.WhereClause, nil, nil)
+		return a.fromSingle(sc, st.UpdateStmt.WhereClause, nil, nil, nil)
 	case *pg_query.Node_DeleteStmt:
-		return a.fromSingle(sc, st.DeleteStmt.WhereClause, nil, nil)
+		return a.fromSingle(sc, st.DeleteStmt.WhereClause, nil, nil, nil)
 	case *pg_query.Node_CallStmt:
 		return true, ""
 	}
@@ -104,16 +104,19 @@ func (a *analyzer) selectSingle(sel *pg_query.SelectStmt, sc *scope, knownOut []
 		return true, ""
 	}
 	if len(sel.GroupClause) > 0 {
-		return false, "GROUP BY yields one row per group"
+		// one group when every grouping expression is pinned to a known value
+		return a.fromSingle(sc, sel.WhereClause, sel.TargetList, knownOut, sel.GroupClause)
 	}
 	if sc.agg {
 		return true, ""
 	}
-	return a.fromSingle(sc, sel.WhereClause, sel.TargetList, knownOut)
+	return a.fromSingle(sc, sel.WhereClause, sel.TargetList, knownOut, nil)
 }
 
-// fromSingle runs the functional-dependency argument over sc.items.
-func (a *analyzer) fromSingle(sc *scope, where *pg_query.Node, targets []*pg_query.Node, knownOut []int) (bool, string) {
+// fromSingle runs the functional-dependency argument over sc.items. With groups (a GROUP
+// BY list) the question becomes whether every grouping expression is pinned, i.e. there
+// is at most one group.
+func (a *analyzer) fromSingle(sc *scope, where *pg_query.Node, targets []*pg_query.Node, knownOut []int, groups []*pg_query.Node) (bool, string) {
 	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
 	for _, it := range sc.items {
 		p.addItem(it)
@@ -131,6 +134,21 @@ func (a *analyzer) fromSingle(sc *scope, where *pg_query.Node, targets []*pg_que
 		}
 	}
 	p.fixpoint()
+	if groups != nil {
+		for _, g := range groups {
+			if g.GetGroupingSet() != nil {
+				return false, "GROUPING SETS yield one row per set"
+			}
+			if k, ok := p.resolve(g); ok && p.known[k] {
+				continue
+			}
+			if p.isKnown(g) {
+				continue
+			}
+			return false, "GROUP BY yields one row per group (" + deparse(g) + " is not pinned)"
+		}
+		return true, ""
+	}
 	for _, l := range p.leaves {
 		if !p.single[l] {
 			return false, p.describe(l)
@@ -382,6 +400,20 @@ func (p *prover) isKnown(n *pg_query.Node) bool {
 		return x.Kind == pg_query.A_Expr_Kind_AEXPR_OP && (x.Lexpr == nil || p.isKnown(x.Lexpr)) && p.isKnown(x.Rexpr)
 	case *pg_query.Node_CoalesceExpr:
 		for _, arg := range v.CoalesceExpr.Args {
+			if !p.isKnown(arg) {
+				return false
+			}
+		}
+		return true
+	case *pg_query.Node_FuncCall:
+		// a stable / immutable function of known values has one value per query;
+		// volatile ones (random(), nextval()) are evaluated per row
+		f := v.FuncCall
+		vol, ok := p.a.funcVolatility[f]
+		if !ok || vol == 'v' || f.AggStar || f.Over != nil || p.a.isAggregateName(strs(f.Funcname)) {
+			return false
+		}
+		for _, arg := range f.Args {
 			if !p.isKnown(arg) {
 				return false
 			}

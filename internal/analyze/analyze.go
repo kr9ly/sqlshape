@@ -36,6 +36,8 @@ type analyzer struct {
 	lastUserFunc *schema.Function
 	// funcParams: when analyzing a SQL function body, its parameters (by name and position)
 	funcParams []funcParam
+	// funcVolatility remembers the volatility of each resolved function call (card.go)
+	funcVolatility map[*pg_query.FuncCall]byte
 }
 
 // Analyze analyzes exactly one SQL statement against s.
@@ -61,13 +63,14 @@ type funcParam struct {
 func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam) (*Result, error) {
 	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
 	a := &analyzer{
-		s:          s,
-		params:     map[int32]catalog.OID{},
-		paramSrc:   map[int32]*Source{},
-		viewCache:  map[*schema.Relation][]rteCol{},
-		viewScopes: map[*schema.Relation]*subquery{},
-		viewBusy:   map[*schema.Relation]bool{},
-		funcParams: fp,
+		s:              s,
+		params:         map[int32]catalog.OID{},
+		paramSrc:       map[int32]*Source{},
+		viewCache:      map[*schema.Relation][]rteCol{},
+		viewScopes:     map[*schema.Relation]*subquery{},
+		viewBusy:       map[*schema.Relation]bool{},
+		funcParams:     fp,
+		funcVolatility: map[*pg_query.FuncCall]byte{},
 	}
 	for i, p := range fp {
 		a.params[int32(i+1)] = p.typ.OID

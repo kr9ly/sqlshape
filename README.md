@@ -46,7 +46,7 @@ package directory (or `-schema path`). See `examples/orders` for the shape of a 
 
 Meaning that lives in the catalog is checked against the Go side by use, without registration:
 
-- a Go named string type that meets an **enum** column is bound to it; its typed constants are diffed
+- a Go named string type that meets an **enum** column (or a column with `CHECK (col IN (...))`) is bound to it; its typed constants are diffed
   against the labels both ways (across packages via `go/analysis` facts), `T("typo")` conversions and
   non-exhaustive `switch`es are reported
 - a Go named type that meets a **key column** (PK, or FK-derived) is bound to that identity;

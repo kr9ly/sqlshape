@@ -56,6 +56,8 @@ func (n nominal) String() string {
 	switch n.kind {
 	case 'e':
 		return "enum " + n.key
+	case 'v':
+		return "value set of " + n.key + " (CHECK)"
 	case 'd':
 		return "domain " + n.key
 	}
@@ -81,6 +83,11 @@ func (c *checker) nominalOf(pg schema.TypeRef, src *analyze.Source) (nominal, bo
 		return nominal{kind: 'd', key: t.Name}, true
 	}
 	if src != nil {
+		if rel := c.relByFullName(src.Table); rel != nil {
+			if col := rel.Column(src.Column); col != nil && len(col.Values) > 0 {
+				return nominal{kind: 'v', key: rel.Name + "." + col.Name, labels: col.Values}, true
+			}
+		}
 		if id, ok := c.identity(src.Table, src.Column, 0); ok {
 			return nominal{kind: 'k', key: id}, true
 		}
@@ -214,7 +221,7 @@ func (c *checker) finishBindings() {
 		if tn.Pkg() == c.pass.Pkg {
 			c.pass.ExportObjectFact(tn, &BindingFact{Kind: b.kind, Key: b.key, Labels: b.labels})
 		}
-		if b.kind != 'e' {
+		if b.kind != 'e' && b.kind != 'v' {
 			continue
 		}
 		consts, have := local[tn]
@@ -239,32 +246,34 @@ func (c *checker) finishBindings() {
 		for _, l := range b.labels {
 			ls[l] = true
 		}
+		set := nominal{kind: b.kind, key: b.key}.String()
 		for _, l := range b.labels {
 			if !cs[l] {
-				c.pass.Reportf(at, "sqlshape: enum %s has label %q but %s has no constant for it", b.key, l, tn.Name())
+				c.pass.Reportf(at, "sqlshape: %s has label %q but %s has no constant for it", set, l, tn.Name())
 			}
 		}
 		for _, v := range consts {
 			if !ls[v] {
-				c.pass.Reportf(at, "sqlshape: %s has constant %q which is not a label of enum %s", tn.Name(), v, b.key)
+				c.pass.Reportf(at, "sqlshape: %s has constant %q which is not a label of %s", tn.Name(), v, set)
 			}
 		}
 	}
 	c.checkConversionsAndSwitches()
 }
 
-// enumLabels returns the labels a Go type is bound to (locally or via fact), if it is an enum type.
+// enumLabels returns the labels a Go type is bound to (locally or via fact), if it is
+// bound to a value set (an enum or a CHECK IN column); key describes the set.
 func (c *checker) enumLabels(t types.Type) (*types.Named, []string, string, bool) {
 	named, ok := t.(*types.Named)
 	if !ok {
 		return nil, nil, "", false
 	}
-	if b, ok := c.bindings[named.Obj()]; ok && b.kind == 'e' {
-		return named, b.labels, b.key, true
+	if b, ok := c.bindings[named.Obj()]; ok && (b.kind == 'e' || b.kind == 'v') {
+		return named, b.labels, nominal{kind: b.kind, key: b.key}.String(), true
 	}
 	var f BindingFact
-	if c.pass.ImportObjectFact(named.Obj(), &f) && f.Kind == 'e' {
-		return named, f.Labels, f.Key, true
+	if c.pass.ImportObjectFact(named.Obj(), &f) && (f.Kind == 'e' || f.Kind == 'v') {
+		return named, f.Labels, nominal{kind: f.Kind, key: f.Key}.String(), true
 	}
 	return nil, nil, "", false
 }
@@ -296,7 +305,7 @@ func (c *checker) checkConversionsAndSwitches() {
 						return true
 					}
 				}
-				c.pass.Reportf(v.Pos(), "sqlshape: %s(%q) is not a label of enum %s", named.Obj().Name(), lit, key)
+				c.pass.Reportf(v.Pos(), "sqlshape: %s(%q) is not a label of %s", named.Obj().Name(), lit, key)
 			case *ast.SwitchStmt:
 				if v.Tag == nil {
 					return true
@@ -328,7 +337,7 @@ func (c *checker) checkConversionsAndSwitches() {
 					}
 				}
 				if len(missing) > 0 {
-					c.pass.Reportf(v.Pos(), "sqlshape: switch on %s does not handle enum %s labels: %s", named.Obj().Name(), key, strings.Join(missing, ", "))
+					c.pass.Reportf(v.Pos(), "sqlshape: switch on %s does not handle %s labels: %s", named.Obj().Name(), key, strings.Join(missing, ", "))
 				}
 			}
 			return true

@@ -671,6 +671,12 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	}
 	a.lastUserFunc = c.ufn
 	a.lastFuncRetSet = (c.fn != nil && c.fn.RetSet) || (c.ufn != nil && c.ufn.RetSet)
+	switch {
+	case c.fn != nil:
+		a.funcVolatility[f] = c.fn.Volatile
+	case c.ufn != nil:
+		a.funcVolatility[f] = c.ufn.Volatile
+	}
 	if c.fn != nil && c.fn.Kind == 'a' && f.Over == nil {
 		sc.agg = true
 	}

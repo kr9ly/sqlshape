@@ -203,3 +203,14 @@ var orderStats = sqlshape.MatView("order_stats")
 var noSuchView = sqlshape.MatView("order_statz") // want `materialized view "order_statz" does not exist`
 
 var notAMatView = sqlshape.MatView("order_summary") // want `"order_summary" is not a materialized view`
+
+// CHECK (role IN (...)) is a value set like an enum: constants are diffed both ways
+type Role string // want Role:`consts admin,guest,member` Role:`bound v users.role`
+
+const (
+	RoleMember Role = "member"
+	RoleAdmin  Role = "admin"
+	RoleGuest  Role = "guest"
+)
+
+var byRole = sqlshape.Query[int64, struct{ R Role }](`SELECT id FROM users WHERE role = {{.R}}`) // want `value set of users.role \(CHECK\) has label "owner" but Role has no constant for it` `Role has constant "guest" which is not a label of value set of users.role \(CHECK\)`

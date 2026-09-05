@@ -694,7 +694,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | テーブル直参照禁止 lint（`-no-tables`）、サービス境界（`-schemas=a_api,b_private`） | analyzer が `Result.Relations`（直接参照した関係、ビューは展開しない）を出す。DROP 影響分析 / 死んだスキーマ検出の土台 |
 | ⬜ | `COMMENT ON` を Go doc / gopls hover へ | `schema.Comments` に取り込み済み、出力先が無い |
 | 🔶 | MV: REFRESH CONCURRENTLY に要るユニークインデックス | `-strict` のスキーマ advisory。依存元テーブル一覧は `Result.Relations` を MV 定義に掛ければ出るが出力先が未定 |
-| ⬜ | 値集合の CHECK IN / lookup テーブル対応 | enum のみ。lookup は `@data` 宣言（マイグレーション側）待ち |
+| 🔶 | 値集合の CHECK IN / lookup テーブル対応 | `CHECK (col IN (...))` / `= ANY(ARRAY[...])` を列の値集合として enum と同じ両方向 diff・変換・switch 検査に載せた。lookup は `@data` 宣言（マイグレーション側）待ち |
 
 ### 解釈の共有
 
@@ -707,7 +707,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | 失敗モード: 違反し得る制約の列挙 + `-- sqlshape: expect` + `ConstraintError` | |
 | ✅ | トリガーの独自 SQLSTATE（`-- sqlshape: error XX001 = Name`）→ 型付きエラー | schema が CREATE TRIGGER を取り込み、トリガー関数の directive を DML の失敗モードに載せる。expect 行にはコードを書く（名前は診断文のみ）。runtime は expect 行にあるコードの PgError を ConstraintError に写す |
 | ⬜ | 複合キー（複数列 PK / FK）の同一性 | |
-| ⬜ | `One` の既知値に関数呼び出しを含める（volatility 判定が要る）、GROUP BY 列がすべて既知のケース | |
+| ✅ | `One` の既知値に関数呼び出しを含める、GROUP BY 列がすべて既知のケース | 解析時に関数呼び出しごとの volatility を記録し、stable / immutable かつ引数が既知なら既知。GROUP BY は全グループ式が固定されていれば 1 グループ（ビュー `order_stats WHERE user_id = $1` が One になる） |
 
 ### runtime
 

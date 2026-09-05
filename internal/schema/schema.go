@@ -81,6 +81,9 @@ type Column struct {
 	Identity  byte // 'a' always / 'd' by default / 0
 	Generated Expr // GENERATED ALWAYS AS (expr) STORED
 	Collation string
+	// Values is the closed value set a `CHECK (col IN ('a', 'b'))` constraint gives the
+	// column (nil when none): a value set the checker diffs with Go constants like enum labels.
+	Values []string
 }
 
 // ConstraintKind is the constraint flavour.
@@ -802,6 +805,64 @@ func (s *Schema) addConstraint(rel *Relation, c *Constraint) {
 		})
 	}
 	rel.Constraints = append(rel.Constraints, c)
+	if c.Kind == Check {
+		if col, vals := checkInValues(c.Expr); col != "" {
+			if column := rel.Column(col); column != nil {
+				column.Values = vals
+			}
+		}
+	}
+}
+
+// checkInValues recognizes `col IN ('a', 'b', ...)` and `col = ANY (ARRAY['a', ...])`.
+func checkInValues(e Expr) (string, []string) {
+	x := e.GetAExpr()
+	if x == nil {
+		return "", nil
+	}
+	cr := x.Lexpr.GetColumnRef()
+	if cr == nil || len(cr.Fields) != 1 {
+		return "", nil
+	}
+	col := cr.Fields[0].GetString_().GetSval()
+	var items []*pg_query.Node
+	switch x.Kind {
+	case pg_query.A_Expr_Kind_AEXPR_IN:
+		items = x.Rexpr.GetList().GetItems()
+	case pg_query.A_Expr_Kind_AEXPR_OP_ANY:
+		if strs(x.Name)[0] != "=" {
+			return "", nil
+		}
+		arr := x.Rexpr.GetAArrayExpr()
+		if arr == nil {
+			// ARRAY[...]::text[]
+			if tc := x.Rexpr.GetTypeCast(); tc != nil {
+				arr = tc.Arg.GetAArrayExpr()
+			}
+		}
+		if arr == nil {
+			return "", nil
+		}
+		items = arr.Elements
+	default:
+		return "", nil
+	}
+	var vals []string
+	for _, it := range items {
+		c := it.GetAConst()
+		if c == nil {
+			return "", nil
+		}
+		sv, ok := c.Val.(*pg_query.A_Const_Sval)
+		if !ok {
+			return "", nil
+		}
+		vals = append(vals, sv.Sval.GetSval())
+	}
+	if len(vals) == 0 {
+		return "", nil
+	}
+	return col, vals
 }
 
 func uniqueName(base string, taken func(string) bool) string {

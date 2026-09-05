@@ -10,6 +10,7 @@ CREATE TABLE users (
     nick       character(8),
     tags       text[] NOT NULL DEFAULT '{}',
     balance    yen NOT NULL DEFAULT 0,
+    role       text NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin', 'owner')),
     score      real,
     ratio      double precision,
     flags      bit(4),
