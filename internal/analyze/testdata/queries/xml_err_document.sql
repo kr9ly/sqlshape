@@ -1,0 +1,1 @@
+SELECT note IS DOCUMENT FROM orders

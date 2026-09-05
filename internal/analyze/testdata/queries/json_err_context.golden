@@ -1,0 +1,1 @@
+error: 42846: cannot cast type bigint to jsonb (at 19)

@@ -1,0 +1,7 @@
+params:
+columns:
+  key text
+  value jsonb
+  k2 text
+  v2 text
+  a integer

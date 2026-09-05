@@ -1,0 +1,12 @@
+params:
+columns:
+  el xml
+  fo xml
+  cc xml
+  pc xml
+  ser text
+  pi xml
+  rt xml
+  isdoc boolean
+  agg xml
+  cm xml

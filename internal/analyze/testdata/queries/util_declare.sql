@@ -1,0 +1,1 @@
+DECLARE cur NO SCROLL CURSOR WITH HOLD FOR SELECT id, note FROM orders WHERE user_id = $1

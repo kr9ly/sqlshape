@@ -38,6 +38,7 @@ type analyzer struct {
 	inView int
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
+	lastCatFunc  *catalog.Func
 	// funcParams: when analyzing a SQL function body, its parameters (by name and position)
 	funcParams []funcParam
 	// funcVolatility remembers the volatility of each resolved function call (card.go)
@@ -145,6 +146,62 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 		// no parameters, no result
 	case *pg_query.Node_VariableShowStmt:
 		cols = []rteCol{{name: st.VariableShowStmt.Name, typ: ref(catalog.Text)}}
+	case *pg_query.Node_TransactionStmt, *pg_query.Node_DoStmt, *pg_query.Node_ClosePortalStmt, *pg_query.Node_CheckPointStmt:
+		// no parameters, no result
+	case *pg_query.Node_VacuumStmt:
+		for _, rn := range st.VacuumStmt.Rels {
+			vr := rn.GetVacuumRelation()
+			rel, _, err := a.targetRTE(vr.Relation, sc)
+			if err != nil {
+				return nil, err
+			}
+			for _, cn := range vr.VaCols {
+				if rel.Column(cn.GetString_().GetSval()) == nil {
+					return nil, errAt(codeUndefinedColumn, vr.Relation.Location, "column %q of relation %q does not exist", cn.GetString_().GetSval(), rel.Name)
+				}
+			}
+		}
+	case *pg_query.Node_CopyStmt:
+		cp := st.CopyStmt
+		if cp.Relation != nil {
+			rel, _, err := a.targetRTE(cp.Relation, sc)
+			if err != nil {
+				return nil, err
+			}
+			for _, cn := range cp.Attlist {
+				if rel.Column(cn.GetString_().GetSval()) == nil {
+					return nil, errAt(codeUndefinedColumn, cp.Relation.Location, "column %q of relation %q does not exist", cn.GetString_().GetSval(), rel.Name)
+				}
+			}
+			if cp.WhereClause != nil {
+				_, target, err := a.targetRTE(cp.Relation, sc)
+				if err != nil {
+					return nil, err
+				}
+				wsc := newScope(sc)
+				wsc.items = []*rte{target}
+				if err := a.boolClause(cp.WhereClause, wsc, "WHERE"); err != nil {
+					return nil, err
+				}
+			}
+		} else if cp.Query != nil {
+			if _, err := a.subStatement(cp.Query, sc); err != nil {
+				return nil, err
+			}
+		}
+	case *pg_query.Node_DeclareCursorStmt:
+		if _, err := a.subStatement(st.DeclareCursorStmt.Query, sc); err != nil {
+			return nil, err
+		}
+	case *pg_query.Node_CreateTableAsStmt:
+		if _, err := a.subStatement(st.CreateTableAsStmt.Query, sc); err != nil {
+			return nil, err
+		}
+	case *pg_query.Node_CreateStmt:
+		// CREATE [TEMP] TABLE from application code: nothing to type; the checker cannot see
+		// the table in later statements (declare it in schema.sql for that)
+	case *pg_query.Node_FetchStmt:
+		return nil, &Error{Code: codeFeatureNotSupported, Message: "FETCH: a cursor's columns are not known statically; read the DECLARE CURSOR query directly"}
 	default:
 		return nil, &Error{Code: codeFeatureNotSupported, Message: fmt.Sprintf("unsupported statement %T", tree.Stmts[0].Stmt.Node)}
 	}
@@ -231,4 +288,20 @@ func (a *analyzer) column(c rteCol) Column {
 		col.Fields = append(col.Fields, a.column(f))
 	}
 	return col
+}
+
+// subStatement analyzes a statement nested in another (COPY (query), DECLARE CURSOR ...,
+// CREATE TABLE AS ...) and returns its columns.
+func (a *analyzer) subStatement(n *pg_query.Node, sc *scope) ([]rteCol, *Error) {
+	switch st := n.Node.(type) {
+	case *pg_query.Node_SelectStmt:
+		return a.selectStmt(st.SelectStmt, newScope(sc))
+	case *pg_query.Node_InsertStmt:
+		return a.insertStmt(st.InsertStmt, newScope(sc))
+	case *pg_query.Node_UpdateStmt:
+		return a.updateStmt(st.UpdateStmt, newScope(sc))
+	case *pg_query.Node_DeleteStmt:
+		return a.deleteStmt(st.DeleteStmt, newScope(sc))
+	}
+	return nil, errAt(codeFeatureNotSupported, -1, "unsupported nested statement %T", n.Node)
 }

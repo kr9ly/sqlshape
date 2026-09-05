@@ -1,0 +1,9 @@
+params:
+  $1 integer
+columns:
+  id bigint <- orders.id not null
+  n integer
+  item_id integer
+  name text
+  has_price boolean
+  tag text

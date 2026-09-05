@@ -1,0 +1,9 @@
+params:
+  $1 text
+columns:
+  ex boolean
+  q jsonb
+  qw json
+  v text
+  vi integer
+  vp numeric

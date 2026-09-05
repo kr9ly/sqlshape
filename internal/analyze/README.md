@@ -29,7 +29,11 @@ ARRAY / IN / VALUES (§10.5), `$n` inference from context with `text` fallback, 
 validation (22P02). Scopes: JOIN (USING / NATURAL / LATERAL), subqueries, CTEs (incl. recursive),
 set operations, VALUES, functions in FROM, views (analyzed once), whole-row refs, ROWS FROM, data-modifying CTEs, CALL, INSERT / UPDATE /
 DELETE with RETURNING and ON CONFLICT, MERGE (WHEN MATCHED / NOT MATCHED [BY SOURCE], RETURNING with merge_action()),
-utility statements (TRUNCATE / LOCK / REFRESH MATERIALIZED VIEW / NOTIFY / SET / SHOW). Not yet: XML expressions, json_table.
+SQL/JSON (`json.go`: JSON_OBJECT / JSON_ARRAY / JSON_ARRAYAGG / JSON_OBJECTAGG, JSON_EXISTS / JSON_QUERY / JSON_VALUE,
+JSON() / JSON_SCALAR / JSON_SERIALIZE, JSON_TABLE in FROM), SQL/XML expressions, `(expr).*`, functions with OUT
+parameters in FROM, WHERE CURRENT OF, and utility statements (TRUNCATE / LOCK / REFRESH MATERIALIZED VIEW / NOTIFY /
+SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR / CREATE TABLE AS). FETCH stays
+0A000: a cursor's columns are not known statically.
 
 - `testdata/queries/*.sql` + `.golden`: goldens come from the real PG (`go test ./internal/analyze -update`);
   the default run compares the analyzer to them without starting PG

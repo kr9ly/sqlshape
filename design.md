@@ -195,7 +195,7 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 - `numeric` の typmod は列直参照なら残る（`numeric(12,2)`）が集約（`sum`）や `$n` では落ちる。
   typmod 伝播規則が関数ごとに違うことの実例
 
-スコープ外: PL/pgSQL、ルール、XML 式、json_table。拡張は `gen -ext <name>` で本物の PG から dump して `data/ext/<name>/` に同じ形式で置き、
+スコープ外: PL/pgSQL 本体、FETCH（カーソルの列は静的に決まらない）。拡張は `gen -ext <name>` で本物の PG から dump して `data/ext/<name>/` に同じ形式で置き、
 `CREATE EXTENSION` を見た schema 層がマージする（OID は拡張ごとの範囲に振り直す）。
 
 ## 副産物: 型安全なストアドプロシージャ

@@ -278,6 +278,77 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		return a.analyzeExpr(v.NamedArgExpr.Arg, sc)
 	case *pg_query.Node_GroupingFunc:
 		return &expr{typ: ref(catalog.Int4), node: n}, nil
+	case *pg_query.Node_JsonObjectConstructor:
+		return a.jsonConstructorList(v.JsonObjectConstructor.Exprs, v.JsonObjectConstructor.Output, sc, n)
+	case *pg_query.Node_JsonArrayConstructor:
+		return a.jsonConstructorList(v.JsonArrayConstructor.Exprs, v.JsonArrayConstructor.Output, sc, n)
+	case *pg_query.Node_JsonArrayQueryConstructor:
+		q := v.JsonArrayQueryConstructor
+		if sel := q.Query.GetSelectStmt(); sel != nil {
+			cols, err := a.selectStmt(sel, newScope(sc))
+			if err != nil {
+				return nil, err
+			}
+			if len(cols) != 1 {
+				return nil, errAt(codeSyntaxError, q.Location, "subquery must return only one column")
+			}
+		}
+		t, err := a.jsonOutput(q.Output, catalog.JSON)
+		if err != nil {
+			return nil, err
+		}
+		return &expr{typ: t, node: n}, nil
+	case *pg_query.Node_JsonArrayAgg:
+		ag := v.JsonArrayAgg
+		return a.jsonAgg(ag.Constructor, sc, n, func() *Error { _, err := a.jsonValue(ag.Arg, sc); return err })
+	case *pg_query.Node_JsonObjectAgg:
+		ag := v.JsonObjectAgg
+		return a.jsonAgg(ag.Constructor, sc, n, func() *Error {
+			k, err := a.analyzeExpr(ag.Arg.Key, sc)
+			if err != nil {
+				return err
+			}
+			if err := a.bind(k, catalog.Text, loc(ag.Arg.Key)); err != nil {
+				return err
+			}
+			_, err = a.jsonValue(ag.Arg.Value, sc)
+			return err
+		})
+	case *pg_query.Node_JsonFuncExpr:
+		return a.jsonFuncExpr(v.JsonFuncExpr, sc, n)
+	case *pg_query.Node_JsonParseExpr:
+		if _, err := a.jsonValue(v.JsonParseExpr.Expr, sc); err != nil {
+			return nil, err
+		}
+		t, err := a.jsonOutput(v.JsonParseExpr.Output, catalog.JSON)
+		if err != nil {
+			return nil, err
+		}
+		return &expr{typ: t, nullable: true, node: n}, nil
+	case *pg_query.Node_JsonScalarExpr:
+		if _, err := a.analyzeExpr(v.JsonScalarExpr.Expr, sc); err != nil {
+			return nil, err
+		}
+		t, err := a.jsonOutput(v.JsonScalarExpr.Output, catalog.JSON)
+		if err != nil {
+			return nil, err
+		}
+		return &expr{typ: t, nullable: true, node: n}, nil
+	case *pg_query.Node_JsonSerializeExpr:
+		if _, err := a.jsonValue(v.JsonSerializeExpr.Expr, sc); err != nil {
+			return nil, err
+		}
+		t, err := a.jsonOutput(v.JsonSerializeExpr.Output, catalog.Text)
+		if err != nil {
+			return nil, err
+		}
+		return &expr{typ: t, nullable: true, node: n}, nil
+	case *pg_query.Node_XmlExpr:
+		return a.xmlExpr(v.XmlExpr, sc, n)
+	case *pg_query.Node_XmlSerialize:
+		return a.xmlSerialize(v.XmlSerialize, sc, n)
+	case *pg_query.Node_CurrentOfExpr:
+		return &expr{typ: ref(catalog.Bool), node: n}, nil
 	case *pg_query.Node_MergeSupportFunc:
 		// merge_action() in MERGE ... RETURNING (PG 17)
 		return &expr{typ: ref(catalog.Text), node: n}, nil
@@ -725,6 +796,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		return nil, err
 	}
 	a.lastUserFunc = c.ufn
+	a.lastCatFunc = c.fn
 	a.lastFuncRetSet = (c.fn != nil && c.fn.RetSet) || (c.ufn != nil && c.ufn.RetSet)
 	switch {
 	case c.fn != nil:

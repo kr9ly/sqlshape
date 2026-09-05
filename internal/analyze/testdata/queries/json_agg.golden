@@ -1,0 +1,7 @@
+params:
+  $1 numeric
+columns:
+  user_id bigint <- orders.user_id not null
+  ids json
+  by_note jsonb
+  big json

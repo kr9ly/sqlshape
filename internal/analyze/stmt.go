@@ -48,6 +48,15 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 			cols = append(cols, expanded...)
 			continue
 		}
+		if ind := t.Val.GetAIndirection(); ind != nil && len(ind.Indirection) > 0 && ind.Indirection[len(ind.Indirection)-1].GetAStar() != nil {
+			// (composite expression).* expands to the row type's columns
+			expanded, err := a.expandCompositeStar(ind, sc)
+			if err != nil {
+				return nil, err
+			}
+			cols = append(cols, expanded...)
+			continue
+		}
 		e, err := a.analyzeExpr(t.Val, sc)
 		if err != nil {
 			return nil, err
@@ -414,6 +423,8 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		return a.rangeFunction(v.RangeFunction, sc)
 	case *pg_query.Node_JoinExpr:
 		return a.joinExpr(v.JoinExpr, sc)
+	case *pg_query.Node_JsonTable:
+		return a.jsonTable(v.JsonTable, sc)
 	case *pg_query.Node_RangeTableSample:
 		ts := v.RangeTableSample
 		r, err := a.fromItem(ts.Relation, sc)
@@ -533,11 +544,22 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 				cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: !c.NotNull})
 			}
 		case e.typ.OID == catalog.Record:
-			// RETURNS TABLE / OUT params of a user function
+			// RETURNS TABLE / OUT params of a user function, or of a catalog function
+			// (jsonb_each, json_each_text, ...)
 			if uf := a.lastUserFunc; uf != nil {
 				for _, arg := range uf.Args {
 					if arg.Mode == 't' || arg.Mode == 'o' || arg.Mode == 'b' {
 						cols = append(cols, rteCol{name: arg.Name, typ: arg.Type, nullable: true})
+					}
+				}
+			} else if cf := a.lastCatFunc; cf != nil && len(cf.ArgModes) == len(cf.AllArgTypes) {
+				for i, m := range cf.ArgModes {
+					if m == 'o' || m == 't' || m == 'b' {
+						name := ""
+						if i < len(cf.ArgNames) {
+							name = cf.ArgNames[i]
+						}
+						cols = append(cols, rteCol{name: name, typ: ref(cf.AllArgTypes[i]), nullable: true})
 					}
 				}
 			}
@@ -567,7 +589,7 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 				// alias(colname) on a scalar function renames the single column
 			}
 		}
-		if len(rf.Alias.Colnames) == 0 && len(cols) == 1 && fc != nil && a.typ(cols[0].typ.OID) != nil && a.typ(cols[0].typ.OID).Kind != 'c' {
+		if len(rf.Alias.Colnames) == 0 && len(coldefs) == 0 && len(cols) == 1 && fc != nil && a.typ(cols[0].typ.OID) != nil && a.typ(cols[0].typ.OID).Kind != 'c' {
 			// a scalar-returning function's alias names its single column too
 			cols[0].name = rf.Alias.Aliasname
 		}
@@ -1163,3 +1185,36 @@ const (
 	mergeUpdate
 	mergeDelete
 )
+
+// expandCompositeStar expands (expr).* in a target list to the columns of expr's row type.
+func (a *analyzer) expandCompositeStar(ind *pg_query.A_Indirection, sc *scope) ([]rteCol, *Error) {
+	inner := &pg_query.A_Indirection{Arg: ind.Arg, Indirection: ind.Indirection[:len(ind.Indirection)-1]}
+	var e *expr
+	var err *Error
+	if len(inner.Indirection) == 0 {
+		e, err = a.analyzeExpr(inner.Arg, sc)
+	} else {
+		e, err = a.indirection(inner, sc)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(e.fields) > 0 {
+		out := make([]rteCol, len(e.fields))
+		copy(out, e.fields)
+		return out, nil
+	}
+	t := a.typ(e.oid())
+	if t == nil || t.Kind != 'c' {
+		return nil, errAt(codeWrongObjectType, loc(ind.Arg), "type %s is not composite", a.s.Types.Format(e.typ))
+	}
+	rel := a.relByRowType(t.OID)
+	if rel == nil {
+		return nil, errAt(codeWrongObjectType, loc(ind.Arg), "type %s is not composite", a.s.Types.Format(e.typ))
+	}
+	var out []rteCol
+	for _, c := range rel.Columns {
+		out = append(out, rteCol{name: c.Name, typ: c.Type, nullable: true})
+	}
+	return out, nil
+}

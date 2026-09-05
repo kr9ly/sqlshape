@@ -1,0 +1,11 @@
+params:
+  $1 text
+columns:
+  o json
+  ob jsonb
+  ar json
+  aq json
+  j json
+  js json
+  ser text
+  serb bytea
