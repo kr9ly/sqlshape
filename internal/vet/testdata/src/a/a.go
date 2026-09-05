@@ -421,3 +421,29 @@ type TwoIDs struct {
 }
 
 var dupCol = sqlshape.Query[TwoIDs, struct{}](`SELECT o.id, u.id FROM orders o JOIN users u ON u.id = o.user_id`) // want `result columns 1 and 2 are both named "id": alias one of them \(\.\.\. AS other_name\)` `field TwoIDs.UserID has no result column`
+
+// bulk loads: table and columns exist, each column is fed by the field of its name, and
+// what is left out must have a default
+var loadItems = sqlshape.Copy[ItemIn]("order_items")
+
+var loadItemsQualified = sqlshape.Copy[ItemIn]("public.order_items", "order_id", "line_no", "sku", "qty", "discount")
+
+var loadItemsPartial = sqlshape.Copy[ItemIn]("order_items", "order_id", "line_no", "sku") // want `Copy into order_items: field Qty \(column "qty"\) is not copied` `Copy into order_items: field Discount \(column "discount"\) is not copied` `Copy into order_items: column "discount" is NOT NULL without a default and is not copied`
+
+var loadNoSuchTable = sqlshape.Copy[ItemIn]("order_itemz") // want `Copy: table "order_itemz" does not exist`
+
+var loadView = sqlshape.Copy[ItemIn]("order_summary") // want `Copy: "order_summary" is not a table`
+
+var loadNoSuchColumn = sqlshape.Copy[ItemIn]("order_items", "order_id", "line_no", "skoo", "qty", "discount") // want `Copy into order_items: column "skoo" does not exist` `field Sku \(column "sku"\) is not copied` `column "sku" is NOT NULL without a default and is not copied`
+
+type BadItem struct {
+	OrderID  int64
+	LineNo   int16
+	Sku      *string
+	Qty      bool
+	Discount string
+}
+
+var loadBadItems = sqlshape.Copy[BadItem]("order_items") // want `Copy: field Sku is \*string but column "sku" is NOT NULL: a nil value fails the load` `Copy: field Qty is bool but column "qty" is integer`
+
+var loadNames = sqlshape.Copy[string]("users", "name", "alias") // want `Copy\[string\] into users: a scalar R feeds exactly one column, 2 given`

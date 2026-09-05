@@ -209,6 +209,12 @@ var setPrice = sqlshape.Query[struct{}, struct {
 
 var itemSkus = sqlshape.Query[string, struct{ Items []ItemIn }](`SELECT sku FROM unnest({{.Items}}::order_items[]) ORDER BY line_no`)
 
+var loadItems = sqlshape.Copy[ItemIn]("order_items", "order_id", "line_no", "sku", "qty", "discount")
+
+var itemCount = sqlshape.Query[int64, struct{ OrderID int64 }](`SELECT count(*) FROM order_items WHERE order_id = {{.OrderID}}`)
+
+var markPaidOne = sqlshape.One[struct{}, struct{ ID int64 }](`UPDATE orders SET status = 'paid' WHERE id = {{.ID}}`)
+
 var priceOf = sqlshape.One[struct{ Price *Money }, struct{ ID int64 }](`SELECT price FROM orders WHERE id = {{.ID}}`)
 
 func TestRender(t *testing.T) {
@@ -347,6 +353,59 @@ func TestAgainstPostgres(t *testing.T) {
 		Price *MoneyIn
 	}{id2, nil}); err != nil {
 		t.Fatalf("NULL composite param: %v", err)
+	}
+
+	// COPY FROM
+	if n, err := loadItems.From(ctx, db, items); err != nil || n != 2 {
+		t.Fatalf("copy: %v %d", err, n)
+	}
+	if n, err := itemCount.First(ctx, db, struct{ OrderID int64 }{id1}); err != nil || n != 2 {
+		t.Errorf("copied rows: %v %d", err, n)
+	}
+
+	// One.Exec: exactly one row, or ErrNoRows
+	if _, err := markPaidOne.Exec(ctx, db, struct{ ID int64 }{id1}); err != nil {
+		t.Errorf("One.Exec: %v", err)
+	}
+	if _, err := markPaidOne.Exec(ctx, db, struct{ ID int64 }{id1 + 100}); !sqlshape.IsNoRows(err) {
+		t.Errorf("One.Exec on no row: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'pending' WHERE id = $1`, id1); err != nil {
+		t.Fatal(err)
+	}
+
+	// batch: one round trip, results per statement
+	b := sqlshape.NewBatch()
+	qAll := sqlshape.Queue(b, listOrders, ListParams{})
+	qPaid := sqlshape.QueueOne(b, markPaidOne, struct{ ID int64 }{id1})
+	qOne := sqlshape.QueueOne(b, orderByID, struct{ ID int64 }{id1})
+	qNone := sqlshape.QueueOne(b, orderByID, struct{ ID int64 }{id1 + 100})
+	if _, err := qAll.Rows(); !errors.Is(err, sqlshape.ErrNotSent) {
+		t.Errorf("before send: %v", err)
+	}
+	if err := b.Send(ctx, db); err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if rows, err := qAll.Rows(); err != nil || len(rows) != 2 {
+		t.Errorf("batch rows: %v %d", err, len(rows))
+	}
+	if tag, err := qPaid.Tag(); err != nil || tag.RowsAffected() != 1 {
+		t.Errorf("batch exec: %v %v", err, tag)
+	}
+	if row, err := qOne.First(); err != nil || row.Status != "paid" {
+		t.Errorf("batch one: %v %+v", err, row)
+	}
+	if _, err := qNone.First(); !sqlshape.IsNoRows(err) {
+		t.Errorf("batch one missing: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'pending' WHERE id = $1`, id1); err != nil {
+		t.Fatal(err)
+	}
+	// a failing statement surfaces as the same ConstraintError as Run
+	b = sqlshape.NewBatch()
+	sqlshape.Queue(b, insertOrder, NewOrder{UserID: 999, Total: "1"})
+	if err := b.Send(ctx, db); !sqlshape.Violates(err, "orders_user_id_fkey") {
+		t.Errorf("batch fk violation: %v", err)
 	}
 
 	// unknown enum label: the database knows 'cancelled', this build's Known() does not

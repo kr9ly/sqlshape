@@ -65,7 +65,15 @@ func Violates(err error, key string) bool {
 
 // wrapErr maps integrity-constraint errors (SQLSTATE class 23) and the custom SQLSTATEs
 // the template's expect line names to ConstraintError; other errors pass through.
-func (s Stmt[R, P]) wrapErr(err error) error {
+func (s Stmt[R, P]) wrapErr(err error) error { return wrapPgErr(err, s.expects) }
+
+// wrapPgErr is wrapErr with the statement's expectations passed in (nil: class 23 only).
+// An error already mapped is left alone.
+func wrapPgErr(err error, expects func(code string) bool) error {
+	var ce *ConstraintError
+	if err == nil || errors.As(err, &ce) {
+		return err
+	}
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
 		return err
@@ -73,7 +81,7 @@ func (s Stmt[R, P]) wrapErr(err error) error {
 	if strings.HasPrefix(pgErr.Code, "23") {
 		return &ConstraintError{Code: pgErr.Code, Constraint: pgErr.ConstraintName, Table: pgErr.TableName, Column: pgErr.ColumnName, Detail: pgErr.Detail, Err: pgErr}
 	}
-	if s.expects(pgErr.Code) {
+	if expects != nil && expects(pgErr.Code) {
 		return &ConstraintError{Code: pgErr.Code, Constraint: pgErr.Code, Detail: pgErr.Detail, Err: pgErr}
 	}
 	return err
@@ -265,8 +273,23 @@ func (s Single[R, P]) Find(ctx context.Context, db DB, p P) (R, bool, error) {
 }
 
 // Exec runs a single-row statement that returns no rows (e.g. UPDATE ... WHERE id = $1).
+// An INSERT / UPDATE / DELETE / MERGE that touched no row returns ErrNoRows (the key did
+// not exist), one that touched more than one returns ErrManyRows (the checker's proof
+// that the statement affects at most one row did not hold).
 func (s Single[R, P]) Exec(ctx context.Context, db DB, p P) (pgconn.CommandTag, error) {
-	return s.stmt.Exec(ctx, db, p)
+	tag, err := s.stmt.Exec(ctx, db, p)
+	if err != nil {
+		return tag, err
+	}
+	if tag.Insert() || tag.Update() || tag.Delete() || strings.HasPrefix(tag.String(), "MERGE") {
+		switch n := tag.RowsAffected(); {
+		case n == 0:
+			return tag, ErrNoRows
+		case n > 1:
+			return tag, ErrManyRows
+		}
+	}
+	return tag, nil
 }
 
 // Render renders the template for p.

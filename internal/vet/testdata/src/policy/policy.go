@@ -14,3 +14,5 @@ var write = sqlshape.Query[struct{}, struct{ ID int64 }]("-- sqlshape: expect P0
 
 // interpreted string: the diagnostic lands on the reference inside the template
 var escaped = sqlshape.Query[int64, struct{}]("SELECT id\n  FROM orders") // want `table orders is referenced directly`
+
+var bulk = sqlshape.Copy[struct{ ID int64 }]("users", "id") // want `table users is written directly; with -no-tables application code reads views and calls functions only`

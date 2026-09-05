@@ -144,15 +144,19 @@ type checker struct {
 
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-	var calls, matviews []*ast.CallExpr
+	var calls, matviews, copies []*ast.CallExpr
 	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
 		call := n.(*ast.CallExpr)
-		if isQueryCall(pass, call) {
+		switch {
+		case isQueryCall(pass, call):
 			calls = append(calls, call)
-		} else if isMatViewConversion(pass, call) {
+		case isMatViewConversion(pass, call):
 			matviews = append(matviews, call)
+		case isCopyCall(pass, call):
+			copies = append(copies, call)
 		}
 	})
+	matviews = append(matviews, copies...) // checked after the statements, like matviews
 	calls = append(calls, matviews...)
 	if len(calls) == 0 {
 		// still export constant sets so packages that use these types in queries can diff them
@@ -185,7 +189,11 @@ func run(pass *analysis.Pass) (any, error) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: coverage: %d of %d statements checked, %d unchecked (non-constant templates)", n-c.unchecked, n, c.unchecked)
 	}
 	for _, call := range matviews {
-		c.checkMatView(call)
+		if isCopyCall(pass, call) {
+			c.checkCopy(call)
+		} else {
+			c.checkMatView(call)
+		}
 	}
 	c.finishBindings()
 	return nil, nil
