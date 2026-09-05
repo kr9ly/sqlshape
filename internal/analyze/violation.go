@@ -73,6 +73,27 @@ func (a *analyzer) violations(stmt *pg_query.Node) []Violation {
 	case *pg_query.Node_DeleteStmt:
 		rel := a.s.Relation(st.DeleteStmt.Relation.Schemaname, st.DeleteStmt.Relation.Relname)
 		return append(a.referencingViolations(rel, nil, true), a.triggerViolations(rel, 'd')...)
+	case *pg_query.Node_MergeStmt:
+		// the union of what its actions may violate
+		rel := a.s.Relation(st.MergeStmt.Relation.Schemaname, st.MergeStmt.Relation.Relname)
+		var out []Violation
+		if a.mergeActions&mergeInsert != 0 {
+			ins := &pg_query.InsertStmt{Relation: st.MergeStmt.Relation, SelectStmt: &pg_query.Node{}}
+			for _, c := range a.mergeInserted {
+				ins.Cols = append(ins.Cols, &pg_query.Node{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Name: c}}})
+			}
+			out = append(out, a.insertViolations(ins)...)
+			out = append(out, a.triggerViolations(rel, 'i')...)
+		}
+		if a.mergeActions&mergeUpdate != 0 {
+			out = append(out, a.updateViolations(rel, a.assignedColumns(rel), nil)...)
+			out = append(out, a.triggerViolations(rel, 'u')...)
+		}
+		if a.mergeActions&mergeDelete != 0 {
+			out = append(out, a.referencingViolations(rel, nil, true)...)
+			out = append(out, a.triggerViolations(rel, 'd')...)
+		}
+		return dedupe(out)
 	}
 	return nil
 }

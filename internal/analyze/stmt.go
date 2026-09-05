@@ -1066,3 +1066,100 @@ func (a *analyzer) callStmt(call *pg_query.CallStmt, sc *scope) ([]rteCol, *Erro
 	}
 	return cols, nil
 }
+
+// mergeStmt analyzes MERGE INTO target USING source ON cond WHEN ... (PG 15; RETURNING and
+// WHEN NOT MATCHED BY SOURCE are PG 17). A WHEN MATCHED / NOT MATCHED BY SOURCE action
+// sees both relations, a WHEN NOT MATCHED [BY TARGET] action sees the source only.
+func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error) {
+	if m.WithClause != nil {
+		if err := a.withClause(m.WithClause, sc); err != nil {
+			return nil, err
+		}
+	}
+	rel, target, err := a.targetRTE(m.Relation, sc)
+	if err != nil {
+		return nil, err
+	}
+	source, err := a.fromItem(m.SourceRelation, sc)
+	if err != nil {
+		return nil, err
+	}
+	both := newScope(sc)
+	both.items = []*rte{target, source}
+	srcOnly := newScope(sc)
+	srcOnly.items = []*rte{source}
+	if err := a.boolClause(m.JoinCondition, both, "ON"); err != nil {
+		return nil, err
+	}
+	for _, wn := range m.MergeWhenClauses {
+		w := wn.GetMergeWhenClause()
+		wsc := both
+		if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+			wsc = srcOnly
+		}
+		if err := a.boolClause(w.Condition, wsc, "WHEN"); err != nil {
+			return nil, err
+		}
+		switch w.CommandType {
+		case pg_query.CmdType_CMD_UPDATE:
+			if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+				return nil, errAt(codeSyntaxError, -1, "UPDATE is not allowed in WHEN NOT MATCHED clause")
+			}
+			if err := a.setClause(w.TargetList, rel, wsc); err != nil {
+				return nil, err
+			}
+			a.mergeActions |= mergeUpdate
+		case pg_query.CmdType_CMD_DELETE:
+			if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+				return nil, errAt(codeSyntaxError, -1, "DELETE is not allowed in WHEN NOT MATCHED clause")
+			}
+			a.mergeActions |= mergeDelete
+		case pg_query.CmdType_CMD_INSERT:
+			if w.MatchKind != pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+				return nil, errAt(codeSyntaxError, -1, "INSERT is not allowed in WHEN MATCHED clause")
+			}
+			var cols []*schema.Column
+			if len(w.TargetList) == 0 {
+				cols = rel.Columns
+			}
+			for _, tn := range w.TargetList {
+				rt := tn.GetResTarget()
+				c := rel.Column(rt.Name)
+				if c == nil {
+					return nil, errAt(codeUndefinedColumn, rt.Location, "column %q of relation %q does not exist", rt.Name, rel.Name)
+				}
+				cols = append(cols, c)
+				a.mergeInserted = append(a.mergeInserted, c.Name)
+			}
+			if len(w.TargetList) == 0 && len(w.Values) > 0 {
+				for _, c := range rel.Columns {
+					a.mergeInserted = append(a.mergeInserted, c.Name)
+				}
+			}
+			if len(w.Values) > len(cols) {
+				return nil, errAt(codeSyntaxError, loc(w.Values[len(cols)]), "INSERT has more expressions than target columns")
+			}
+			if len(w.Values) > 0 && len(w.Values) < len(cols) && len(w.TargetList) > 0 {
+				return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
+			}
+			for i, vn := range w.Values {
+				e, err := a.analyzeExpr(vn, srcOnly)
+				if err != nil {
+					return nil, err
+				}
+				if err := a.assign(e, cols[i], rel.FullName(), loc(vn)); err != nil {
+					return nil, err
+				}
+			}
+			a.mergeActions |= mergeInsert
+		case pg_query.CmdType_CMD_NOTHING:
+		}
+	}
+	return a.returning(m.ReturningList, both)
+}
+
+const (
+	mergeInsert = 1 << iota
+	mergeUpdate
+	mergeDelete
+)

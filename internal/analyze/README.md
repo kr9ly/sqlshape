@@ -28,7 +28,8 @@ variadic / defaults / polymorphic consistency, implicit / assignment / explicit 
 ARRAY / IN / VALUES (§10.5), `$n` inference from context with `text` fallback, parse-time literal
 validation (22P02). Scopes: JOIN (USING / NATURAL / LATERAL), subqueries, CTEs (incl. recursive),
 set operations, VALUES, functions in FROM, views (analyzed once), whole-row refs, ROWS FROM, data-modifying CTEs, CALL, INSERT / UPDATE /
-DELETE with RETURNING and ON CONFLICT.
+DELETE with RETURNING and ON CONFLICT, MERGE (WHEN MATCHED / NOT MATCHED [BY SOURCE], RETURNING with merge_action()),
+utility statements (TRUNCATE / LOCK / REFRESH MATERIALIZED VIEW / NOTIFY / SET / SHOW). Not yet: XML expressions, json_table.
 
 - `testdata/queries/*.sql` + `.golden`: goldens come from the real PG (`go test ./internal/analyze -update`);
   the default run compares the analyzer to them without starting PG

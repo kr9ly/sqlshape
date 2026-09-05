@@ -90,3 +90,35 @@ func TestViolations(t *testing.T) {
 		})
 	}
 }
+
+// TestMergeViolations: MERGE reports the union of what its INSERT / UPDATE / DELETE
+// actions may violate.
+func TestMergeViolations(t *testing.T) {
+	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
+	s, err := schema.Load(string(schemaSQL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Analyze(s, `MERGE INTO orders o USING users u ON o.user_id = u.id
+WHEN MATCHED AND u.role = 'x' THEN DELETE
+WHEN MATCHED THEN UPDATE SET total = -1
+WHEN NOT MATCHED THEN INSERT (user_id, total, note) VALUES (u.id, 0, u.name)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range r.Violations {
+		got = append(got, v.Constraint)
+	}
+	for _, want := range []string{"orders_total_check", "orders_user_id_fkey", "orders_user_note_key", "order_items_order_fk"} {
+		found := false
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing %s in %v", want, got)
+		}
+	}
+}

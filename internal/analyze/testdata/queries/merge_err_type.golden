@@ -1,0 +1,1 @@
+error: 42804: column "total" is of type numeric but expression is of type character varying (at 92)

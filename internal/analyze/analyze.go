@@ -18,6 +18,9 @@ type analyzer struct {
 	maxParam int32
 	notes    []Note
 	assigned []assignment // values stored into columns (violation.go)
+	// MERGE: which actions its WHEN clauses take, and the columns its INSERT actions fill
+	mergeActions  int
+	mergeInserted []string
 
 	viewCache  map[*schema.Relation][]rteCol
 	viewScopes map[*schema.Relation]*subquery
@@ -115,6 +118,8 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 		cols, aerr = a.deleteStmt(st.DeleteStmt, sc)
 	case *pg_query.Node_CallStmt:
 		cols, aerr = a.callStmt(st.CallStmt, sc)
+	case *pg_query.Node_MergeStmt:
+		cols, aerr = a.mergeStmt(st.MergeStmt, sc)
 	case *pg_query.Node_TruncateStmt:
 		for _, rv := range st.TruncateStmt.Relations {
 			if _, _, err := a.targetRTE(rv.GetRangeVar(), sc); err != nil {

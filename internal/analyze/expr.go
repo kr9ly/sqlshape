@@ -278,6 +278,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		return a.analyzeExpr(v.NamedArgExpr.Arg, sc)
 	case *pg_query.Node_GroupingFunc:
 		return &expr{typ: ref(catalog.Int4), node: n}, nil
+	case *pg_query.Node_MergeSupportFunc:
+		// merge_action() in MERGE ... RETURNING (PG 17)
+		return &expr{typ: ref(catalog.Text), node: n}, nil
 	case *pg_query.Node_JsonIsPredicate:
 		e, err := a.analyzeExpr(v.JsonIsPredicate.Expr, sc)
 		if err != nil {

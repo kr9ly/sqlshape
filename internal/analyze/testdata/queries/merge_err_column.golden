@@ -1,0 +1,1 @@
+error: 42703: column "nope" of relation "orders" does not exist (at 94)

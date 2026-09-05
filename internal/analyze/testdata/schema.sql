@@ -64,6 +64,12 @@ SELECT o.id, o.status, o.total, u.email
 CREATE MATERIALIZED VIEW order_stats AS
 SELECT user_id, count(*) AS n, sum(total) AS total FROM orders GROUP BY user_id;
 
+CREATE TABLE order_stats_copy (
+    user_id bigint PRIMARY KEY,
+    n       bigint NOT NULL,
+    total   numeric
+);
+
 CREATE FUNCTION save_order(p money_amount, items order_items[]) RETURNS bigint
 LANGUAGE sql STABLE STRICT AS $$ SELECT 1::bigint $$;
 
