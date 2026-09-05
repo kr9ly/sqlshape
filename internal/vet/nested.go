@@ -53,8 +53,14 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 	fields := make([]*types.Var, len(flat))
 	names := make([]string, len(flat))
 	goNames := make([]string, len(flat))
+	notnull := make([]bool, len(flat))
 	for i, f := range flat {
 		fields[i], names[i], goNames[i] = f.v, f.col, f.name
+		for _, o := range f.opts {
+			if o == "notnull" {
+				notnull[i] = true // `col:",notnull"`: the author knows better than the analyzer
+			}
+		}
 	}
 	if len(fields) != len(col.Fields) {
 		report(at, "%s: %s has %d fields but the row type has %d (%s)%s", what, inner, len(fields), len(col.Fields), rowShape(c, col), where)
@@ -69,6 +75,9 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 		}
 		c.meet(fv.Type(), f.Type, f.Source, at, sub)
 		fit := c.matchDir(f.Type, fv.Type(), param)
+		if notnull[i] {
+			f.Nullable = false
+		}
 		c.reportFit(report, at, sub, f, fv.Type(), fit, where)
 		c.checkNested(f, fv.Type(), at, sub, report, where, param)
 	}

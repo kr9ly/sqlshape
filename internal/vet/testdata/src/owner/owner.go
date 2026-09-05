@@ -17,7 +17,7 @@ var unpinnedSubquery = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM 
 var inserted = sqlshape.Query[int64, struct {
 	U int64
 	T string
-}]("-- sqlshape: expect orders_pkey, orders_user_note_key, orders_uid_active, orders_user_id_fkey, orders_total_check, P0401\nINSERT INTO orders (user_id, total) VALUES ({{.U}}, {{.T}}) RETURNING id")
+}]("-- sqlshape: expect orders_pkey, orders_user_note_key, orders_user_id_fkey, orders_total_check, P0401\nINSERT INTO orders (user_id, total) VALUES ({{.U}}, {{.T}}) RETURNING id")
 
 var deleted = sqlshape.Query[struct{}, struct{ ID int64 }]("-- sqlshape: expect order_items_order_fk\nDELETE FROM orders WHERE id = {{.ID}}") // want `orders.user_id is not pinned`
 

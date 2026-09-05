@@ -69,13 +69,13 @@ func (a *analyzer) violations(stmt *pg_query.Node) []Violation {
 	switch st := stmt.Node.(type) {
 	case *pg_query.Node_InsertStmt:
 		rel := a.s.Relation(st.InsertStmt.Relation.Schemaname, st.InsertStmt.Relation.Relname)
-		return append(a.insertViolations(st.InsertStmt), a.triggerViolations(rel, 'i')...)
+		return append(a.insertViolations(st.InsertStmt), a.triggerViolations(rel, 'i', nil)...)
 	case *pg_query.Node_UpdateStmt:
 		rel := a.s.Relation(st.UpdateStmt.Relation.Schemaname, st.UpdateStmt.Relation.Relname)
-		return append(a.updateViolations(rel, a.assignedColumns(rel), nil), a.triggerViolations(rel, 'u')...)
+		return append(a.updateViolations(rel, a.assignedColumns(rel), nil), a.triggerViolations(rel, 'u', a.assignedColumns(rel))...)
 	case *pg_query.Node_DeleteStmt:
 		rel := a.s.Relation(st.DeleteStmt.Relation.Schemaname, st.DeleteStmt.Relation.Relname)
-		return append(a.referencingViolations(rel, nil, true), a.triggerViolations(rel, 'd')...)
+		return append(a.referencingViolations(rel, nil, true), a.triggerViolations(rel, 'd', nil)...)
 	case *pg_query.Node_MergeStmt:
 		// the union of what its actions may violate
 		rel := a.s.Relation(st.MergeStmt.Relation.Schemaname, st.MergeStmt.Relation.Relname)
@@ -86,15 +86,15 @@ func (a *analyzer) violations(stmt *pg_query.Node) []Violation {
 				ins.Cols = append(ins.Cols, &pg_query.Node{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Name: c}}})
 			}
 			out = append(out, a.insertViolations(ins)...)
-			out = append(out, a.triggerViolations(rel, 'i')...)
+			out = append(out, a.triggerViolations(rel, 'i', nil)...)
 		}
 		if a.mergeActions&mergeUpdate != 0 {
 			out = append(out, a.updateViolations(rel, a.assignedColumns(rel), nil)...)
-			out = append(out, a.triggerViolations(rel, 'u')...)
+			out = append(out, a.triggerViolations(rel, 'u', a.assignedColumns(rel))...)
 		}
 		if a.mergeActions&mergeDelete != 0 {
 			out = append(out, a.referencingViolations(rel, nil, true)...)
-			out = append(out, a.triggerViolations(rel, 'd')...)
+			out = append(out, a.triggerViolations(rel, 'd', nil)...)
 		}
 		return dedupe(out)
 	}
@@ -103,7 +103,7 @@ func (a *analyzer) violations(stmt *pg_query.Node) []Violation {
 
 // triggerViolations lists the custom SQLSTATEs the table's triggers for the event raise
 // (declared with `-- sqlshape: error XX001 = Name` on the trigger function).
-func (a *analyzer) triggerViolations(rel *schema.Relation, event byte) []Violation {
+func (a *analyzer) triggerViolations(rel *schema.Relation, event byte, assigned map[string]bool) []Violation {
 	if rel == nil {
 		return nil
 	}
@@ -114,6 +114,9 @@ func (a *analyzer) triggerViolations(rel *schema.Relation, event byte) []Violati
 		}
 		if (event == 'i' && !tg.Insert) || (event == 'u' && !tg.Update) || (event == 'd' && !tg.Delete) {
 			continue
+		}
+		if event == 'u' && len(tg.UpdateOf) > 0 && !anyIn(tg.UpdateOf, assigned) {
+			continue // UPDATE OF col: the trigger does not fire for these assignments
 		}
 		fs, fname := "", tg.Function
 		if i := strings.LastIndex(fname, "."); i >= 0 {
@@ -217,19 +220,33 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 	return dedupe(out)
 }
 
-// systemGenerated reports whether every column is a GENERATED ALWAYS AS IDENTITY column
-// the statement does not assign.
+// systemGenerated reports whether every column is one the statement leaves to the system
+// and the system never repeats: GENERATED ALWAYS AS IDENTITY, or a DEFAULT that generates
+// a random UUID.
 func systemGenerated(rel *schema.Relation, cols []string, inserted map[string]bool) bool {
 	if len(cols) == 0 {
 		return false
 	}
 	for _, name := range cols {
 		c := rel.Column(name)
-		if c == nil || c.Identity != 'a' || inserted[name] {
+		if c == nil || inserted[name] || (c.Identity != 'a' && !uuidDefault(c.Default)) {
 			return false
 		}
 	}
 	return true
+}
+
+// uuidDefault reports whether a DEFAULT expression is a call to a UUID generator.
+func uuidDefault(e schema.Expr) bool {
+	f := e.GetFuncCall()
+	if f == nil || len(f.Args) > 0 {
+		return false
+	}
+	switch f.Funcname[len(f.Funcname)-1].GetString_().GetSval() {
+	case "gen_random_uuid", "uuidv4", "uuidv7", "uuid_generate_v1", "uuid_generate_v1mc", "uuid_generate_v4":
+		return true
+	}
+	return false
 }
 
 // updateViolations lists what storing into the set columns of rel may violate.

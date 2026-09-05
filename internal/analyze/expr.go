@@ -547,6 +547,21 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 		if err := a.bind(e, target.OID, tc.Location); err != nil {
 			return nil, err
 		}
+	} else if e.oid() == catalog.Record && len(e.fields) > 0 {
+		// row(a, b)::composite (coerce_record_to_complex): field by field, by position
+		rel := relByRowType(a.s, target.OID)
+		if rel == nil || len(rel.Columns) != len(e.fields) {
+			return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type record to %s", a.s.Types.Format(target))
+		}
+		var cols []rteCol
+		for i, f := range e.fields {
+			c := rel.Columns[i]
+			if f.typ.OID != catalog.Unknown && !a.canCoerce(f.typ.OID, c.Type.OID, assignmentCoercion) {
+				return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type %s to %s in column %d of %s", a.s.Types.Format(f.typ), a.s.Types.Format(c.Type), i+1, a.s.Types.Format(target))
+			}
+			cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: f.nullable})
+		}
+		return &expr{typ: target, nullable: e.nullable, node: nodeOf(tc), fields: cols}, nil
 	} else if !a.canCoerce(e.oid(), target.OID, explicitCoercion) {
 		return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type %s to %s", a.s.Types.Format(e.typ), a.s.Types.Format(target))
 	}

@@ -215,5 +215,5 @@ func AnalyzeView(s *schema.Schema, rel *schema.Relation) (*Result, error) {
 	if rel.Query == nil {
 		return &Result{}, nil
 	}
-	return analyzeStmt(s, rel.Query, nil, nil)
+	return analyzeStmt(s, rel.Query, nil, rel.Unfiltered)
 }

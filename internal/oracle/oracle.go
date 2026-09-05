@@ -27,6 +27,7 @@ type Oracle struct {
 	pg          *embeddedpostgres.EmbeddedPostgres
 	conn        *pgx.Conn
 	runtimePath string
+	dsn         string
 }
 
 // Type is a PostgreSQL type as PG itself prints it (format_type), plus the raw OID / typmod.
@@ -98,6 +99,7 @@ func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
 	}
 	o := &Oracle{pg: pg, runtimePath: runtimePath}
 	dsn := fmt.Sprintf("postgres://sqlshape:sqlshape@127.0.0.1:%d/sqlshape?sslmode=disable", port)
+	o.dsn = dsn
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		o.Close()
@@ -225,3 +227,6 @@ func freePort() (int, error) {
 
 // Conn exposes the underlying connection for tooling (catalog dump). Tests use Describe.
 func (o *Oracle) Conn() *pgx.Conn { return o.conn }
+
+// ConnString is the connection string of the running server (for pools and other clients).
+func (o *Oracle) ConnString() string { return o.dsn }

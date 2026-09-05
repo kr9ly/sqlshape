@@ -68,6 +68,10 @@ func (c *checker) possibleViolations(e *expand.Expansion, r *analyze.Result, pTy
 				if int32(p.N) == v.Param {
 					if gt, err := c.resolvePath(pType, p.Path); err == nil {
 						_, nullable = unwrapNullable(gt)
+						switch gt.Underlying().(type) {
+						case *types.Slice, *types.Map:
+							nullable = true // a nil slice / map is sent as NULL
+						}
 					}
 				}
 			}

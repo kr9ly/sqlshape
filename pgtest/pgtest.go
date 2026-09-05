@@ -79,5 +79,8 @@ func firstLine(s string) string {
 // Conn is a connection to the database; it satisfies sqlshape.DB.
 func (d *DB) Conn() *pgx.Conn { return d.o.Conn() }
 
+// ConnString connects other clients (a pgxpool.Pool, psql) to the same server.
+func (d *DB) ConnString() string { return d.o.ConnString() }
+
 // Close stops the server and removes its data.
 func (d *DB) Close() error { return d.o.Close() }

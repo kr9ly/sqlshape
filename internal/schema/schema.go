@@ -81,6 +81,9 @@ type Relation struct {
 	// only meant to be seen through this predicate, so every statement reading it (and
 	// every view over it) must carry the predicate. Nil when none.
 	Visible Expr
+	// Unfiltered (views): tables a `-- sqlshape: unfiltered t1, t2` directive before the
+	// CREATE VIEW exempts from their visibility policy inside this view's query.
+	Unfiltered map[string]bool
 }
 
 // Column is one attribute.
@@ -175,7 +178,8 @@ type Trigger struct {
 	Insert   bool
 	Update   bool
 	Delete   bool
-	Function string // schema-qualified unless public
+	UpdateOf []string // UPDATE OF col, col: the trigger fires only when one of these is assigned (empty: any)
+	Function string   // schema-qualified unless public
 }
 
 // FuncArg is one parameter.
@@ -669,6 +673,27 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 	rel := s.newRelation(schema, name, View)
 	rel.Query = st.Query
 	rel.ColumnAliases = strs(st.Aliases)
+	s.viewDirectives(rel, loc)
+}
+
+// viewDirectives applies the directives written before a CREATE (MATERIALIZED) VIEW.
+func (s *Schema) viewDirectives(rel *Relation, loc int32) {
+	for _, d := range s.pending {
+		norm := strings.Join(strings.Fields(d), " ")
+		switch {
+		case len(norm) > 11 && strings.EqualFold(norm[:11], "unfiltered "):
+			if rel.Unfiltered == nil {
+				rel.Unfiltered = map[string]bool{}
+			}
+			for _, t := range strings.Split(norm[11:], ",") {
+				if t = strings.TrimSpace(t); t != "" {
+					rel.Unfiltered[t] = true
+				}
+			}
+		default:
+			s.problem(loc, "view %s: unknown directive %q", rel.Name, d)
+		}
+	}
 }
 
 func (s *Schema) createMatView(st *pg_query.CreateTableAsStmt, loc int32) {
@@ -676,6 +701,7 @@ func (s *Schema) createMatView(st *pg_query.CreateTableAsStmt, loc int32) {
 	rel := s.newRelation(schema, name, MatView)
 	rel.Query = st.Query
 	rel.ColumnAliases = strs(st.Into.ColNames)
+	s.viewDirectives(rel, loc)
 }
 
 func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
@@ -1061,6 +1087,7 @@ func (s *Schema) createTrigger(st *pg_query.CreateTrigStmt, loc int32) {
 	s.Triggers = append(s.Triggers, &Trigger{
 		Name: st.Trigname, Table: rel.FullName(),
 		Insert: st.Events&(1<<2) != 0, Delete: st.Events&(1<<3) != 0, Update: st.Events&(1<<4) != 0,
+		UpdateOf: strs(st.Columns),
 		Function: fs + fn,
 	})
 }

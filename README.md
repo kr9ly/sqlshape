@@ -29,7 +29,17 @@ $ go run ./cmd/sqlshape ./examples/...
 
 `cmd/sqlshape` is a `go vet -vettool`-compatible checker. It looks for `schema.sql`, or a
 `schema/` directory whose `*.sql` files apply in name order, above the package directory
-(or `-schema path`). See `examples/orders` for the shape of a query.
+(or `-schema path`).
+
+The examples are three stages of the same order book, one per level of trust in the database:
+
+| | what it uses | read it when |
+|---|---|---|
+| [`examples/1-tables`](examples/1-tables) | plain tables, `Query` / `One`, templates, enum types, `expect` lines, `pgtest.Start` + `Verify` | you come from an ORM and want checked SQL on the tables you have |
+| [`examples/2-database-api`](examples/2-database-api) | views for reads, functions for writes, domains, value sets, a composite, a trigger SQLSTATE, `-no-tables` | you want the schema to carry the meaning and the application to see an API |
+| [`examples/3-everything`](examples/3-everything) | schemas as a boundary, extensions, ranges, nested rows, declared type bindings, composite array parameters, Batch, Copy, soft-delete policy, tenant pinning, every flag | you want to see the whole surface at once |
+
+Each has its own `schema.sql`, a `doc.go` saying what it shows, and a test that runs it against a real PostgreSQL.
 
 ### In the editor
 
@@ -105,6 +115,7 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 
 ## Status
 
-First vertical slice works: the analyzer agrees with the PostgreSQL oracle on 152 golden
-statements (contrib extensions, SQL/JSON, MERGE, GROUPING SETS and a schema full of DDL included) and the checker reports type / column / nullability
-findings on real Go code. Not yet: the migration side.
+The analyzer agrees with the PostgreSQL oracle on 152 golden statements (contrib extensions,
+SQL/JSON, MERGE, GROUPING SETS and a schema full of DDL included), the checker and the runtime
+cover the surface the three examples exercise, and each example's test verifies every statement
+against a real PostgreSQL. Not yet: the migration side.

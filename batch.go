@@ -27,18 +27,24 @@ type BatchDB interface {
 //
 // Result types the connection has not loaded yet cannot be loaded mid-batch: with user
 // enums / composites in results or parameters, call LoadUserTypes on the connection first
-// (pgxpool: in AfterConnect).
+// (pgxpool: in AfterConnect). A statement whose rows carry a sql.Scanner type (a declared
+// binding) cannot ride in a pgx batch, which never requests text format; Send runs it as a
+// plain query right after the batch.
 type Batch struct {
 	b    *pgx.Batch
 	err  error // the first error rendering a queued statement; Send returns it
 	sent bool
+	// after are statements a pgx batch cannot carry: a result received by a sql.Scanner
+	// must come in text format, which only a plain Query can ask for; they run right
+	// after the batch, on the same db, in queue order
+	after []func(ctx context.Context, db BatchDB) error
 }
 
 // NewBatch starts an empty batch.
 func NewBatch() *Batch { return &Batch{b: &pgx.Batch{}} }
 
 // Len is the number of queued statements.
-func (b *Batch) Len() int { return b.b.Len() }
+func (b *Batch) Len() int { return b.b.Len() + len(b.after) }
 
 // ErrNotSent is returned by a queued statement's accessors before the batch was sent.
 var ErrNotSent = errors.New("sqlshape: batch not sent")
@@ -96,11 +102,19 @@ func Queue[R, P any](b *Batch, s Stmt[R, P], p P) *Queued[R] {
 		return q
 	}
 	var zero R
-	var formats pgx.QueryResultFormatsByOID
-	if f, ok := formatCache.Load(formatKey{typ: reflect.TypeOf(zero), sql: r.SQL}); ok {
-		formats = f.(pgx.QueryResultFormatsByOID) // known from an earlier Run of the same statement
+	if hasUserScanner(reflect.TypeOf(zero)) {
+		b.after = append(b.after, func(ctx context.Context, db BatchDB) error {
+			q.done = true
+			if d, ok := db.(DB); ok {
+				q.rows, q.err = s.Collect(ctx, d, p)
+			} else {
+				q.err = errors.New("sqlshape: batch db cannot run a plain query")
+			}
+			return q.err
+		})
+		return q
 	}
-	qq := b.b.Queue(r.SQL, s.args(r.Args, formats)...)
+	qq := b.b.Queue(r.SQL, r.Args...)
 	if rt := reflect.TypeOf(zero); rt != nil && rt.Kind() == reflect.Struct && rt.NumField() == 0 {
 		// R = struct{}: a statement without rows
 		qq.Exec(func(tag pgconn.CommandTag) error {
@@ -154,10 +168,40 @@ func (b *Batch) Send(ctx context.Context, db BatchDB) error {
 	if b.err != nil {
 		return b.err
 	}
-	br := db.SendBatch(ctx, b.b)
-	err := br.Close()
-	if err != nil {
-		return wrapPgErr(err, nil)
+	if b.b.Len() > 0 {
+		br := db.SendBatch(ctx, b.b)
+		if err := br.Close(); err != nil {
+			return wrapPgErr(err, nil)
+		}
+	}
+	for _, run := range b.after {
+		if err := run(ctx, db); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// hasUserScanner reports whether R (or a field of it, embedded structs included) decodes
+// itself through sql.Scanner, which needs text format a batch cannot request.
+func hasUserScanner(rt reflect.Type) bool {
+	if rt == nil {
+		return false
+	}
+	if rt.Kind() != reflect.Struct || scalarStruct(rt) {
+		return userScanner(rt)
+	}
+	if userScanner(rt) {
+		return true
+	}
+	flat, err := flatFields(rt)
+	if err != nil {
+		return false
+	}
+	for _, f := range flat {
+		if userScanner(f.typ) {
+			return true
+		}
+	}
+	return false
 }

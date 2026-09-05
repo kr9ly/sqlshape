@@ -81,8 +81,9 @@ func (c *checker) matchDir(pg schema.TypeRef, t types.Type, param bool) fit {
 		return fit{ok: true, nullable: true}
 	}
 	f := c.matchValue(pg, inner, param)
-	// a nil slice receives a NULL array / record[] without a pointer
-	if _, isSlice := inner.Underlying().(*types.Slice); isSlice {
+	// a nil slice / map receives a NULL array, record[] or hstore without a pointer
+	switch inner.Underlying().(type) {
+	case *types.Slice, *types.Map:
 		nullable = true
 	}
 	// a Scanner sees NULL as Scan(nil) and represents it itself
