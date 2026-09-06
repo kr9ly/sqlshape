@@ -422,6 +422,39 @@ func (a *analyzer) subStatement(n *pg_query.Node, sc *scope) ([]rteCol, *Error) 
 }
 
 func init() {
+	// PARTITION BY (expr): ComputePartitionAttrs' rules on the key expression
+	schema.PartitionKeyProblem = func(s *schema.Schema, rel *schema.Relation, expr *pg_query.Node) string {
+		a := newAnalyzer(s, nil, nil)
+		switch {
+		case a.aggregateIn(expr) != nil:
+			return "aggregate functions are not allowed in partition key expressions"
+		case windowIn(expr) != nil:
+			return "window functions are not allowed in partition key expressions"
+		case containsSubLink(expr):
+			return "cannot use subquery in partition key expression"
+		case a.srfIn(expr):
+			return "set-returning functions are not allowed in partition key expressions"
+		}
+		r, err := a.relationRTE(rel, nil, -1)
+		if err != nil {
+			return ""
+		}
+		sc := newScope(nil)
+		sc.items = []*rte{r}
+		if _, err := a.analyzeExpr(expr, sc); err != nil {
+			return err.Message
+		}
+		for f, vol := range a.funcVolatility {
+			_ = f
+			if vol != 'i' {
+				return "functions in partition key expression must be marked IMMUTABLE"
+			}
+		}
+		if !hasColumnRef(expr) {
+			return "cannot use constant expression as partition key"
+		}
+		return ""
+	}
 	// CREATE TABLE AS / SELECT INTO in schema.sql: the loader asks the analyzer for the
 	// query's columns
 	schema.QueryColumns = func(s *schema.Schema, query *pg_query.Node) ([]*schema.Column, error) {

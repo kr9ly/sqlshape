@@ -393,6 +393,15 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 					}
 				}
 			default:
+				// COMMIT: the loader drops ON COMMIT DROP tables at transaction end
+				if err == nil {
+					if s == nil {
+						s = loadRegressSchema(&ddl)
+					}
+					if s.Apply(sql+";\n") == nil {
+						ddl = append(ddl, sql)
+					}
+				}
 				txSnap = -1
 				saves = nil
 			}

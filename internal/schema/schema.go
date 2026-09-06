@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -50,8 +51,9 @@ type Schema struct {
 	// at that point; the analyzer installs it to fill Relation.Frozen.
 	ViewHook func(s *Schema, rel *Relation)
 
-	xmlDocument   bool // SET xmloption = document
-	restrictViews bool // SET restrict_nonsystem_relation_kind includes view
+	prepared      map[string]*pg_query.Node // PREPARE name AS query, for CREATE TABLE AS EXECUTE
+	xmlDocument   bool                      // SET xmloption = document
+	restrictViews bool                      // SET restrict_nonsystem_relation_kind includes view
 }
 
 // Problem is a DDL statement (or part) that was skipped or rejected.
@@ -138,6 +140,13 @@ type Relation struct {
 	// OwnedBy (sequences): "schema.table.column" of the serial / identity column, or the
 	// ALTER SEQUENCE ... OWNED BY target; the sequence goes with the table or column.
 	OwnedBy string
+	// OnCommitDrop: a temporary table created ON COMMIT DROP (gone at transaction end).
+	OnCommitDrop bool
+	// PartKey (partitioned tables): the columns the partition key names or its expressions
+	// reference (they cannot be dropped; a type they depend on takes the table with it);
+	// PartKeyFuncs: the functions the key expressions call (DROP FUNCTION CASCADE takes
+	// the table).
+	PartKey, PartKeyFuncs []string
 	// QualifiedRules (views): write commands that have a conditional DO INSTEAD rule
 	// (WHERE ...), which does not make the view take the write but does stop it from
 	// being auto-updatable.
@@ -181,6 +190,10 @@ type Column struct {
 	Identity  byte // 'a' always / 'd' by default / 0
 	Generated Expr // GENERATED ALWAYS AS (expr) STORED
 	Collation string
+	// Inherited: the column comes from a parent table (attinhcount > 0); LocalDef: the
+	// child declares it too (attislocal). Dropping the parent's column drops an inherited
+	// column without a local definition; a child cannot drop an inherited column.
+	Inherited, LocalDef bool
 	// Values is the closed value set a `CHECK (col IN ('a', 'b'))` constraint gives the
 	// column (nil when none): a value set the checker diffs with Go constants like enum labels.
 	Values []string
@@ -501,6 +514,30 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		s.createComposite(st.CompositeTypeStmt, loc)
 	case *pg_query.Node_CreateStmt:
 		s.createTable(st.CreateStmt, loc)
+	case *pg_query.Node_CreateForeignTableStmt:
+		s.createTable(st.CreateForeignTableStmt.BaseStmt, loc) // typed like a table; the server is not ours
+	case *pg_query.Node_PrepareStmt:
+		if s.prepared == nil {
+			s.prepared = map[string]*pg_query.Node{}
+		}
+		s.prepared[st.PrepareStmt.Name] = st.PrepareStmt.Query
+	case *pg_query.Node_DeallocateStmt:
+		if st.DeallocateStmt.Isall {
+			s.prepared = nil
+		} else {
+			delete(s.prepared, st.DeallocateStmt.Name)
+		}
+	case *pg_query.Node_TransactionStmt:
+		switch st.TransactionStmt.Kind {
+		case pg_query.TransactionStmtKind_TRANS_STMT_COMMIT, pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK,
+			pg_query.TransactionStmtKind_TRANS_STMT_PREPARE:
+			// ON COMMIT DROP tables go at transaction end (a rolled-back CREATE never was)
+			for _, r := range append([]*Relation{}, s.Relations...) {
+				if r.OnCommitDrop {
+					s.removeRelation(r)
+				}
+			}
+		}
 	case *pg_query.Node_ViewStmt:
 		s.createView(st.ViewStmt, loc)
 	case *pg_query.Node_SelectStmt:
@@ -513,7 +550,22 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		if st.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_MATVIEW {
 			s.createMatView(st.CreateTableAsStmt, loc)
 		} else if st.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_TABLE {
-			s.createTableAs(st.CreateTableAsStmt.Into, st.CreateTableAsStmt.Query, loc)
+			query := st.CreateTableAsStmt.Query
+			if ex := query.GetExecuteStmt(); ex != nil {
+				// CREATE TABLE ... AS EXECUTE name: the prepared statement's query
+				q, ok := s.prepared[ex.Name]
+				if !ok {
+					s.problem(loc, "CREATE TABLE AS EXECUTE: prepared statement %q does not exist", ex.Name)
+					return
+				}
+				query = q
+			}
+			if st.CreateTableAsStmt.IfNotExists {
+				if sch, name := s.rangeVar(st.CreateTableAsStmt.Into.Rel); s.relByName[sch+"."+name] != nil {
+					return
+				}
+			}
+			s.createTableAs(st.CreateTableAsStmt.Into, query, loc)
 		} else {
 			s.problem(loc, "CREATE TABLE AS is not supported in schema.sql")
 		}
@@ -635,7 +687,7 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		*pg_query.Node_CreateEventTrigStmt, *pg_query.Node_AlterEventTrigStmt, *pg_query.Node_CreatePublicationStmt, *pg_query.Node_AlterPublicationStmt,
 		*pg_query.Node_CreateSubscriptionStmt, *pg_query.Node_CreateRoleStmt, *pg_query.Node_AlterRoleStmt, *pg_query.Node_GrantRoleStmt,
 		*pg_query.Node_CreateTableSpaceStmt, *pg_query.Node_SecLabelStmt, *pg_query.Node_ClusterStmt, *pg_query.Node_VacuumStmt,
-		*pg_query.Node_TransactionStmt, *pg_query.Node_DoStmt, *pg_query.Node_AlterDefaultPrivilegesStmt, *pg_query.Node_CreateFdwStmt,
+		*pg_query.Node_DoStmt, *pg_query.Node_AlterDefaultPrivilegesStmt, *pg_query.Node_CreateFdwStmt,
 		*pg_query.Node_CreateForeignServerStmt, *pg_query.Node_CreateUserMappingStmt, *pg_query.Node_AlterFunctionStmt, *pg_query.Node_AlterCollationStmt:
 		// No effect on typing (CREATE EXTENSION was resolved up front in LoadWith).
 	default:
@@ -669,6 +721,22 @@ func (s *Schema) rangeVar(rv *pg_query.RangeVar) (schema, name string) {
 		schema = s.creationSchema()
 	}
 	return schema, rv.GetRelname()
+}
+
+// lookupRangeVar is rangeVar for an existing relation: an unqualified name is searched
+// the way the search path does (pg_catalog first, then the path), so a user table moved
+// into pg_catalog is still found; nothing found falls back to the creation schema.
+func (s *Schema) lookupRangeVar(rv *pg_query.RangeVar) (schema, name string) {
+	if rv.GetSchemaname() != "" {
+		return rv.GetSchemaname(), rv.GetRelname()
+	}
+	name = rv.GetRelname()
+	for _, p := range append([]string{"pg_catalog"}, s.SearchPath()...) {
+		if s.relByName[p+"."+name] != nil {
+			return p, name
+		}
+	}
+	return s.creationSchema(), name
 }
 
 // resolveType turns a TypeName AST into a TypeRef (handles serial pseudo-types and arrays).
@@ -835,6 +903,7 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		// search path); the hidden relation stays for its other references
 	}
 	rel := s.newRelation(schema, name, Table)
+	rel.OnCommitDrop = st.Oncommit == pg_query.OnCommitAction_ONCOMMIT_DROP
 	// CREATE TABLE ... OF type: the composite type's attributes are the columns
 	if st.OfTypename != nil {
 		tr, err := s.resolveType(st.OfTypename)
@@ -894,8 +963,32 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		if msg := s.partitionSpecProblem(rel, st, ps); msg != "" {
 			s.problem(loc, "table %s: %s", name, msg)
 			s.removeRelation(rel)
+			return
+		}
+		for _, pn := range ps.PartParams {
+			pe := pn.GetPartitionElem()
+			switch {
+			case pe == nil:
+			case pe.Name != "":
+				rel.PartKey = append(rel.PartKey, pe.Name)
+			case pe.Expr != nil:
+				rel.PartKey = append(rel.PartKey, ColumnRefs(pe.Expr)...)
+				rel.PartKeyFuncs = append(rel.PartKeyFuncs, funcNamesIn(pe.Expr)...)
+			}
 		}
 	}
+}
+
+// funcNamesIn lists the (unqualified) names of the functions an expression calls.
+func funcNamesIn(e Expr) []string {
+	var out []string
+	WalkNodes(e, func(n *pg_query.Node) {
+		if fc := n.GetFuncCall(); fc != nil && len(fc.Funcname) > 0 {
+			names := strs(fc.Funcname)
+			out = append(out, names[len(names)-1])
+		}
+	})
+	return out
 }
 
 // partitionSpecProblem is the part of DefineRelation / transformPartitionSpec that needs
@@ -910,7 +1003,15 @@ func (s *Schema) partitionSpecProblem(rel *Relation, st *pg_query.CreateStmt, ps
 	}
 	for _, pn := range ps.PartParams {
 		pe := pn.GetPartitionElem()
-		if pe == nil || pe.Name == "" {
+		if pe == nil {
+			continue
+		}
+		if pe.Name == "" {
+			if pe.Expr != nil && PartitionKeyProblem != nil {
+				if msg := PartitionKeyProblem(s, rel, pe.Expr); msg != "" {
+					return msg
+				}
+			}
 			continue
 		}
 		switch pe.Name {
@@ -937,6 +1038,7 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 		// the child's default / identity / generated expression win
 		col = existing
 		col.NotNull = col.NotNull || cd.IsNotNull
+		col.LocalDef = true
 		merged = true
 	}
 	if isSerial(cd.TypeName) {
@@ -1091,7 +1193,7 @@ func (s *Schema) createMatView(st *pg_query.CreateTableAsStmt, loc int32) {
 }
 
 func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
-	schema, name := s.rangeVar(st.Relation)
+	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
 		if !st.MissingOk {
@@ -1137,12 +1239,39 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			if col := rel.Column(cmd.Name); col != nil {
 				if tr, err := s.resolveType(cmd.Def.GetColumnDef().GetTypeName()); err == nil {
 					col.Type = tr
+					for _, child := range s.Relations {
+						// inherited columns keep the parent's type
+						if child != rel && child.InheritsFrom(rel) {
+							if cc := child.Column(cmd.Name); cc != nil && cc.Inherited {
+								cc.Type = tr
+							}
+						}
+					}
 				} else {
 					s.problem(loc, "%s.%s: %v", rel.Name, cmd.Name, err)
 				}
 			}
 		case pg_query.AlterTableType_AT_DropColumn:
+			if col := rel.Column(cmd.Name); col != nil && col.Inherited {
+				s.problem(loc, "%s: cannot drop inherited column %q", rel.Name, cmd.Name)
+				continue
+			}
+			if slices.Contains(rel.PartKey, cmd.Name) {
+				s.problem(loc, "%s: cannot drop column %q because it is part of the partition key", rel.Name, cmd.Name)
+				continue
+			}
 			s.dropColumn(rel, cmd.Name, loc, cmd.MissingOk)
+			for _, child := range s.Relations {
+				if child != rel && child.InheritsFrom(rel) {
+					if cc := child.Column(cmd.Name); cc != nil && cc.Inherited {
+						if cc.LocalDef {
+							cc.Inherited = false // now the child's own column
+						} else {
+							s.dropColumn(child, cmd.Name, loc, true)
+						}
+					}
+				}
+			}
 		case pg_query.AlterTableType_AT_DropConstraint:
 			n := len(rel.Constraints)
 			rel.Constraints = filterConstraints(rel.Constraints, func(c *Constraint) bool { return c.Name != cmd.Name })
@@ -1240,7 +1369,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 }
 
 func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
-	schema, name := s.rangeVar(st.Relation)
+	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
 		s.problem(loc, "CREATE INDEX: relation %q does not exist", name)
@@ -1559,7 +1688,7 @@ func WalkNodes(m proto.Message, f func(*pg_query.Node)) {
 
 // createTrigger records which events on which table run which function (trigger.h bits).
 func (s *Schema) createTrigger(st *pg_query.CreateTrigStmt, loc int32) {
-	schema, name := s.rangeVar(st.Relation)
+	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
 		s.problem(loc, "CREATE TRIGGER %s: relation %q does not exist", st.Trigname, name)
@@ -1631,6 +1760,10 @@ func sameInputs(a, b *Function) bool {
 	return true
 }
 
+// PartitionKeyProblem checks one PARTITION BY expression against the table (the analyzer
+// installs it): the message PG would give, or "" when the expression is acceptable.
+var PartitionKeyProblem func(s *Schema, rel *Relation, expr *pg_query.Node) string
+
 // QueryColumns types a query's result columns for CREATE TABLE AS / SELECT INTO. The
 // analyzer installs it (package analyze imports schema, not the reverse); nil leaves
 // such tables as problems.
@@ -1656,6 +1789,7 @@ func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, 
 		return
 	}
 	rel := s.newRelation(schema, name, Table)
+	rel.OnCommitDrop = into.OnCommit == pg_query.OnCommitAction_ONCOMMIT_DROP
 	for i, c := range cols {
 		c.Num = int16(i + 1)
 		c.NotNull = false // the created table has no constraints, whatever the query guaranteed

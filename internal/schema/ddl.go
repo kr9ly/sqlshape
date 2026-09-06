@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -182,11 +183,13 @@ func (s *Schema) inherit(rel *Relation, parent *Relation, partition bool, loc in
 	rel.Parents = append(rel.Parents, parent)
 	rel.IsPartition = rel.IsPartition || partition
 	for _, pc := range parent.Columns {
-		if rel.Column(pc.Name) != nil {
-			continue // a child may redeclare a parent column with the same type
+		if existing := rel.Column(pc.Name); existing != nil {
+			existing.Inherited = true // a child may redeclare a parent column with the same type
+			continue
 		}
 		c := *pc
 		c.Num = int16(len(rel.Columns) + 1)
+		c.Inherited, c.LocalDef = true, false
 		rel.Columns = append(rel.Columns, &c)
 	}
 	for _, pc := range parent.Constraints {
@@ -254,7 +257,7 @@ func (s *Schema) likeClause(rel *Relation, lk *pg_query.TableLikeClause, loc int
 func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 	switch st.RenameType {
 	case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_INDEX:
-		schema, name := s.rangeVar(st.Relation)
+		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
 			if st.RenameType == pg_query.ObjectType_OBJECT_INDEX {
@@ -288,7 +291,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 			}
 		}
 	case pg_query.ObjectType_OBJECT_COLUMN, pg_query.ObjectType_OBJECT_ATTRIBUTE:
-		schema, name := s.rangeVar(st.Relation)
+		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
 			if !st.MissingOk {
@@ -331,7 +334,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 			}
 		}
 	case pg_query.ObjectType_OBJECT_TABCONSTRAINT:
-		schema, name := s.rangeVar(st.Relation)
+		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
 			s.problem(loc, "ALTER TABLE ... RENAME CONSTRAINT: relation %q does not exist", name)
@@ -429,7 +432,8 @@ func fullName(schema, name string) string {
 func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 	for _, on := range st.Objects {
 		switch st.RemoveType {
-		case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_SEQUENCE:
+		case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_SEQUENCE,
+			pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 			schema, name := qualified(strs(on.GetList().GetItems()))
 			rel := s.findRelation(schema, name)
 			if rel == nil {
@@ -475,7 +479,10 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 				continue
 			}
-			s.dropTypeDependents(t, st.Behavior == pg_query.DropBehavior_DROP_CASCADE)
+			if !s.dropTypeDependents(t, st.Behavior == pg_query.DropBehavior_DROP_CASCADE) {
+				s.problem(loc, "DROP TYPE %s: other objects depend on it (use CASCADE)", name)
+				continue
+			}
 			s.Types.removeUser(t.OID)
 			if rel := s.relByName[schema+"."+name]; rel != nil && rel.Kind == 'c' {
 				s.removeRelation(rel)
@@ -491,6 +498,27 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 					continue
 				}
 				kept = append(kept, f)
+			}
+			if removed {
+				var keyed []*Relation
+				for _, r := range s.Relations {
+					if slices.Contains(r.PartKeyFuncs, name) {
+						keyed = append(keyed, r)
+					}
+				}
+				if len(keyed) > 0 && st.Behavior != pg_query.DropBehavior_DROP_CASCADE {
+					s.problem(loc, "DROP FUNCTION %s: a partition key depends on it (use CASCADE)", name)
+					continue
+				}
+				for _, r := range keyed {
+					for _, child := range append([]*Relation{}, s.Relations...) {
+						if child != r && child.IsPartition && child.InheritsFrom(r) {
+							s.removeRelation(child)
+						}
+					}
+					s.removeRelation(r)
+					s.dropDependentViews(r)
+				}
 			}
 			s.Functions = kept
 			if !removed && !st.MissingOk {
@@ -596,6 +624,9 @@ func (s *Schema) findRelation(schema, name string) *Relation {
 		return s.systemRelation(schema, name)
 	}
 	// pg_catalog is implicitly first on the search path
+	if r := s.relByName["pg_catalog."+name]; r != nil {
+		return r
+	}
 	if r := s.systemRelation("pg_catalog", name); r != nil {
 		return r
 	}
@@ -620,6 +651,21 @@ func (s *Schema) systemRelation(schema, name string) *Relation {
 	}
 	cr := s.Catalog.RelationByName(schema, name)
 	if cr == nil {
+		if schema == "pg_toast" && strings.HasPrefix(name, "pg_toast_") {
+			// every TOAST table has the same three columns
+			rel := &Relation{Schema: schema, Name: name, Kind: Table}
+			for i, c := range []struct {
+				name string
+				typ  catalog.OID
+			}{{"chunk_id", catalog.OIDType}, {"chunk_seq", catalog.Int4}, {"chunk_data", catalog.Bytea}} {
+				rel.Columns = append(rel.Columns, &Column{Num: int16(i + 1), Name: c.name, Type: TypeRef{OID: c.typ, Typmod: -1}, NotNull: true})
+			}
+			if s.sysRels == nil {
+				s.sysRels = map[string]*Relation{}
+			}
+			s.sysRels[schema+"."+name] = rel
+			return rel
+		}
 		return nil
 	}
 	rel := &Relation{OID: cr.OID, Schema: cr.Schema, Name: cr.Name, Kind: Table}
@@ -1191,7 +1237,7 @@ func (s *Schema) alterObjectSchema(st *pg_query.AlterObjectSchemaStmt, loc int32
 	switch st.ObjectType {
 	case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW,
 		pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
-		schema, name := s.rangeVar(st.Relation)
+		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
 			if !st.MissingOk {
@@ -1263,7 +1309,9 @@ func (s *Schema) funcArgsMatch(fn *Function, owa *pg_query.ObjectWithArgs) bool 
 // dropTypeDependents removes what a DROP TYPE takes along: the range / multirange
 // constructor functions and casts made with the type (internal dependencies), and, with
 // CASCADE, the typed tables OF it.
-func (s *Schema) dropTypeDependents(t *catalog.Type, cascade bool) {
+// dropTypeDependents removes what depends on a type being dropped; without CASCADE a
+// column or typed table depending on it stops the drop (false).
+func (s *Schema) dropTypeDependents(t *catalog.Type, cascade bool) bool {
 	gone := map[catalog.OID]bool{t.OID: true, t.Array: true}
 	if r := s.Types.RangeOf(t.OID); r != nil && t.Kind == 'r' {
 		gone[r.Multi] = true
@@ -1289,16 +1337,44 @@ func (s *Schema) dropTypeDependents(t *catalog.Type, cascade bool) {
 		casts = append(casts, c)
 	}
 	s.Casts = casts
-	if cascade {
-		var typed []*Relation
-		for _, r := range s.Relations {
-			if r.OfType == t.OID {
-				typed = append(typed, r)
+	var typed []*Relation
+	type dep struct {
+		rel *Relation
+		col string
+	}
+	var cols []dep
+	for _, r := range s.Relations {
+		if r.OfType == t.OID {
+			typed = append(typed, r)
+			continue
+		}
+		if r.Kind != Table {
+			continue
+		}
+		for _, c := range r.Columns {
+			if gone[c.Type.OID] {
+				cols = append(cols, dep{r, c.Name})
 			}
 		}
-		for _, r := range typed {
-			s.removeRelation(r)
-			s.dropDependentViews(r)
-		}
 	}
+	if !cascade && (len(typed) > 0 || len(cols) > 0) {
+		return false
+	}
+	for _, d := range cols {
+		if slices.Contains(d.rel.PartKey, d.col) {
+			typed = append(typed, d.rel) // the partition key depends on the type: the table goes
+			continue
+		}
+		s.dropColumn(d.rel, d.col, -1, true)
+	}
+	for _, r := range typed {
+		for _, child := range append([]*Relation{}, s.Relations...) {
+			if child != r && child.IsPartition && child.InheritsFrom(r) {
+				s.removeRelation(child)
+			}
+		}
+		s.removeRelation(r)
+		s.dropDependentViews(r)
+	}
+	return true
 }

@@ -346,13 +346,28 @@ func (ts *Types) renameUser(oid catalog.OID, name string) {
 	}
 	schema := ts.Schemas[oid]
 	delete(ts.byName, schema+"."+t.Name)
+	ts.claimName(schema, name)
 	t.Name = name
 	ts.byName[schema+"."+name] = t
 	if arr := ts.byOID[t.Array]; arr != nil {
 		delete(ts.byName, schema+"."+arr.Name)
+		ts.claimName(schema, "_"+name)
 		arr.Name = "_" + name
 		ts.byName[schema+"."+arr.Name] = arr
 	}
+}
+
+// claimName frees schema.name for a type about to take it: an array type sitting there
+// moves to "_" + name (makeArrayTypeName / moveArrayTypeName), as many times as needed.
+func (ts *Types) claimName(schema, name string) {
+	other := ts.byName[schema+"."+name]
+	if other == nil || other.Category != 'A' || ts.Schemas[other.OID] != schema {
+		return
+	}
+	delete(ts.byName, schema+"."+name)
+	ts.claimName(schema, "_"+name)
+	other.Name = "_" + name
+	ts.byName[schema+"."+other.Name] = other
 }
 
 // moveUser puts a user type (and its array type) in another schema; catalog types stay.
