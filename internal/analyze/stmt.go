@@ -1413,8 +1413,12 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 					if _, err := a.analyzeExpr(ex, inner); err != nil {
 						return nil, err
 					}
-				} else if n := ie.GetIndexElem().GetName(); n != "" && len(target.find(n)) == 0 {
-					return nil, errAt(codeUndefinedColumn, oc.Infer.Location, "column %q does not exist", n)
+				} else if n := ie.GetIndexElem().GetName(); n != "" {
+					hits := target.find(n)
+					if len(hits) == 0 {
+						return nil, errAt(codeUndefinedColumn, oc.Infer.Location, "column %q does not exist", n)
+					}
+					a.use(hits[0].src, oc.Infer.Location)
 				}
 			}
 			if err := a.boolClause(oc.Infer.WhereClause, inner, "WHERE"); err != nil {

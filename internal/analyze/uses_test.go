@@ -26,6 +26,8 @@ func TestUses(t *testing.T) {
 		{"WITH m AS (SELECT id FROM memos WHERE deleted_at IS NULL) SELECT id FROM m", "memos.id@19 memos.deleted_at@39"},
 		{"SELECT u.id FROM users u JOIN memos m ON m.user_id = u.id", "users.id@8 memos.user_id@42"},
 		{"DELETE FROM memos WHERE id = $1", "memos.id@25"},
+		{"INSERT INTO memos (user_id, body) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET body = excluded.body RETURNING id, deleted_at", "memos.user_id@20 memos.body@29 memos.id@63 memos.deleted_at@117"},
+		{"UPDATE memos SET body = $1 WHERE id = $2 RETURNING user_id", "memos.body@18 memos.id@34 memos.user_id@52"},
 	}
 	for _, c := range cases {
 		r, err := Analyze(s, c.sql)
