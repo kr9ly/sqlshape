@@ -284,6 +284,7 @@ func (a *analyzer) expandStar(cr *pg_query.ColumnRef, sc *scope) ([]rteCol, *Err
 		if len(out) == 0 && len(sc.items) == 0 {
 			return nil, errAt(codeSyntaxError, cr.Location, "SELECT * with no tables specified is not valid")
 		}
+		a.useAll(out, cr.Location)
 		return out, nil
 	}
 	alias := cr.Fields[len(cr.Fields)-2].GetString_().GetSval()
@@ -294,7 +295,9 @@ func (a *analyzer) expandStar(cr *pg_query.ColumnRef, sc *scope) ([]rteCol, *Err
 	if r == nil {
 		return nil, errAt(codeUndefinedTable, cr.Location, "missing FROM-clause entry for table %q", alias)
 	}
-	return r.expand(), nil // j.* of an aliased join: its columns, USING ones merged
+	cols := r.expand() // j.* of an aliased join: its columns, USING ones merged
+	a.useAll(cols, cr.Location)
+	return cols, nil
 }
 
 func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
@@ -1298,6 +1301,9 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 	if len(ins.Cols) == 0 {
 		cols = rel.Columns
 		indirect = make([]bool, len(cols))
+		for _, c := range cols {
+			a.useColumn(rel, c, ins.Relation.Location)
+		}
 	} else {
 		for _, cn := range ins.Cols {
 			rt := cn.GetResTarget()
@@ -1305,6 +1311,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			if c == nil {
 				return nil, errAt(codeUndefinedColumn, rt.Location, "column %q of relation %q does not exist", rt.Name, rel.Name)
 			}
+			a.useColumn(rel, c, rt.Location)
 			if len(rt.Indirection) > 0 {
 				var err *Error
 				if c, err = a.indirectTarget(c, rt.Indirection, rt.Location); err != nil {
@@ -1447,6 +1454,7 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 		if col == nil {
 			return errAt(codeUndefinedColumn, t.Location, "column %q of relation %q does not exist", t.Name, rel.Name)
 		}
+		a.useColumn(rel, col, t.Location)
 		if len(t.Indirection) == 0 {
 			if assignedCols[t.Name] {
 				return errAt(codeSyntaxError, t.Location, "multiple assignments to same column %q", t.Name)
@@ -1931,6 +1939,9 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 			var cols []*schema.Column
 			if len(w.TargetList) == 0 {
 				cols = rel.Columns
+				for _, c := range cols {
+					a.useColumn(rel, c, m.Relation.Location)
+				}
 			}
 			for _, tn := range w.TargetList {
 				rt := tn.GetResTarget()
@@ -1938,6 +1949,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 				if c == nil {
 					return nil, errAt(codeUndefinedColumn, rt.Location, "column %q of relation %q does not exist", rt.Name, rel.Name)
 				}
+				a.useColumn(rel, c, rt.Location)
 				cols = append(cols, c)
 				a.mergeInserted = append(a.mergeInserted, c.Name)
 			}

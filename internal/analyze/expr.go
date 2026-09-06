@@ -601,9 +601,12 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 			}
 			if r != nil {
 				if r.rowType != 0 {
+					a.useAll(r.cols, c.Location)
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 				}
-				return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.expand()}, nil
+				cols := r.expand()
+				a.useAll(cols, c.Location)
+				return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: cols}, nil
 			}
 		}
 		return nil, errAt(codeSyntaxError, c.Location, "improper use of \"*\"")
@@ -628,6 +631,7 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 			}
 			if r != nil {
 				a.noteVarScope(sc.scopeOf(r))
+				a.useAll(r.cols, c.Location)
 				if r.rowType != 0 {
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols, rowOf: r}, nil
 				}

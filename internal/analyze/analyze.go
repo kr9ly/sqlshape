@@ -3,6 +3,7 @@ package analyze
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -66,6 +67,8 @@ type analyzer struct {
 	// INSERT ... SELECT types them by the target columns
 	keepUnknown bool
 	refs        []RelationRef
+	uses        []Use
+	useSeen     map[string]int
 	fixed       []Source
 	// inView is the depth of view definitions being analyzed: their references are the
 	// view's, not the statement's
@@ -350,6 +353,8 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilt
 		res.Violations = dedupe(append(res.Violations, functionViolations(s, cf, visited)...))
 	}
 	res.Relations = a.refs
+	sort.SliceStable(a.uses, func(i, j int) bool { return a.uses[i].Position < a.uses[j].Position })
+	res.Uses = a.uses
 	for _, as := range a.assigned {
 		if as.rel != nil {
 			a.fixed = append(a.fixed, Source{Table: as.rel.FullName(), Column: as.col.Name, NotNull: as.col.NotNull, Assigned: true})

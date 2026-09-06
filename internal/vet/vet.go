@@ -11,6 +11,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/consumers"
 	"github.com/kr9ly/sqlshape/internal/expand"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -31,10 +33,11 @@ const sqlshapePkg = "github.com/kr9ly/sqlshape"
 
 // Analyzer is the sqlshape checker.
 var Analyzer = &analysis.Analyzer{
-	Name:     "sqlshape",
-	Doc:      "checks every expansion of sqlshape.Query templates against schema.sql and the Go result / parameter types",
-	Run:      run,
-	Requires: []*analysis.Analyzer{inspect.Analyzer},
+	Name:       "sqlshape",
+	Doc:        "checks every expansion of sqlshape.Query templates against schema.sql and the Go result / parameter types",
+	Run:        run,
+	Requires:   []*analysis.Analyzer{inspect.Analyzer},
+	ResultType: reflect.TypeOf((*consumers.Index)(nil)),
 }
 
 var (
@@ -151,12 +154,21 @@ type checker struct {
 	declared map[*types.TypeName]declaredType
 	// unchecked counts Query / One calls whose template is not a constant (-coverage)
 	unchecked int
+	// index collects the relation columns this package's statements depend on (the
+	// analyzer's result); owners names the declaration each call sits in
+	index  *consumers.Index
+	owners map[*ast.CallExpr]string
 }
 
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	index := consumers.New()
+	owners := map[*ast.CallExpr]string{}
 	var calls, matviews, copies, all []*ast.CallExpr
-	insp.Preorder([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node) {
+	insp.WithStack([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node, push bool, stack []ast.Node) bool {
+		if !push {
+			return false
+		}
 		call := n.(*ast.CallExpr)
 		all = append(all, call)
 		switch {
@@ -166,7 +178,11 @@ func run(pass *analysis.Pass) (any, error) {
 			matviews = append(matviews, call)
 		case isCopyCall(pass, call):
 			copies = append(copies, call)
+		default:
+			return true
 		}
+		owners[call] = owner(pass, stack)
+		return true
 	})
 	matviews = append(matviews, copies...) // checked after the statements, like matviews
 	calls = append(calls, matviews...)
@@ -176,20 +192,20 @@ func run(pass *analysis.Pass) (any, error) {
 		c := &checker{pass: pass, bindings: map[*types.TypeName]*binding{}}
 		c.exportConstSets()
 		c.collectDeclaredTypes()
-		return nil, nil
+		return index, nil
 	}
 	path, err := findSchema(pass)
 	if err != nil {
 		pass.Reportf(calls[0].Pos(), "sqlshape: %v", err)
-		return nil, nil
+		return index, nil
 	}
 	ls, err := loadSchema(path)
 	if err != nil {
 		pass.Reportf(calls[0].Pos(), "sqlshape: load %s: %v", path, err)
-		return nil, nil
+		return index, nil
 	}
 	s := ls.s
-	c := &checker{pass: pass, s: s, strict: strictFlag, bindings: map[*types.TypeName]*binding{}}
+	c := &checker{pass: pass, s: s, strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
 	c.collectDeclaredTypes()
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
@@ -212,7 +228,46 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 	}
 	c.finishBindings()
-	return nil, nil
+	return index, nil
+}
+
+// owner names the declaration a call sits in: "pkg.Func", "pkg.(*T).Method", "pkg.var";
+// the package path alone at the top level of an expression outside any declaration.
+func owner(pass *analysis.Pass, stack []ast.Node) string {
+	pkg := pass.Pkg.Path()
+	for i := len(stack) - 1; i >= 0; i-- {
+		switch d := stack[i].(type) {
+		case *ast.FuncDecl:
+			if d.Recv != nil && len(d.Recv.List) == 1 {
+				return pkg + "." + types.ExprString(d.Recv.List[0].Type) + "." + d.Name.Name
+			}
+			return pkg + "." + d.Name.Name
+		case *ast.ValueSpec:
+			if len(d.Names) > 0 {
+				return pkg + "." + d.Names[0].Name
+			}
+		}
+	}
+	return pkg
+}
+
+// site is the consumer index entry for a position in the SQL of call.
+func (c *checker) site(call *ast.CallExpr, at token.Pos) consumers.Site {
+	return consumers.Site{Pos: c.pass.Fset.Position(at), Owner: c.owners[call]}
+}
+
+// record adds one expansion's relation and column uses to the index.
+func (c *checker) record(call *ast.CallExpr, e *expand.Expansion, r *analyze.Result, lit literal) {
+	for _, ref := range r.Relations {
+		name := ref.Name
+		if ref.Schema != "public" {
+			name = ref.Schema + "." + name
+		}
+		c.index.AddRelation(name, c.site(call, lit.pos(e.TemplatePos(int(ref.Position)-1))))
+	}
+	for _, u := range r.Uses {
+		c.index.AddColumn(u.Table, u.Column, c.site(call, lit.pos(e.TemplatePos(int(u.Position)-1))))
+	}
 }
 
 // isQueryCall recognizes sqlshape.Query[R, P](...) and sqlshape.One[R, P](...).
@@ -487,6 +542,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			continue
 		}
 		c.checkReferences(e, r, lit, report, where)
+		c.record(call, e, r, lit)
 		for _, v := range c.possibleViolations(e, r, pType) {
 			if _, seen := possible[v.Key()]; !seen {
 				possible[v.Key()] = v
@@ -894,6 +950,8 @@ func (c *checker) checkMatView(call *ast.CallExpr) {
 		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: materialized view %q does not exist", name)
 	case rel.Kind != schema.MatView:
 		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: %q is not a materialized view", name)
+	default:
+		c.index.AddRelation(rel.FullName(), c.site(call, call.Args[0].Pos()))
 	}
 }
 

@@ -104,6 +104,19 @@ type Result struct {
 	// literal / parameter / outer reference in WHERE or ON (at any select level), or by
 	// assignment in an INSERT (Assigned set). Row-ownership policies check against it.
 	Fixed []Source
+	// Uses are the relation columns the statement depends on (see Use).
+	Uses []Use
+}
+
+// Use is a relation column the statement depends on: read by name or by *, assigned by
+// INSERT / UPDATE / MERGE, or taken in a whole-row reference. Dropping or changing the
+// column changes what the statement means. A view's columns count as the view's (its base
+// tables are the view's business, and the schema knows them). Each once, at its first
+// position; nothing is recorded inside view definitions.
+type Use struct {
+	Table    string // schema-qualified unless public, like Source.Table
+	Column   string
+	Position int32
 }
 
 // RelationRef is a direct reference to a relation, with its position in the SQL.

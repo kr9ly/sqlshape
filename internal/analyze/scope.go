@@ -328,6 +328,7 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 				}
 				return rteCol{}, errAt(codeUndefinedColumn, loc, "column %s.%s does not exist", tbl, col)
 			}
+			a.use(hits[0].src, loc)
 			return hits[0], nil
 		}
 		var hits []rteCol
@@ -343,6 +344,7 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 			return rteCol{}, errAt(codeAmbiguousColumn, loc, "column reference %q is ambiguous", col)
 		}
 		if len(hits) == 1 {
+			a.use(hits[0].src, loc)
 			return hits[0], nil
 		}
 	}
@@ -363,6 +365,39 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 		return rteCol{}, errAt(codeUndefinedTable, loc, "missing FROM-clause entry for table %q", tbl)
 	}
 	return rteCol{}, errAt(codeUndefinedColumn, loc, "column %q does not exist", col)
+}
+
+// use records that the statement depends on the column src (Result.Uses). Inside a view
+// definition nothing is recorded: the reference is the view's, not the statement's.
+func (a *analyzer) use(src *Source, loc int32) {
+	if a.inView > 0 || src == nil {
+		return
+	}
+	key := src.Table + "." + src.Column
+	if i, ok := a.useSeen[key]; ok {
+		// clauses are analyzed in PG's order (FROM, WHERE, targets), not the text's
+		if loc+1 < a.uses[i].Position {
+			a.uses[i].Position = loc + 1
+		}
+		return
+	}
+	if a.useSeen == nil {
+		a.useSeen = map[string]int{}
+	}
+	a.useSeen[key] = len(a.uses)
+	a.uses = append(a.uses, Use{Table: src.Table, Column: src.Column, Position: loc + 1})
+}
+
+// useAll records every column of cols (a * expansion or a whole-row reference).
+func (a *analyzer) useAll(cols []rteCol, loc int32) {
+	for _, c := range cols {
+		a.use(c.src, loc)
+	}
+}
+
+// useColumn records a target column of a write to rel.
+func (a *analyzer) useColumn(rel *schema.Relation, c *schema.Column, loc int32) {
+	a.use(&Source{Table: rel.FullName(), Column: c.Name}, loc)
 }
 
 // scopeOf is the scope (this one or an enclosing one) whose FROM list holds r.

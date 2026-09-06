@@ -80,6 +80,16 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 		report("Copy: %q is not a table (COPY FROM loads tables)", table)
 		return
 	}
+	for i, name := range cols {
+		if col := rel.Column(name); col != nil {
+			c.index.AddColumn(rel.FullName(), col.Name, c.site(call, call.Args[i+1].Pos()))
+		}
+	}
+	if len(cols) == 0 {
+		for _, col := range rel.Columns {
+			c.index.AddColumn(rel.FullName(), col.Name, c.site(call, call.Args[0].Pos()))
+		}
+	}
 	if noTables {
 		report("table %s is written directly; with -no-tables application code reads views and calls functions only", rel.FullName())
 	}
