@@ -269,6 +269,7 @@ func (o *Oracle) Reconnect(ctx context.Context, database string) error {
 		conn, err = pgx.Connect(ctx, dsn)
 		if err == nil {
 			o.conn = conn
+			o.dsn = dsn
 			return nil
 		}
 		select {

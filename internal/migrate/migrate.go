@@ -34,14 +34,14 @@ func Plan(from, to *schema.Schema) []string {
 	return p.out
 }
 
-// Verify applies ddl to a fresh PostgreSQL holding currentSQL and lists what still
+// Verify applies ddl to a fresh database holding currentSQL and lists what still
 // differs from target. An error is a statement PostgreSQL refused (or the server
 // failing); no changes and no error means the DDL reaches the target. Column order is
 // tolerated (diff.Change.OrderOnly) and returned separately as notes.
-func Verify(ctx context.Context, currentSQL, ddl string, target *schema.Schema) (changes, notes []diff.Change, err error) {
+func Verify(ctx context.Context, c dump.Canonicalizer, currentSQL, ddl string, target *schema.Schema) (changes, notes []diff.Change, err error) {
 	// the current schema is a dump, whose session has search_path emptied; the plan's
 	// rendered statements name public objects unqualified
-	got, _, err := dump.Canonical(ctx, currentSQL+"\nRESET search_path;\n"+ddl)
+	got, _, err := c.Canonical(ctx, currentSQL+"\nRESET search_path;\n"+ddl)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,36 @@ type canonical struct {
 	text string
 }
 
+// server is the one PostgreSQL every test in the package canonicalizes on (booting one
+// costs seconds; a database on it, milliseconds).
+var server *dump.Server
+
+func TestMain(m *testing.M) {
+	if _, err := exec.LookPath(dump.Binary()); err == nil {
+		srv, err := dump.NewServer(context.Background())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		server = srv
+	}
+	code := m.Run()
+	if server != nil {
+		server.Close()
+	}
+	os.Exit(code)
+}
+
+func requirePgDump(t *testing.T) {
+	t.Helper()
+	if server == nil {
+		t.Skipf("%s not found", dump.Binary())
+	}
+}
+
 func mustCanonical(t *testing.T, sql string) canonical {
 	t.Helper()
-	s, text, err := dump.Canonical(context.Background(), sql)
+	s, text, err := server.Canonical(context.Background(), sql)
 	if err != nil {
 		t.Fatalf("canonical: %v", err)
 	}
@@ -38,7 +66,7 @@ func roundTrip(t *testing.T, from, to canonical, oneWay bool) {
 			continue
 		}
 		ddl := strings.Join(Plan(dir.from.s, dir.to.s), "\n")
-		changes, _, err := Verify(context.Background(), dir.from.text, ddl, dir.to.s)
+		changes, _, err := Verify(context.Background(), server, dir.from.text, ddl, dir.to.s)
 		if err != nil {
 			t.Errorf("%s: %v\nplan:\n%s", dir.name, err, ddl)
 			continue
@@ -63,9 +91,7 @@ func example(t *testing.T, name string) string {
 }
 
 func TestPlan(t *testing.T) {
-	if _, err := exec.LookPath(dump.Binary()); err != nil {
-		t.Skipf("%s not found: %v", dump.Binary(), err)
-	}
+	requirePgDump(t)
 	cases := []struct {
 		name, base, edit string
 		oneWay           bool // the way back needs an intent declaration
@@ -103,6 +129,7 @@ COMMENT ON COLUMN core.rooms.capacity IS 'seats';`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			base := example(t, c.base)
 			roundTrip(t, mustCanonical(t, base), mustCanonical(t, base+"\n"+c.edit), c.oneWay)
 		})
@@ -110,9 +137,7 @@ COMMENT ON COLUMN core.rooms.capacity IS 'seats';`},
 }
 
 func TestPlanEmptyForIdentical(t *testing.T) {
-	if _, err := exec.LookPath(dump.Binary()); err != nil {
-		t.Skip()
-	}
+	requirePgDump(t)
 	s := mustCanonical(t, example(t, "3-everything"))
 	if p := Plan(s.s, s.s); len(p) > 0 {
 		t.Errorf("plan for identical schemas: %v", p)

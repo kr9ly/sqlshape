@@ -30,20 +30,25 @@ func requirePgDump(t *testing.T) {
 func TestCanonicalFixedPoint(t *testing.T) {
 	requirePgDump(t)
 	ctx := context.Background()
+	srv, err := NewServer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
 	for _, ex := range []string{"1-tables", "2-database-api", "3-everything"} {
 		t.Run(ex, func(t *testing.T) {
 			sql, err := os.ReadFile(filepath.Join("../../examples", ex, "schema.sql"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			s1, text, err := Canonical(ctx, string(sql))
+			s1, text, err := srv.Canonical(ctx, string(sql))
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, p := range s1.Problems {
 				t.Errorf("problem loading dump: %s", p)
 			}
-			s2, _, err := Canonical(ctx, text)
+			s2, _, err := srv.Canonical(ctx, text)
 			if err != nil {
 				t.Fatalf("re-applying the dump: %v", err)
 			}
@@ -91,7 +96,7 @@ COMMENT ON TABLE orders IS 'orders placed';
 ~ enum order_status
     labels: pending, paid, shipped, cancelled -> pending, paid, shipped, cancelled, refunded
 ~ table customers
-    columns: id, email, name, created_at -> id, email, name, created_at, nickname
+    column order: id, email, name, created_at -> id, email, name, created_at, nickname
 + column customers.nickname
 ~ column orders.total
     default: 0 -> 1

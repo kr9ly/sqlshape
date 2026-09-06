@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/oracle"
@@ -81,22 +82,73 @@ func Load(ctx context.Context, connString string) (*schema.Schema, error) {
 	return s, nil
 }
 
+// Canonicalizer gives schema text its canonical form. Server is the implementation;
+// Canonical below is the one-shot convenience.
+type Canonicalizer interface {
+	Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, string, error)
+}
+
 // Canonical applies schemaSQL to a fresh PostgreSQL and reads it back. The returned text
-// is the normalized dump the Schema was loaded from.
+// is the normalized dump the Schema was loaded from. Each call boots its own server;
+// for several canonical forms use one Server.
 func Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, string, error) {
-	o, err := oracle.Start(ctx, schemaSQL)
+	srv, err := NewServer(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	defer o.Close()
-	text, err := Run(ctx, o.ConnString())
+	defer srv.Close()
+	return srv.Canonical(ctx, schemaSQL)
+}
+
+// Server is one running PostgreSQL that canonicalizes many schema texts, each in a
+// database of its own (booting a server costs seconds, CREATE DATABASE milliseconds).
+type Server struct {
+	o  *oracle.Oracle
+	mu sync.Mutex
+	n  int
+}
+
+// NewServer boots the PostgreSQL. Close it when done.
+func NewServer(ctx context.Context) (*Server, error) {
+	o, err := oracle.Start(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return &Server{o: o}, nil
+}
+
+// Close stops the server and removes its data.
+func (s *Server) Close() error { return s.o.Close() }
+
+// Canonical applies schemaSQL to a fresh database on the server and reads it back. Safe
+// for concurrent use.
+func (s *Server) Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, string, error) {
+	s.mu.Lock()
+	s.n++
+	name := fmt.Sprintf("canonical_%d", s.n)
+	_, err := s.o.Conn().Exec(ctx, "CREATE DATABASE "+name)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, "", fmt.Errorf("create database: %w", err)
+	}
+	sess, err := s.o.Session(ctx, name)
+	if err != nil {
+		return nil, "", err
+	}
+	defer sess.Close()
+	if strings.TrimSpace(schemaSQL) != "" {
+		if _, err := sess.Conn().Exec(ctx, schemaSQL); err != nil {
+			return nil, "", fmt.Errorf("apply schema: %w", err)
+		}
+	}
+	text, err := Run(ctx, sess.ConnString())
 	if err != nil {
 		return nil, "", err
 	}
 	text = Normalize(text)
-	s, err := analyze.Load(text)
+	sc, err := analyze.Load(text)
 	if err != nil {
 		return nil, "", fmt.Errorf("load dump: %w", err)
 	}
-	return s, text, nil
+	return sc, text, nil
 }
