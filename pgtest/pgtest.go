@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/oracle"
 	"github.com/kr9ly/sqlshape/internal/schema"
 	"github.com/kr9ly/sqlshape/internal/verify"
@@ -49,7 +50,7 @@ type Statement interface{ SQLTemplate() string }
 // hold for the PostgreSQL it runs on.
 func (d *DB) Verify(ctx context.Context, stmts ...Statement) error {
 	if d.schema == nil {
-		s, err := schema.Load(d.schemaSQL)
+		s, err := analyze.Load(d.schemaSQL)
 		if err != nil {
 			return fmt.Errorf("pgtest: schema: %w", err)
 		}

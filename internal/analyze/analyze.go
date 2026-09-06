@@ -98,6 +98,46 @@ type analyzer struct {
 
 // Analyze analyzes exactly one SQL statement against s.
 // A statement PG would reject returns an *Error; other failures are ordinary errors.
+// Load parses schema DDL the way schema.Load does and freezes every view's output columns
+// as the view is created (PG fixes them at CREATE VIEW; see schema.Relation.Frozen). Use
+// this rather than schema.Load for a schema the analyzer will read.
+func Load(schemaSQL string) (*schema.Schema, error) {
+	cat, err := catalog.Load()
+	if err != nil {
+		return nil, err
+	}
+	return LoadWith(cat, schemaSQL)
+}
+
+// LoadWith is Load with an explicit catalog.
+func LoadWith(cat *catalog.Catalog, schemaSQL string) (*schema.Schema, error) {
+	return schema.LoadWithHook(cat, schemaSQL, freezeView)
+}
+
+// freezeView is the ViewHook: the view body analyzed against the schema as it stands now.
+func freezeView(s *schema.Schema, rel *schema.Relation) {
+	a := newAnalyzer(s, nil, nil)
+	cols, err := a.viewColumns(rel)
+	if err != nil {
+		return // the reader will report the body's problem
+	}
+	rel.Frozen = make([]schema.ViewColumn, len(cols))
+	for i, c := range cols {
+		vc := schema.ViewColumn{Name: c.name, Type: c.typ, Nullable: c.nullable}
+		if cv := c.coll.asVar(); cv.strength == collImplicit {
+			vc.Collation = cv.name
+		}
+		if c.src != nil {
+			vc.SrcTable, vc.SrcColumn = c.src.Table, c.src.Column
+			if br := a.relByFullName(c.src.Table); br != nil {
+				vc.SrcRel = br
+				vc.Src = br.Column(c.src.Column) // nil when the base is a view
+			}
+		}
+		rel.Frozen[i] = vc
+	}
+}
+
 func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	tree, err := pg_query.Parse(sql)
 	if err != nil {
@@ -134,15 +174,8 @@ type funcParam struct {
 	typ  schema.TypeRef
 }
 
-// analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
-func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool) (*Result, error) {
-	return analyzeStmtIn(s, stmt, fp, unfiltered, map[*schema.Function]bool{})
-}
-
-// analyzeStmtIn is analyzeStmt inside a function body: visited holds the functions on
-// the call chain so a recursive SQL function terminates.
-func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool, visited map[*schema.Function]bool) (*Result, error) {
-	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
+// newAnalyzer is a fresh analyzer over s; fp are the enclosing function's parameters.
+func newAnalyzer(s *schema.Schema, fp []funcParam, unfiltered map[string]bool) *analyzer {
 	a := &analyzer{
 		s:              s,
 		params:         map[int32]catalog.OID{},
@@ -161,6 +194,19 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilt
 	for i, p := range fp {
 		a.params[int32(i+1)] = p.typ.OID
 	}
+	return a
+}
+
+// analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
+func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool) (*Result, error) {
+	return analyzeStmtIn(s, stmt, fp, unfiltered, map[*schema.Function]bool{})
+}
+
+// analyzeStmtIn is analyzeStmt inside a function body: visited holds the functions on
+// the call chain so a recursive SQL function terminates.
+func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool, visited map[*schema.Function]bool) (*Result, error) {
+	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
+	a := newAnalyzer(s, fp, unfiltered)
 	sc := newScope(nil)
 	var cols []rteCol
 	var aerr *Error

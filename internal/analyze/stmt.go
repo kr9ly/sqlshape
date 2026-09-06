@@ -891,7 +891,9 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		if err != nil {
 			return nil, err
 		}
-		cols = []rteCol{{name: "?column?", typ: e.typ, nullable: true}}
+		if len(coldefs) == 0 {
+			cols = []rteCol{{name: "?column?", typ: e.typ, nullable: true}}
+		}
 	} else {
 		a.inFromFunc = true
 		e, err := a.funcCall(fc, sc)
@@ -906,6 +908,9 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		t := a.typ(e.typ.OID)
 		if t != nil && t.IsPolymorphic() {
 			return nil, errAt(codeDatatypeMismatch, fc.Location, "function %q in FROM has unsupported return type %s", fname, a.s.Types.Format(e.typ))
+		}
+		if t != nil && t.Kind == 'd' {
+			t = a.typ(a.baseType(t.OID)) // a domain over a composite expands like the composite
 		}
 		composite := t != nil && t.Kind == 'c' && a.relByRowType(t.OID) != nil
 		scalar = !composite && e.typ.OID != catalog.Record
@@ -1871,7 +1876,9 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 		case pg_query.CmdType_CMD_NOTHING:
 		}
 	}
-	return a.returning(m.ReturningList, both)
+	ret := newScope(sc)
+	ret.items = []*rte{source, target} // RETURNING * expands the source first (transformMergeStmt's rtable order)
+	return a.returning(m.ReturningList, ret)
 }
 
 const (

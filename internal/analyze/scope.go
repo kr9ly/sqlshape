@@ -354,6 +354,31 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 	savedNotes := a.notes
 	cols, err := a.selectStmt(sel, vsc)
 	a.notes = savedNotes // a view body's findings belong to the view (AnalyzeView), not to its readers
+	if rel.Frozen != nil {
+		// the columns were fixed when the view was created (see schema.Relation.Frozen); the
+		// body is re-analyzed only for the cardinality proof's scope, and may no longer
+		// resolve after the base tables changed
+		frozen := make([]rteCol, len(rel.Frozen))
+		for i, vc := range rel.Frozen {
+			frozen[i] = rteCol{name: vc.Name, typ: vc.Type, nullable: vc.Nullable}
+			if vc.Collation != "" {
+				frozen[i].coll = collation{strength: collImplicit, name: vc.Collation}
+			}
+			switch {
+			case vc.Src != nil:
+				frozen[i].src = &Source{Table: vc.SrcRel.FullName(), Column: vc.Src.Name, NotNull: vc.Src.NotNull}
+			case vc.SrcRel != nil:
+				frozen[i].src = &Source{Table: vc.SrcRel.FullName(), Column: vc.SrcColumn}
+			case vc.SrcTable != "":
+				frozen[i].src = &Source{Table: vc.SrcTable, Column: vc.SrcColumn}
+			}
+		}
+		a.viewCache[rel] = frozen
+		if err == nil && len(cols) == len(frozen) {
+			a.viewScopes[rel] = &subquery{what: "view", sel: sel, sc: vsc}
+		}
+		return frozen, nil
+	}
 	if err != nil {
 		return nil, err
 	}

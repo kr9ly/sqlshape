@@ -4,8 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestCardinality covers the at-most-one-row proof (card.go). Schema: users (PK id,
@@ -17,7 +15,7 @@ func TestCardinality(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

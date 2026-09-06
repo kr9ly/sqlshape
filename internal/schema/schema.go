@@ -46,8 +46,12 @@ type Schema struct {
 	searchPath []string // SET search_path, nil = public
 	// datetime input GUCs (SET datestyle / intervalstyle / timezone); "" = PG default
 	dateOrder, intervalStyle, timeZone string
-	xmlDocument                        bool // SET xmloption = document
-	restrictViews                      bool // SET restrict_nonsystem_relation_kind includes view
+	// ViewHook runs after every CREATE (MATERIALIZED) VIEW with the schema as it stands
+	// at that point; the analyzer installs it to fill Relation.Frozen.
+	ViewHook func(s *Schema, rel *Relation)
+
+	xmlDocument   bool // SET xmloption = document
+	restrictViews bool // SET restrict_nonsystem_relation_kind includes view
 }
 
 // Problem is a DDL statement (or part) that was skipped or rejected.
@@ -57,6 +61,23 @@ type Problem struct {
 }
 
 func (p Problem) String() string { return fmt.Sprintf("@%d: %s", p.Location, p.Message) }
+
+// ViewColumn is one frozen output column of a view (see Relation.Frozen).
+type ViewColumn struct {
+	Name      string
+	Type      TypeRef
+	Nullable  bool
+	Collation string // the column's collation name, "" for none / default
+	// SrcRel / Src: the base relation and column this output column is a plain reference
+	// to (writes through the view land there); nil for computed columns. Pointers, so a
+	// later RENAME of the base column is followed the way PG follows attnums. When the
+	// base is itself a view (no Column objects) SrcColumn holds the column's name instead,
+	// and SrcTable the base's full name when it is not a user relation (a catalog table).
+	SrcRel    *Relation
+	Src       *Column
+	SrcTable  string
+	SrcColumn string
+}
 
 // RelKind distinguishes tables from views.
 type RelKind byte
@@ -84,6 +105,12 @@ type Relation struct {
 	Query Expr
 	// ColumnAliases are explicit column names given to a view (CREATE VIEW v (a, b) AS ...).
 	ColumnAliases []string
+	// Frozen (views / matviews) is the output column list as it was when the view was
+	// created, filled by the ViewHook: PG fixes a view's columns at CREATE time (a later
+	// RENAME / ADD COLUMN on a base table does not reach it), so readers use this rather
+	// than re-resolving Query against the current schema. Nil when no hook ran or the
+	// body did not analyze.
+	Frozen []ViewColumn
 	// ViewDefaults (views): ALTER VIEW ... ALTER COLUMN SET DEFAULT, by column name; an
 	// INSERT through the view uses these in place of the base column's default.
 	ViewDefaults map[string]Expr
@@ -334,6 +361,11 @@ func Load(schemaSQL string) (*Schema, error) {
 
 // LoadWith is Load with an explicit catalog.
 func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
+	return LoadWithHook(cat, schemaSQL, nil)
+}
+
+// LoadWithHook is LoadWith with a ViewHook installed before the first statement applies.
+func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Relation)) (*Schema, error) {
 	tree, err := pg_query.Parse(schemaSQL)
 	if err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
@@ -365,6 +397,7 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 		Comments:  map[string]string{},
 		relByName: map[string]*Relation{},
 		nextOID:   FirstUserOID + 100000, // relations / functions live in a separate range from types
+		ViewHook:  hook,
 	}
 	s.Problems = append(s.Problems, extProblems...)
 	s.applyAll(tree, schemaSQL)
@@ -1000,14 +1033,30 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 
 func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 	schema, name := s.rangeVar(st.View)
-	if s.relByName[schema+"."+name] != nil && !st.Replace {
-		s.problem(loc, "relation %q already exists", name)
-		return
+	var rel *Relation
+	if existing := s.relByName[schema+"."+name]; existing != nil {
+		switch {
+		case st.Replace && existing.Kind == View:
+			// CREATE OR REPLACE VIEW keeps the relation (its rules, triggers and the views
+			// built on it) and redefines the query
+			rel = existing
+			rel.Frozen, rel.Unfiltered = nil, nil
+		case st.View.Relpersistence == "t":
+			// a temporary view hides the permanent relation of the same name (as createTable)
+		default:
+			s.problem(loc, "relation %q already exists", name)
+			return
+		}
 	}
-	rel := s.newRelation(schema, name, View)
+	if rel == nil {
+		rel = s.newRelation(schema, name, View)
+	}
 	rel.Query = st.Query
 	rel.ColumnAliases = strs(st.Aliases)
 	s.viewDirectives(rel, loc)
+	if s.ViewHook != nil {
+		s.ViewHook(s, rel)
+	}
 }
 
 // viewDirectives applies the directives written before a CREATE (MATERIALIZED) VIEW.
@@ -1036,6 +1085,9 @@ func (s *Schema) createMatView(st *pg_query.CreateTableAsStmt, loc int32) {
 	rel.Query = st.Query
 	rel.ColumnAliases = strs(st.Into.ColNames)
 	s.viewDirectives(rel, loc)
+	if s.ViewHook != nil {
+		s.ViewHook(s, rel)
+	}
 }
 
 func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {

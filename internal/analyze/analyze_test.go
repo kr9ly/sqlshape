@@ -24,7 +24,7 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func renderAnalyzer(s *schema.Schema, sql string) string {
 // missing relation surfaces at execution; the analyzer reports it up front (no golden).
 func TestUtilityErrors(t *testing.T) {
 	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestUtilityErrors(t *testing.T) {
 // leave it out, so it is nullable even when the table column is NOT NULL; count(*) is not.
 func TestGroupingSetsNullable(t *testing.T) {
 	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

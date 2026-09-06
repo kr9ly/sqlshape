@@ -5,8 +5,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestViolations covers the failure-mode enumeration (violation.go) against testdata/schema.sql.
@@ -15,7 +13,7 @@ func TestViolations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +94,7 @@ func TestViolations(t *testing.T) {
 // actions may violate.
 func TestMergeViolations(t *testing.T) {
 	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +126,7 @@ WHEN NOT MATCHED THEN INSERT (user_id, total, note) VALUES (u.id, 0, u.name)`)
 // (428C9), on INSERT unless OVERRIDING SYSTEM VALUE, and on UPDATE except to DEFAULT.
 func TestIdentityUpdate(t *testing.T) {
 	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

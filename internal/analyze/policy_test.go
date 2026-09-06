@@ -4,14 +4,12 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestVisibilityPolicy: `-- sqlshape: visible where deleted_at IS NULL` on memos.
 func TestVisibilityPolicy(t *testing.T) {
 	base, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(base))
+	s, err := Load(string(base))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +56,7 @@ func TestVisibilityPolicy(t *testing.T) {
 	}
 
 	// a view that forgets the policy is a schema problem, found by AnalyzeView
-	bad, err := schema.Load(string(base) + "\nCREATE VIEW all_memos AS SELECT id FROM memos;")
+	bad, err := Load(string(base) + "\nCREATE VIEW all_memos AS SELECT id FROM memos;")
 	if err != nil {
 		t.Fatal(err)
 	}

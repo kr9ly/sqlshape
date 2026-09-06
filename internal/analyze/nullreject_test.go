@@ -3,14 +3,12 @@ package analyze
 import (
 	"os"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestNullRejection: predicates that reject NULL refine the nullability of result columns.
 func TestNullRejection(t *testing.T) {
 	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -372,7 +372,7 @@ func (a *analyzer) checkJsonTableNames(nodes []*pg_query.Node, seen map[string]b
 }
 
 func (a *analyzer) jsonTableColumns(nodes []*pg_query.Node, sc *scope) ([]rteCol, *Error) {
-	var cols []rteCol
+	var cols, nestedCols []rteCol
 	for _, n := range nodes {
 		c := n.GetJsonTableColumn()
 		if c == nil {
@@ -391,7 +391,7 @@ func (a *analyzer) jsonTableColumns(nodes []*pg_query.Node, sc *scope) ([]rteCol
 			if err != nil {
 				return nil, err
 			}
-			cols = append(cols, nested...)
+			nestedCols = append(nestedCols, nested...) // appended after this level's own columns
 		default:
 			def := catalog.Text
 			if c.Coltype == pg_query.JsonTableColumnType_JTC_EXISTS {
@@ -431,7 +431,7 @@ func (a *analyzer) jsonTableColumns(nodes []*pg_query.Node, sc *scope) ([]rteCol
 			cols = append(cols, rteCol{name: c.Name, typ: t, nullable: true})
 		}
 	}
-	return cols, nil
+	return append(cols, nestedCols...), nil
 }
 
 // xmlExpr types the SQL/XML constructors and predicates.

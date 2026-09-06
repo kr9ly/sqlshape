@@ -3,15 +3,13 @@ package analyze
 import (
 	"errors"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestLiteralInput pins the input-function ports (arrays, ranges, geometry, jsonpath,
 // money, ...) on hand-picked cases; TestLiteralOracle checks the whole regress corpus
 // against a real PG when -regress is given.
 func TestLiteralInput(t *testing.T) {
-	s, err := schema.Load("CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');")
+	s, err := Load("CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');")
 	if err != nil {
 		t.Fatal(err)
 	}

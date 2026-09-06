@@ -4,14 +4,12 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestRecordFields covers Column.Fields: the shape of row(...), whole-row and composite columns.
 func TestRecordFields(t *testing.T) {
 	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

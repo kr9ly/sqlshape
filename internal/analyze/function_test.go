@@ -4,8 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestAnalyzeFunction checks SQL function bodies against their signatures (what PG does
@@ -39,7 +37,7 @@ func TestAnalyzeFunction(t *testing.T) {
 		{def: "CREATE FUNCTION f16(p_id bigint) RETURNS bigint LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$"},
 	}
 	for _, c := range cases {
-		s, err := schema.Load(string(base) + "\n" + c.def + ";")
+		s, err := Load(string(base) + "\n" + c.def + ";")
 		if err != nil {
 			t.Fatalf("%s: %v", c.def, err)
 		}
@@ -67,7 +65,7 @@ func TestAnalyzeFunction(t *testing.T) {
 // send the violation walk into unbounded recursion.
 func TestRecursiveFunctionTerminates(t *testing.T) {
 	base, _ := os.ReadFile("testdata/schema.sql")
-	s, err := schema.Load(string(base) + "\nCREATE FUNCTION rec(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec(i - 1) $$;\n" +
+	s, err := Load(string(base) + "\nCREATE FUNCTION rec(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec(i - 1) $$;\n" +
 		"CREATE FUNCTION rec_a(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec_b(i) $$;\n" +
 		"CREATE FUNCTION rec_b(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec_a(i) $$;")
 	if err != nil {

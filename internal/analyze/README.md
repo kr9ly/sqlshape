@@ -3,6 +3,13 @@
 Pure-Go PostgreSQL semantic analyzer. `Analyze(schema, sql)` → parameter types, result columns
 (type, nullability, provenance) or a PG-style `*Error` (SQLSTATE + position). No PostgreSQL at lint time.
 
+Load the schema with `analyze.Load` (not `schema.Load`): it installs the loader's `ViewHook`, which
+analyzes each view body as the view is created and freezes the output columns on
+`schema.Relation.Frozen` — PG fixes a view's columns at CREATE VIEW (a later RENAME COLUMN / ADD COLUMN
+on a base table does not reach `SELECT *`, and a matview keeps its names), so readers take the frozen
+list and re-analyze the body only for the cardinality proof. Frozen columns keep the base column they
+reference (`SrcRel` / `Src`) so writes through the view still land on the base table.
+
 `Result.Notes` carries findings PG itself would accept and so never appear in a golden: domains as
 opaque units (`domain.go` — a domain value only meets the same domain or a literal / parameter; mixing
 with another domain or the plain base type is a note; unit-preserving operations keep the domain on

@@ -4,8 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestCollationNotes covers the indeterminate-collation findings (collation.go): PG
@@ -17,7 +15,7 @@ func TestCollationNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

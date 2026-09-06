@@ -14,7 +14,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/kr9ly/sqlshape/internal/oracle"
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestLiteralOracle runs every 'literal'::type found in PG's regress corpus through the
@@ -76,7 +75,7 @@ func TestLiteralOracle(t *testing.T) {
 		}
 		return lits[i].val < lits[j].val
 	})
-	s, err := schema.Load("")
+	s, err := Load("")
 	if err != nil {
 		t.Fatal(err)
 	}

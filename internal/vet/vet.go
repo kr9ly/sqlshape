@@ -82,7 +82,7 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := schema.Load(src)
+	s, err := analyze.Load(src)
 	if err != nil {
 		return nil, err
 	}

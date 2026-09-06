@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestDomainNotes covers the stricter-than-PG domain rules (domain.go): what mixes,
@@ -18,7 +16,7 @@ func TestDomainNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := schema.Load(string(schemaSQL))
+	s, err := Load(string(schemaSQL))
 	if err != nil {
 		t.Fatal(err)
 	}

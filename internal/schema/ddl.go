@@ -298,6 +298,12 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 		}
 		col := rel.Column(st.Subname)
 		if col == nil {
+			for i := range rel.Frozen {
+				if rel.Frozen[i].Name == st.Subname {
+					rel.Frozen[i].Name = st.Newname
+					return
+				}
+			}
 			s.problem(loc, "%s: column %q does not exist", rel.Name, st.Subname)
 			return
 		}

@@ -451,7 +451,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 // loadsAlone reports whether the loader takes the statement without a hard error, so
 // appending it cannot poison the accumulated DDL.
 func loadsAlone(sql string) bool {
-	_, err := schema.Load(sql + ";\n")
+	_, err := Load(sql + ";\n")
 	return err == nil
 }
 
@@ -459,7 +459,7 @@ func loadsAlone(sql string) bool {
 // outright (not merely a Problem) is dropped so the rest still applies.
 func loadRegressSchema(ddl *[]string) *schema.Schema {
 	for {
-		s, err := schema.Load(strings.Join(*ddl, ";\n") + ";\n")
+		s, err := Load(strings.Join(*ddl, ";\n") + ";\n")
 		if err == nil {
 			return s
 		}
