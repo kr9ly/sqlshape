@@ -9,8 +9,9 @@ import (
 )
 
 // TestCollationNotes covers the indeterminate-collation findings (collation.go): PG
-// accepts these statements and fails at run time. Schema: users.alias is varchar
-// COLLATE "C", users.name / users.nick have the default collation.
+// accepts these statements and fails at run time, except that sorting, grouping and
+// DISTINCT on a conflict fail at parse time (42P21, assign_query_collations). Schema:
+// users.alias is varchar COLLATE "C", users.name / users.nick have the default collation.
 func TestCollationNotes(t *testing.T) {
 	schemaSQL, err := os.ReadFile("testdata/schema.sql")
 	if err != nil {
@@ -25,6 +26,7 @@ func TestCollationNotes(t *testing.T) {
 	cases := []struct {
 		sql   string
 		notes []string // substrings, one per expected note, in order
+		err   string   // expected SQLSTATE instead
 	}{
 		// a non-default collation beats the default: no conflict
 		{sql: `SELECT id FROM users WHERE name = alias`},
@@ -53,13 +55,13 @@ func TestCollationNotes(t *testing.T) {
 		{sql: `SELECT lower(u.alias || s.p) FROM users u, ` + posix, notes: []string{"lower()"}},
 		{sql: `SELECT max(u.alias || s.p) FROM users u, ` + posix, notes: []string{"max()"}},
 		{sql: `SELECT greatest(u.alias, s.p) FROM users u, ` + posix, notes: []string{"GREATEST"}},
-		// sorting, grouping and DISTINCT compare too
-		{sql: `SELECT u.alias || s.p AS x FROM users u, ` + posix + ` ORDER BY x`, notes: []string{"ORDER BY"}},
-		{sql: `SELECT u.alias || s.p AS x FROM users u, ` + posix + ` ORDER BY 1`, notes: []string{"ORDER BY"}},
-		{sql: `SELECT u.id FROM users u, ` + posix + ` ORDER BY u.alias || s.p`, notes: []string{"ORDER BY"}},
-		{sql: `SELECT u.alias || s.p AS x FROM users u, ` + posix + ` GROUP BY 1`, notes: []string{"GROUP BY"}},
-		{sql: `SELECT DISTINCT u.alias || s.p FROM users u, ` + posix, notes: []string{"DISTINCT"}},
-		{sql: `SELECT DISTINCT ON (u.alias || s.p) u.id FROM users u, ` + posix, notes: []string{"DISTINCT ON"}},
+		// sorting, grouping and DISTINCT compare too, and PG refuses them at parse time
+		{sql: `SELECT u.alias || s.p AS x FROM users u, ` + posix + ` ORDER BY x`, err: "42P21"},
+		{sql: `SELECT u.alias || s.p AS x FROM users u, ` + posix + ` ORDER BY 1`, err: "42P21"},
+		{sql: `SELECT u.id FROM users u, ` + posix + ` ORDER BY u.alias || s.p`, err: "42P21"},
+		{sql: `SELECT u.alias || s.p AS x FROM users u, ` + posix + ` GROUP BY 1`, err: "42P21"},
+		{sql: `SELECT DISTINCT u.alias || s.p FROM users u, ` + posix, err: "42P21"},
+		{sql: `SELECT DISTINCT ON (u.alias || s.p) u.id FROM users u, ` + posix, err: "42P21"},
 		// UNION ALL never compares; the conflict travels with the column
 		{sql: `SELECT x FROM (SELECT alias AS x FROM users UNION ALL SELECT p FROM ` + posix + `) t WHERE x = 'a'`, notes: []string{"string comparison"}},
 		// the finding sits on the operator
@@ -68,6 +70,12 @@ func TestCollationNotes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.sql, func(t *testing.T) {
 			r, err := Analyze(s, c.sql)
+			if c.err != "" {
+				if err == nil || !strings.HasPrefix(err.Error(), c.err) {
+					t.Fatalf("want error %s, got %v", c.err, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("analyze: %v", err)
 			}

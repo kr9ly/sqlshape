@@ -160,6 +160,16 @@ func (a *analyzer) noteCollConflict(c collation, at int32, what string) {
 		quoteColl(c.name)+" and "+quoteColl(c.name2)+" conflict, PostgreSQL fails at run time (apply COLLATE to one side)")
 }
 
+// collConflictError is the parse-time refusal of sorting or grouping on an expression whose
+// implicit collations conflict (ORDER BY, GROUP BY, DISTINCT, aggregate / window ORDER BY);
+// elsewhere a conflict only fails at run time and is a note.
+func collConflictError(c collation, at int32) *Error {
+	if c.strength != collConflict {
+		return nil
+	}
+	return errAt(codeCollationMismatch, at, "collation mismatch between implicit collations %s and %s", quoteColl(c.name), quoteColl(c.name2))
+}
+
 func quoteColl(name string) string { return `"` + collDisplay(name) + `"` }
 
 // collSensitiveOp lists the operators that compare strings under a collation.

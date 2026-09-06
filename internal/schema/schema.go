@@ -115,6 +115,17 @@ type Relation struct {
 	// (WHERE ...), which does not make the view take the write but does stop it from
 	// being auto-updatable.
 	QualifiedRules map[string]bool
+	// RuleNoReturning: write commands taken by an unconditional DO INSTEAD rule whose
+	// single action has no RETURNING (RETURNING on the command is 0A000).
+	RuleNoReturning map[string]bool
+	// RuleCTEUnsupported: write commands with a rule a data-modifying WITH item cannot use
+	// (anything but one unconditional DO INSTEAD INSERT / UPDATE / DELETE).
+	RuleCTEUnsupported map[string]bool
+	// RuleInsertSelect: write commands with a DO INSTEAD INSERT ... SELECT action (0A000
+	// when the query also has data-modifying WITH items).
+	RuleInsertSelect map[string]bool
+	// RuleNames maps each rule's name to its event, so DROP RULE can reset the event.
+	RuleNames map[string]string
 	// RuleEvents: the write commands ("insert" / "update" / "delete") that have any rule
 	// on the relation (MERGE refuses an action kind that has one).
 	RuleEvents map[string]bool
@@ -519,10 +530,53 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		r := st.RuleStmt
 		event := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete"}[r.Event]
 		if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil && event != "" {
+			if r.Replace || rel.RuleNames[r.Rulename] != "" {
+				rel.clearRules(event) // CREATE OR REPLACE RULE: the event's rule is this one now
+			}
+			if rel.RuleNames == nil {
+				rel.RuleNames = map[string]string{}
+			}
+			rel.RuleNames[r.Rulename] = event
 			if rel.RuleEvents == nil {
 				rel.RuleEvents = map[string]bool{}
 			}
 			rel.RuleEvents[event] = true
+			set := func(m *map[string]bool) {
+				if *m == nil {
+					*m = map[string]bool{}
+				}
+				(*m)[event] = true
+			}
+			single := r.Instead && r.WhereClause == nil && len(r.Actions) == 1
+			var dml bool
+			if single {
+				switch act := r.Actions[0].Node.(type) {
+				case *pg_query.Node_InsertStmt:
+					dml = true
+					if q := act.InsertStmt.SelectStmt.GetSelectStmt(); q != nil && len(q.ValuesLists) == 0 {
+						set(&rel.RuleInsertSelect)
+					}
+					if len(act.InsertStmt.ReturningList) == 0 {
+						set(&rel.RuleNoReturning)
+					}
+				case *pg_query.Node_UpdateStmt:
+					dml = true
+					if len(act.UpdateStmt.ReturningList) == 0 {
+						set(&rel.RuleNoReturning)
+					}
+				case *pg_query.Node_DeleteStmt:
+					dml = true
+					if len(act.DeleteStmt.ReturningList) == 0 {
+						set(&rel.RuleNoReturning)
+					}
+				}
+			}
+			if r.Instead && r.WhereClause == nil && len(r.Actions) == 0 {
+				set(&rel.RuleNoReturning) // DO INSTEAD NOTHING
+			}
+			if !(single && dml) {
+				set(&rel.RuleCTEUnsupported)
+			}
 			if r.Instead && rel.Kind == View {
 				if r.WhereClause == nil {
 					if rel.InsteadRules == nil {
@@ -1573,6 +1627,19 @@ func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
 		typ  catalog.OID
 	}{{"last_value", catalog.Int8}, {"log_cnt", catalog.Int8}, {"is_called", catalog.Bool}} {
 		rel.Columns = append(rel.Columns, &Column{Num: int16(i + 1), Name: c.name, Type: TypeRef{OID: c.typ, Typmod: -1}, NotNull: true})
+	}
+}
+
+// clearRules forgets what the rules on event made of the relation (a rule being replaced
+// or dropped; with several rules on one event this over-clears).
+func (rel *Relation) clearRules(event string) {
+	for _, m := range []map[string]bool{rel.RuleEvents, rel.InsteadRules, rel.QualifiedRules, rel.RuleNoReturning, rel.RuleCTEUnsupported, rel.RuleInsertSelect} {
+		delete(m, event)
+	}
+	for name, ev := range rel.RuleNames {
+		if ev == event {
+			delete(rel.RuleNames, name)
+		}
 	}
 }
 

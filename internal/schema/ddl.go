@@ -542,8 +542,19 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			}
 			s.Functions = fns
 			s.Types.removeSchema(name)
+		case pg_query.ObjectType_OBJECT_RULE:
+			// DROP RULE name ON table
+			parts := strs(on.GetList().GetItems())
+			if len(parts) >= 2 {
+				schema, name := qualified(parts[:len(parts)-1])
+				if rel := s.findRelation(schema, name); rel != nil {
+					if ev := rel.RuleNames[parts[len(parts)-1]]; ev != "" {
+						rel.clearRules(ev)
+					}
+				}
+			}
 		case pg_query.ObjectType_OBJECT_EXTENSION,
-			pg_query.ObjectType_OBJECT_POLICY, pg_query.ObjectType_OBJECT_RULE, pg_query.ObjectType_OBJECT_COLLATION:
+			pg_query.ObjectType_OBJECT_POLICY, pg_query.ObjectType_OBJECT_COLLATION:
 			// no typing consequence
 		default:
 			s.problem(loc, "unsupported DROP of %v", st.RemoveType)

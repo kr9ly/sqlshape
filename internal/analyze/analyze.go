@@ -52,6 +52,8 @@ type analyzer struct {
 	opAmbiguous bool
 	// polyErr is a specific error resolvePolymorphic leaves behind a false return
 	polyErr *Error
+	// inDMLCTE is set while a data-modifying WITH item is analyzed
+	inDMLCTE bool
 	// inAggArgs is the depth of aggregate calls whose arguments are being analyzed
 	// (aggregates do not nest)
 	inAggArgs int

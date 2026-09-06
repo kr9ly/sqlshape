@@ -15,7 +15,9 @@ type expr struct {
 	typ      schema.TypeRef
 	nullable bool
 	src      *Source
-	node     *pg_query.Node
+	// rowOf is the FROM item this expression is the whole row of (a bare table alias)
+	rowOf *rte
+	node  *pg_query.Node
 	// param is the parameter number when the expression is a bare $n
 	param int32
 	// fparam is the 1-based position of the SQL function parameter this expression is,
@@ -602,7 +604,7 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 		if tbl == "" {
 			if r := sc.wholeRow(col); r != nil {
 				if r.rowType != 0 {
-					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
+					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols, rowOf: r}, nil
 				}
 				if r.scalarFn && len(r.cols) == 1 {
 					return &expr{typ: r.cols[0].typ, nullable: true, node: nodeOf(c)}, nil
@@ -702,7 +704,11 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 		return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type %s to %s", a.s.Types.Format(e.typ), a.s.Types.Format(target))
 	}
 	// `$1::bigint` is still a unitless value; `$1::yen` asserts the unit
-	return &expr{typ: target, nullable: e.nullable, node: nodeOf(tc), lit: isLit(e) && a.domainType(target.OID) == nil}, nil
+	var src *Source
+	if e.oid() == target.OID && (target.Typmod < 0 || target.Typmod == e.typ.Typmod) {
+		src = e.src // a cast to the column's own type is the column (coerce_type returns the Var)
+	}
+	return &expr{typ: target, nullable: e.nullable, node: nodeOf(tc), lit: isLit(e) && a.domainType(target.OID) == nil, src: src}, nil
 }
 
 func (a *analyzer) opName(nodes []*pg_query.Node) string {
@@ -1002,7 +1008,11 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			if w := windowIn(n); w != nil {
 				return nil, errAt(codeWindowingError, w.Location, "window functions are not allowed in window definitions")
 			}
-			if _, err := a.analyzeExpr(n, sc); err != nil {
+			oe, err := a.analyzeExpr(n, sc)
+			if err != nil {
+				return nil, err
+			}
+			if err := collConflictError(oe.coll, loc(n)); err != nil {
 				return nil, err
 			}
 		}
@@ -1023,19 +1033,23 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := collConflictError(e.coll, loc(n.GetSortBy().GetNode())); err != nil {
+			return nil, err
+		}
 		if f.AggWithinGroup {
 			// an ordered-set aggregate's signature is its direct arguments followed by the
 			// WITHIN GROUP (ORDER BY ...) expressions
 			args = append(args, e)
 		}
 	}
-	// f(x) with x a composite row that has a field f is the field (ParseFuncOrColumn
-	// tries the projection before any function)
+	// f(x) with x a composite row that has a field f is the field, unless a function f
+	// takes the row (ParseFuncOrColumn: the function wins, checked against the oracle)
+	var projection *expr
 	if len(args) == 1 && !f.AggStar && f.AggFilter == nil && f.Over == nil && len(f.AggOrder) == 0 && schemaName == "" {
 		if t := a.typ(args[0].oid()); t != nil && t.Kind == 'c' {
 			if fe := a.fieldOf(args[0], name); fe != nil {
 				fe.node = self
-				return fe, nil
+				projection = fe
 			}
 		}
 	}
@@ -1054,6 +1068,9 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 	}
 	c, ambiguous := a.resolveFunction(schemaName, name, actual, f.AggWithinGroup, named, f.FuncVariadic)
+	if c == nil && projection != nil {
+		return projection, nil
+	}
 	if c == nil {
 		// type-name(x) is a cast
 		if len(args) == 1 {
@@ -1688,7 +1705,11 @@ func (a *analyzer) fieldOf(e *expr, name string) *expr {
 	if col == nil {
 		return nil
 	}
-	return &expr{typ: col.Type, nullable: true}
+	var src *Source
+	if e.rowOf != nil && e.rowOf.rel == rel {
+		src = &Source{Table: rel.FullName(), Column: col.Name, NotNull: col.NotNull} // f(t) on a FROM item's row is the column
+	}
+	return &expr{typ: col.Type, nullable: true, src: src}
 }
 
 // rowSubquery analyzes a scalar subquery used as one side of a row comparison: its

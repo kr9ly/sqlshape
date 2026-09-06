@@ -146,7 +146,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if d.Node == nil {
 			// plain DISTINCT compares every output column
 			for _, c := range cols {
-				a.noteCollConflict(c.coll, loc(d), "DISTINCT")
+				if err := collConflictError(c.coll, loc(d)); err != nil {
+					return nil, err
+				}
 				if err := a.checkComparable(c.typ, "DISTINCT", loc(d)); err != nil {
 					return nil, err
 				}
@@ -208,7 +210,9 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 	if c := n.GetAConst(); c != nil {
 		if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
 			if i := int(iv.Ival.Ival); i >= 1 && i <= len(cols) {
-				a.noteCollConflict(cols[i-1].coll, loc(n), what)
+				if err := collConflictError(cols[i-1].coll, loc(n)); err != nil {
+					return err
+				}
 				return a.checkComparable(cols[i-1].typ, what, loc(n))
 			}
 			return nil
@@ -219,7 +223,9 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 		name := cr.Fields[0].GetString_().GetSval()
 		for _, c := range cols {
 			if c.name == name {
-				a.noteCollConflict(c.coll, loc(n), what)
+				if err := collConflictError(c.coll, loc(n)); err != nil {
+					return err
+				}
 				return a.checkComparable(c.typ, what, loc(n))
 			}
 		}
@@ -228,7 +234,9 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 	if err != nil {
 		return err
 	}
-	a.noteCollConflict(e.coll, loc(n), what)
+	if err := collConflictError(e.coll, loc(n)); err != nil {
+		return err
+	}
 	return a.checkComparable(e.typ, what, loc(n))
 }
 
@@ -336,6 +344,8 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		csc := newScope(sc)
 		var cols []rteCol
 		var err *Error
+		a.inDMLCTE = true
+		defer func() { a.inDMLCTE = false }()
 		switch st := c.Ctequery.Node.(type) {
 		case *pg_query.Node_InsertStmt:
 			cols, err = a.insertStmt(st.InsertStmt, csc)
@@ -480,6 +490,10 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		for i := range left {
 			def.cols[i].nullable = def.cols[i].nullable || right[i].nullable
 			def.cols[i].src = nil
+			if lc, rc := left[i].coll, right[i].coll; lc.strength != collNone && lc.strength != collConflict && rc.strength != collNone && rc.strength != collConflict && lc.name != rc.name && lc.name != "" && rc.name != "" {
+				return errAt(codeCollationMismatch, c.Location, "recursive query %q column %d has collation %s in non-recursive term but collation %s overall",
+					c.Ctename, i+1, quoteColl(lc.name), quoteColl(rc.name))
+			}
 			// the CTE's column types are the non-recursive term's; the recursive term must
 			// not pull the union to a wider type (transformSetOperationTree's check)
 			lt, rt := left[i].typ.OID, right[i].typ.OID
@@ -530,8 +544,12 @@ func (a *analyzer) addSearchCycleCols(def *cte, c *pg_query.CommonTableExpr, sc 
 		if cy := c.CycleClause; cy != nil {
 			mark := ref(catalog.Bool)
 			if cy.CycleMarkValue != nil {
+				// select_common_type of the mark value and default: both unknown is text
+				mark = ref(catalog.Text)
 				if me, err := a.analyzeExpr(cy.CycleMarkValue, newScope(sc)); err == nil && me.oid() != catalog.Unknown {
 					mark = me.typ
+				} else if de, err := a.analyzeExpr(cy.CycleMarkDefault, newScope(sc)); err == nil && de != nil && de.oid() != catalog.Unknown {
+					mark = de.typ
 				}
 			}
 			def.cols = append(def.cols, rteCol{name: cy.CycleMarkColumn, typ: mark}, rteCol{name: cy.CyclePathColumn, typ: ref(a.s.Types.ArrayOf(catalog.Record))})
@@ -1052,6 +1070,20 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	return r, nil
 }
 
+// ruleRestrictions are the rewriter's refusals for a write on a relation with rules: a
+// RETURNING clause when the unconditional DO INSTEAD rule taking the write has none, and
+// any rule other than one unconditional DO INSTEAD INSERT / UPDATE / DELETE when the write
+// is a data-modifying WITH item.
+func (a *analyzer) ruleRestrictions(orig *schema.Relation, event string, returning bool) *Error {
+	if returning && orig.RuleNoReturning[event] {
+		return errAt(codeFeatureNotSupported, -1, "cannot perform %s RETURNING on relation %q", strings.ToUpper(event), orig.Name)
+	}
+	if a.inDMLCTE && orig.RuleCTEUnsupported[event] {
+		return errAt(codeFeatureNotSupported, -1, "rules are not supported for data-modifying statements in WITH")
+	}
+	return nil
+}
+
 func markNullable(r *rte) {
 	if r.join != nil {
 		markNullable(r.join.left)
@@ -1155,6 +1187,17 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 	rel, target, err := a.writeTarget(ins.Relation, sc, "insert into")
 	if err != nil {
 		return nil, err
+	}
+	if orig := a.s.Relation(ins.Relation.Schemaname, ins.Relation.Relname); orig != nil {
+		if ins.OnConflictClause != nil && (orig.RuleEvents["insert"] || orig.RuleEvents["update"]) {
+			return nil, errAt(codeFeatureNotSupported, -1, "INSERT with ON CONFLICT clause cannot be used with table that has INSERT or UPDATE rules")
+		}
+		if err := a.ruleRestrictions(orig, "insert", len(ins.ReturningList) > 0); err != nil {
+			return nil, err
+		}
+		if len(a.dmlCTEs) > 0 && orig.RuleInsertSelect["insert"] {
+			return nil, errAt(codeFeatureNotSupported, -1, "INSERT ... SELECT rule actions are not supported for queries having data-modifying statements in WITH")
+		}
 	}
 	var cols []*schema.Column
 	var indirect []bool // the target has subscripts / a field: DEFAULT is not allowed there
@@ -1402,6 +1445,11 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 	if err != nil {
 		return nil, err
 	}
+	if orig := a.s.Relation(upd.Relation.Schemaname, upd.Relation.Relname); orig != nil {
+		if err := a.ruleRestrictions(orig, "update", len(upd.ReturningList) > 0); err != nil {
+			return nil, err
+		}
+	}
 	sc.items = append(sc.items, target)
 	for _, item := range upd.FromClause {
 		r, err := a.fromItem(item, sc)
@@ -1435,6 +1483,11 @@ func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *E
 	_, target, err := a.writeTarget(del.Relation, sc, "delete from")
 	if err != nil {
 		return nil, err
+	}
+	if orig := a.s.Relation(del.Relation.Schemaname, del.Relation.Relname); orig != nil {
+		if err := a.ruleRestrictions(orig, "delete", len(del.ReturningList) > 0); err != nil {
+			return nil, err
+		}
 	}
 	sc.items = append(sc.items, target)
 	for _, item := range del.UsingClause {

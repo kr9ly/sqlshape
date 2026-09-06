@@ -84,6 +84,17 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		return a.validateRegprocLiteral(s, base == catalog.RegProcedure, loc)
 	case catalog.RegOper, catalog.RegOperator:
 		return a.validateRegoperLiteral(s, base == catalog.RegOperator, loc)
+	case catalog.RegCollation:
+		// regcollationin: only the schema qualification is ours to check
+		if v == "" || v == "-" {
+			return nil
+		}
+		if _, err := parsePGInt(v, 64); err == nil {
+			return nil
+		}
+		if parts := qualifiedNameParts(v); len(parts) > 1 && !a.s.HasSchema(parts[len(parts)-2]) {
+			return errAt("42704", loc, "collation %q for encoding \"UTF8\" does not exist", strings.Join(parts, "."))
+		}
 	case catalog.RegRole, catalog.RegNamespace:
 		// regrolein / regnamespacein: a single identifier; roles and schemas are not ours
 		// to know, so only the shape is checked

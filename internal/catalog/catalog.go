@@ -46,6 +46,7 @@ const (
 	RegType                 OID = 2206
 	RegRole                 OID = 4096
 	RegNamespace            OID = 4089
+	RegCollation            OID = 4191
 	TxidSnapshot            OID = 2970
 	PgSnapshot              OID = 5038
 	Xid8                    OID = 5069

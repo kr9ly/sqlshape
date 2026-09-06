@@ -28,8 +28,13 @@ func (a *analyzer) jsonOutput(o *pg_query.JsonOutput, def catalog.OID) (schema.T
 	if tt := a.typ(t.OID); tt != nil && tt.Kind == 'p' {
 		return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.TypeName.Location, "returning pseudo-types is not supported in SQL/JSON functions")
 	}
-	if o.Returning != nil && o.Returning.Format != nil && o.Returning.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT && a.baseType(t.OID) != catalog.Bytea {
-		return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.Returning.Format.Location, "cannot set JSON encoding for non-bytea output types")
+	if o.Returning != nil && o.Returning.Format != nil && o.Returning.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT {
+		if a.baseType(t.OID) != catalog.Bytea {
+			return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.Returning.Format.Location, "cannot set JSON encoding for non-bytea output types")
+		}
+		if o.Returning.Format.Encoding != pg_query.JsonEncoding_JS_ENC_UTF8 {
+			return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.Returning.Format.Location, "unsupported JSON encoding")
+		}
 	}
 	return t, nil
 }
