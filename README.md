@@ -27,9 +27,10 @@ See [design.md](design.md) for the rationale and architecture.
 $ go run ./cmd/sqlshape ./examples/...
 ```
 
-`cmd/sqlshape` is a `go vet -vettool`-compatible checker. It looks for `schema.sql`, or a
-`schema/` directory whose `*.sql` files apply in name order, above the package directory
-(or `-schema path`).
+`cmd/sqlshape` is a `go vet -vettool`-compatible checker (`sqlshape vet` is the same thing). It
+looks for `schema.sql`, or a `schema/` directory whose `*.sql` files apply in name order, above the
+package directory (or `-schema path`). `sqlshape diff` / `apply` / `verify-schema` are the
+migration side, see below.
 
 The examples are three stages of the same order book, one per level of trust in the database:
 
@@ -75,6 +76,39 @@ Templates are Go `text/template` syntax restricted to what can be expanded stati
 | `internal/analyze` | the analyzer: chapter-10 type conversion, scopes, DML, `$n` inference, PG-compatible errors |
 | `internal/vet` | the `go/analysis` analyzer: result columns ↔ `R`, `$n` ↔ `P`, nullability |
 | `internal/oracle` | a real PostgreSQL (embedded-postgres) as the differential-test oracle; never used at lint time |
+| `internal/dump` / `diff` / `migrate` / `consumers` / `cli` | the migration side: canonical forms via pg_dump, object-level diff, DDL plan + end-state verification, the consumer index, the subcommands |
+
+## Migrations
+
+`schema.sql` is the only definition; there are no migration files. The `sqlshape` binary
+compares canonical forms (the live database read back through pg_dump, `schema.sql` applied to
+an embedded PostgreSQL and read back the same way) and works from the difference:
+
+```
+$ sqlshape diff -db "$DSN" > up.sql         # the DDL from the database's state to schema.sql
+$ $EDITOR up.sql                            # reorder, split, add USING, interleave a backfill
+$ sqlshape apply -db "$DSN" -packages ./... up.sql
+$ sqlshape verify-schema -db "$DSN"         # drift: where a database differs from schema.sql
+```
+
+- `diff` prints a proposal. It cannot tell a rename from a drop + add, which label an enum value
+  should become when it goes, or what to fill a new `NOT NULL` column with, so those are declared in
+  `schema.sql` (`-- @migrate rename orders.total -> orders.amount`, `-- @migrate drop legacy`,
+  `-- @migrate enum status: drop 'x' using 'y'`, `-- @migrate backfill t.c = expr [where p]`);
+  a table or column that disappears without a declaration is an error (the DDL is still printed).
+  `-from other.sql` compares two schema texts without a database
+- `apply` takes the DDL **file** (hand-edited or not) and checks it by its **end state**: the
+  database's current schema plus the DDL, on an embedded PostgreSQL, must read back as
+  `schema.sql` — column order is tolerated and noted, anything else refuses. With `-packages`, the
+  Go statements are indexed against the current schema and no statement may still depend on a
+  column the DDL drops or retypes (`-force` overrides; `diff -packages` lists the same consumers as
+  comments). Then the DDL runs in one transaction (`-no-transaction` for `CONCURRENTLY` and
+  friends); `-dry-run` stops before
+- seeded lookup tables (see above) are part of every comparison: their declared rows are read
+  back from the database and diffed by key, and the plan ends with a `MERGE` per table whose
+  content differs
+- `pg_dump` from the caller's installation is used (`$SQLSHAPE_PG_DUMP` or `PATH`; its major
+  version must be at least the server's); the embedded PostgreSQL ships without client tools
 
 ## Shared interpretation
 
@@ -119,4 +153,5 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 The analyzer agrees with the PostgreSQL oracle on 152 golden statements (contrib extensions,
 SQL/JSON, MERGE, GROUPING SETS and a schema full of DDL included), the checker and the runtime
 cover the surface the three examples exercise, and each example's test verifies every statement
-against a real PostgreSQL. Not yet: the migration side.
+against a real PostgreSQL. The migration side (diff / apply / verify-schema, intents, seeded
+tables, consumer index) round-trips its test scenarios through an embedded PostgreSQL.

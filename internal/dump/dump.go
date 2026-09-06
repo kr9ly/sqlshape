@@ -77,34 +77,34 @@ func Normalize(text string) string {
 	return setConfig.ReplaceAllString(b.String(), "SET search_path = '$1';")
 }
 
-// Load reads the database at connString into a Schema. seeds names the tables whose
-// rows are part of the schema (the relations with a schema.Seed, typically the target's):
-// their declared columns are read back as INSERT statements so the content compares
-// like the rest; nil reads no rows.
-func Load(ctx context.Context, connString string, seeds *schema.Schema) (*schema.Schema, error) {
+// Load reads the database at connString into a Schema, and returns the normalized dump
+// text it was loaded from. seeds names the tables whose rows are part of the schema (the
+// relations with a schema.Seed, typically the target's): their declared columns are read
+// back as INSERT statements so the content compares like the rest; nil reads no rows.
+func Load(ctx context.Context, connString string, seeds *schema.Schema) (*schema.Schema, string, error) {
 	text, err := Run(ctx, connString)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	text = Normalize(text)
 	if seeds != nil {
 		conn, err := pgx.Connect(ctx, connString)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		defer conn.Close(ctx)
 		data, err := readSeeds(ctx, conn, seeds)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		text += data
 	}
 	s, err := analyze.Load(text)
 	if err != nil {
-		return nil, fmt.Errorf("load dump: %w", err)
+		return nil, "", fmt.Errorf("load dump: %w", err)
 	}
 	adoptSeeds(s, seeds)
-	return s, nil
+	return s, text, nil
 }
 
 // readSeeds renders the current rows of every seeded table of spec as INSERT statements

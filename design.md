@@ -559,7 +559,8 @@ analyzer で型検査のみ、非トランザクション文（CONCURRENTLY / AD
 5. **消費者インデックス**: vet の Result を集計して「table.column → 参照 statement の位置」を出す層
 6. **意図宣言 `@migrate`** と diff の整合検査、backfill 式の型検査
 7. **固定値テーブル**（INSERT → `Relation.Seed` → MERGE 生成、値集合としての読み取り）— 済
-8. **CLI サブコマンド化**
+8. **CLI サブコマンド化** — 済（`internal/cli`: diff / apply / verify-schema、`cmd/sqlshape` は裸の起動と `vet` で
+   singlechecker のまま）
 
 アナライザー本体（型検査・スコープ・nullability）が無いと影響分析も backfill の検査も成立しないので、
 依存は明確に「アナライザー → マイグレーション」。
@@ -771,10 +772,10 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | schema.sql → テーブル / ビュー / MV / enum / ドメイン / 複合型 / 関数 / 制約 / ユニークインデックス / COMMENT | 無名制約は PG と同じ命名 |
 | ✅ | 実 DB → Schema の逆ロード（`internal/dump`: pg_dump → Normalize → analyze.Load、Canonical = embedded PG に当てて dump）、ドリフト検出 | D1。apply の終点比較の核。CLI 表面は ⑧ |
 | ✅ | Schema 同士の差分 → DDL 生成 + 依存順序（`internal/diff` / `migrate.Plan`）、embedded PG での機械検証（`migrate.Verify`） | 裁定 2026-09-06: sqldef を捨てて自前 |
-| 🔶 | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、DROP ゲート | `internal/consumers.Index`（vet Analyzer の ResultType）まで。集計の表面は ⑧ |
+| 🔶 | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、DROP ゲート | DROP / 型変更の影響分析と DROP ゲートは `diff -packages` / `apply -packages`。死んだスキーマ検出・世代跨ぎは未 |
 | ✅ | 意図宣言 `@migrate`（rename / drop / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
 | ✅ | 固定値テーブル: schema.sql の INSERT → `Relation.Seed` → MERGE 生成 + ドリフト検出、値集合としての読み取り | 本命。`@data` コメント構文は不採用。FK で結ばれた seed 同士は親→子 MERGE + 子→親 DELETE に分割 |
-| ⬜ | CLI サブコマンド化（vet / diff / apply / verify-schema） | 現状 vet 一本 |
+| ✅ | CLI サブコマンド化（vet / diff / apply / verify-schema） | `internal/cli`。apply = 終点比較 + `-packages` の消費者ゼロ検査 + 1 トランザクション実行。消費者索引は**現スキーマ**で vet を回す（目標では消えた列が解決できない） |
 | 🔶 | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | CREATE EXTENSION と SET search_path は schema 層が読む。ロール・PG 版は未 |
 
 ### 周辺・同梱物
