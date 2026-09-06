@@ -37,6 +37,13 @@ type Change struct {
 	Fields []Field
 }
 
+// OrderOnly reports whether a change is nothing but a relation's columns in another
+// order: the database cannot be brought to the declared order without rebuilding the
+// table, so apply tolerates it and reports it as a note.
+func (c Change) OrderOnly() bool {
+	return c.Op == Alter && len(c.Fields) == 1 && c.Fields[0].Name == "column order"
+}
+
 // Field is one differing property.
 type Field struct {
 	Name     string
@@ -110,17 +117,20 @@ func (d *differ) strings(kind string, from, to map[string]bool) {
 
 // --- types ---------------------------------------------------------------------
 
-type userType struct {
-	kind  string
-	props map[string]string
+// UserType is a declared type with its comparable properties.
+type UserType struct {
+	OID   catalog.OID
+	Kind  string // enum, domain, composite, range
+	Props map[string]string
 }
 
-func userTypes(s *schema.Schema) map[string]userType {
+// UserTypes lists a schema's declared types by name (public omitted).
+func UserTypes(s *schema.Schema) map[string]UserType {
 	rels := map[catalog.OID]*schema.Relation{}
 	for _, r := range s.Relations {
 		rels[r.OID] = r
 	}
-	out := map[string]userType{}
+	out := map[string]UserType{}
 	for _, t := range s.Types.User() {
 		if t.Elem != 0 {
 			continue // array types follow their element
@@ -131,7 +141,7 @@ func userTypes(s *schema.Schema) map[string]userType {
 		}
 		switch t.Kind {
 		case 'e':
-			out[name] = userType{"enum", map[string]string{"labels": strings.Join(s.Types.Enums[t.OID], ", ")}}
+			out[name] = UserType{t.OID, "enum", map[string]string{"labels": strings.Join(s.Types.Enums[t.OID], ", ")}}
 		case 'd':
 			dom := s.Types.Domains[t.OID]
 			p := map[string]string{"base": s.Types.Format(schema.TypeRef{OID: t.BaseType, Typmod: t.Typmod}), "not null": fmt.Sprint(dom != nil && dom.NotNull)}
@@ -140,7 +150,7 @@ func userTypes(s *schema.Schema) map[string]userType {
 					p["check "+c.Name] = schema.Deparse(c.Expr)
 				}
 			}
-			out[name] = userType{"domain", p}
+			out[name] = UserType{t.OID, "domain", p}
 		case 'c':
 			rel := rels[t.RelID]
 			if rel == nil || rel.Kind != 'c' {
@@ -153,33 +163,33 @@ func userTypes(s *schema.Schema) map[string]userType {
 				p["attribute "+c.Name] = s.Types.Format(c.Type) + collation(c.Collation)
 			}
 			p["attributes"] = strings.Join(order, ", ")
-			out[name] = userType{"composite", p}
+			out[name] = UserType{t.OID, "composite", p}
 		case 'r':
 			p := map[string]string{}
 			if rng := s.Types.RangeOf(t.OID); rng != nil {
 				p["subtype"] = s.Types.Format(schema.TypeRef{OID: rng.Subtype, Typmod: -1})
 			}
-			out[name] = userType{"range", p}
+			out[name] = UserType{t.OID, "range", p}
 		}
 	}
 	return out
 }
 
 func (d *differ) types(a, b *schema.Schema) {
-	from, to := userTypes(a), userTypes(b)
+	from, to := UserTypes(a), UserTypes(b)
 	for _, n := range sortedKeys(from) {
 		t, ok := to[n]
-		if !ok || t.kind != from[n].kind {
-			d.add(Drop, from[n].kind, n)
+		if !ok || t.Kind != from[n].Kind {
+			d.add(Drop, from[n].Kind, n)
 		}
 	}
 	for _, n := range sortedKeys(to) {
 		f, ok := from[n]
-		if !ok || f.kind != to[n].kind {
-			d.add(Add, to[n].kind, n)
+		if !ok || f.Kind != to[n].Kind {
+			d.add(Add, to[n].Kind, n)
 			continue
 		}
-		d.props(f.kind, n, f.props, to[n].props)
+		d.props(f.Kind, n, f.Props, to[n].Props)
 	}
 }
 
@@ -236,7 +246,7 @@ func relProps(s *schema.Schema, r *schema.Relation) map[string]string {
 		p["owned by"] = r.OwnedBy
 	}
 	if r.Kind != schema.Sequence {
-		p["columns"] = strings.Join(columnNames(r), ", ")
+		p["column order"] = strings.Join(columnNames(r), ", ")
 	}
 	return p
 }
@@ -543,6 +553,28 @@ func (d *differ) comments(a, b *schema.Schema) {
 			d.add(Alter, "comment", k, Field{Name: "text", From: v, To: b.Comments[k]})
 		}
 	}
+}
+
+// Props are the comparable properties of a relation, column, constraint, index, rule,
+// function or trigger: two objects with equal Props are the same to Compare.
+func Props(s *schema.Schema, obj any) map[string]string {
+	switch x := obj.(type) {
+	case *schema.Relation:
+		return relProps(s, x)
+	case *schema.Column:
+		return colProps(s, x)
+	case *schema.Constraint:
+		return conProps(x)
+	case *schema.Index:
+		return idxProps(x)
+	case schema.RuleDef:
+		return ruleProps(x)
+	case *schema.Function:
+		return fnProps(s, x)
+	case *schema.Trigger:
+		return trgProps(x)
+	}
+	return nil
 }
 
 // --- helpers -------------------------------------------------------------------

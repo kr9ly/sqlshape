@@ -48,6 +48,11 @@ type Schema struct {
 	searchPath []string // SET search_path, nil = public
 	// datetime input GUCs (SET datestyle / intervalstyle / timezone); "" = PG default
 	dateOrder, intervalStyle, timeZone string
+	// TypeDefs holds the statement text that created each user type (enum, domain,
+	// composite, range), for regenerating it elsewhere.
+	TypeDefs map[catalog.OID]string
+	// stmtText is the text of the statement being applied (without leading comments).
+	stmtText string
 	// ViewHook runs after every CREATE (MATERIALIZED) VIEW with the schema as it stands
 	// at that point; the analyzer installs it to fill Relation.Frozen.
 	ViewHook func(s *Schema, rel *Relation)
@@ -106,6 +111,11 @@ type Relation struct {
 	Constraints []*Constraint
 	// Query is the defining query of a view / matview (nil for tables).
 	Query Expr
+	// Definition is the text of the CREATE statement that made the relation; Alters the
+	// ALTER TABLE statements that shaped it afterwards, other than ADD CONSTRAINT (a
+	// constraint keeps its own Definition).
+	Definition string
+	Alters     []string
 	// ColumnAliases are explicit column names given to a view (CREATE VIEW v (a, b) AS ...).
 	ColumnAliases []string
 	// Frozen (views / matviews) is the output column list as it was when the view was
@@ -235,6 +245,9 @@ type Constraint struct {
 	// ForeignKey actions (pg_constraint confdeltype / confupdtype):
 	// 'a' NO ACTION, 'r' RESTRICT, 'c' CASCADE, 'n' SET NULL, 'd' SET DEFAULT
 	OnDelete, OnUpdate byte
+	// Definition is the text of the ALTER TABLE ... ADD CONSTRAINT that made it, "" when
+	// it was declared inside CREATE TABLE.
+	Definition string
 }
 
 // Function is a user-defined function / procedure signature (body is not analyzed).
@@ -265,6 +278,8 @@ type Function struct {
 	// parsed BEGIN ATOMIC body (a List of statements, or a ReturnStmt). Nil for other languages.
 	Body    string
 	SQLBody Expr
+	// Definition is the text of the CREATE FUNCTION statement.
+	Definition string
 }
 
 // RaisedError is a custom SQLSTATE a function raises, with its application-side name.
@@ -279,6 +294,8 @@ type Index struct {
 	Columns   []string
 	Unique    bool
 	Predicate Expr
+	// Definition is the text of the CREATE INDEX statement.
+	Definition string
 	// nameParts is what PG's ChooseIndexNameAddition sees: every index element's column
 	// name, "expr" for expressions. Copies of the index (partitions, LIKE) are renamed from it.
 	nameParts []string
@@ -361,6 +378,8 @@ type Trigger struct {
 	Delete   bool
 	UpdateOf []string // UPDATE OF col, col: the trigger fires only when one of these is assigned (empty: any)
 	Function string   // schema-qualified unless public
+	// Definition is the text of the CREATE TRIGGER statement.
+	Definition string
 }
 
 // FuncArg is one parameter.
@@ -416,6 +435,7 @@ func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Re
 		Catalog:   cat,
 		Types:     newTypes(cat),
 		Comments:  map[string]string{},
+		TypeDefs:  map[catalog.OID]string{},
 		relByName: map[string]*Relation{},
 		nextOID:   FirstUserOID + 100000, // relations / functions live in a separate range from types
 		ViewHook:  hook,
@@ -435,7 +455,10 @@ func (s *Schema) applyAll(tree *pg_query.ParseResult, schemaSQL string) {
 		if raw.StmtLen == 0 {
 			end = int32(len(schemaSQL))
 		}
-		s.pending = directives(leadingComments(schemaSQL[prev:end]))
+		span := schemaSQL[prev:end]
+		lead := leadingComments(span)
+		s.pending = directives(lead)
+		s.stmtText = strings.TrimSuffix(strings.TrimSpace(span[len(lead):]), ";")
 		s.apply(raw.Stmt, raw.StmtLocation)
 		prev = end
 	}
@@ -514,6 +537,24 @@ func (s *Schema) problem(loc int32, format string, args ...any) {
 }
 
 func (s *Schema) apply(n *pg_query.Node, loc int32) {
+	nFuncs, nTrigs, nTypes := len(s.Functions), len(s.Triggers), len(s.Types.user)
+	defer func() {
+		// remember the text that created what this statement added
+		switch n.Node.(type) {
+		case *pg_query.Node_CreateFunctionStmt:
+			if len(s.Functions) > nFuncs {
+				s.Functions[len(s.Functions)-1].Definition = s.stmtText
+			}
+		case *pg_query.Node_CreateTrigStmt:
+			if len(s.Triggers) > nTrigs {
+				s.Triggers[len(s.Triggers)-1].Definition = s.stmtText
+			}
+		case *pg_query.Node_CreateEnumStmt, *pg_query.Node_CreateDomainStmt, *pg_query.Node_CompositeTypeStmt, *pg_query.Node_CreateRangeStmt:
+			if len(s.Types.user) > nTypes {
+				s.TypeDefs[s.Types.user[nTypes].OID] = s.stmtText
+			}
+		}
+	}()
 	switch st := n.Node.(type) {
 	case *pg_query.Node_CreateEnumStmt:
 		s.createEnum(st.CreateEnumStmt, loc)
@@ -813,7 +854,7 @@ func (s *Schema) createDomain(st *pg_query.CreateDomainStmt, loc int32) {
 
 func (s *Schema) createComposite(st *pg_query.CompositeTypeStmt, loc int32) {
 	schema, name := s.rangeVar(st.Typevar)
-	rel := &Relation{OID: s.nextOID, Schema: schema, Name: name, Kind: 'c'}
+	rel := &Relation{OID: s.nextOID, Schema: schema, Name: name, Kind: 'c', Definition: s.stmtText}
 	s.nextOID++
 	for i, cn := range st.Coldeflist {
 		cd := cn.GetColumnDef()
@@ -833,7 +874,7 @@ func (s *Schema) createComposite(st *pg_query.CompositeTypeStmt, loc int32) {
 // --- relations -------------------------------------------------------------
 
 func (s *Schema) newRelation(schema, name string, kind RelKind) *Relation {
-	rel := &Relation{OID: s.nextOID, Schema: schema, Name: name, Kind: kind}
+	rel := &Relation{OID: s.nextOID, Schema: schema, Name: name, Kind: kind, Definition: s.stmtText}
 	s.nextOID++
 	t := s.Types.addUser(schema, name, 'c', 'C', 0, rel.OID)
 	rel.RowType = t.OID
@@ -1156,6 +1197,15 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 		}
 		return
 	}
+	shaping := false
+	for _, cn := range st.Cmds {
+		if cmd := cn.GetAlterTableCmd(); cmd.GetSubtype() != pg_query.AlterTableType_AT_AddConstraint {
+			shaping = true
+		}
+	}
+	if shaping {
+		rel.Alters = append(rel.Alters, s.stmtText)
+	}
 	for _, cn := range st.Cmds {
 		cmd := cn.GetAlterTableCmd()
 		switch cmd.GetSubtype() {
@@ -1168,7 +1218,11 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				}
 			}
 		case pg_query.AlterTableType_AT_AddConstraint:
+			n := len(rel.Constraints)
 			s.addTableConstraint(rel, cmd.Def.GetConstraint())
+			if len(rel.Constraints) > n && len(st.Cmds) == 1 {
+				rel.Constraints[len(rel.Constraints)-1].Definition = s.stmtText
+			}
 		case pg_query.AlterTableType_AT_SetNotNull:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.NotNull = true
@@ -1366,7 +1420,7 @@ func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
 		s.problem(loc, "CREATE INDEX: relation %q does not exist", name)
 		return
 	}
-	idx := &Index{Name: st.Idxname, Unique: st.Unique, Predicate: st.WhereClause}
+	idx := &Index{Name: st.Idxname, Unique: st.Unique, Predicate: st.WhereClause, Definition: s.stmtText}
 	for _, pn := range st.IndexParams {
 		ie := pn.GetIndexElem()
 		if ie.GetName() == "" {
