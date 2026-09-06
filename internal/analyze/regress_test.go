@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"context"
+	"crypto/sha1"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,16 +24,104 @@ import (
 
 // The regress probe replays PostgreSQL's own regression corpus (src/test/regress)
 // against a live PG and the analyzer side by side, and reports every statement on
-// which they disagree. It is a discovery tool, not a gate: nothing here is asserted.
+// which they disagree. The corpus is the PG release the oracle runs, checked out by
+// testdata/tools/fetch-regress.sh into the sqlshape cache directory (or named with
+// -regress / $SQLSHAPE_REGRESS); without it the test skips.
 //
-//	go test ./internal/analyze -run TestRegress -regress /path/to/src/test/regress \
-//	    [-regress-tests select,join] [-regress-report /path/report.txt]
+// The known disagreements — the ceiling: collation environment, RLS recursion, server
+// internals, and the three deliberate differences — are listed in testdata/regress_baseline.txt,
+// and the test fails on any statement that joins or leaves that list (run with
+// -regress-update to rewrite it after reading the report).
+//
+//	go test ./internal/analyze -run TestRegress [-regress /path/to/src/test/regress] \
+//	    [-regress-tests select,join] [-regress-report /path/report.txt] [-regress-update]
 var (
-	regressDir    = flag.String("regress", "", "path to PG's src/test/regress; enables TestRegress")
-	regressTests  = flag.String("regress-tests", "", "comma-separated test names to run (default: parallel_schedule order)")
+	regressDir    = flag.String("regress", "", "path to PG's src/test/regress (default: $SQLSHAPE_REGRESS, else the fetch-regress.sh checkout in the cache directory)")
+	regressTests  = flag.String("regress-tests", "", "comma-separated test names to run (default: parallel_schedule order; the baseline is not checked)")
 	regressReport = flag.String("regress-report", "", "write the per-statement report here (default: stderr summary only)")
 	regressJobs   = flag.Int("regress-jobs", 0, "parallel workers for the non-promoted files (default: NumCPU, at most 8)")
+	regressUpdate = flag.Bool("regress-update", false, "rewrite testdata/regress_baseline.txt from this run's hits")
 )
+
+const regressBaseline = "testdata/regress_baseline.txt"
+
+// regressCorpus resolves the corpus directory: the flag, the environment, or the
+// fetch-regress.sh checkout under the user cache directory.
+func regressCorpus() string {
+	if *regressDir != "" {
+		return *regressDir
+	}
+	if p := os.Getenv("SQLSHAPE_REGRESS"); p != "" {
+		return p
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	major, _, _ := strings.Cut(string(oracle.Version), ".")
+	p := filepath.Join(base, "sqlshape", "regress-"+major, "src", "test", "regress")
+	if _, err := os.Stat(filepath.Join(p, "parallel_schedule")); err != nil {
+		return ""
+	}
+	return p
+}
+
+// reEnvCollation matches the oracle's refusal of a collation the operating system does
+// not provide: which collations exist depends on the machine's locales, so these hits
+// are neither in the baseline nor counted as new.
+var reEnvCollation = regexp.MustCompile(`42704: collation "[^"]*" for encoding "[^"]*" does not exist`)
+
+func (h regressHit) envDependent() bool { return reEnvCollation.MatchString(h.oracle) }
+
+// hitID identifies a hit independently of its statement number: test, class, key and a
+// hash of the statement text.
+func (h regressHit) hitID() string {
+	sum := sha1.Sum([]byte(h.sql))
+	return fmt.Sprintf("%s\t%s %s\t%x", h.test, h.class, h.key, sum[:6])
+}
+
+// readBaseline returns the hit ids of the baseline file (nil when there is none).
+func readBaseline(t *testing.T) map[string]bool {
+	data, err := os.ReadFile(regressBaseline)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, l := range strings.Split(string(data), "\n") {
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if f := strings.Split(l, "\t"); len(f) >= 3 {
+			ids[strings.Join(f[:3], "\t")] = true
+		}
+	}
+	return ids
+}
+
+// writeBaseline writes the hits as the new baseline, one per line: id fields, then the
+// first line of the statement for the reader.
+func writeBaseline(t *testing.T, hits []regressHit) {
+	lines := []string{"# regress probe: the statements on which the analyzer and PostgreSQL knowingly disagree.", "# test\tclass key\tsha1(sql)\tfirst line. Rewrite with: go test ./internal/analyze -run TestRegress -regress-update"}
+	var body []string
+	for _, h := range hits {
+		if h.envDependent() {
+			continue
+		}
+		first, _, _ := strings.Cut(strings.TrimSpace(h.sql), "\n")
+		if len(first) > 100 {
+			first = first[:100] + "…"
+		}
+		body = append(body, h.hitID()+"\t"+first)
+	}
+	sort.Strings(body)
+	lines = append(lines, body...)
+	if err := os.WriteFile(regressBaseline, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // The schedule lines whose objects later tests build on. Files in these lines run
 // sequentially in the shared database; every later file runs in a throwaway copy.
@@ -49,10 +138,11 @@ type regressHit struct {
 }
 
 func TestRegress(t *testing.T) {
-	if *regressDir == "" {
-		t.Skip("-regress not set")
+	corpus := regressCorpus()
+	if corpus == "" {
+		t.Skip("no regress corpus: run internal/analyze/testdata/tools/fetch-regress.sh, or set -regress / $SQLSHAPE_REGRESS")
 	}
-	dir, err := filepath.Abs(*regressDir)
+	dir, err := filepath.Abs(corpus)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,6 +294,55 @@ func TestRegress(t *testing.T) {
 		if err := os.WriteFile(*regressReport, []byte(rb.String()), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	// The gate: the hits must be exactly the baseline's.
+	if len(only) > 0 {
+		return // a partial run cannot be compared
+	}
+	if *regressUpdate {
+		writeBaseline(t, p.hits)
+		t.Logf("baseline rewritten: %d hits", len(p.hits))
+		return
+	}
+	base := readBaseline(t)
+	if base == nil {
+		t.Logf("no %s: nothing asserted (write one with -regress-update)", regressBaseline)
+		return
+	}
+	seen := map[string]bool{}
+	var newHits []regressHit
+	env := 0
+	for _, h := range p.hits {
+		if h.envDependent() {
+			env++
+			continue
+		}
+		id := h.hitID()
+		seen[id] = true
+		if !base[id] {
+			newHits = append(newHits, h)
+		}
+	}
+	if env > 0 {
+		t.Logf("%d hit(s) depend on the machine's collations and are not gated", env)
+	}
+	var gone []string
+	for id := range base {
+		if !seen[id] {
+			gone = append(gone, id)
+		}
+	}
+	sort.Strings(gone)
+	for _, h := range newHits {
+		detail := fmt.Sprintf("oracle:   %s\nanalyzer: %s", strings.TrimSpace(h.oracle), strings.TrimSpace(h.analyzer))
+		if h.class == "DIFF" {
+			detail = "--- oracle\n" + h.oracle + "--- analyzer\n" + h.analyzer
+		}
+		t.Errorf("new disagreement (%s %s) in %s #%d:\n%s\n%s", h.class, h.key, h.test, h.n, h.sql, detail)
+	}
+	if len(gone) > 0 {
+		t.Errorf("%d baseline hit(s) no longer disagree (fixed? then rewrite the baseline with -regress-update):\n  %s", len(gone), strings.Join(gone, "\n  "))
 	}
 }
 

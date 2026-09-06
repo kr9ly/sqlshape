@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # pg_dump for the migration side: its major version must be at least the embedded
+      # server's (17), which Ubuntu's own packages lag behind
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-client-17
+          pg_dump --version
+
+      # the embedded PostgreSQL archive, its extracted binaries + initialized template data
+      # directory (internal/oracle), and PostgreSQL's regression corpus (TestRegress)
+      - name: Cache PostgreSQL binaries and regress corpus
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.embedded-postgres-go
+            ~/.cache/sqlshape
+          key: sqlshape-pg-${{ hashFiles('internal/oracle/oracle.go', 'internal/analyze/testdata/tools/fetch-regress.sh') }}
+
+      - name: Fetch regress corpus
+        run: internal/analyze/testdata/tools/fetch-regress.sh
+
+      - name: Test
+        run: go test ./... -timeout 20m

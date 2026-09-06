@@ -155,3 +155,15 @@ SQL/JSON, MERGE, GROUPING SETS and a schema full of DDL included), the checker a
 cover the surface the three examples exercise, and each example's test verifies every statement
 against a real PostgreSQL. The migration side (diff / apply / verify-schema, intents, seeded
 tables, consumer index) round-trips its test scenarios through an embedded PostgreSQL.
+
+`go test ./...` also replays PostgreSQL's own regression corpus (22,000 statements of
+`src/test/regress`, release 17.5) against the analyzer and a live PostgreSQL side by side and
+fails on any new disagreement: the 19 known ones (row-level security recursion, permissions,
+server internals, three deliberate differences) are listed in
+`internal/analyze/testdata/regress_baseline.txt`; disagreements about collations the machine
+does not provide are not gated. The corpus is fetched once by
+`internal/analyze/testdata/tools/fetch-regress.sh` into the cache directory (the test skips
+without it); the embedded PostgreSQL's binaries and an initialized data directory are cached
+there too, so a server boots in a quarter of a second. `pg_dump` (major 17 or later) must be
+on `PATH` for the migration tests, which skip without it. The whole suite takes about half a
+minute; `.github/workflows/test.yml` runs it with those caches.

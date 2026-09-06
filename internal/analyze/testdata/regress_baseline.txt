@@ -1,0 +1,21 @@
+# regress probe: the statements on which the analyzer and PostgreSQL knowingly disagree.
+# test	class key	sha1(sql)	first line. Rewrite with: go test ./internal/analyze -run TestRegress -regress-update
+domain	DIFF column type	e89dc9ebcf60	-- check that domains inherit operations from base types
+domain	LENIENT 23514	1d019203dc12	-- fail
+enum	LENIENT 55P04	1f0366fc3704	SELECT 'new'::bogus
+enum	LENIENT 55P04	f831443bae5a	SELECT 'bad'::bogon
+regproc	LENIENT 42704	855ab3d3e15a	SELECT regrole('"Nonexistent"')
+regproc	LENIENT 42704	8c8130752d2d	SELECT regrole('Nonexistent')
+regproc	LENIENT 42704	c50d8cbb5179	-- schemaname not applicable
+regproc	LENIENT 42704	e426b3fdaac8	SELECT regrole('"regress_regrole_test"')
+rowsecurity	LENIENT 42501	2517fa9c6053	SELECT * FROM part_document ORDER by did
+rowsecurity	LENIENT 42501	cf7ff5fcb371	SELECT * FROM part_document_satire ORDER by did
+rowsecurity	LENIENT 42P17	73128756ed84	SELECT * FROM s1 WHERE f_leak(b)
+rowsecurity	LENIENT 42P17	73128756ed84	SELECT * FROM s1 WHERE f_leak(b)
+rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
+rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
+rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
+rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
+rowsecurity	LENIENT 42P17	a45dc166872a	-- fail (infinite recursion)
+tablesample	LENIENT 42704	4d952dc0cc51	-- errors
+temp	STRICT 42P01	aecdb79a778f	SELECT * FROM temptest
