@@ -576,6 +576,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			}
 			s.Functions = fns
 			s.Types.removeSchema(name)
+			delete(s.schemas, name)
 		case pg_query.ObjectType_OBJECT_RULE:
 			// DROP RULE name ON table
 			parts := strs(on.GetList().GetItems())

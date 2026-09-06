@@ -480,3 +480,7 @@ func (ts *Types) removeSchema(schema string) {
 		ts.removeUser(oid)
 	}
 }
+
+// User lists the types declared by the schema text (CREATE TYPE / DOMAIN and the row
+// types of relations), in declaration order.
+func (ts *Types) User() []*catalog.Type { return ts.user }

@@ -1521,6 +1521,11 @@ func (s *Schema) comment(st *pg_query.CommentStmt, loc int32) {
 		return
 	}
 	key = strings.TrimPrefix(key, "public.")
+	if st.Comment == "" {
+		// COMMENT ON ... IS NULL removes the comment
+		delete(s.Comments, key)
+		return
+	}
 	s.Comments[key] = st.Comment
 }
 
@@ -1981,4 +1986,83 @@ func (s *Schema) HasSchema(name string) bool {
 		}
 	}
 	return false
+}
+
+// Schemas lists the names created with CREATE SCHEMA, sorted.
+func (s *Schema) Schemas() []string {
+	out := make([]string, 0, len(s.schemas))
+	for n := range s.schemas {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RuleDef is one rule of a relation as declared, with whether it is enabled.
+type RuleDef struct {
+	Stmt    *pg_query.RuleStmt
+	Enabled bool
+}
+
+// Rules returns the relation's rules by name (CREATE RULE, minus DROP RULE).
+func (rel *Relation) Rules() map[string]RuleDef {
+	out := make(map[string]RuleDef, len(rel.rules))
+	for n, st := range rel.rules {
+		out[n] = RuleDef{Stmt: st, Enabled: !rel.rulesOff[n]}
+	}
+	return out
+}
+
+// Deparse renders an expression back to SQL text. Two expressions that deparse the
+// same are the same for the loader's purposes; "" if the node cannot be rendered.
+func Deparse(e Expr) string {
+	if e == nil {
+		return ""
+	}
+	res := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: &pg_query.SelectStmt{
+		TargetList: []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: e}}}},
+	}}}}}}
+	s, err := pg_query.Deparse(res)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(s, "SELECT ")
+}
+
+// DeparseStmt renders a whole statement (a view's query, a rule) back to SQL text.
+func DeparseStmt(n *pg_query.Node) string {
+	if n == nil {
+		return ""
+	}
+	s, err := pg_query.Deparse(&pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: n}}})
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// DeparseBody renders a SQL-standard function body (Function.SQLBody): `RETURN expr` or
+// `BEGIN ATOMIC stmt; ... END`, which Deparse cannot render on their own.
+func DeparseBody(body Expr) string {
+	if body == nil {
+		return ""
+	}
+	if r := body.GetReturnStmt(); r != nil {
+		return "RETURN " + Deparse(r.Returnval)
+	}
+	if l := body.GetList(); l != nil {
+		var stmts []string
+		for _, item := range l.Items {
+			inner := item.GetList()
+			if inner == nil {
+				stmts = append(stmts, DeparseStmt(item))
+				continue
+			}
+			for _, st := range inner.Items {
+				stmts = append(stmts, DeparseStmt(st))
+			}
+		}
+		return "BEGIN ATOMIC " + strings.Join(stmts, "; ") + "; END"
+	}
+	return DeparseStmt(body)
 }
