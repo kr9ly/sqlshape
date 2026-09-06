@@ -98,3 +98,11 @@ func TestRawSQLForbid(t *testing.T) {
 	defer Analyzer.Flags.Set("raw-sql-allow", "")
 	analysistest.Run(t, td, Analyzer, "rawforbid", "rawok")
 }
+
+func TestDTOFixes(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	analysistest.RunWithSuggestedFixes(t, td, Analyzer, "dto")
+}

@@ -54,7 +54,18 @@ $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...     # what the editor ru
 VS Code (Go extension): `"go.vetOnSave": "workspace"` and `"go.vetFlags": ["-vettool=/path/to/sqlshape", "-strict"]`
 put the findings in the Problems pane. Other editors: run the same `go vet` command as the
 on-save linter (or add `sqlshape` to golangci-lint as a module plugin). Quick fixes the checker
-proposes (`-sync-comments`) are applied with `sqlshape -fix ./...`.
+proposes are applied with `sqlshape -fix ./...`, or from the editor's Problems pane.
+
+**Writing a query's types.** Declare `type OrderRow struct{}` and `type OrderParams struct{}`,
+write the query, save: every result column is reported as having no field and every `{{.X}}` as
+having no path, and each of those diagnostics carries a quick fix that rewrites the struct from
+the query — the columns of every branch (a column only some branches select becomes a pointer),
+nullable columns as pointers, enums and lookup values as the Go type already bound to them,
+records as nested structs, doc comments from `COMMENT ON`; the parameter struct gets a field per
+path typed by what the SQL expects, and a `bool` per `{{if .Flag}}`. The same fix sits on every
+later mismatch (a column added to the SELECT, a type changed in the schema), with the names and
+doc comments of fields that still match kept. `-sync-comments` adds doc comments from `COMMENT ON`
+to types and fields that already exist.
 
 ### Templates
 

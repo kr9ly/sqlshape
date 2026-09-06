@@ -1,0 +1,16 @@
+package dto
+
+import (
+	"github.com/kr9ly/sqlshape"
+	"github.com/jackc/pgx/v5/pgtype"
+	"time"
+)
+
+// A fix that needs imports the file lacks adds them (a single import becomes a block).
+type Stamped struct {
+	ID        int64
+	CreatedAt time.Time
+	Total     pgtype.Numeric
+}
+
+var stamped = sqlshape.Query[Stamped, struct{}](`SELECT id, created_at, total FROM orders`) // want `result column "id" has no field` `result column "created_at" has no field` `result column "total" has no field`

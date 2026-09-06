@@ -16,3 +16,5 @@ type TSVector struct{ Valid bool }
 type Bits struct{ Valid bool }
 
 type Hstore map[string]*string
+
+type Numeric struct{ Valid bool }

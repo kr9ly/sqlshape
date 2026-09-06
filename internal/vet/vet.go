@@ -481,12 +481,6 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		}
 		return
 	}
-	// control paths must exist on P
-	for _, ctl := range res.Controls {
-		if _, err := c.resolvePath(pType, ctl); err != nil {
-			pass.Reportf(lit.pos(0), "sqlshape: %v", err)
-		}
-	}
 	if c.strict {
 		c.reportUnusedParams(pType, res, call.Pos())
 	}
@@ -497,17 +491,21 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	// One diagnostic per distinct message; the branch suffix (after " [") does not count
 	// towards distinctness, so a problem shared by many expansions is reported once.
 	seen := map[string]bool{}
-	report := func(pos token.Pos, format string, args ...any) {
-		msg := fmt.Sprintf(format, args...)
+	dedupe := func(msg string) (string, bool) {
 		key := msg
 		if i := strings.LastIndex(msg, " ["); i >= 0 && strings.HasSuffix(msg, "]") {
 			key = msg[:i]
 		}
 		if seen[key] {
-			return
+			return "", false
 		}
 		seen[key] = true
-		pass.Reportf(pos, "sqlshape: %s", msg)
+		return msg, true
+	}
+	report := func(pos token.Pos, format string, args ...any) {
+		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
+			pass.Reportf(pos, "sqlshape: %s", msg)
+		}
 	}
 	multi := len(res.Expansions) > 1
 	if res.Sparse && c.strict {
@@ -520,6 +518,25 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	missing := map[string]int{}
 	missingType := map[string]types.Type{}
 	missingBranch := map[string]string{}
+	d := newDTO()
+	// diagnostics about R's fit and P's fit are held back and emitted at the end with the
+	// rewrite of the struct (dto.go) attached as their quick fix
+	reportR := func(pos token.Pos, format string, args ...any) {
+		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
+			d.rDiags = append(d.rDiags, heldDiag{pos, msg})
+		}
+	}
+	reportP := func(pos token.Pos, format string, args ...any) {
+		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
+			d.pDiags = append(d.pDiags, heldDiag{pos, msg})
+		}
+	}
+	// control paths must exist on P
+	for _, ctl := range res.Controls {
+		if _, err := c.resolvePath(pType, ctl); err != nil {
+			reportP(lit.pos(0), "%v", err)
+		}
+	}
 
 	for i := range res.Expansions {
 		e := &res.Expansions[i]
@@ -562,9 +579,11 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		if single && !r.AtMostOne {
 			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
 		}
-		c.checkParams(e, r, pType, lit, report, where)
+		c.checkParams(e, r, pType, lit, reportP, where)
 		checkBareOrderBy(e, lit, report, where)
-		for name, t := range c.checkResult(call.Pos(), r, rType, lit, report, where) {
+		d.addParams(e, r)
+		d.addResult(r)
+		for name, t := range c.checkResult(call.Pos(), r, rType, lit, reportR, where) {
 			missing[name]++
 			missingType[name] = t
 			if _, ok := missingBranch[name]; !ok {
@@ -582,15 +601,16 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	sort.Strings(names)
 	for _, name := range names {
 		if missing[name] == analyzed {
-			report(call.Pos(), "field %s.%s has no result column", typeName(rType), name)
+			reportR(call.Pos(), "field %s.%s has no result column", typeName(rType), name)
 			continue
 		}
 		if _, nullable := unwrapNullable(missingType[name]); !nullable {
 			if _, isSlice := missingType[name].Underlying().(*types.Slice); !isSlice {
-				report(call.Pos(), "field %s.%s is not selected in every branch%s: make it a pointer so those branches leave it nil", typeName(rType), name, missingBranch[name])
+				reportR(call.Pos(), "field %s.%s is not selected in every branch%s: make it a pointer so those branches leave it nil", typeName(rType), name, missingBranch[name])
 			}
 		}
 	}
+	c.emitHeld(call, d, res, rType, pType)
 	if analyzedAll {
 		c.checkExpectations(lit, possible, branch, report)
 	}
