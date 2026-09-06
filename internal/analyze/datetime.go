@@ -2186,26 +2186,32 @@ func dtError(dterr int, extra *dtExtra, str, datatype string, loc int32) *Error 
 
 // tm2timestamp reports whether the broken-down time is a representable timestamp.
 func tm2timestamp(tm *pgTM, fsec int64, tzp *int) bool {
+	_, ok := timestampOf(tm, fsec, tzp)
+	return ok
+}
+
+// timestampOf is tm2timestamp returning the value in microseconds since the PG epoch.
+func timestampOf(tm *pgTM, fsec int64, tzp *int) (int64, bool) {
 	if !isValidJulian(tm.year, tm.mon, tm.mday) {
-		return false
+		return 0, false
 	}
 	date := int64(date2j(tm.year, tm.mon, tm.mday) - postgresEpochJDate)
 	t := (int64((tm.hour*minsPerHour+tm.min)*secsPerMinute+tm.sec) * usecsPerSec) + fsec
 	prod, over := mul64(date, usecsPerDay)
 	if over {
-		return false
+		return 0, false
 	}
 	result, over := add64(prod, t)
 	if over || (result-t)/usecsPerDay != date {
-		return false
+		return 0, false
 	}
 	if (result < 0 && date > 0) || (result > 0 && date < -1) {
-		return false
+		return 0, false
 	}
 	if tzp != nil {
 		result += int64(*tzp) * usecsPerSec
 	}
-	return minTimestamp <= result && result < endTimestamp
+	return result, minTimestamp <= result && result < endTimestamp
 }
 
 // validateTimestampLiteral is timestamp_in / timestamptz_in.

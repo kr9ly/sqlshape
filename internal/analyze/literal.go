@@ -39,7 +39,7 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		bits := map[catalog.OID]int{catalog.Int2: 16, catalog.Int4: 32, catalog.Int8: 64}[base]
 		if _, err := parsePGInt(v, bits); err != nil {
 			name := map[catalog.OID]string{catalog.Int2: "smallint", catalog.Int4: "integer", catalog.Int8: "bigint"}[base]
-			if _, e2 := parsePGInt(v, 64); e2 == nil || errors.Is(e2, strconv.ErrRange) || isNumberish(v) {
+			if _, e2 := parsePGInt(v, 64); e2 == nil || errors.Is(e2, strconv.ErrRange) {
 				return errAt("22003", loc, "value %q is out of range for type %s", s, name)
 			}
 			return bad(name)
@@ -66,7 +66,7 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 	case catalog.Float4, catalog.Float8:
 		return validateFloatLiteral(s, base == catalog.Float4, loc)
 	case catalog.JSON, catalog.JSONB:
-		if !json.Valid([]byte(s)) || !jsonSurrogatesOK(s) {
+		if !json.Valid([]byte(s)) || (base == catalog.JSONB && !jsonSurrogatesOK(s)) {
 			return bad(map[catalog.OID]string{catalog.JSON: "json", catalog.JSONB: "jsonb"}[base])
 		}
 		if base == catalog.JSONB && jsonHasNulEscape(s) {
@@ -75,7 +75,7 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 	case catalog.JSONPath:
 		return validateJsonpathLiteral(s, loc)
 	case catalog.XML:
-		return validateXMLLiteral(s, loc)
+		return validateXMLLiteral(s, a.s.XMLOptionDocument(), loc)
 	case catalog.RegType:
 		return a.validateRegtypeLiteral(s, loc)
 	case catalog.RegClass:
@@ -84,6 +84,18 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		return a.validateRegprocLiteral(s, base == catalog.RegProcedure, loc)
 	case catalog.RegOper, catalog.RegOperator:
 		return a.validateRegoperLiteral(s, base == catalog.RegOperator, loc)
+	case catalog.RegRole, catalog.RegNamespace:
+		// regrolein / regnamespacein: a single identifier; roles and schemas are not ours
+		// to know, so only the shape is checked
+		if v == "" || v == "-" {
+			return nil
+		}
+		if _, err := parsePGInt(v, 64); err == nil {
+			return nil
+		}
+		if len(qualifiedNameParts(v)) > 1 {
+			return errAt("42602", loc, "invalid name syntax")
+		}
 	case catalog.Money:
 		return validateMoneyLiteral(s, loc)
 	case catalog.MacAddr8:
@@ -523,6 +535,11 @@ func (a *analyzer) validateRegtypeLiteral(s string, loc int32) *Error {
 	if tc == nil || tc.TypeName == nil {
 		return errAt("42601", loc, "syntax error at or near %q", v)
 	}
+	if names := tc.TypeName.Names; len(names) >= 2 {
+		if sch := names[len(names)-2].GetString_().GetSval(); !a.s.HasSchema(sch) {
+			return errAt("3F000", loc, "schema %q does not exist", sch)
+		}
+	}
 	if _, rerr := a.s.ResolveType(tc.TypeName); rerr != nil {
 		return errAt("42704", loc, "type %q does not exist", v)
 	}
@@ -745,10 +762,17 @@ func (a *analyzer) validateAssignLength(s string, target schema.TypeRef, loc int
 	return nil
 }
 
-// validateXMLLiteral is xml_in under XMLOPTION content: well-formed XML content, where a
-// DOCTYPE turns the value into a document with exactly one root element.
-func validateXMLLiteral(s string, loc int32) *Error {
-	bad := func() *Error { return errAt("2200N", loc, "invalid XML content") }
+// validateXMLLiteral is xml_in: under XMLOPTION content well-formed XML content, where a
+// DOCTYPE turns the value into a document with exactly one root element; under XMLOPTION
+// document a document. The SQLSTATE follows the option, not what the value turned out to be.
+func validateXMLLiteral(s string, docMode bool, loc int32) *Error {
+	document := docMode
+	bad := func() *Error {
+		if docMode {
+			return errAt("2200M", loc, "invalid XML document")
+		}
+		return errAt("2200N", loc, "invalid XML content")
+	}
 	if strings.HasPrefix(s, "<?xml") {
 		if end := strings.Index(s, "?>"); end > 0 {
 			decl := strings.Replace(s[:end], `version="1.1"`, `version="1.0"`, 1)
@@ -760,7 +784,6 @@ func validateXMLLiteral(s string, loc int32) *Error {
 	dec.Strict = true
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
 	sawContent := false // an element or non-blank text
-	document := false
 	roots, depth := 0, 0
 	for {
 		tok, err := dec.Token()

@@ -46,6 +46,7 @@ type Schema struct {
 	searchPath []string // SET search_path, nil = public
 	// datetime input GUCs (SET datestyle / intervalstyle / timezone); "" = PG default
 	dateOrder, intervalStyle, timeZone string
+	xmlDocument                       bool // SET xmloption = document
 }
 
 // Problem is a DDL statement (or part) that was skipped or rejected.

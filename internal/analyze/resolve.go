@@ -392,7 +392,10 @@ func (a *analyzer) resolveOperator(name string, left, right catalog.OID) *candid
 	if binary {
 		actual = []catalog.OID{left, right}
 	}
-	c, _ := a.selectCandidate(actual, cands)
+	c, n := a.selectCandidate(actual, cands)
+	if c == nil && n > 1 {
+		a.opAmbiguous = true
+	}
 	return c
 }
 

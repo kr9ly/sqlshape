@@ -416,6 +416,12 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		if err != nil {
 			return nil, err
 		}
+		if b := a.baseType(je.oid()); b != catalog.Bytea && b != catalog.JSON && b != catalog.JSONB {
+			if c, _ := a.category(b); c != 'S' {
+				// transformJsonParseArg: only strings, bytea and json values parse as JSON
+				return nil, errAt(codeCannotCoerce, loc(v.JsonParseExpr.Expr.RawExpr), "cannot cast type %s to json", a.s.Types.Format(je.typ))
+			}
+		}
 		if v.JsonParseExpr.UniqueKeys {
 			if c, _ := a.category(a.baseType(je.oid())); c != 'S' && a.baseType(je.oid()) != catalog.Bytea {
 				return nil, errAt(codeDatatypeMismatch, n.GetJsonParseExpr().Location, "cannot use non-string types with WITH UNIQUE KEYS clause")
@@ -632,6 +638,36 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 	if arr := tc.Arg.GetAArrayExpr(); arr != nil && len(arr.Elements) == 0 {
 		return &expr{typ: target, node: nodeOf(tc)}, nil
 	}
+	if arr := tc.Arg.GetAArrayExpr(); arr != nil {
+		if at := a.typ(a.baseType(target.OID)); at != nil && at.IsArray() {
+			// transformArrayExpr with the cast's array type: every element is coerced to
+			// the element type explicitly, so ARRAY[1, 'NaN']::float8[] reads the literal
+			// as float8 rather than unifying the elements first
+			nested := false
+			for _, el := range arr.Elements {
+				if el.GetAArrayExpr() != nil {
+					nested = true
+				}
+			}
+			if !nested {
+				es, err := a.analyzeList(arr.Elements, sc)
+				if err != nil {
+					return nil, err
+				}
+				nullable := false
+				for i, el := range es {
+					if err := a.bind(el, at.Elem, loc(arr.Elements[i])); err != nil {
+						return nil, err
+					}
+					if !a.canCoerce(el.oid(), at.Elem, explicitCoercion) {
+						return nil, errAt(codeCannotCoerce, loc(arr.Elements[i]), "cannot cast type %s to %s", a.s.Types.Format(el.typ), a.s.Types.Format(ref(at.Elem)))
+					}
+					nullable = nullable || el.nullable
+				}
+				return &expr{typ: target, nullable: nullable, node: nodeOf(tc)}, nil
+			}
+		}
+	}
 	e, err := a.analyzeExpr(tc.Arg, sc)
 	if err != nil {
 		return nil, err
@@ -744,7 +780,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 		if r.oid() != catalog.Unknown {
 			rt := a.typ(a.baseType(r.oid()))
 			if rt == nil || !rt.IsArray() {
-				return nil, errAt(codeDatatypeMismatch, x.Location, "op ANY/ALL (array) requires array on right side")
+				return nil, errAt(codeWrongObjectType, x.Location, "op ANY/ALL (array) requires array on right side")
 			}
 			elem = rt.Elem
 		}
@@ -835,10 +871,17 @@ func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_que
 	if l != nil {
 		left = l.oid()
 	}
+	a.opAmbiguous = false
 	c := a.resolveOperator(name, left, r.oid())
 	if c == nil {
 		if l != nil && l.oid() == catalog.Unknown && r.oid() == catalog.Unknown {
 			return nil, errAt(codeIndeterminateDatatype, at, "could not determine data type of parameter $%d", firstParam(l, r))
+		}
+		if a.opAmbiguous {
+			if l != nil {
+				return nil, errAt(codeAmbiguousFunction, at, "operator is not unique: %s %s %s", a.s.Types.Format(l.typ), name, a.s.Types.Format(r.typ))
+			}
+			return nil, errAt(codeAmbiguousFunction, at, "operator is not unique: %s %s", name, a.s.Types.Format(r.typ))
 		}
 		if l != nil {
 			return nil, errAt(codeUndefinedFunction, at, "operator does not exist: %s %s %s", a.s.Types.Format(l.typ), name, a.s.Types.Format(r.typ))
@@ -997,7 +1040,14 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	named := make([]string, len(f.Args))
 	for i, n := range f.Args {
 		if na := n.GetNamedArgExpr(); na != nil {
+			for _, prev := range named[:i] {
+				if prev == na.Name {
+					return nil, errAt(codeSyntaxError, na.Location, "argument name %q used more than once", na.Name)
+				}
+			}
 			named[i] = na.Name
+		} else if i > 0 && named[i-1] != "" {
+			return nil, errAt(codeSyntaxError, loc(n), "positional argument cannot follow named argument")
 		}
 	}
 	c, ambiguous := a.resolveFunction(schemaName, name, actual, f.AggWithinGroup, named, f.FuncVariadic)
@@ -1022,6 +1072,13 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	notCast:
 		if ambiguous {
 			return nil, errAt(codeAmbiguousFunction, f.Location, "function %s(%s) is not unique", name, a.typeNames(actual))
+		}
+		if f.AggWithinGroup {
+			// sum() WITHIN GROUP (ORDER BY x): the direct + ORDER BY arguments name a normal
+			// aggregate, which takes no WITHIN GROUP
+			if c2, _ := a.resolveFunction(schemaName, name, actual, false, named, f.FuncVariadic); c2 != nil && c2.fn != nil && c2.fn.Kind == 'a' {
+				return nil, errAt(codeWrongObjectType, f.Location, "%s is not an ordered-set aggregate, so it cannot have WITHIN GROUP", name)
+			}
 		}
 		// an ordered-set aggregate called without WITHIN GROUP (the other way round is 42883 in PG)
 		for _, fn := range a.s.Catalog.FuncsByName(name) {
@@ -1055,6 +1112,18 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 		for i := 0; i < ndirect; i++ {
 			d, o := args[i], args[ndirect+i]
+			if d.oid() == catalog.Unknown && o.oid() != catalog.Unknown {
+				if err := a.bind(d, o.oid(), loc(f.Args[i])); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if o.oid() == catalog.Unknown && d.oid() != catalog.Unknown {
+				if err := a.bind(o, d.oid(), loc(f.AggOrder[i].GetSortBy().GetNode())); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if d.oid() == catalog.Unknown || o.oid() == catalog.Unknown {
 				continue
 			}
@@ -1344,10 +1413,15 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 				// a run of subscripts is one operation: a[1][2] on int[][] (which is _int4) is
 				// an int, any slice in the run keeps the array type
 				slice := false
+				dims := 0
 				for ; i < len(x.Indirection); i++ {
 					ai := x.Indirection[i].GetAIndices()
 					if ai == nil {
 						break
+					}
+					dims++
+					if dims > maxArrayDim {
+						return nil, errAt("54000", -1, "number of array dimensions (%d) exceeds the maximum allowed (%d)", dims, maxArrayDim)
 					}
 					slice = slice || ai.IsSlice
 					for _, idx := range []*pg_query.Node{ai.Lidx, ai.Uidx} {
@@ -1680,7 +1754,7 @@ func (a *analyzer) checkWindowDef(def *pg_query.WindowDef, sc *scope) *Error {
 			if off == nil {
 				continue
 			}
-			if hasColumnRef(off) {
+			if hasVarClause(off) {
 				return errAt(codeInvalidColumnRef, loc(off), "argument of %s must not contain variables", mode)
 			}
 			oe, err := a.analyzeExpr(off, sc)
@@ -1745,6 +1819,26 @@ func (a *analyzer) checkInRange(col, off *expr, at int32) *Error {
 }
 
 // hasColumnRef reports a column reference anywhere in the expression.
+// maxArrayDim is PG's MAXDIM.
+const maxArrayDim = 6
+
+// hasVarClause is contain_var_clause on a raw expression: a column reference outside any
+// subquery (a SubLink's own columns are not this level's variables).
+func hasVarClause(n *pg_query.Node) bool {
+	if n == nil || n.GetSubLink() != nil {
+		return false
+	}
+	if n.GetColumnRef() != nil {
+		return true
+	}
+	for _, c := range children(n) {
+		if hasVarClause(c) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasColumnRef(n *pg_query.Node) bool {
 	if n == nil {
 		return false

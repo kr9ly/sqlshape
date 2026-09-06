@@ -7,6 +7,7 @@ package analyze
 
 import (
 	"math"
+	"math/big"
 	"net"
 	"regexp"
 	"strconv"
@@ -647,7 +648,70 @@ func (a *analyzer) validateRangeLiteral(str string, rng catalog.OID, loc int32) 
 			}
 		}
 	}
+	if lower != nil && upper != nil {
+		if cmp, ok := a.compareLiterals(*lower, *upper, r.Subtype); ok && cmp > 0 {
+			return errAt("22000", loc, "range lower bound must be less than or equal to range upper bound")
+		}
+	}
 	return nil
+}
+
+// compareLiterals orders two literals of a type whose ordering is knowable without a
+// session: numbers, dates / timestamps, and strings whose byte and case-folded orders
+// agree (so any collation orders them the same way). ok is false otherwise.
+func (a *analyzer) compareLiterals(x, y string, typ catalog.OID) (cmp int, ok bool) {
+	switch base := a.baseType(typ); base {
+	case catalog.Int2, catalog.Int4, catalog.Int8, catalog.Numeric, catalog.Float4, catalog.Float8:
+		fx, okx := new(big.Float).SetPrec(200).SetString(strings.TrimSpace(stripDigitSeparators(x)))
+		fy, oky := new(big.Float).SetPrec(200).SetString(strings.TrimSpace(stripDigitSeparators(y)))
+		if !okx || !oky {
+			return 0, false
+		}
+		return fx.Cmp(fy), true
+	case catalog.Text, catalog.Varchar, catalog.BPChar, catalog.Name:
+		c1 := strings.Compare(x, y)
+		c2 := strings.Compare(strings.ToLower(x), strings.ToLower(y))
+		if c1 == c2 && c1 != 0 {
+			return c1, true
+		}
+		return 0, false
+	case catalog.Date, catalog.Timestamp, catalog.TimestampTZ:
+		vx, okx := a.timestampValue(x, base)
+		vy, oky := a.timestampValue(y, base)
+		if !okx || !oky {
+			return 0, false
+		}
+		switch {
+		case vx < vy:
+			return -1, true
+		case vx > vy:
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
+}
+
+// timestampValue reads a date / timestamp literal as microseconds since the PG epoch;
+// ok is false for anything but a plain calendar value (infinity, epoch words).
+func (a *analyzer) timestampValue(str string, base catalog.OID) (int64, bool) {
+	var extra dtExtra
+	fields, ftypes, dterr := parseDateTime(str, maxDateLen+maxDateFields)
+	if dterr != 0 {
+		return 0, false
+	}
+	dtype, tm, fsec, tz, dterr := decodeDateTime(fields, ftypes, a.dtSession(), &extra)
+	if dterr != 0 || dtype != dtkDate {
+		return 0, false
+	}
+	if base == catalog.Date {
+		tm.hour, tm.min, tm.sec, fsec = 0, 0, 0, 0
+	}
+	var tzp *int
+	if base == catalog.TimestampTZ {
+		tzp = &tz
+	}
+	return timestampOf(&tm, fsec, tzp)
 }
 
 func (a *analyzer) validateMultirangeLiteral(str string, multi catalog.OID, loc int32) *Error {
@@ -749,9 +813,10 @@ func (a *analyzer) validateMultirangeLiteral(str string, multi catalog.OID, loc 
 
 // geoScan reads coordinates the way geo_ops.c does; fail is sticky.
 type geoScan struct {
-	s    string
-	p    int
-	fail bool
+	s      string
+	p      int
+	fail   bool
+	erange string // a coordinate float8in_internal rejects as out of range (22003)
 }
 
 func (g *geoScan) skipSpace() {
@@ -798,7 +863,8 @@ func (g *geoScan) single() {
 		}
 		if !matched {
 			if len(tail) != len(rest) && (math.IsInf(f, 0) || f == 0) {
-				g.fail = true // out of range: 22003 in PG, reported as the same class below
+				g.erange = strings.TrimSpace(rest[:len(rest)-len(tail)]) // out of range: 22003
+				g.fail = true
 				return
 			}
 			g.fail = true
@@ -891,8 +957,13 @@ func pairCount(s string) int {
 
 func validateGeoLiteral(str string, typ catalog.OID, loc int32) *Error {
 	name := map[catalog.OID]string{oidPoint: "point", oidLseg: "lseg", oidPath: "path", oidBox: "box", oidPolygon: "polygon", oidLine: "line", oidCircle: "circle"}[typ]
-	bad := func() *Error { return errAt("22P02", loc, "invalid input syntax for type %s: %q", name, str) }
 	g := &geoScan{s: str}
+	bad := func() *Error {
+		if g.erange != "" {
+			return errAt("22003", loc, "%q is out of range for type double precision", g.erange)
+		}
+		return errAt("22P02", loc, "invalid input syntax for type %s: %q", name, str)
+	}
 	switch typ {
 	case oidPoint:
 		g.pair()

@@ -20,6 +20,9 @@ type rteCol struct {
 
 // rte is a FROM item: a table / view / CTE / subquery / function, or a join of two.
 type rte struct {
+	// noStar: trailing columns a bare * does not expand (a recursive CTE's SEARCH / CYCLE
+	// columns inside its own recursive term); they still resolve by name
+	noStar  int
 	alias   string
 	cols    []rteCol
 	rowType catalog.OID // whole-row reference type, 0 for joins / subqueries
@@ -61,10 +64,39 @@ func (r *rte) leaves() []*rte {
 	return out
 }
 
+// visibleNames are the table names r contributes to its FROM level: a relation's alias,
+// the leaves and USING alias of an unnamed join, an aliased join's alias. Unnamed
+// subqueries and joins have none (checkNameSpaceConflicts skips them).
+func (r *rte) visibleNames() []string {
+	var out []string
+	for _, l := range r.leaves() {
+		if l.alias != "" && l.alias != "unnamed_subquery" {
+			out = append(out, l.alias)
+		}
+	}
+	return out
+}
+
+// nameConflict is checkNameSpaceConflicts: a table name may appear once per FROM level.
+func nameConflict(existing []*rte, added *rte) *Error {
+	seen := map[string]bool{}
+	for _, it := range existing {
+		for _, n := range it.visibleNames() {
+			seen[n] = true
+		}
+	}
+	for _, n := range added.visibleNames() {
+		if seen[n] {
+			return errAt(codeDuplicateAlias, -1, "table name %q specified more than once", n)
+		}
+	}
+	return nil
+}
+
 // expand returns the columns in SELECT * order.
 func (r *rte) expand() []rteCol {
 	if r.join == nil {
-		return r.cols
+		return r.cols[:len(r.cols)-r.noStar]
 	}
 	j := r.join
 	out := append([]rteCol{}, j.usingCols...)
@@ -143,6 +175,10 @@ type cte struct {
 	// forbidden: the CTE is being defined and may not be referenced here (the
 	// non-recursive term of a recursive query)
 	forbidden bool
+	// defining: the recursive term is being analyzed; hiddenCols trailing SEARCH / CYCLE
+	// columns resolve by name but are not expanded by * (a self-reference's expandRTE)
+	defining   bool
+	hiddenCols int
 }
 
 func newScope(parent *scope) *scope {
@@ -186,6 +222,9 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 			}
 			if len(hits) == 0 {
 				if c, ok := a.systemColumn(sc, tbl, col); ok {
+					if a.mergeWhen && col != "tableoid" {
+						return rteCol{}, errAt(codeInvalidColumnRef, loc, "cannot use system column %q in MERGE WHEN condition", col)
+					}
 					return c, nil
 				}
 				if r.rowType != 0 {
@@ -212,6 +251,9 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 		}
 	}
 	if c, ok := a.systemColumn(sc, tbl, col); ok {
+		if a.mergeWhen && col != "tableoid" {
+			return rteCol{}, errAt(codeInvalidColumnRef, loc, "cannot use system column %q in MERGE WHEN condition", col)
+		}
 		return c, nil
 	}
 	if tbl != "" {

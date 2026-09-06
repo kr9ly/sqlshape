@@ -44,6 +44,7 @@ const (
 	codeGeneratedAlways              = "428C9"
 	codeWindowingError               = "42P20"
 	codeDuplicateAlias               = "42712"
+	codeDuplicateColumn              = "42701"
 	codeInvalidRecursion             = "42P19"
 )
 

@@ -142,7 +142,7 @@ func (a *analyzer) jsonBehavior(b *pg_query.JsonBehavior, sc *scope, want catalo
 			return err
 		}
 		if !a.canCoerce(e.oid(), want, assignmentCoercion) {
-			return errAt(codeDatatypeMismatch, loc(b.Expr), "cannot cast DEFAULT expression of type %s to %s", a.s.Types.Format(e.typ), a.s.Types.Format(ref(want)))
+			return errAt(codeCannotCoerce, loc(b.Expr), "cannot cast behavior expression of type %s to %s", a.s.Types.Format(e.typ), a.s.Types.Format(ref(want)))
 		}
 	}
 	return nil
@@ -302,7 +302,11 @@ func (a *analyzer) jsonTable(jt *pg_query.JsonTable, sc *scope) (*rte, *Error) {
 		return nil, err
 	}
 	r := &rte{alias: "json_table"}
-	if err := a.checkJsonTableNames(jt.Columns, map[string]bool{}); err != nil {
+	seen := map[string]bool{}
+	if jt.Pathspec != nil && jt.Pathspec.Name != "" {
+		seen[jt.Pathspec.Name] = true
+	}
+	if err := a.checkJsonTableNames(jt.Columns, seen); err != nil {
 		return nil, err
 	}
 	cols, err := a.jsonTableColumns(jt.Columns, sc)

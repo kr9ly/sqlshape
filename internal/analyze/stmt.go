@@ -47,6 +47,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if err != nil {
 			return nil, err
 		}
+		if err := nameConflict(sc.items, r); err != nil {
+			return nil, err
+		}
 		sc.items = append(sc.items, r)
 	}
 	// WINDOW clause
@@ -233,9 +236,9 @@ func (a *analyzer) boolClause(n *pg_query.Node, sc *scope, what string) *Error {
 	if n == nil {
 		return nil
 	}
-	if what == "WHERE" || what == "ON" {
+	if what == "WHERE" || what == "ON" || what == "JOIN/ON" {
 		where := "WHERE"
-		if what == "ON" {
+		if what != "WHERE" {
 			where = "JOIN conditions"
 		}
 		if agg := a.aggregateIn(n); agg != nil && !a.outerLevelAggregate(agg, sc) {
@@ -412,17 +415,29 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 				names[col.name] = true
 			}
 			if sc2 := c.SearchClause; sc2 != nil {
+				seen := map[string]bool{}
 				for _, sn := range sc2.SearchColList {
-					if n := sn.GetString_().GetSval(); !names[n] {
+					n := sn.GetString_().GetSval()
+					if !names[n] {
 						return errAt(codeSyntaxError, sc2.Location, "search column %q not in WITH query column list", n)
 					}
+					if seen[n] {
+						return errAt(codeDuplicateColumn, sc2.Location, "search column %q specified more than once", n)
+					}
+					seen[n] = true
 				}
 			}
 			if cy := c.CycleClause; cy != nil {
+				seen := map[string]bool{}
 				for _, cn := range cy.CycleColList {
-					if n := cn.GetString_().GetSval(); !names[n] {
+					n := cn.GetString_().GetSval()
+					if !names[n] {
 						return errAt(codeSyntaxError, cy.Location, "cycle column %q not in WITH query column list", n)
 					}
+					if seen[n] {
+						return errAt(codeDuplicateColumn, cy.Location, "cycle column %q specified more than once", n)
+					}
+					seen[n] = true
 				}
 			}
 			if sc2 := c.SearchClause; sc2 != nil {
@@ -451,8 +466,11 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 			}
 		}
 		// SEARCH / CYCLE columns are visible to the recursive term (WHERE NOT is_cycle)
+		before := len(def.cols)
 		a.addSearchCycleCols(def, c, sc)
+		def.defining, def.hiddenCols = true, len(def.cols)-before
 		right, err := a.selectStmt(sel.Rarg, newScope(armSc))
+		def.defining = false
 		if err != nil {
 			return err
 		}
@@ -640,6 +658,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 					return nil, errAt(codeFeatureNotSupported, rv.Location, "WITH query %q does not have a RETURNING clause", rv.Relname)
 				}
 				r := &rte{alias: rv.Relname, cols: append([]rteCol{}, c.cols...), sub: c.sub}
+				if c.defining {
+					r.noStar = c.hiddenCols
+				}
 				if rv.Alias != nil {
 					if rv.Alias.Aliasname != "" {
 						r.alias = rv.Alias.Aliasname
@@ -929,6 +950,9 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := nameConflict([]*rte{left}, right); err != nil {
+		return nil, err
+	}
 	// outer-join nullability
 	switch j.Jointype {
 	case pg_query.JoinType_JOIN_LEFT:
@@ -1047,7 +1071,12 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 		}
 		if c := e.node.GetAConst(); c != nil {
 			if sv, ok := c.Val.(*pg_query.A_Const_Sval); ok {
-				return a.validateAssignLength(sv.Sval.GetSval(), col.Type, c.Location)
+				// PG applies the length coercion at execution, not at parse time, so this
+				// never fails Prepare; it fails every execution, which is a note.
+				if err := a.validateAssignLength(sv.Sval.GetSval(), col.Type, c.Location); err != nil {
+					a.note(noteAlwaysFails, c.Location, err.Message+": every execution fails")
+				}
+				return nil
 			}
 		}
 		return nil
@@ -1331,6 +1360,9 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 		if err != nil {
 			return nil, err
 		}
+		if err := nameConflict(sc.items, r); err != nil {
+			return nil, err
+		}
 		sc.items = append(sc.items, r)
 	}
 	a.srfBan = "UPDATE"
@@ -1360,6 +1392,9 @@ func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *E
 	for _, item := range del.UsingClause {
 		r, err := a.fromItem(item, sc)
 		if err != nil {
+			return nil, err
+		}
+		if err := nameConflict(sc.items, r); err != nil {
 			return nil, err
 		}
 		sc.items = append(sc.items, r)
@@ -1580,6 +1615,9 @@ func (a *analyzer) callStmt(call *pg_query.CallStmt, sc *scope) ([]rteCol, *Erro
 // sees both relations, a WHEN NOT MATCHED [BY TARGET] action sees the source only.
 func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error) {
 	if m.WithClause != nil {
+		if m.WithClause.Recursive {
+			return nil, errAt(codeSyntaxError, -1, "WITH RECURSIVE is not supported for MERGE statement")
+		}
 		if err := a.withClause(m.WithClause, sc); err != nil {
 			return nil, err
 		}
@@ -1638,10 +1676,15 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	if err != nil {
 		return nil, err
 	}
+	if err := nameConflict([]*rte{target}, source); err != nil {
+		return nil, errAt(codeDuplicateAlias, -1, "name %q specified more than once", target.alias)
+	}
 	both := newScope(sc)
 	both.items = []*rte{target, source}
 	srcOnly := newScope(sc)
 	srcOnly.items = []*rte{source}
+	tgtOnly := newScope(sc)
+	tgtOnly.items = []*rte{target}
 	if err := a.boolClause(m.JoinCondition, both, "ON"); err != nil {
 		return nil, err
 	}
@@ -1657,10 +1700,16 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 			unconditional[w.MatchKind] = true
 		}
 		wsc := both
-		if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+		switch w.MatchKind {
+		case pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET:
 			wsc = srcOnly
+		case pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_SOURCE:
+			wsc = tgtOnly
 		}
-		if err := a.boolClause(w.Condition, wsc, "WHEN"); err != nil {
+		a.mergeWhen = true
+		err := a.boolClause(w.Condition, wsc, "WHEN")
+		a.mergeWhen = false
+		if err != nil {
 			return nil, err
 		}
 		switch w.CommandType {
@@ -2100,7 +2149,7 @@ func (a *analyzer) checkLocking(sel *pg_query.SelectStmt, sc *scope, cols []rteC
 			rv := rn.GetRangeVar()
 			found := false
 			for _, it := range sc.items {
-				if it.join != nil && it.join.usingAlias != nil && it.join.usingAlias.alias == rv.Relname {
+				if it.join != nil && it.alias == "" && it.join.usingAlias != nil && it.join.usingAlias.alias == rv.Relname {
 					return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a join", what)
 				}
 				if it.alias == rv.Relname {

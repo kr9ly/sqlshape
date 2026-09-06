@@ -43,6 +43,10 @@ type analyzer struct {
 	writeCmd string
 	// inMerge is set while analyzing a MERGE (merge_action() is only valid there)
 	inMerge bool
+	// mergeWhen is set while analyzing a MERGE WHEN condition (no system columns there)
+	mergeWhen bool
+	// opAmbiguous is set by resolveOperator when more than one candidate fits equally
+	opAmbiguous bool
 	// inAggArgs is the depth of aggregate calls whose arguments are being analyzed
 	// (aggregates do not nest)
 	inAggArgs int

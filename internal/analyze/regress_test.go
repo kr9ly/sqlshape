@@ -442,7 +442,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		}
 		// and so did its session settings: the template database starts every later file
 		// with the defaults, and the loader's replay must land there too
-		ddl = append(ddl, "RESET search_path", "RESET datestyle", "RESET intervalstyle", "RESET timezone")
+		ddl = append(ddl, "RESET search_path", "RESET datestyle", "RESET intervalstyle", "RESET timezone", "RESET xmloption")
 		p.baseDDL = ddl
 	}
 	return hits

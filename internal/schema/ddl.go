@@ -50,6 +50,9 @@ func (s *Schema) DateTimeSettings() (dateOrder, intervalStyle, timeZone string) 
 	return s.dateOrder, s.intervalStyle, s.timeZone
 }
 
+// XMLOptionDocument reports SET xmloption = document (XML literals are documents).
+func (s *Schema) XMLOptionDocument() bool { return s.xmlDocument }
+
 // setVariableValues flattens SET's argument list: constants, identifiers and the
 // comma-separated lists DateStyle accepts inside one string.
 func setVariableValues(st *pg_query.VariableSetStmt) []string {
@@ -110,6 +113,14 @@ func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
 		if !reset {
 			if vs := setVariableValues(st); len(vs) > 0 {
 				s.intervalStyle = strings.ToLower(vs[0])
+			}
+		}
+		return
+	case "xmloption":
+		s.xmlDocument = false
+		if !reset {
+			if vs := setVariableValues(st); len(vs) > 0 && strings.EqualFold(vs[0], "document") {
+				s.xmlDocument = true
 			}
 		}
 		return
