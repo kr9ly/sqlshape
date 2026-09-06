@@ -37,7 +37,10 @@ type analyzer struct {
 	// view computes (not writable, keyed by the synthetic column), and the current command
 	viewTargets  map[*schema.Relation]*schema.Relation
 	viewComputed map[*schema.Column]string
-	writeCmd     string
+	// viewBase: the base-table column a view target column stands for (two view columns
+	// over one base column may not both be assigned)
+	viewBase map[*schema.Column]*schema.Column
+	writeCmd string
 	// inMerge is set while analyzing a MERGE (merge_action() is only valid there)
 	inMerge bool
 	// inAggArgs is the depth of aggregate calls whose arguments are being analyzed
@@ -56,6 +59,9 @@ type analyzer struct {
 	// lastCallArgs / lastCallActual: the declared and actual argument types of the most
 	// recent funcCall, so polymorphic OUT parameters can be resolved for it
 	lastCallArgs, lastCallActual []catalog.OID
+	// inFuncArgs / inCase / inFromFunc: nesting a set-returning function is refused there
+	inFuncArgs, inCase int
+	inFromFunc         bool
 	// calledFuncs are the user functions the statement calls (with their arguments): their
 	// bodies' failure modes are the statement's too
 	calledFuncs []calledFunc
@@ -125,6 +131,7 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilt
 		viewCache:      map[*schema.Relation][]rteCol{},
 		viewTargets:    map[*schema.Relation]*schema.Relation{},
 		viewComputed:   map[*schema.Column]string{},
+		viewBase:       map[*schema.Column]*schema.Column{},
 		viewScopes:     map[*schema.Relation]*subquery{},
 		viewBusy:       map[*schema.Relation]bool{},
 		funcParams:     fp,

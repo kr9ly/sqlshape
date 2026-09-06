@@ -423,3 +423,16 @@ func formatInterval(m int32) string {
 	}
 	return out
 }
+
+// removeSchema forgets every user type living in schema (DROP SCHEMA ... CASCADE).
+func (ts *Types) removeSchema(schema string) {
+	var oids []catalog.OID
+	for _, t := range ts.user {
+		if ts.Schemas[t.OID] == schema {
+			oids = append(oids, t.OID)
+		}
+	}
+	for _, oid := range oids {
+		ts.removeUser(oid)
+	}
+}

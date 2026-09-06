@@ -92,6 +92,10 @@ func (a *analyzer) viewWriteTarget(rel *schema.Relation, cmd string, loc int32) 
 				if inner, ok := a.viewComputed[bc]; ok {
 					a.viewComputed[col] = inner // computed further down the view stack
 				}
+				a.viewBase[col] = bc
+				if b, ok := a.viewBase[bc]; ok {
+					a.viewBase[col] = b
+				}
 			}
 		}
 		if col == nil {

@@ -210,17 +210,6 @@ func (p *regressProbe) runFile(name string, promote bool) {
 	conn.Exec(ctx, "SET statement_timeout = '5s'; SET lock_timeout = '2s'; SET client_min_messages = warning")
 
 	ddl := append([]string(nil), p.baseDDL...)
-	if !promote {
-		// the template database carries the promoted files' objects but not their session
-		// settings (SET search_path ...), so the loader must not replay those either
-		ddl = ddl[:0]
-		for _, d := range p.baseDDL {
-			if tree, err := pg_query.Parse(d); err == nil && len(tree.Stmts) == 1 && tree.Stmts[0].Stmt.GetVariableSetStmt() != nil {
-				continue
-			}
-			ddl = append(ddl, d)
-		}
-	}
 	var s *schema.Schema
 	dirty := true
 	txSnap := -1
@@ -316,6 +305,33 @@ func (p *regressProbe) runFile(name string, promote bool) {
 		}
 	}
 	if promote {
+		// temp tables died with this file's session: drop the ones still standing
+		temps := map[string]bool{}
+		for _, sql := range stmts {
+			tree, err := pg_query.Parse(sql)
+			if err != nil || len(tree.Stmts) != 1 {
+				continue
+			}
+			st := tree.Stmts[0].Stmt
+			if cs := st.GetCreateStmt(); cs != nil && cs.Relation.Relpersistence == "t" {
+				temps[cs.Relation.Relname] = true
+			}
+			if ct := st.GetCreateTableAsStmt(); ct != nil && ct.Into != nil && ct.Into.Rel.Relpersistence == "t" {
+				temps[ct.Into.Rel.Relname] = true
+			}
+			if ds := st.GetDropStmt(); ds != nil && ds.RemoveType == pg_query.ObjectType_OBJECT_TABLE {
+				for _, on := range ds.Objects {
+					items := on.GetList().GetItems()
+					delete(temps, items[len(items)-1].GetString_().GetSval())
+				}
+			}
+		}
+		for name := range temps {
+			ddl = append(ddl, "DROP TABLE IF EXISTS "+name)
+		}
+		// and so did its session settings: the template database starts every later file
+		// with the defaults, and the loader's replay must land there too
+		ddl = append(ddl, "RESET search_path", "RESET datestyle", "RESET intervalstyle", "RESET timezone")
 		p.baseDDL = ddl
 	}
 }

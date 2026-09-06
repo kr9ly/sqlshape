@@ -14,10 +14,12 @@ import (
 func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error) {
 	keepUnknown := a.keepUnknown
 	a.keepUnknown = false
-	// a subquery is its own level for aggregate nesting
-	savedAggArgs := a.inAggArgs
-	a.inAggArgs = 0
-	defer func() { a.inAggArgs = savedAggArgs }()
+	// a subquery is its own level for aggregate nesting and SRF placement
+	savedAggArgs, savedFuncArgs, savedCase, savedFromFunc := a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc
+	a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc = 0, 0, 0, false
+	defer func() {
+		a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc = savedAggArgs, savedFuncArgs, savedCase, savedFromFunc
+	}()
 	if sel.WithClause != nil {
 		if err := a.withClause(sel.WithClause, sc); err != nil {
 			return nil, err
@@ -318,6 +320,10 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		return errAt(codeInvalidRecursion, c.Location, "recursive query %q does not have the form non-recursive-term UNION [ALL] recursive-term", c.Ctename)
 	}
 	if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION {
+		// the CTE may not be referenced from its non-recursive term, nor from a WITH nested
+		// in its body; expose it (forbidden) before either is analyzed
+		def.forbidden = true
+		sc.ctes[c.Ctename] = def
 		// a WITH on the whole recursive union is visible to both arms
 		armSc := sc
 		if sel.WithClause != nil {
@@ -326,10 +332,6 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 				return err
 			}
 		}
-		// analyze the non-recursive term first (the CTE may not appear in it), then expose
-		// the CTE with those types for the recursive term
-		def.forbidden = true
-		sc.ctes[c.Ctename] = def
 		left, err := a.selectStmt(sel.Larg, newScope(armSc))
 		if err != nil {
 			return err
@@ -338,6 +340,39 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		def.cols = a.aliasCols(left, c.Aliascolnames)
 		if err := a.checkRecursiveTerm(c.Ctename, selNode(sel.Rarg)); err != nil {
 			return err
+		}
+		if c.SearchClause != nil || c.CycleClause != nil {
+			if sel.Rarg != nil && sel.Rarg.Op != pg_query.SetOperation_SETOP_NONE {
+				return errAt(codeSyntaxError, c.Location, "with a SEARCH or CYCLE clause, the right side of the UNION must be a SELECT")
+			}
+			names := map[string]bool{}
+			for _, col := range def.cols {
+				names[col.name] = true
+			}
+			if sc2 := c.SearchClause; sc2 != nil {
+				if names[sc2.SearchSeqColumn] {
+					return errAt(codeSyntaxError, sc2.Location, "search sequence column name %q already used in WITH query column list", sc2.SearchSeqColumn)
+				}
+				if cy := c.CycleClause; cy != nil {
+					if sc2.SearchSeqColumn == cy.CycleMarkColumn {
+						return errAt(codeSyntaxError, sc2.Location, "search sequence column name and cycle mark column name are the same")
+					}
+					if sc2.SearchSeqColumn == cy.CyclePathColumn {
+						return errAt(codeSyntaxError, sc2.Location, "search sequence column name and cycle path column name are the same")
+					}
+				}
+			}
+			if cy := c.CycleClause; cy != nil {
+				if names[cy.CycleMarkColumn] {
+					return errAt(codeSyntaxError, cy.Location, "cycle mark column name %q already used in WITH query column list", cy.CycleMarkColumn)
+				}
+				if names[cy.CyclePathColumn] {
+					return errAt(codeSyntaxError, cy.Location, "cycle path column name %q already used in WITH query column list", cy.CyclePathColumn)
+				}
+				if cy.CycleMarkColumn == cy.CyclePathColumn {
+					return errAt(codeSyntaxError, cy.Location, "cycle mark column name and cycle path column name are the same")
+				}
+			}
 		}
 		// SEARCH / CYCLE columns are visible to the recursive term (WHERE NOT is_cycle)
 		a.addSearchCycleCols(def, c, sc)
@@ -525,6 +560,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		return a.relationRTE(rel, rv.Alias, rv.Location)
 	case *pg_query.Node_RangeSubselect:
 		sub := v.RangeSubselect
+		if ss := sub.Subquery.GetSelectStmt(); ss != nil && ss.IntoClause != nil {
+			return nil, errAt(codeSyntaxError, ss.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
+		}
 		child := newScope(sc)
 		if !sub.Lateral {
 			// non-lateral subqueries cannot see sibling FROM items; they can see outer levels
@@ -683,7 +721,9 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		}
 		cols = []rteCol{{name: "?column?", typ: e.typ, nullable: true}}
 	} else {
+		a.inFromFunc = true
 		e, err := a.funcCall(fc, sc)
+		a.inFromFunc = false
 		if err != nil {
 			return nil, err
 		}
@@ -933,8 +973,10 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 		return nil, err
 	}
 	var cols []*schema.Column
+	var indirect []bool // the target has subscripts / a field: DEFAULT is not allowed there
 	if len(ins.Cols) == 0 {
 		cols = rel.Columns
+		indirect = make([]bool, len(cols))
 	} else {
 		for _, cn := range ins.Cols {
 			rt := cn.GetResTarget()
@@ -949,10 +991,17 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 				}
 			}
 			cols = append(cols, c)
+			indirect = append(indirect, len(rt.Indirection) > 0)
 		}
+	}
+	if err := a.checkDuplicateBase(cols); err != nil {
+		return nil, err
 	}
 	if ins.SelectStmt != nil {
 		sel := ins.SelectStmt.GetSelectStmt()
+		if sel.IntoClause != nil {
+			return nil, errAt(codeSyntaxError, sel.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
+		}
 		if len(sel.ValuesLists) > 0 && sel.Op == pg_query.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
 			// VALUES: coerce each expression directly to its column (assignment context)
 			for _, ln := range sel.ValuesLists {
@@ -966,6 +1015,9 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 				for i, it := range items {
 					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
 						return nil, errAt(codeGeneratedAlways, loc(it), "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+					}
+					if indirect[i] && it.GetSetToDefault() != nil {
+						return nil, errAt(codeFeatureNotSupported, loc(it), "cannot set an array element to DEFAULT")
 					}
 					e, err := a.analyzeExpr(it, sc)
 					if err != nil {
@@ -1042,6 +1094,7 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 	// SET (a, b) = (x, y) / (SELECT ...): one source, analyzed once, one value per column
 	sources := map[*pg_query.Node][]*expr{}
 	assignedCols := map[string]bool{}
+	var plain []*schema.Column
 	for _, tn := range targets {
 		t := tn.GetResTarget()
 		col := rel.Column(t.Name)
@@ -1053,6 +1106,10 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 				return errAt(codeSyntaxError, t.Location, "multiple assignments to same column %q", t.Name)
 			}
 			assignedCols[t.Name] = true
+			plain = append(plain, col)
+			if err := a.checkDuplicateBase(plain); err != nil {
+				return err
+			}
 		}
 		if col.Identity == 'a' && t.Val.GetSetToDefault() == nil {
 			return errAt(codeGeneratedAlways, t.Location, "column %q can only be updated to DEFAULT", col.Name)
@@ -1060,6 +1117,9 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 		if len(t.Indirection) > 0 {
 			var err *Error
 			if t.Val.GetSetToDefault() != nil {
+				if t.Indirection[0].GetString_() != nil {
+					return errAt(codeFeatureNotSupported, t.Location, "cannot set a subfield to DEFAULT")
+				}
 				return errAt(codeFeatureNotSupported, t.Location, "cannot set an array element to DEFAULT")
 			}
 			if col, err = a.indirectTarget(col, t.Indirection, t.Location); err != nil {
@@ -1792,4 +1852,21 @@ func (a *analyzer) outerLevelAggregate(f *pg_query.FuncCall, sc *scope) bool {
 		})
 	}
 	return sawRef && !local
+}
+
+// checkDuplicateBase rejects assigning two target columns that are the same base-table
+// column (a view exposing a column twice).
+func (a *analyzer) checkDuplicateBase(cols []*schema.Column) *Error {
+	seen := map[*schema.Column]bool{}
+	for _, c := range cols {
+		base := c
+		if b, ok := a.viewBase[c]; ok {
+			base = b
+		}
+		if seen[base] {
+			return errAt(codeSyntaxError, -1, "multiple assignments to same column %q", base.Name)
+		}
+		seen[base] = true
+	}
+	return nil
 }

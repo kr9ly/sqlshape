@@ -40,6 +40,7 @@ const (
 	MacAddr8                OID = 774
 	Money                   OID = 790
 	RegProcedure            OID = 2202
+	RegClass                OID = 2205
 	RegType                 OID = 2206
 	TxidSnapshot            OID = 2970
 	PgSnapshot              OID = 5038

@@ -155,6 +155,7 @@ func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
 // inherit copies a parent's columns (and, for partitions, its constraints) into rel.
 func (s *Schema) inherit(rel *Relation, parent *Relation, partition bool, loc int32) {
 	rel.Parents = append(rel.Parents, parent)
+	rel.IsPartition = rel.IsPartition || partition
 	for _, pc := range parent.Columns {
 		if rel.Column(pc.Name) != nil {
 			continue // a child may redeclare a parent column with the same type
@@ -400,12 +401,10 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 				continue
 			}
-			if st.Behavior == pg_query.DropBehavior_DROP_CASCADE {
-				for _, child := range append([]*Relation{}, s.Relations...) {
-					if child != rel && child.InheritsFrom(rel) {
-						s.removeRelation(child)
-						s.dropDependentViews(child)
-					}
+			for _, child := range append([]*Relation{}, s.Relations...) {
+				if child != rel && child.InheritsFrom(rel) && (st.Behavior == pg_query.DropBehavior_DROP_CASCADE || child.IsPartition) {
+					s.removeRelation(child)
+					s.dropDependentViews(child)
 				}
 			}
 			s.removeRelation(rel)
@@ -492,7 +491,23 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 			}
 			s.Operators = kept
-		case pg_query.ObjectType_OBJECT_SCHEMA, pg_query.ObjectType_OBJECT_EXTENSION,
+		case pg_query.ObjectType_OBJECT_SCHEMA:
+			name := on.GetString_().GetSval()
+			for _, r := range append([]*Relation{}, s.Relations...) {
+				if r.Schema == name {
+					s.removeRelation(r)
+					s.dropDependentViews(r)
+				}
+			}
+			var fns []*Function
+			for _, f := range s.Functions {
+				if f.Schema != name {
+					fns = append(fns, f)
+				}
+			}
+			s.Functions = fns
+			s.Types.removeSchema(name)
+		case pg_query.ObjectType_OBJECT_EXTENSION,
 			pg_query.ObjectType_OBJECT_POLICY, pg_query.ObjectType_OBJECT_RULE, pg_query.ObjectType_OBJECT_COLLATION:
 			// no typing consequence
 		default:

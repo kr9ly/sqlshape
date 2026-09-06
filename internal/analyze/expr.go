@@ -453,7 +453,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		switch a.baseType(e.oid()) {
 		case catalog.Text, catalog.JSON, catalog.JSONB, catalog.Bytea, catalog.Varchar, catalog.BPChar, catalog.Name:
 		default:
-			return nil, errAt(codeDatatypeMismatch, v.JsonIsPredicate.Location, "cannot use type %s in IS JSON predicate", a.s.Types.Format(e.typ))
+			if c, _ := a.category(a.baseType(e.oid())); c != 'S' {
+				return nil, errAt(codeDatatypeMismatch, v.JsonIsPredicate.Location, "cannot use type %s in IS JSON predicate", a.s.Types.Format(e.typ))
+			}
 		}
 		return &expr{typ: ref(catalog.Bool), nullable: e.nullable, node: n}, nil
 	case *pg_query.Node_SetToDefault:
@@ -523,6 +525,9 @@ func (a *analyzer) constExpr(c *pg_query.A_Const, n *pg_query.Node) *expr {
 	case *pg_query.A_Const_Fval:
 		s := v.Fval.GetFval()
 		if !strings.ContainsAny(s, ".eE") {
+			if _, err := strconv.ParseInt(s, 10, 32); err == nil {
+				return &expr{typ: ref(catalog.Int4), node: n, lit: true} // -2147483648, folded with its sign
+			}
 			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
 				return &expr{typ: ref(catalog.Int8), node: n, lit: true}
 			}
@@ -862,7 +867,10 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		// count(*)
 	} else {
 		var err *Error
-		if args, err = a.analyzeList(f.Args, sc); err != nil {
+		a.inFuncArgs++
+		args, err = a.analyzeList(f.Args, sc)
+		a.inFuncArgs--
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -892,6 +900,17 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 	}
 	for _, n := range f.AggOrder {
+		if f.AggDistinct {
+			found := false
+			for _, arg := range f.Args {
+				if deparse(arg) == deparse(n.GetSortBy().GetNode()) {
+					found = true
+				}
+			}
+			if !found {
+				return nil, errAt(codeInvalidColumnRef, loc(n.GetSortBy().GetNode()), "in an aggregate with DISTINCT, ORDER BY expressions must appear in argument list")
+			}
+		}
 		e, err := a.analyzeExpr(n.GetSortBy().GetNode(), sc)
 		if err != nil {
 			return nil, err
@@ -963,6 +982,14 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	}
 	a.lastCatFunc = c.fn
 	a.lastFuncRetSet = (c.fn != nil && c.fn.RetSet) || (c.ufn != nil && c.ufn.RetSet)
+	if a.lastFuncRetSet {
+		if a.inFromFunc && a.inFuncArgs > 0 {
+			return nil, errAt(codeFeatureNotSupported, f.Location, "set-returning functions must appear at top level of FROM")
+		}
+		if a.inCase > 0 {
+			return nil, errAt(codeFeatureNotSupported, f.Location, "set-returning functions are not allowed in CASE")
+		}
+	}
 	switch {
 	case c.fn != nil:
 		a.funcVolatility[f] = c.fn.Volatile
@@ -1034,6 +1061,8 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 }
 
 func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {
+	a.inCase++
+	defer func() { a.inCase-- }()
 	var arg *expr
 	if c.Arg != nil {
 		var err *Error
@@ -1093,6 +1122,9 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 	sel := s.Subselect.GetSelectStmt()
 	if sel == nil {
 		return nil, errAt(codeFeatureNotSupported, s.Location, "unsupported subquery")
+	}
+	if sel.IntoClause != nil {
+		return nil, errAt(codeSyntaxError, sel.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
 	}
 	cols, err := a.selectStmt(sel, newScope(sc))
 	if err != nil {

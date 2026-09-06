@@ -93,6 +93,8 @@ type Relation struct {
 	InsteadRules map[string]bool
 	// Parents are the tables this one INHERITS from / is a PARTITION OF.
 	Parents []*Relation
+	// IsPartition: created as PARTITION OF (dropped with its parent).
+	IsPartition bool
 	// QualifiedRules (views): write commands that have a conditional DO INSTEAD rule
 	// (WHERE ...), which does not make the view take the write but does stop it from
 	// being auto-updatable.

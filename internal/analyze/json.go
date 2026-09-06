@@ -25,7 +25,26 @@ func (a *analyzer) jsonOutput(o *pg_query.JsonOutput, def catalog.OID) (schema.T
 	if err != nil {
 		return schema.TypeRef{}, errAt(codeUndefinedObject, o.TypeName.Location, "%v", err)
 	}
+	if tt := a.typ(t.OID); tt != nil && tt.Kind == 'p' {
+		return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.TypeName.Location, "returning pseudo-types is not supported in SQL/JSON functions")
+	}
 	return t, nil
+}
+
+// containsSubLink reports a subquery anywhere in the expression.
+func containsSubLink(n *pg_query.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.GetSubLink() != nil {
+		return true
+	}
+	for _, c := range children(n) {
+		if containsSubLink(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // jsonValue types a JSON value expression (the context item of a query function, an
@@ -92,6 +111,9 @@ func (a *analyzer) jsonPassing(args []*pg_query.Node, sc *scope) *Error {
 func (a *analyzer) jsonBehavior(b *pg_query.JsonBehavior, sc *scope, want catalog.OID) *Error {
 	if b == nil || b.Expr == nil {
 		return nil
+	}
+	if b.Btype == pg_query.JsonBehaviorType_JSON_BEHAVIOR_DEFAULT && (containsSubLink(b.Expr) || a.aggregateIn(b.Expr) != nil || windowIn(b.Expr) != nil) {
+		return errAt(codeDatatypeMismatch, loc(b.Expr), "can only specify a constant, non-aggregate function, or operator expression for DEFAULT")
 	}
 	e, err := a.analyzeExpr(b.Expr, sc)
 	if err != nil {

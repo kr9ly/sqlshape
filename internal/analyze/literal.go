@@ -45,7 +45,7 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 			return bad(name)
 		}
 	case catalog.Numeric:
-		if _, err := parsePGInt(v, 64); err == nil {
+		if _, err := parsePGInt(v, 64); err == nil || isNonDecimalInt(v) {
 			return nil // non-decimal integer literals and digit separators are numeric input too
 		}
 		v = stripDigitSeparators(v)
@@ -71,6 +71,8 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		return validateXMLLiteral(s, loc)
 	case catalog.RegType:
 		return a.validateRegtypeLiteral(s, loc)
+	case catalog.RegClass:
+		return a.validateRegclassLiteral(s, loc)
 	case catalog.RegProc, catalog.RegProcedure:
 		return a.validateRegprocLiteral(s, base == catalog.RegProcedure, loc)
 	case catalog.Money:
@@ -542,8 +544,8 @@ func (a *analyzer) validateRegprocLiteral(s string, withArgs bool, loc int32) *E
 		schemaName = parts[len(parts)-2]
 	}
 	for _, fn := range a.s.Functions {
-		if fn.Name == fname && (schemaName == "" && a.s.OnSearchPath(fn.Schema) || fn.Schema == schemaName) {
-			return nil
+		if fn.Name == fname && (schemaName == "" || fn.Schema == schemaName) {
+			return nil // the session's search_path is not ours to know: any schema will do
 		}
 	}
 	if schemaName == "" || schemaName == "pg_catalog" {
@@ -752,4 +754,76 @@ func validateXMLLiteral(s string, loc int32) *Error {
 		return bad()
 	}
 	return nil
+}
+
+// isNonDecimalInt is a 0x / 0o / 0b integer of any length, digit separators allowed
+// (numeric_in has no range limit).
+func isNonDecimalInt(v string) bool {
+	v = strings.TrimLeft(v, "+-")
+	if len(v) < 3 || v[0] != '0' {
+		return false
+	}
+	base := 0
+	switch v[1] {
+	case 'x', 'X':
+		base = 16
+	case 'o', 'O':
+		base = 8
+	case 'b', 'B':
+		base = 2
+	default:
+		return false
+	}
+	v = strings.TrimPrefix(v[2:], "_")
+	if v == "" || strings.HasSuffix(v, "_") || strings.Contains(v, "__") {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] == '_' {
+			continue
+		}
+		if _, ok := digitVal(v[i], base); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// validateRegclassLiteral is regclassin: a numeric OID, or the name of a table, view,
+// sequence, index or composite type (42P01 otherwise).
+func (a *analyzer) validateRegclassLiteral(s string, loc int32) *Error {
+	v := strings.TrimSpace(s)
+	if v == "" || v == "-" {
+		return nil
+	}
+	if _, err := parsePGInt(v, 64); err == nil {
+		return nil
+	}
+	parts := strings.Split(v, ".")
+	for i := range parts {
+		parts[i] = strings.Trim(strings.TrimSpace(parts[i]), `"`)
+	}
+	schemaName, name := "", parts[len(parts)-1]
+	if len(parts) > 1 {
+		schemaName = parts[len(parts)-2]
+	}
+	if a.s.Relation(schemaName, name) != nil {
+		return nil
+	}
+	for _, r := range a.s.Relations {
+		if schemaName != "" && r.Schema != schemaName {
+			continue
+		}
+		for _, ix := range r.Indexes {
+			if ix.Name == name {
+				return nil
+			}
+		}
+		for _, c := range r.Constraints {
+			if c.Name == name && (c.Kind == schema.PrimaryKey || c.Kind == schema.Unique) {
+				return nil // the index behind a PK / UNIQUE constraint
+			}
+		}
+	}
+	return errAt("42P01", loc, "relation %q does not exist", v)
 }

@@ -7,6 +7,7 @@ package analyze
 
 import (
 	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func (a *analyzer) checkRecursiveTerm(name string, term *pg_query.Node) *Error {
@@ -115,12 +116,50 @@ func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop stri
 		}
 		return nil
 	}
-	for _, c := range children(n) {
+	for _, c := range allNodes(n) {
 		if err := w.walk(c, inSub, inOuter, setop); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// allNodes is children() that also looks through message fields that are not Nodes
+// themselves (WithClause, IntoClause, OnConflictClause, ...).
+func allNodes(n *pg_query.Node) []*pg_query.Node {
+	var out []*pg_query.Node
+	var descend func(m protoreflect.Message)
+	descend = func(m protoreflect.Message) {
+		m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			if fd.Kind() != protoreflect.MessageKind {
+				return true
+			}
+			visit := func(mv protoreflect.Message) {
+				if c, ok := mv.Interface().(*pg_query.Node); ok {
+					out = append(out, c)
+					return
+				}
+				descend(mv)
+			}
+			if fd.IsList() {
+				l := v.List()
+				for i := 0; i < l.Len(); i++ {
+					visit(l.Get(i).Message())
+				}
+				return true
+			}
+			visit(v.Message())
+			return true
+		})
+	}
+	// the Node's single oneof payload
+	n.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if fd.Kind() == protoreflect.MessageKind {
+			descend(v.Message())
+		}
+		return true
+	})
+	return out
 }
 
 func selNode(sel *pg_query.SelectStmt) *pg_query.Node {
@@ -138,7 +177,10 @@ func (w *recursionWalker) mentions(n *pg_query.Node) bool {
 	if rv := n.GetRangeVar(); rv != nil && rv.Schemaname == "" && rv.Relname == w.name {
 		return true
 	}
-	for _, c := range children(n) {
+	if sel := n.GetSelectStmt(); sel != nil && (w.mentions(selNode(sel.Larg)) || w.mentions(selNode(sel.Rarg))) {
+		return true
+	}
+	for _, c := range allNodes(n) {
 		if w.mentions(c) {
 			return true
 		}
