@@ -59,9 +59,9 @@ MySQL 等は別インターフェースとして割り切る。共通化しよ�
 
 ### スキーマは宣言 1 ファイル、マイグレーションは書かない
 
-`schema.sql` を真実の源にする。DB の実状態は sqldef が寄せ、コードの実状態は
-sqlshape が寄せる。検査器はマイグレーション再生すら不要で `schema.sql` を
-空の PG に流すだけ。
+`schema.sql` を真実の源にする。DB の実状態は sqlshape の diff / apply が寄せ、コードの実状態は
+sqlshape vet が寄せる。検査器はマイグレーション再生すら不要で `schema.sql` を
+空の PG に流すだけ。DB 側の寄せ方は「マイグレーション: 自前の diff / apply」参照。
 
 「マイグレーションに書いてあるスキーマしか使えない」は制約として検査するのではなく、
 制約以外の状態が作れなくなる。要件 4 は解決ではなく消滅する。
@@ -71,12 +71,12 @@ sqlshape が寄せる。検査器はマイグレーション再生すら不要�
 - マイグレーション PR の影響分析（この DROP はどの呼び出し箇所を壊すか）
 - 死んだスキーマの検出（どのクエリからも参照されない列・テーブル・インデックス）
 - ローリングデプロイの世代跨ぎ検査（HEAD と HEAD~1 の schema.sql で 2 回回す）
-- ドリフト検出（再生結果 vs 本番 `pg_dump --schema-only`）
-- sqldef の DROP ゲート: 参照クエリ 0 件なら CI 自動許可、1 件以上なら人間レビュー
+- ドリフト検出（稼働 DB の逆ロード vs `schema.sql` の再生結果）
+- DROP ゲート: 参照クエリ 0 件なら CI 自動許可、1 件以上なら人間レビュー
 
-sqldef で表現できないもの（データマイグレーション / 順序依存の複合変更）は
-当面は別ディレクトリの命令的ステップとして持つ。いずれ sqlshape 側で引き取る
-（「マイグレーション: sqldef の先」参照）。
+diff ツールが判断できないもの（rename か drop + add か、enum 値の削除、backfill）は意図宣言で受け、
+固定値テーブルの中身は schema.sql に普通の INSERT として書く。命令的なマイグレーションファイルは
+持たない（「マイグレーション: 自前の diff / apply」参照）。
 
 ## 書き味（Go）
 
@@ -207,7 +207,7 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 ストアドが避けられてきた理由がこの構成で全部消える:
 
 - バージョン管理されない → schema.sql が git にある
-- デプロイが手作業 → sqldef が `CREATE OR REPLACE FUNCTION` の差分を当てる
+- デプロイが手作業 → sqlshape diff が `CREATE OR REPLACE FUNCTION`（シグネチャ変更なら依存ビュー込みの DROP → CREATE）を出す
 - 呼び出し側が型なしで壊れる → シグネチャ変更で全呼び出し箇所が lint で赤くなる
 
 踏み込める範囲:
@@ -221,8 +221,8 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 - 関数戻り値の nullability は原理的に不明。`STRICT` と NOT NULL ドメインから拾い、他は nullable 扱いで
   `-- sqlshape: not null` 注釈で上書き
 - `RETURNS record` を OUT なしで宣言した関数は呼び出し側の列定義リストが必須。そこも検査対象
-- psqldef が `CREATE FUNCTION` の差分をどこまで扱えるか未確認。扱えなければテーブルは sqldef、
-  関数は `CREATE OR REPLACE` で全量再適用、の分担で済む
+- 関数の差分は本体の AST 比較（`pg_query.Deparse` の正規化形）。本体だけの変更は `CREATE OR REPLACE`、
+  シグネチャ変更は依存ビュー / トリガーを含めた DROP → CREATE の依存順序で出す
 
 ## 副産物: ビュー / マテリアライズドビューを DB の公開 API にする
 
@@ -250,7 +250,8 @@ PGlite は JS ホスト前提で Go からは使いづらい。DB を起動し�
 - runtime: 型付きの `Refresh(ctx, OrderStatsMV)` ハンドル
 - リフレッシュのタイミングは業務判断。ツールは依存情報まで
 
-psqldef の `CREATE VIEW` 差分は対応があるはず。MV / 関数は対応が薄ければ全量再適用の分担。
+ビュー / MV / 関数の差分は自前 diff がオブジェクト単位で持つ（本体は AST 比較、基底列の型変更で壊れる
+ビューは依存順序で DROP → ALTER → CREATE）。MV は再作成 = REFRESH を伴うので差分に注記する。
 
 ## ORM の代替としての読み方
 
@@ -467,9 +468,11 @@ sqlshape が「サービス B のコードは `a_api.*` と `b_private.*` 以外
 切れていれば後で本当に分けるときその境界で切れること（`a_private` を論理レプリケーションで別インスタンスへ、
 `a_api` を FDW か API 呼び出しに置換）。境界のない共有 DB の分離が地獄だったのは境界がなかったから。
 
-## マイグレーション: sqldef の先
+## マイグレーション: 自前の diff / apply
 
-最初は sqldef でよい。ただし diff ツール一般の限界が 2 つあり、片方は sqlshape だけが埋められる。
+diff ツールは自前で持つ（裁定 2026-09-06。当初は sqldef をラップする案だったが、schema 層が既に
+DDL 全般のオブジェクトモデルを持ち、embedded PG が生成 DDL の機械検証に使えるので、外部ツールの
+出力を検査する層より自前で出す方が短い）。diff ツール一般の限界が 2 つあり、片方は sqlshape だけが埋められる。
 
 - **変更の意味を知らない。** before/after の diff からは「rename か drop + add か」「enum 値の削除を
   どう実現するか」「NOT NULL 追加時の既存行はどうするか」が決まらない。Prisma も Atlas も同じ壁に
@@ -499,27 +502,62 @@ diff が判断できない部分を schema.sql の隣に宣言として置く:
 ### 固定値テーブルの宣言的データマイグレーション（本命）
 
 lookup テーブル（`order_statuses(code, label, sort_order, active)` のような固定値テーブル）の中身を
-schema.sql と同格の宣言にする:
+schema.sql に**普通の INSERT** として書く（裁定 2026-09-06。コメント構文 `@data` は不採用。
+INSERT なら analyzer の型 / NOT NULL / FK / CHECK / enum / domain 検査がそのまま効き、psql にも流せる）:
 
 ```sql
--- @data order_statuses (code, label, sort_order)
---   ('pending',   '保留',   10),
---   ('paid',      '支払済', 20),
---   ('shipped',   '発送済', 30);
+INSERT INTO order_statuses (code, label, sort_order) VALUES
+  ('pending', '保留',   10),
+  ('paid',    '支払済', 20),
+  ('shipped', '発送済', 30);
 ```
 
-- 適用は宣言と実テーブルの差分から生成する。追加は INSERT、変更は UPDATE、削除は DELETE
-  （FK 参照が残っていれば DB が弾く。事前に参照件数を出して止められる）
-- **検査器はこの宣言を値集合として読める**。lookup テーブルが enum と同じ精度で「値集合の共有」
-  検査に乗る。enum の落とし穴（DROP VALUE 不在・宣言順比較・LoadType）は構造的に無い
+- loader は InsertStmt を受けて `Relation.Rows` に定数行を持つ。冪等でない INSERT はエラー:
+  ① PK / NOT NULL UNIQUE が無い ② キー列が定数で埋まっていない（serial PK 省略で code UNIQUE も無い等。
+  定数で埋まったキーが同一性、複数あれば全一致）③ 値が非 immutable（now() / random() / サブクエリ /
+  nextval。volatility で判定）④ ON CONFLICT 付き ⑤ 宣言内でキー重複
+- 所有権: INSERT のあるテーブルは宣言が所有し、宣言外の行はドリフト（DELETE）。`-- sqlshape: seed` で
+  「追加のみ・削除しない」の逃げ道。INSERT に無い列（DEFAULT 任せ）は比較しない
+- 差分は PG にやらせる。テーブルごとに 1 文の MERGE〔`USING (VALUES ...) ON key` / MATCHED AND
+  IS DISTINCT FROM → UPDATE / NOT MATCHED → INSERT / NOT MATCHED BY SOURCE → DELETE（PG 17）〕を生成、
+  ドライランは `RETURNING merge_action()` + ROLLBACK。FK 依存で親 → 子の INSERT、子 → 親の DELETE、
+  削除前に参照件数で止める
+- **検査器は Rows を値集合として読める**。キー列を enum と同じ経路で Go typed const と両方向 diff。
+  lookup テーブルが enum と同じ精度で「値集合の共有」検査に乗り、enum の落とし穴（DROP VALUE 不在・
+  宣言順比較・LoadType）は構造的に無い
 - ビュー（semantic layer）から JOIN で名前解決できるので、分析側にも同じ集合が届く
-- 固定値テーブルとマスタデータ（運用で増える）の境界は宣言の有無で決まる。宣言したテーブルは
-  宣言以外の行が「ドリフト」として検出される
+- 固定値テーブルとマスタデータ（運用で増える）の境界は INSERT の有無で決まる
+
+### CLI と apply の一致確認
+
+`sqlshape vet` / `diff` / `apply <ddl.sql>` / `verify-schema` のサブコマンド構成（現状は vet 一本の
+singlechecker）。**diff は DDL を出すだけ、apply は DDL ファイルを入力に取る**（裁定 2026-09-06）。
+間に人間の手編集（順序変更・文の分割・USING の追加・backfill の UPDATE 挟み込み）が入る前提。
+
+apply の一致確認は文字列比較ではなく**終点比較**: 実 DB を逆ロード（ここでドリフトも捕まる）→
+embedded PG 上でその状態に入力 DDL を当てて再逆ロード → `schema.sql` の Schema と差分ゼロなら実 DB に
+適用。終点が同じなら手編集の中身は問わない。追加検査: DROP / 型変更の消費者ゼロ、入力 DDL 中の DML は
+analyzer で型検査のみ、非トランザクション文（CONCURRENTLY / ADD VALUE）は phase 分割。
+穴: 終点比較は rename と drop + add を区別できない → `@migrate rename` の「説明のつかない DROP はエラー」で塞ぐ。
 
 ### 進め方
 
-sqldef の実行系は書き直さない。「sqldef の出力を sqlshape が検査して危険なら止める」ラッパーから
-始め、意図宣言 → 固定値データ → 手順生成の順で diff の判断部分を引き取る。
+依存順に:
+
+1. **実 DB → Schema の逆ロード**（drift 検出と apply の終点比較の核）。まず `pg_dump --schema-only` の
+   出力を loader に食わせる（loader はダンプ形式を概ね読める。SET / OWNER / GRANT は無視済み）。
+   pg_catalog 直読みは必要になったら
+2. **Schema 同士の差分**（relation / column / constraint / index / type / function / view / trigger / rule /
+   sequence / comment のオブジェクト単位）。rename は diff から決めず意図宣言で受ける
+3. **機械検証**: 現スキーマ + 生成 DDL を embedded PG に当て、1 で逆ロードして目標 Schema と差分ゼロを確認
+   （regress probe と同じオラクル差分の構図）。DDL 生成より先に足場を置く
+4. **DDL 生成 + 依存順序**: 型変更で壊れるビュー / 関数の DROP → ALTER → CREATE（schema 層の CASCADE
+   連鎖ロジックを再利用）、enum 値削除の新型作成 + USING、ADD VALUE のトランザクション分離
+5. **消費者インデックス**: vet の Result を集計して「table.column → 参照 statement の位置」を出す層
+6. **意図宣言 `@migrate`** と diff の整合検査、backfill 式の型検査
+7. **固定値テーブル**（INSERT → Rows → MERGE 生成、値集合としての読み取り）
+8. **CLI サブコマンド化**
+
 アナライザー本体（型検査・スコープ・nullability）が無いと影響分析も backfill の検査も成立しないので、
 依存は明確に「アナライザー → マイグレーション」。
 
@@ -552,7 +590,7 @@ sqldef の実行系は書き直さない。「sqldef の出力を sqlshape が�
 
 DB 中心設計（Koppelaars "Fat Database"、PL/SQL 中心の基幹系）が退潮したのは思想の誤りではなく、
 git・CI・型検査・テスト自動化がアプリ側にだけ来て DB 側が手作業と無型のまま残ったから。
-sqlshape + schema.sql + sqldef はその差を埋める。加えて LLM の時代には、SQL が学習データに濃い言語で
+sqlshape + schema.sql はその差を埋める。加えて LLM の時代には、SQL が学習データに濃い言語で
 あること、書いた SQL が全部静的検査されるオラクルがあることで、エージェントの試行ループが DB 側ロジック
 でも回る。層を減らして機械検査の表面を増やす方針に合う。
 
@@ -728,11 +766,13 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 状態 | 項目 | 備考 |
 |---|---|---|
 | ✅ | schema.sql → テーブル / ビュー / MV / enum / ドメイン / 複合型 / 関数 / 制約 / ユニークインデックス / COMMENT | 無名制約は PG と同じ命名 |
-| ⬜ | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、ドリフト検出、sqldef DROP ゲート | analyzer は列参照を全部見ているが、集計して出す層が無い |
+| ⬜ | 実 DB → Schema の逆ロード（`pg_dump --schema-only` を loader に）、ドリフト検出 | D1。apply の終点比較の核 |
+| ⬜ | Schema 同士の差分 → DDL 生成 + 依存順序、embedded PG での機械検証 | 裁定 2026-09-06: sqldef を捨てて自前 |
+| ⬜ | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、DROP ゲート | analyzer は列参照を全部見ているが、集計して出す層が無い |
 | ⬜ | 意図宣言 `@migrate`（rename / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
-| ⬜ | 固定値テーブルの `@data` 宣言 → 差分適用 + ドリフト検出、値集合としての読み取り | 本命 |
+| ⬜ | 固定値テーブル: schema.sql の INSERT → `Relation.Rows` → MERGE 生成 + ドリフト検出、値集合としての読み取り | 本命。`@data` コメント構文は不採用 |
+| ⬜ | CLI サブコマンド化（vet / diff / apply / verify-schema） | 現状 vet 一本 |
 | 🔶 | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | CREATE EXTENSION と SET search_path は schema 層が読む。ロール・PG 版は未 |
-| ⬜ | psqldef の CREATE FUNCTION / MV 差分の対応確認 | 対応が薄ければ全量再適用の分担 |
 
 ### 周辺・同梱物
 
