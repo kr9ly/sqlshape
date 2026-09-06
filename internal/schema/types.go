@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -72,7 +73,12 @@ func (ts *Types) Lookup(schema, name string) *catalog.Type {
 				return t
 			}
 		}
-		return ts.cat.TypeByName(name)
+		// a catalog type: pg_catalog's, or one living in a schema on the path (an
+		// extension's); information_schema's domains need qualifying
+		if t := ts.cat.TypeByName(name); t != nil && (t.Schema == "" || slices.Contains(path, t.Schema)) {
+			return t
+		}
+		return nil
 	}
 	if schema == "pg_catalog" {
 		if t := ts.cat.TypeByName(name); t != nil && t.Schema == "" {
@@ -138,7 +144,8 @@ func (ts *Types) Format(r TypeRef) string {
 		s, ok = t.Schema, true // an extension's type
 	}
 	if ok {
-		if s == "public" {
+		// format_type qualifies a type only when its schema is not on the search path
+		if s == "public" || slices.Contains(ts.searchPath, s) {
 			return quoteIdent(t.Name)
 		}
 		return quoteIdent(s) + "." + quoteIdent(t.Name)

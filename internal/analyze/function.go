@@ -156,7 +156,7 @@ func functionViolations(s *schema.Schema, cf calledFunc, visited map[*schema.Fun
 		if st.GetReturnStmt() != nil {
 			continue
 		}
-		r, err := analyzeStmt(s, st, fp, nil)
+		r, err := analyzeStmtIn(s, st, fp, nil, visited)
 		if err != nil {
 			continue
 		}

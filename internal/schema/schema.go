@@ -38,7 +38,8 @@ type Schema struct {
 	Problems []Problem
 
 	relByName  map[string]*Relation
-	pending    []string // directives preceding the statement being applied
+	sysRels    map[string]*Relation // system relations named so far (systemRelation)
+	pending    []string             // directives preceding the statement being applied
 	nextOID    catalog.OID
 	searchPath []string // SET search_path, nil = public
 }
@@ -84,6 +85,9 @@ type Relation struct {
 	// Unfiltered (views): tables a `-- sqlshape: unfiltered t1, t2` directive before the
 	// CREATE VIEW exempts from their visibility policy inside this view's query.
 	Unfiltered map[string]bool
+	// InsteadRules (views): the write commands ("insert" / "update" / "delete") a
+	// CREATE RULE ... DO INSTEAD makes the view take.
+	InsteadRules map[string]bool
 }
 
 // Column is one attribute.
@@ -312,9 +316,17 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		s.createTable(st.CreateStmt, loc)
 	case *pg_query.Node_ViewStmt:
 		s.createView(st.ViewStmt, loc)
+	case *pg_query.Node_SelectStmt:
+		if st.SelectStmt.IntoClause != nil {
+			s.createTableAs(st.SelectStmt.IntoClause, n, loc)
+		} else {
+			s.problem(loc, "unsupported statement %T", n.Node)
+		}
 	case *pg_query.Node_CreateTableAsStmt:
 		if st.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_MATVIEW {
 			s.createMatView(st.CreateTableAsStmt, loc)
+		} else if st.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_TABLE {
+			s.createTableAs(st.CreateTableAsStmt.Into, st.CreateTableAsStmt.Query, loc)
 		} else {
 			s.problem(loc, "CREATE TABLE AS is not supported in schema.sql")
 		}
@@ -344,9 +356,36 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		s.createCast(st.CreateCastStmt, loc)
 	case *pg_query.Node_VariableSetStmt:
 		s.setVariable(st.VariableSetStmt)
-	case *pg_query.Node_CreateSeqStmt, *pg_query.Node_CreateExtensionStmt, *pg_query.Node_CreateSchemaStmt,
+	case *pg_query.Node_CreateSchemaStmt:
+		// CREATE SCHEMA s CREATE TABLE t (...) ...: the elements are created in s
+		saved, savedT := s.searchPath, s.Types.searchPath
+		s.searchPath = append([]string{st.CreateSchemaStmt.Schemaname}, s.SearchPath()...)
+		s.Types.searchPath = s.searchPath
+		for _, elt := range st.CreateSchemaStmt.SchemaElts {
+			s.apply(elt, loc)
+		}
+		s.searchPath, s.Types.searchPath = saved, savedT
+	case *pg_query.Node_RuleStmt:
+		// a DO INSTEAD rule on a view for INSERT / UPDATE / DELETE makes the view take that write
+		r := st.RuleStmt
+		if r.Instead {
+			if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil && rel.Kind == View {
+				if rel.InsteadRules == nil {
+					rel.InsteadRules = map[string]bool{}
+				}
+				switch r.Event {
+				case pg_query.CmdType_CMD_INSERT:
+					rel.InsteadRules["insert"] = true
+				case pg_query.CmdType_CMD_UPDATE:
+					rel.InsteadRules["update"] = true
+				case pg_query.CmdType_CMD_DELETE:
+					rel.InsteadRules["delete"] = true
+				}
+			}
+		}
+	case *pg_query.Node_CreateSeqStmt, *pg_query.Node_CreateExtensionStmt,
 		*pg_query.Node_GrantStmt, *pg_query.Node_AlterSeqStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt,
-		*pg_query.Node_RuleStmt, *pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
+		*pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
 		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterPolicyStmt, *pg_query.Node_AlterExtensionStmt, *pg_query.Node_AlterObjectSchemaStmt,
 		*pg_query.Node_CreateEventTrigStmt, *pg_query.Node_AlterEventTrigStmt, *pg_query.Node_CreatePublicationStmt, *pg_query.Node_AlterPublicationStmt,
 		*pg_query.Node_CreateSubscriptionStmt, *pg_query.Node_CreateRoleStmt, *pg_query.Node_AlterRoleStmt, *pg_query.Node_GrantRoleStmt,
@@ -526,8 +565,12 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		if st.IfNotExists {
 			return
 		}
-		s.problem(loc, "relation %q already exists", name)
-		return
+		if st.Relation.Relpersistence != "t" {
+			s.problem(loc, "relation %q already exists", name)
+			return
+		}
+		// a temporary table hides the permanent one of the same name (pg_temp leads the
+		// search path); the hidden relation stays for its other references
 	}
 	rel := s.newRelation(schema, name, Table)
 	// a partition takes its parent's columns and constraints; an INHERITS child takes
@@ -576,6 +619,14 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 		return
 	}
 	col := &Column{Num: int16(len(rel.Columns) + 1), Name: cd.Colname, Type: tr, NotNull: cd.IsNotNull}
+	merged := false
+	if existing := rel.Column(cd.Colname); existing != nil {
+		// a child redeclaring an inherited column merges with it: NOT NULL accumulates,
+		// the child's default / identity / generated expression win
+		col = existing
+		col.NotNull = col.NotNull || cd.IsNotNull
+		merged = true
+	}
 	if isSerial(cd.TypeName) {
 		col.NotNull = true
 		col.Identity = 's' // serial: sequence default; behaves like identity for "who owns the value"
@@ -586,7 +637,9 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 			s.problem(cd.GetLocation(), "%s.%s: collation %q does not exist", rel.Name, cd.Colname, parts[len(parts)-1])
 		}
 	}
-	rel.Columns = append(rel.Columns, col)
+	if !merged {
+		rel.Columns = append(rel.Columns, col)
+	}
 	for _, cn := range cd.Constraints {
 		c := cn.GetConstraint()
 		switch c.GetContype() {
@@ -870,7 +923,22 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 		fn.RetType = tr
 		fn.RetSet = st.ReturnType.Setof
 	} else if !st.IsProcedure {
-		fn.RetType = TypeRef{OID: catalog.Void, Typmod: -1}
+		// no RETURNS: OUT / INOUT parameters shape the result (one is the type itself,
+		// several a record), otherwise void
+		var outs []FuncArg
+		for _, arg := range fn.Args {
+			if arg.Mode == 'o' || arg.Mode == 'b' {
+				outs = append(outs, arg)
+			}
+		}
+		switch len(outs) {
+		case 0:
+			fn.RetType = TypeRef{OID: catalog.Void, Typmod: -1}
+		case 1:
+			fn.RetType = outs[0].Type
+		default:
+			fn.RetType = TypeRef{OID: catalog.Record, Typmod: -1}
+		}
 	}
 	if len(tableCols) > 0 {
 		fn.RetSet = true
@@ -895,6 +963,16 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 		case "strict":
 			fn.Strict = d.GetArg().GetBoolean().GetBoolval()
 		}
+	}
+	if st.Replace {
+		// CREATE OR REPLACE: the function with the same input signature is redefined
+		var kept []*Function
+		for _, f := range s.Functions {
+			if !(f.Schema == fn.Schema && f.Name == fn.Name && sameInputs(f, fn)) {
+				kept = append(kept, f)
+			}
+		}
+		s.Functions = kept
 	}
 	s.Functions = append(s.Functions, fn)
 }
@@ -1119,4 +1197,61 @@ func parseExpr(text string) (Expr, error) {
 		return nil, fmt.Errorf("one expression expected")
 	}
 	return targets[0].GetResTarget().GetVal(), nil
+}
+
+// sameInputs reports whether two functions take the same input parameter types.
+func sameInputs(a, b *Function) bool {
+	inputs := func(f *Function) []catalog.OID {
+		var out []catalog.OID
+		for _, arg := range f.Args {
+			if arg.Mode == 'i' || arg.Mode == 'b' || arg.Mode == 'v' {
+				out = append(out, arg.Type.OID)
+			}
+		}
+		return out
+	}
+	x, y := inputs(a), inputs(b)
+	if len(x) != len(y) {
+		return false
+	}
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// QueryColumns types a query's result columns for CREATE TABLE AS / SELECT INTO. The
+// analyzer installs it (package analyze imports schema, not the reverse); nil leaves
+// such tables as problems.
+var QueryColumns func(s *Schema, query *pg_query.Node) ([]*Column, error)
+
+// createTableAs creates the table a CREATE TABLE AS / SELECT INTO fills, with the
+// query's columns (renamed by the INTO column list when given).
+func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, loc int32) {
+	schema, name := s.rangeVar(into.Rel)
+	if s.relByName[schema+"."+name] != nil {
+		if into.Rel.Relpersistence != "t" {
+			s.problem(loc, "relation %q already exists", name)
+			return
+		}
+	}
+	if QueryColumns == nil {
+		s.problem(loc, "CREATE TABLE AS %s: the query's columns need the analyzer", name)
+		return
+	}
+	cols, err := QueryColumns(s, query)
+	if err != nil {
+		s.problem(loc, "CREATE TABLE AS %s: %v", name, err)
+		return
+	}
+	rel := s.newRelation(schema, name, Table)
+	for i, c := range cols {
+		c.Num = int16(i + 1)
+		if i < len(into.ColNames) {
+			c.Name = into.ColNames[i].GetString_().GetSval()
+		}
+		rel.Columns = append(rel.Columns, c)
+	}
 }

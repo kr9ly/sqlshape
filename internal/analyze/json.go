@@ -47,8 +47,15 @@ func (a *analyzer) jsonValue(v *pg_query.JsonValueExpr, sc *scope) (*expr, *Erro
 // jsonContext types the context item of JSON_EXISTS / JSON_QUERY / JSON_VALUE / JSON_TABLE:
 // json, jsonb, or a string / bytea with FORMAT JSON.
 func (a *analyzer) jsonContext(v *pg_query.JsonValueExpr, sc *scope, at int32) (*expr, *Error) {
-	e, err := a.jsonValue(v, sc)
+	if v == nil {
+		return nil, errAt(codeSyntaxError, -1, "missing JSON value")
+	}
+	e, err := a.analyzeExpr(v.RawExpr, sc)
 	if err != nil {
+		return nil, err
+	}
+	// an untyped literal context item is jsonb (transformJsonValueExpr), and is validated as such
+	if err := a.bind(e, catalog.JSONB, loc(v.RawExpr)); err != nil {
 		return nil, err
 	}
 	switch a.baseType(e.oid()) {

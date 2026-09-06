@@ -12,6 +12,12 @@ import (
 
 // selectStmt analyzes a SELECT (incl. set operations and VALUES) and returns its output columns.
 func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error) {
+	keepUnknown := a.keepUnknown
+	a.keepUnknown = false
+	// a subquery is its own level for aggregate nesting
+	savedAggArgs := a.inAggArgs
+	a.inAggArgs = 0
+	defer func() { a.inAggArgs = savedAggArgs }()
 	if sel.WithClause != nil {
 		if err := a.withClause(sel.WithClause, sc); err != nil {
 			return nil, err
@@ -61,8 +67,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if err != nil {
 			return nil, err
 		}
-		// unresolved unknown in an output column becomes text
-		if e.oid() == catalog.Unknown {
+		// unresolved unknown in an output column becomes text (INSERT ... SELECT keeps it
+		// for the target column to type)
+		if e.oid() == catalog.Unknown && !keepUnknown {
 			if err := a.bind(e, catalog.Text, t.Location); err != nil {
 				return nil, err
 			}
@@ -166,6 +173,18 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 func (a *analyzer) boolClause(n *pg_query.Node, sc *scope, what string) *Error {
 	if n == nil {
 		return nil
+	}
+	if what == "WHERE" || what == "ON" {
+		where := "WHERE"
+		if what == "ON" {
+			where = "JOIN conditions"
+		}
+		if agg := a.aggregateIn(n); agg != nil && !a.outerLevelAggregate(agg, sc) {
+			return errAt(codeGroupingError, agg.Location, "aggregate functions are not allowed in %s", where)
+		}
+		if w := windowIn(n); w != nil {
+			return errAt(codeWindowingError, w.Location, "window functions are not allowed in %s", where)
+		}
 	}
 	e, err := a.analyzeExpr(n, sc)
 	if err != nil {
@@ -408,7 +427,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			return nil, err
 		}
 		if sub.Alias == nil {
-			return nil, errAt(codeSyntaxError, -1, "subquery in FROM must have an alias")
+			sub.Alias = &pg_query.Alias{Aliasname: "unnamed_subquery"} // optional since PG 16
 		}
 		r := &rte{alias: sub.Alias.Aliasname, sub: &subquery{what: "subquery", sel: sub.Subquery.GetSelectStmt(), sc: child}}
 		for i, c := range cols {
@@ -421,6 +440,8 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		return r, nil
 	case *pg_query.Node_RangeFunction:
 		return a.rangeFunction(v.RangeFunction, sc)
+	case *pg_query.Node_RangeTableFunc:
+		return a.xmlTable(v.RangeTableFunc, sc)
 	case *pg_query.Node_JoinExpr:
 		return a.joinExpr(v.JoinExpr, sc)
 	case *pg_query.Node_JsonTable:
@@ -516,6 +537,7 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 	}
 	r := &rte{}
 	var cols []rteCol
+	scalar, outName := false, "" // a scalar result: its one column is named by the OUT parameter, the alias, or the function
 	coldefs := rf.Coldeflist
 	if len(items) > 1 && len(coldefs) == 0 {
 		coldefs = items[1].GetList().GetItems()
@@ -537,6 +559,8 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		fname := names[len(names)-1]
 		r.alias = fname
 		t := a.typ(e.typ.OID)
+		scalar = !(t != nil && t.Kind == 'c' && t.RelID != 0) && e.typ.OID != catalog.Record
+		outName = a.singleOutName()
 		switch {
 		case t != nil && t.Kind == 'c' && t.RelID != 0:
 			rel := a.relByRowType(t.OID)
@@ -546,28 +570,15 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		case e.typ.OID == catalog.Record:
 			// RETURNS TABLE / OUT params of a user function, or of a catalog function
 			// (jsonb_each, json_each_text, ...)
-			if uf := a.lastUserFunc; uf != nil {
-				for _, arg := range uf.Args {
-					if arg.Mode == 't' || arg.Mode == 'o' || arg.Mode == 'b' {
-						cols = append(cols, rteCol{name: arg.Name, typ: arg.Type, nullable: true})
-					}
-				}
-			} else if cf := a.lastCatFunc; cf != nil && len(cf.ArgModes) == len(cf.AllArgTypes) {
-				for i, m := range cf.ArgModes {
-					if m == 'o' || m == 't' || m == 'b' {
-						name := ""
-						if i < len(cf.ArgNames) {
-							name = cf.ArgNames[i]
-						}
-						cols = append(cols, rteCol{name: name, typ: ref(cf.AllArgTypes[i]), nullable: true})
-					}
-				}
-			}
+			cols = a.outParamCols()
 			if len(cols) == 0 && len(coldefs) == 0 {
 				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is required for functions returning \"record\"")
 			}
 		default:
 			cols = []rteCol{{name: fname, typ: e.typ, nullable: true}}
+			if outName != "" {
+				cols[0].name = outName
+			}
 		}
 	}
 	for _, cd := range coldefs {
@@ -589,8 +600,9 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 				// alias(colname) on a scalar function renames the single column
 			}
 		}
-		if len(rf.Alias.Colnames) == 0 && len(coldefs) == 0 && len(cols) == 1 && fc != nil && a.typ(cols[0].typ.OID) != nil && a.typ(cols[0].typ.OID).Kind != 'c' {
+		if len(rf.Alias.Colnames) == 0 && len(coldefs) == 0 && len(cols) == 1 && scalar && outName == "" {
 			// a scalar-returning function's alias names its single column too
+			// (chooseScalarFunctionAlias: a named OUT parameter wins over the alias)
 			cols[0].name = rf.Alias.Aliasname
 		}
 	}
@@ -675,6 +687,15 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 		if j.Jointype == pg_query.JoinType_JOIN_RIGHT {
 			merged = rc[0]
 		}
+		if a.baseType(lc[0].typ.OID) != a.baseType(rc[0].typ.OID) {
+			// sides of different types: the merged column is their common type, coerced
+			ct, _, err := a.unify([]*expr{l, rr}, -1, "JOIN/USING")
+			if err != nil {
+				return nil, err
+			}
+			merged.typ = ct
+			merged.src = nil
+		}
 		r.join.usingCols = append(r.join.usingCols, merged)
 	}
 	r.join.using = using
@@ -717,6 +738,9 @@ func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation
 
 // assign coerces a value expression to a target column in assignment context.
 func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32) *Error {
+	if err := a.checkViewColumnWritable(col, at); err != nil {
+		return err
+	}
 	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e})
 	if e.param > 0 {
 		if _, done := a.paramSrc[e.param]; !done {
@@ -747,7 +771,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			return nil, err
 		}
 	}
-	rel, target, err := a.targetRTE(ins.Relation, sc)
+	rel, target, err := a.writeTarget(ins.Relation, sc, "insert into")
 	if err != nil {
 		return nil, err
 	}
@@ -760,6 +784,12 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			c := rel.Column(rt.Name)
 			if c == nil {
 				return nil, errAt(codeUndefinedColumn, rt.Location, "column %q of relation %q does not exist", rt.Name, rel.Name)
+			}
+			if len(rt.Indirection) > 0 {
+				var err *Error
+				if c, err = a.indirectTarget(c, rt.Indirection, rt.Location); err != nil {
+					return nil, err
+				}
 			}
 			cols = append(cols, c)
 		}
@@ -777,6 +807,9 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 					return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
 				}
 				for i, it := range items {
+					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override != pg_query.OverridingKind_OVERRIDING_SYSTEM_VALUE {
+						return nil, errAt(codeGeneratedAlways, loc(it), "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+					}
 					e, err := a.analyzeExpr(it, sc)
 					if err != nil {
 						return nil, err
@@ -788,12 +821,19 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			}
 		} else {
 			a.insertSelScope = newScope(sc)
+			a.keepUnknown = true
 			src, err := a.selectStmt(sel, a.insertSelScope)
+			a.keepUnknown = false
 			if err != nil {
 				return nil, err
 			}
 			if len(src) > len(cols) {
 				return nil, errAt(codeSyntaxError, -1, "INSERT has more expressions than target columns")
+			}
+			for i := range src {
+				if cols[i].Identity == 'a' && ins.Override != pg_query.OverridingKind_OVERRIDING_SYSTEM_VALUE {
+					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+				}
 			}
 			for i, c := range src {
 				e := &expr{typ: c.typ, nullable: c.nullable}
@@ -820,6 +860,9 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			}
 		}
 		if oc.Action == pg_query.OnConflictAction_ONCONFLICT_UPDATE {
+			if oc.Infer == nil {
+				return nil, errAt(codeSyntaxError, oc.Location, "ON CONFLICT DO UPDATE requires inference specification or constraint name")
+			}
 			excluded := &rte{alias: "excluded", cols: append([]rteCol{}, target.cols...)}
 			for i := range excluded.cols {
 				excluded.cols[i].src = nil
@@ -841,11 +884,27 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc *scope) *Error {
 	// SET (a, b) = (x, y) / (SELECT ...): one source, analyzed once, one value per column
 	sources := map[*pg_query.Node][]*expr{}
+	assignedCols := map[string]bool{}
 	for _, tn := range targets {
 		t := tn.GetResTarget()
 		col := rel.Column(t.Name)
 		if col == nil {
 			return errAt(codeUndefinedColumn, t.Location, "column %q of relation %q does not exist", t.Name, rel.Name)
+		}
+		if len(t.Indirection) == 0 {
+			if assignedCols[t.Name] {
+				return errAt(codeSyntaxError, t.Location, "multiple assignments to same column %q", t.Name)
+			}
+			assignedCols[t.Name] = true
+		}
+		if col.Identity == 'a' && t.Val.GetSetToDefault() == nil {
+			return errAt(codeGeneratedAlways, t.Location, "column %q can only be updated to DEFAULT", col.Name)
+		}
+		if len(t.Indirection) > 0 {
+			var err *Error
+			if col, err = a.indirectTarget(col, t.Indirection, t.Location); err != nil {
+				return err
+			}
 		}
 		var e *expr
 		if ma := t.Val.GetMultiAssignRef(); ma != nil {
@@ -907,7 +966,7 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 			return nil, err
 		}
 	}
-	rel, target, err := a.targetRTE(upd.Relation, sc)
+	rel, target, err := a.writeTarget(upd.Relation, sc, "update")
 	if err != nil {
 		return nil, err
 	}
@@ -935,7 +994,7 @@ func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *E
 			return nil, err
 		}
 	}
-	_, target, err := a.targetRTE(del.Relation, sc)
+	_, target, err := a.writeTarget(del.Relation, sc, "delete from")
 	if err != nil {
 		return nil, err
 	}
@@ -963,78 +1022,136 @@ func (a *analyzer) figureColname(n *pg_query.Node) string {
 }
 
 func (a *analyzer) figureColnameInternal(n *pg_query.Node) string {
+	name, _ := a.figureColnameStrength(n)
+	return name
+}
+
+// figureColnameStrength is FigureColnameInternal: the name and how strongly the node
+// claims it (2 a real name, 1 a fallback such as a cast's type name, 0 none). A cast
+// only names the column when what it casts has no strong name of its own.
+func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 	switch v := n.Node.(type) {
 	case *pg_query.Node_ColumnRef:
 		f := v.ColumnRef.Fields
 		for i := len(f) - 1; i >= 0; i-- {
 			if s := f[i].GetString_(); s != nil {
-				return s.Sval
+				return s.Sval, 2
 			}
 		}
 	case *pg_query.Node_AIndirection:
 		ind := v.AIndirection.Indirection
 		for i := len(ind) - 1; i >= 0; i-- {
 			if s := ind[i].GetString_(); s != nil {
-				return s.Sval
+				return s.Sval, 2
 			}
 			if ind[i].GetAIndices() != nil {
 				continue
 			}
 		}
-		return a.figureColnameInternal(v.AIndirection.Arg)
+		return a.figureColnameStrength(v.AIndirection.Arg)
 	case *pg_query.Node_FuncCall:
 		names := strs(v.FuncCall.Funcname)
-		return names[len(names)-1]
+		return names[len(names)-1], 2
 	case *pg_query.Node_TypeCast:
-		if inner := a.figureColnameInternal(v.TypeCast.Arg); inner != "" {
-			return inner
+		inner, strength := a.figureColnameStrength(v.TypeCast.Arg)
+		if strength > 1 {
+			return inner, strength
 		}
-		names := strs(v.TypeCast.TypeName.Names)
-		return names[len(names)-1]
+		if v.TypeCast.TypeName != nil {
+			names := strs(v.TypeCast.TypeName.Names)
+			return names[len(names)-1], 1
+		}
+		return inner, strength
 	case *pg_query.Node_CollateClause:
-		return a.figureColnameInternal(v.CollateClause.Arg)
+		return a.figureColnameStrength(v.CollateClause.Arg)
 	case *pg_query.Node_CaseExpr:
 		if v.CaseExpr.Defresult != nil {
-			if inner := a.figureColnameInternal(v.CaseExpr.Defresult); inner != "" && v.CaseExpr.Defresult.GetAConst() == nil {
-				return inner
+			if inner, strength := a.figureColnameStrength(v.CaseExpr.Defresult); strength > 0 {
+				return inner, strength
 			}
 		}
-		return "case"
-	case *pg_query.Node_CoalesceExpr:
-		return "coalesce"
-	case *pg_query.Node_MinMaxExpr:
-		if v.MinMaxExpr.Op == pg_query.MinMaxOp_IS_LEAST {
-			return "least"
-		}
-		return "greatest"
+		return "case", 1
 	case *pg_query.Node_AArrayExpr:
-		return "array"
+		return "array", 2
 	case *pg_query.Node_RowExpr:
-		return "row"
+		return "row", 2
 	case *pg_query.Node_SubLink:
 		switch v.SubLink.SubLinkType {
 		case pg_query.SubLinkType_EXISTS_SUBLINK:
-			return "exists"
+			return "exists", 2
 		case pg_query.SubLinkType_ARRAY_SUBLINK:
-			return "array"
+			return "array", 2
 		case pg_query.SubLinkType_EXPR_SUBLINK:
 			if sel := v.SubLink.Subselect.GetSelectStmt(); sel != nil && len(sel.TargetList) == 1 {
 				t := sel.TargetList[0].GetResTarget()
 				if t.Name != "" {
-					return t.Name
+					return t.Name, 2
 				}
-				return a.figureColnameInternal(t.Val)
+				return a.figureColnameStrength(t.Val)
 			}
 		}
 	case *pg_query.Node_SqlvalueFunction:
 		s := strings.ToLower(strings.TrimPrefix(v.SqlvalueFunction.Op.String(), "SVFOP_"))
-		return strings.TrimSuffix(s, "_n")
+		return strings.TrimSuffix(s, "_n"), 2
 	case *pg_query.Node_GroupingFunc:
-		return "grouping"
+		return "grouping", 2
 	case *pg_query.Node_NamedArgExpr:
-		return a.figureColnameInternal(v.NamedArgExpr.Arg)
+		return a.figureColnameStrength(v.NamedArgExpr.Arg)
+	case *pg_query.Node_CoalesceExpr:
+		return "coalesce", 2
+	case *pg_query.Node_MinMaxExpr:
+		if v.MinMaxExpr.Op == pg_query.MinMaxOp_IS_LEAST {
+			return "least", 2
+		}
+		return "greatest", 2
+	case *pg_query.Node_MergeSupportFunc:
+		return "merge_action", 2
+	case *pg_query.Node_XmlExpr:
+		switch v.XmlExpr.Op {
+		case pg_query.XmlExprOp_IS_XMLCONCAT:
+			return "xmlconcat", 2
+		case pg_query.XmlExprOp_IS_XMLELEMENT:
+			return "xmlelement", 2
+		case pg_query.XmlExprOp_IS_XMLFOREST:
+			return "xmlforest", 2
+		case pg_query.XmlExprOp_IS_XMLPARSE:
+			return "xmlparse", 2
+		case pg_query.XmlExprOp_IS_XMLPI:
+			return "xmlpi", 2
+		case pg_query.XmlExprOp_IS_XMLROOT:
+			return "xmlroot", 2
+		case pg_query.XmlExprOp_IS_XMLSERIALIZE:
+			return "xmlserialize", 2
+		case pg_query.XmlExprOp_IS_DOCUMENT:
+			return "is_document", 2
+		}
+	case *pg_query.Node_XmlSerialize:
+		return "xmlserialize", 2
+	case *pg_query.Node_JsonParseExpr:
+		return "json", 2
+	case *pg_query.Node_JsonScalarExpr:
+		return "json_scalar", 2
+	case *pg_query.Node_JsonSerializeExpr:
+		return "json_serialize", 2
+	case *pg_query.Node_JsonObjectConstructor:
+		return "json_object", 2
+	case *pg_query.Node_JsonArrayConstructor, *pg_query.Node_JsonArrayQueryConstructor:
+		return "json_array", 2
+	case *pg_query.Node_JsonObjectAgg:
+		return "json_objectagg", 2
+	case *pg_query.Node_JsonArrayAgg:
+		return "json_arrayagg", 2
+	case *pg_query.Node_JsonFuncExpr:
+		switch v.JsonFuncExpr.Op {
+		case pg_query.JsonExprOp_JSON_EXISTS_OP:
+			return "json_exists", 2
+		case pg_query.JsonExprOp_JSON_QUERY_OP:
+			return "json_query", 2
+		case pg_query.JsonExprOp_JSON_VALUE_OP:
+			return "json_value", 2
+		}
 	}
-	return ""
+	return "", 0
 }
 
 // noteEnumSort flags ORDER BY on an enum: it sorts by declaration order, which surprises
@@ -1098,7 +1215,20 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 			return nil, err
 		}
 	}
-	rel, target, err := a.targetRTE(m.Relation, sc)
+	writes := false
+	for _, wn := range m.MergeWhenClauses {
+		if wn.GetMergeWhenClause().CommandType != pg_query.CmdType_CMD_NOTHING {
+			writes = true
+		}
+	}
+	var rel *schema.Relation
+	var target *rte
+	var err *Error
+	if writes {
+		rel, target, err = a.writeTarget(m.Relation, sc, "merge into")
+	} else {
+		rel, target, err = a.targetRTE(m.Relation, sc)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1113,8 +1243,17 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	if err := a.boolClause(m.JoinCondition, both, "ON"); err != nil {
 		return nil, err
 	}
+	a.inMerge = true
+	defer func() { a.inMerge = false }()
+	unconditional := map[pg_query.MergeMatchKind]bool{}
 	for _, wn := range m.MergeWhenClauses {
 		w := wn.GetMergeWhenClause()
+		if unconditional[w.MatchKind] {
+			return nil, errAt(codeSyntaxError, -1, "unreachable WHEN clause specified after unconditional WHEN clause")
+		}
+		if w.Condition == nil {
+			unconditional[w.MatchKind] = true
+		}
 		wsc := both
 		if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
 			wsc = srcOnly
@@ -1204,6 +1343,12 @@ func (a *analyzer) expandCompositeStar(ind *pg_query.A_Indirection, sc *scope) (
 		copy(out, e.fields)
 		return out, nil
 	}
+	if e.oid() == catalog.Record && inner.Arg.GetFuncCall() != nil {
+		// (f(...)).* of a function returning record through OUT parameters
+		if cols := a.outParamCols(); len(cols) > 0 {
+			return cols, nil
+		}
+	}
 	t := a.typ(e.oid())
 	if t == nil || t.Kind != 'c' {
 		return nil, errAt(codeWrongObjectType, loc(ind.Arg), "type %s is not composite", a.s.Types.Format(e.typ))
@@ -1217,4 +1362,216 @@ func (a *analyzer) expandCompositeStar(ind *pg_query.A_Indirection, sc *scope) (
 		out = append(out, rteCol{name: c.Name, typ: c.Type, nullable: true})
 	}
 	return out, nil
+}
+
+// singleOutName is the name of the one OUT parameter of the function the last funcCall
+// resolved, "" when it has none or more than one (get_func_result_name).
+func (a *analyzer) singleOutName() string {
+	var names []string
+	if uf := a.lastUserFunc; uf != nil {
+		for _, arg := range uf.Args {
+			if arg.Mode == 'o' || arg.Mode == 'b' || arg.Mode == 't' {
+				names = append(names, arg.Name)
+			}
+		}
+	} else if cf := a.lastCatFunc; cf != nil {
+		for i, m := range cf.ArgModes {
+			if m == 'o' || m == 'b' || m == 't' {
+				name := ""
+				if i < len(cf.ArgNames) {
+					name = cf.ArgNames[i]
+				}
+				names = append(names, name)
+			}
+		}
+	}
+	if len(names) == 1 && names[0] != "" {
+		return names[0]
+	}
+	return ""
+}
+
+// aggregateIn returns an aggregate call directly in the expression (not inside a
+// subquery), or nil.
+func (a *analyzer) aggregateIn(n *pg_query.Node) *pg_query.FuncCall {
+	if n == nil || n.GetSubLink() != nil {
+		return nil
+	}
+	if f := n.GetFuncCall(); f != nil && f.Over == nil && a.isAggregateName(strs(f.Funcname)) {
+		return f
+	}
+	for _, c := range children(n) {
+		if f := a.aggregateIn(c); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// xmlTable is XMLTABLE(... PASSING doc COLUMNS ...) in FROM: the declared columns (FOR
+// ORDINALITY is integer), or one xml column when none are declared.
+func (a *analyzer) xmlTable(x *pg_query.RangeTableFunc, sc *scope) (*rte, *Error) {
+	inner := sc
+	if x.Lateral {
+		inner = newScope(sc)
+		inner.items = sc.items
+	}
+	for _, n := range append([]*pg_query.Node{x.Docexpr, x.Rowexpr}, x.Namespaces...) {
+		if n == nil {
+			continue
+		}
+		if rn := n.GetResTarget(); rn != nil {
+			n = rn.Val
+		}
+		e, err := a.analyzeExpr(n, inner)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.bind(e, catalog.Text, loc(n)); err != nil {
+			return nil, err
+		}
+	}
+	r := &rte{alias: "xmltable"}
+	for _, cn := range x.Columns {
+		c := cn.GetRangeTableFuncCol()
+		if c.ForOrdinality {
+			r.cols = append(r.cols, rteCol{name: c.Colname, typ: ref(catalog.Int4)})
+			continue
+		}
+		tr, err := a.s.ResolveType(c.TypeName)
+		if err != nil {
+			return nil, errAt(codeUndefinedObject, c.Location, "%v", err)
+		}
+		for _, n := range []*pg_query.Node{c.Colexpr, c.Coldefexpr} {
+			if n == nil {
+				continue
+			}
+			e, err := a.analyzeExpr(n, inner)
+			if err != nil {
+				return nil, err
+			}
+			if err := a.bind(e, catalog.Text, loc(n)); err != nil {
+				return nil, err
+			}
+		}
+		r.cols = append(r.cols, rteCol{name: c.Colname, typ: tr, nullable: !c.IsNotNull})
+	}
+	if len(x.Columns) == 0 {
+		r.cols = []rteCol{{name: "xmltable", typ: ref(catalog.XML), nullable: true}}
+	}
+	if x.Alias != nil {
+		if x.Alias.Aliasname != "" {
+			r.alias = x.Alias.Aliasname
+		}
+		applyColnames(r.cols, x.Alias)
+	}
+	return r, nil
+}
+
+// indirectTarget is the column an INSERT / UPDATE target with subscripts or field
+// selection (f2[1], f3.if1, f4[1].if2[2]) assigns: a copy of the column typed as that
+// element or field.
+func (a *analyzer) indirectTarget(col *schema.Column, ind []*pg_query.Node, at int32) (*schema.Column, *Error) {
+	cur := a.baseType(col.Type.OID)
+	for _, n := range ind {
+		switch v := n.Node.(type) {
+		case *pg_query.Node_AIndices:
+			if cur == catalog.JSONB {
+				continue // jsonb subscripting assigns a jsonb value at the path
+			}
+			t := a.typ(cur)
+			if t == nil || t.Elem == 0 {
+				return nil, errAt(codeDatatypeMismatch, at, "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(ref(cur)))
+			}
+			if !v.AIndices.IsSlice {
+				cur = t.Elem
+			}
+		case *pg_query.Node_String_:
+			t := a.typ(cur)
+			if t == nil || t.Kind != 'c' {
+				return nil, errAt(codeDatatypeMismatch, at, "column notation .%s applied to type %s, which is not a composite type", v.String_.Sval, a.s.Types.Format(ref(cur)))
+			}
+			rel := a.relByRowType(cur)
+			fc := rel.Column(v.String_.Sval)
+			if fc == nil {
+				return nil, errAt(codeUndefinedColumn, at, "column %q not found in data type %s", v.String_.Sval, t.Name)
+			}
+			cur = a.baseType(fc.Type.OID)
+		default:
+			return nil, errAt(codeFeatureNotSupported, at, "unsupported indirection in assignment target")
+		}
+	}
+	cp := *col
+	cp.Type = ref(cur)
+	cp.NotNull = false
+	return &cp, nil
+}
+
+// outParamCols are the OUT / INOUT / TABLE parameters of the function the last funcCall
+// resolved, as result columns (a function returning record through them).
+func (a *analyzer) outParamCols() []rteCol {
+	var cols []rteCol
+	if uf := a.lastUserFunc; uf != nil {
+		for _, arg := range uf.Args {
+			if arg.Mode == 't' || arg.Mode == 'o' || arg.Mode == 'b' {
+				cols = append(cols, rteCol{name: arg.Name, typ: arg.Type, nullable: true})
+			}
+		}
+	} else if cf := a.lastCatFunc; cf != nil && len(cf.ArgModes) == len(cf.AllArgTypes) {
+		for i, m := range cf.ArgModes {
+			if m == 'o' || m == 't' || m == 'b' {
+				name := ""
+				if i < len(cf.ArgNames) {
+					name = cf.ArgNames[i]
+				}
+				cols = append(cols, rteCol{name: name, typ: ref(cf.AllArgTypes[i]), nullable: true})
+			}
+		}
+	}
+	for i := range cols {
+		if cols[i].name == "" {
+			cols[i].name = "column" + strconv.Itoa(i+1) // an unnamed OUT parameter
+		}
+	}
+	return cols
+}
+
+// windowIn returns a window function call directly in the expression (not inside a
+// subquery), or nil.
+func windowIn(n *pg_query.Node) *pg_query.FuncCall {
+	if n == nil || n.GetSubLink() != nil {
+		return nil
+	}
+	if f := n.GetFuncCall(); f != nil && f.Over != nil {
+		return f
+	}
+	for _, c := range children(n) {
+		if f := windowIn(c); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// outerLevelAggregate reports whether an aggregate in a subquery belongs to an enclosing
+// query: none of its column references resolve at this level (they are all outer
+// references), so it is that query's aggregate and allowed here.
+func (a *analyzer) outerLevelAggregate(f *pg_query.FuncCall, sc *scope) bool {
+	if sc.parent == nil {
+		return false
+	}
+	local := false
+	sawRef := false
+	here := &scope{items: sc.items, ctes: sc.ctes}
+	for _, arg := range f.Args {
+		schema.WalkNodes(arg, func(n *pg_query.Node) {
+			if cr := n.GetColumnRef(); cr != nil {
+				sawRef = true
+				if _, err := a.columnRef(cr, here); err == nil {
+					local = true
+				}
+			}
+		})
+	}
+	return sawRef && !local
 }

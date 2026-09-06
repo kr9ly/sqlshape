@@ -155,6 +155,9 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 				}
 			}
 			if len(hits) == 0 {
+				if c, ok := a.systemColumn(sc, tbl, col); ok {
+					return c, nil
+				}
 				return rteCol{}, errAt(codeUndefinedColumn, loc, "column %s.%s does not exist", tbl, col)
 			}
 			return hits[0], nil
@@ -169,6 +172,9 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 		if len(hits) == 1 {
 			return hits[0], nil
 		}
+	}
+	if c, ok := a.systemColumn(sc, tbl, col); ok {
+		return c, nil
 	}
 	if tbl != "" {
 		// distinguish missing table from missing column like PG does
@@ -290,4 +296,36 @@ func (a *analyzer) domainNotNull(oid catalog.OID) bool {
 		}
 		oid = t.BaseType
 	}
+}
+
+// systemColumns are the hidden columns every table row has (not expanded by *).
+var systemColumns = map[string]catalog.OID{
+	"ctid": catalog.Tid, "xmin": catalog.Xid, "xmax": catalog.Xid,
+	"cmin": catalog.Cid, "cmax": catalog.Cid, "tableoid": catalog.OIDType,
+}
+
+// systemColumn resolves ctid / xmin / xmax / cmin / cmax / tableoid on a table in scope:
+// the named one, or the only table when unqualified.
+func (a *analyzer) systemColumn(sc *scope, tbl, col string) (rteCol, bool) {
+	oid, ok := systemColumns[col]
+	if !ok {
+		return rteCol{}, false
+	}
+	for s := sc; s != nil; s = s.parent {
+		var hits []*rte
+		for _, it := range s.items {
+			for _, leaf := range it.leaves() {
+				if leaf.rel != nil && leaf.rel.Kind == schema.Table && (tbl == "" || leaf.alias == tbl) {
+					hits = append(hits, leaf)
+				}
+			}
+		}
+		if len(hits) == 1 {
+			return rteCol{name: col, typ: ref(oid), src: &Source{Table: hits[0].rel.FullName(), Column: col, NotNull: true}}, true
+		}
+		if len(hits) > 1 {
+			return rteCol{}, false
+		}
+	}
+	return rteCol{}, false
 }

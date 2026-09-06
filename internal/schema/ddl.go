@@ -312,6 +312,9 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				continue
 			}
 			s.removeRelation(rel)
+			if st.Behavior == pg_query.DropBehavior_DROP_CASCADE {
+				s.dropDependentViews(rel)
+			}
 		case pg_query.ObjectType_OBJECT_INDEX:
 			_, name := qualified(strs(on.GetList().GetItems()))
 			found := false
@@ -423,14 +426,53 @@ func (s *Schema) argsMatch(f *Function, args []*pg_query.Node) bool {
 
 func (s *Schema) findRelation(schema, name string) *Relation {
 	if schema != "" {
-		return s.relByName[schema+"."+name]
+		if r := s.relByName[schema+"."+name]; r != nil {
+			return r
+		}
+		return s.systemRelation(schema, name)
+	}
+	// pg_catalog is implicitly first on the search path
+	if r := s.systemRelation("pg_catalog", name); r != nil {
+		return r
 	}
 	for _, p := range s.SearchPath() {
 		if r := s.relByName[p+"."+name]; r != nil {
 			return r
 		}
 	}
+	for _, p := range s.SearchPath() {
+		if r := s.systemRelation(p, name); r != nil {
+			return r
+		}
+	}
 	return nil
+}
+
+// systemRelation materializes a catalog relation (pg_class, information_schema.columns,
+// an extension's view) as a read-only table the first time it is named.
+func (s *Schema) systemRelation(schema, name string) *Relation {
+	if r, ok := s.sysRels[schema+"."+name]; ok {
+		return r
+	}
+	cr := s.Catalog.RelationByName(schema, name)
+	if cr == nil {
+		return nil
+	}
+	rel := &Relation{OID: cr.OID, Schema: cr.Schema, Name: cr.Name, Kind: Table}
+	for _, t := range s.Catalog.Types {
+		if t.Kind == 'c' && t.RelID == cr.OID {
+			rel.RowType = t.OID
+			break
+		}
+	}
+	for i, c := range cr.Columns {
+		rel.Columns = append(rel.Columns, &Column{Num: int16(i + 1), Name: c.Name, Type: TypeRef{OID: c.Type, Typmod: c.Typmod}, NotNull: c.NotNull})
+	}
+	if s.sysRels == nil {
+		s.sysRels = map[string]*Relation{}
+	}
+	s.sysRels[schema+"."+name] = rel
+	return rel
 }
 
 func (s *Schema) removeRelation(rel *Relation) {
@@ -640,7 +682,24 @@ func (s *Schema) createRange(st *pg_query.CreateRangeStmt, loc int32) {
 		s.problem(loc, "range %s: subtype is required", name)
 		return
 	}
-	s.Types.addRange(schema, name, sub.OID)
+	r := s.Types.addRange(schema, name, sub.OID)
+	rng := s.Types.RangeOf(r.OID)
+	// CREATE TYPE AS RANGE also creates the constructors and the range → multirange cast
+	// (DefineRange): name(sub, sub), name(sub, sub, text), multi(), multi(range),
+	// multi(VARIADIC range[])
+	mk := func(fname string, ret catalog.OID, args ...FuncArg) {
+		fn := &Function{OID: s.nextOID, Schema: schema, Name: fname, Args: args, RetType: TypeRef{OID: ret}, Volatile: 'i', Language: "internal"}
+		s.nextOID++
+		s.Functions = append(s.Functions, fn)
+	}
+	subRef := TypeRef{OID: sub.OID}
+	mk(name, r.OID, FuncArg{Type: subRef, Mode: 'i'}, FuncArg{Type: subRef, Mode: 'i'})
+	mk(name, r.OID, FuncArg{Type: subRef, Mode: 'i'}, FuncArg{Type: subRef, Mode: 'i'}, FuncArg{Type: TypeRef{OID: catalog.Text}, Mode: 'i'})
+	mt := s.Types.ByOID(rng.Multi)
+	mk(mt.Name, rng.Multi)
+	mk(mt.Name, rng.Multi, FuncArg{Type: TypeRef{OID: r.OID}, Mode: 'i'})
+	mk(mt.Name, rng.Multi, FuncArg{Type: TypeRef{OID: r.Array}, Mode: 'v'})
+	s.Casts = append(s.Casts, &catalog.Cast{Source: r.OID, Target: rng.Multi, Func: s.Functions[len(s.Functions)-2].OID, Context: 'e', Method: 'f'})
 }
 
 // define handles CREATE AGGREGATE / OPERATOR / COLLATION (DefineStmt).
@@ -663,8 +722,40 @@ func (s *Schema) define(st *pg_query.DefineStmt, loc int32) {
 		s.createOperator(schema, name, defs, loc)
 	case pg_query.ObjectType_OBJECT_TSCONFIGURATION, pg_query.ObjectType_OBJECT_TSDICTIONARY, pg_query.ObjectType_OBJECT_TSPARSER, pg_query.ObjectType_OBJECT_TSTEMPLATE:
 		// text search objects: no typing consequence
+	case pg_query.ObjectType_OBJECT_TYPE:
+		s.createBaseType(schema, name, defs, loc)
 	default:
 		s.problem(loc, "unsupported CREATE %v", st.Kind)
+	}
+}
+
+// createBaseType handles CREATE TYPE name (a shell type) and CREATE TYPE name (input = ...,
+// output = ..., like = t): an opaque base type the analyzer can only meet through the
+// casts and functions declared for it. LIKE lends its category, length and pass-by-value.
+func (s *Schema) createBaseType(schema, name string, defs map[string]*pg_query.Node, loc int32) {
+	t := s.Types.Lookup(schema, name)
+	if t == nil {
+		t = s.Types.addUser(schema, name, 'b', 'U', 0, 0)
+	} else if t.OID < FirstUserOID {
+		s.problem(loc, "type %q already exists", name)
+		return
+	}
+	if like := defs["like"]; like != nil {
+		lt, err := s.resolveType(like.GetTypeName())
+		if err != nil {
+			s.problem(loc, "type %s: like: %v", name, err)
+			return
+		}
+		if l := s.Types.ByOID(lt.OID); l != nil {
+			t.Category = l.Category
+			t.Len = l.Len
+			t.ByVal = l.ByVal
+		}
+	}
+	if c := defs["category"]; c != nil {
+		if v := c.GetString_().GetSval(); len(v) == 1 {
+			t.Category = v[0]
+		}
 	}
 }
 
@@ -839,4 +930,28 @@ func (s *Schema) KnownCollation(name string) bool {
 		return true
 	}
 	return strings.ContainsAny(name, "_-.@")
+}
+
+// dropDependentViews removes the views whose defining query names rel (DROP ... CASCADE),
+// and theirs in turn.
+func (s *Schema) dropDependentViews(rel *Relation) {
+	var dependents []*Relation
+	for _, r := range s.Relations {
+		if r.Query == nil {
+			continue
+		}
+		refs := false
+		WalkNodes(r.Query, func(n *pg_query.Node) {
+			if rv := n.GetRangeVar(); rv != nil && rv.Relname == rel.Name && (rv.Schemaname == "" || rv.Schemaname == rel.Schema) {
+				refs = true
+			}
+		})
+		if refs {
+			dependents = append(dependents, r)
+		}
+	}
+	for _, r := range dependents {
+		s.removeRelation(r)
+		s.dropDependentViews(r)
+	}
 }

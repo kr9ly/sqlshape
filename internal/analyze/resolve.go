@@ -384,10 +384,28 @@ func (a *analyzer) resolveOperator(name string, left, right catalog.OID) *candid
 // resolveFunction implements §10.3 over catalog + user functions named name. withinGroup
 // selects the ordered-set / hypothetical-set aggregates (they are only callable with
 // WITHIN GROUP, and nothing else is).
-func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID, withinGroup bool) (*candidate, bool) {
+func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID, withinGroup bool, named []string, funcVariadic bool) (*candidate, bool) {
+	hasNamed := false
+	for _, n := range named {
+		if n != "" {
+			hasNamed = true
+		}
+	}
 	var cands []candidate
 	ambiguousExact := false
+	// two candidates with the same effective argument list (one via VARIADIC or defaults)
+	// are one: the non-variadic one wins, then the one using fewer defaults
+	// (FuncnameGetCandidates)
 	add := func(c candidate) {
+		for i, o := range cands {
+			if !sameOIDs(o.args, c.args) {
+				continue
+			}
+			if (o.variadicElem != 0 && c.variadicElem == 0) || (o.variadicElem == 0) == (c.variadicElem == 0) && c.nargs < o.nargs {
+				cands[i] = c
+			}
+			return
+		}
 		cands = append(cands, c)
 	}
 	// bootstrap functions are pg_catalog, an extension's live in the schema it was created in.
@@ -435,7 +453,16 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 			} else if withinGroup {
 				continue
 			}
-			if c, ok := expandArgs(fn.ArgTypes, int(fn.NArgDefault), fn.Variadic, len(actual)); ok {
+			if funcVariadic {
+				// f(VARIADIC arr): the array itself is the last argument
+				if fn.Variadic != 0 && len(fn.ArgTypes) == len(actual) {
+					add(candidate{fn: fn, args: fn.ArgTypes, nargs: len(fn.ArgTypes)})
+				}
+			} else if hasNamed {
+				if c, ok := namedArgs(fn.ArgTypes, catInputNames(fn), int(fn.NArgDefault), named); ok {
+					add(candidate{fn: fn, args: c, nargs: len(fn.ArgTypes)})
+				}
+			} else if c, ok := expandArgs(fn.ArgTypes, int(fn.NArgDefault), fn.Variadic, len(actual)); ok {
 				add(candidate{fn: fn, args: c, nargs: len(fn.ArgTypes), variadicElem: fn.Variadic})
 			}
 		}
@@ -449,6 +476,7 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 				continue
 			}
 			var in []catalog.OID
+			var inNames []string
 			var variadic catalog.OID
 			ndef := 0
 			for _, arg := range fn.Args {
@@ -456,20 +484,38 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 				case 'o':
 					if fn.IsProc {
 						in = append(in, arg.Type.OID) // CALL passes OUT arguments too
+						inNames = append(inNames, arg.Name)
 					}
 				case 'i', 'b':
 					in = append(in, arg.Type.OID)
+					inNames = append(inNames, arg.Name)
 					if arg.HasDefault {
 						ndef++
 					}
 				case 'v':
 					in = append(in, arg.Type.OID)
-					if t := a.typ(arg.Type.OID); t != nil {
-						variadic = t.Elem
+					inNames = append(inNames, arg.Name)
+					switch arg.Type.OID {
+					case catalog.AnyArray: // VARIADIC anyarray takes anyelement values
+						variadic = catalog.AnyElement
+					case catalog.AnyCompatibleArray:
+						variadic = catalog.AnyCompatible
+					default:
+						if t := a.typ(arg.Type.OID); t != nil {
+							variadic = t.Elem
+						}
 					}
 				}
 			}
-			if c, ok := expandArgs(in, ndef, variadic, len(actual)); ok {
+			if funcVariadic {
+				if variadic != 0 && len(in) == len(actual) {
+					add(candidate{ufn: fn, args: in, nargs: len(in)})
+				}
+			} else if hasNamed {
+				if c, ok := namedArgs(in, inNames, ndef, named); ok {
+					add(candidate{ufn: fn, args: c, nargs: len(in)})
+				}
+			} else if c, ok := expandArgs(in, ndef, variadic, len(actual)); ok {
 				add(candidate{ufn: fn, args: c, nargs: len(in), variadicElem: variadic})
 			}
 		}
@@ -682,4 +728,77 @@ func (a *analyzer) commonType(types []catalog.OID) (catalog.OID, bool) {
 		}
 	}
 	return ptype, true
+}
+
+func sameOIDs(a, b []catalog.OID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// namedArgs maps a call using named notation onto declared parameters: the leading
+// positional arguments take the leading parameters, each named argument its namesake,
+// and every parameter left over must have a default. The result lists the declared type
+// of each actual argument in call order, so positional matching proceeds as usual.
+func namedArgs(declTypes []catalog.OID, declNames []string, ndefault int, names []string) ([]catalog.OID, bool) {
+	if len(declNames) != len(declTypes) || len(names) > len(declTypes) {
+		return nil, false
+	}
+	out := make([]catalog.OID, len(names))
+	used := make([]bool, len(declTypes))
+	i := 0
+	for ; i < len(names) && names[i] == ""; i++ {
+		out[i] = declTypes[i]
+		used[i] = true
+	}
+	for ; i < len(names); i++ {
+		found := -1
+		for j, dn := range declNames {
+			if dn == names[i] && !used[j] {
+				found = j
+				break
+			}
+		}
+		if found < 0 {
+			return nil, false
+		}
+		out[i] = declTypes[found]
+		used[found] = true
+	}
+	for j, u := range used {
+		if !u && j < len(declTypes)-ndefault {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+// catInputNames are the names of a catalog function's input parameters, aligned with
+// ArgTypes ("" when unnamed).
+func catInputNames(fn *catalog.Func) []string {
+	out := make([]string, len(fn.ArgTypes))
+	if fn.ArgModes == nil {
+		for i := range out {
+			if i < len(fn.ArgNames) {
+				out[i] = fn.ArgNames[i]
+			}
+		}
+		return out
+	}
+	k := 0
+	for i, m := range fn.ArgModes {
+		if m == 'i' || m == 'b' || m == 'v' {
+			if k < len(out) && i < len(fn.ArgNames) {
+				out[k] = fn.ArgNames[i]
+			}
+			k++
+		}
+	}
+	return out
 }

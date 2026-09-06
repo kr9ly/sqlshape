@@ -1,9 +1,11 @@
 package analyze
 
 import (
+	"fmt"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/kr9ly/sqlshape/internal/schema"
@@ -17,19 +19,20 @@ import (
 
 // checkGrouping reports an ungrouped column in a grouped SELECT level.
 func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *Error {
-	if len(sel.GroupClause) == 0 && !sc.agg {
-		return nil
+	if len(sel.GroupClause) == 0 && !sc.agg && sel.HavingClause == nil {
+		return nil // HAVING alone makes the query grouped (one group)
 	}
 	var groups []*pg_query.Node
 	for _, g := range groupingLeaves(sel.GroupClause) {
 		groups = append(groups, a.groupExpr(g, sel, sc, cols))
 	}
-	g := &grouping{a: a, p: &prover{a: a, sc: sc}, keys: map[string]bool{}}
+	g := &grouping{a: a, p: &prover{a: a, sc: sc}, keys: map[string]bool{}, grouped: map[colKey]bool{}}
 	for _, n := range groups {
 		if n != nil {
-			g.keys[deparse(n)] = true
+			g.keys[g.key(n)] = true
 			if k, ok := g.p.resolve(n); ok {
 				g.cols = append(g.cols, k)
+				g.grouped[k] = true // by identity: GROUP BY t.c covers c and c covers t.c
 			}
 		}
 	}
@@ -92,10 +95,11 @@ func (a *analyzer) outputRef(n *pg_query.Node, sel *pg_query.SelectStmt, cols []
 }
 
 type grouping struct {
-	a    *analyzer
-	p    *prover
-	keys map[string]bool // deparsed grouping expressions
-	cols []colKey        // grouped plain columns (for functional dependency)
+	a       *analyzer
+	p       *prover
+	keys    map[string]bool // deparsed grouping expressions
+	grouped map[colKey]bool // grouped plain columns, by identity
+	cols    []colKey        // grouped plain columns (for functional dependency)
 }
 
 // check walks an expression and reports the first ungrouped column reference.
@@ -103,7 +107,7 @@ func (g *grouping) check(n *pg_query.Node) *Error {
 	if n == nil {
 		return nil
 	}
-	if g.keys[deparse(n)] {
+	if g.keys[g.key(n)] {
 		return nil
 	}
 	switch v := n.Node.(type) {
@@ -114,7 +118,7 @@ func (g *grouping) check(n *pg_query.Node) *Error {
 		if !ok {
 			return nil // outer reference, whole-row or unresolved: not this level's problem
 		}
-		if g.dependent(k) {
+		if g.grouped[k] || g.dependent(k) {
 			return nil
 		}
 		return errAt(codeGroupingError, v.ColumnRef.Location, "column %q must appear in the GROUP BY clause or be used in an aggregate function", strings.Join(strs(v.ColumnRef.Fields), "."))
@@ -243,4 +247,38 @@ func hasGroupingSets(items []*pg_query.Node) bool {
 		}
 	}
 	return false
+}
+
+// key renders an expression for grouping comparison with every column reference
+// resolved, so GROUP BY t.a % 2 covers a % 2 and the other way round.
+func (g *grouping) key(n *pg_query.Node) string {
+	cp := proto.Clone(n).(*pg_query.Node)
+	var walk func(m protoreflect.Message)
+	walk = func(m protoreflect.Message) {
+		if cr, ok := m.Interface().(*pg_query.ColumnRef); ok {
+			if k, ok := g.p.resolve(&pg_query.Node{Node: &pg_query.Node_ColumnRef{ColumnRef: cr}}); ok {
+				cr.Fields = []*pg_query.Node{
+					{Node: &pg_query.Node_String_{String_: &pg_query.String{Sval: fmt.Sprintf("rte%p", k.r)}}},
+					{Node: &pg_query.Node_String_{String_: &pg_query.String{Sval: fmt.Sprintf("c%d", k.i)}}},
+				}
+			}
+			return
+		}
+		m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			switch {
+			case fd.IsList():
+				l := v.List()
+				for i := 0; i < l.Len(); i++ {
+					if fd.Kind() == protoreflect.MessageKind {
+						walk(l.Get(i).Message())
+					}
+				}
+			case fd.Kind() == protoreflect.MessageKind:
+				walk(v.Message())
+			}
+			return true
+		})
+	}
+	walk(cp.ProtoReflect())
+	return deparse(cp)
 }

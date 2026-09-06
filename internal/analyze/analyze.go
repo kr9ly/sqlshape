@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/schema"
@@ -31,8 +32,21 @@ type analyzer struct {
 	lastFuncRetSet bool
 	// inCall is set while analyzing the FuncCall of a CALL statement (procedures allowed)
 	inCall bool
-	refs   []RelationRef
-	fixed  []Source
+	// writes through views (viewdml.go): the relation each view resolves to, the columns a
+	// view computes (not writable, keyed by the synthetic column), and the current command
+	viewTargets  map[*schema.Relation]*schema.Relation
+	viewComputed map[*schema.Column]string
+	writeCmd     string
+	// inMerge is set while analyzing a MERGE (merge_action() is only valid there)
+	inMerge bool
+	// inAggArgs is the depth of aggregate calls whose arguments are being analyzed
+	// (aggregates do not nest)
+	inAggArgs int
+	// keepUnknown leaves unknown-typed output columns of the next selectStmt unresolved:
+	// INSERT ... SELECT types them by the target columns
+	keepUnknown bool
+	refs        []RelationRef
+	fixed       []Source
 	// inView is the depth of view definitions being analyzed: their references are the
 	// view's, not the statement's
 	inView int
@@ -93,12 +107,20 @@ type funcParam struct {
 
 // analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
 func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool) (*Result, error) {
+	return analyzeStmtIn(s, stmt, fp, unfiltered, map[*schema.Function]bool{})
+}
+
+// analyzeStmtIn is analyzeStmt inside a function body: visited holds the functions on
+// the call chain so a recursive SQL function terminates.
+func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool, visited map[*schema.Function]bool) (*Result, error) {
 	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
 	a := &analyzer{
 		s:              s,
 		params:         map[int32]catalog.OID{},
 		paramSrc:       map[int32]*Source{},
 		viewCache:      map[*schema.Relation][]rteCol{},
+		viewTargets:    map[*schema.Relation]*schema.Relation{},
+		viewComputed:   map[*schema.Column]string{},
 		viewScopes:     map[*schema.Relation]*subquery{},
 		viewBusy:       map[*schema.Relation]bool{},
 		funcParams:     fp,
@@ -114,6 +136,9 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 	switch st := tree.Stmts[0].Stmt.Node.(type) {
 	case *pg_query.Node_SelectStmt:
 		cols, aerr = a.selectStmt(st.SelectStmt, sc)
+		if st.SelectStmt.IntoClause != nil {
+			cols = nil // SELECT INTO creates a table and returns no rows
+		}
 	case *pg_query.Node_InsertStmt:
 		cols, aerr = a.insertStmt(st.InsertStmt, sc)
 	case *pg_query.Node_UpdateStmt:
@@ -239,7 +264,6 @@ func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilter
 	}
 	// a call into a user function may fail the way its body can: the writes go through
 	// functions when the database is the API, and the caller declares their failure modes
-	visited := map[*schema.Function]bool{}
 	for _, cf := range a.calledFuncs {
 		res.Violations = dedupe(append(res.Violations, functionViolations(s, cf, visited)...))
 	}
@@ -313,4 +337,25 @@ func (a *analyzer) subStatement(n *pg_query.Node, sc *scope) ([]rteCol, *Error) 
 		return a.deleteStmt(st.DeleteStmt, newScope(sc))
 	}
 	return nil, errAt(codeFeatureNotSupported, -1, "unsupported nested statement %T", n.Node)
+}
+
+func init() {
+	// CREATE TABLE AS / SELECT INTO in schema.sql: the loader asks the analyzer for the
+	// query's columns
+	schema.QueryColumns = func(s *schema.Schema, query *pg_query.Node) ([]*schema.Column, error) {
+		if sel := query.GetSelectStmt(); sel != nil && sel.IntoClause != nil {
+			cp := proto.Clone(sel).(*pg_query.SelectStmt)
+			cp.IntoClause = nil
+			query = &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: cp}}
+		}
+		r, err := analyzeStmt(s, query, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		var cols []*schema.Column
+		for _, c := range r.Columns {
+			cols = append(cols, &schema.Column{Name: c.Name, Type: c.Type, NotNull: !c.Nullable})
+		}
+		return cols, nil
+	}
 }

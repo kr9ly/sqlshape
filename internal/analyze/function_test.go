@@ -62,3 +62,20 @@ func TestAnalyzeFunction(t *testing.T) {
 		}
 	}
 }
+
+// A SQL function that calls itself (PG's infinite_recurse regress test) must not
+// send the violation walk into unbounded recursion.
+func TestRecursiveFunctionTerminates(t *testing.T) {
+	base, _ := os.ReadFile("testdata/schema.sql")
+	s, err := schema.Load(string(base) + "\nCREATE FUNCTION rec(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec(i - 1) $$;\n" +
+		"CREATE FUNCTION rec_a(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec_b(i) $$;\n" +
+		"CREATE FUNCTION rec_b(i int) RETURNS int LANGUAGE sql AS $$ SELECT rec_a(i) $$;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{"SELECT rec(1)", "SELECT rec_a($1)"} {
+		if _, err := Analyze(s, sql); err != nil {
+			t.Errorf("%s: %v", sql, err)
+		}
+	}
+}

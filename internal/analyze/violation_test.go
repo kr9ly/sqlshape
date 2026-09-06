@@ -51,7 +51,8 @@ func TestViolations(t *testing.T) {
 		{sql: "UPDATE orders SET total = 0 WHERE id = $1", want: "23514 orders_total_check, P0401 P0401"},
 		{sql: "UPDATE orders SET user_id = $1 WHERE id = $2", want: "23502 orders.user_id@1, 23503 orders_user_id_fkey, 23505 orders_user_note_key, P0401 P0401"},
 		{sql: "UPDATE orders SET id = $1 WHERE id = $2", want: "23502 orders.id@1, 23503 order_items_order_fk, 23505 orders_pkey, P0401 P0401"},
-		{sql: "UPDATE users SET id = 5 WHERE id = $1", want: "23503 memos_user_id_fkey, 23503 orders_user_id_fkey, 23505 users_pkey"},
+		{sql: "UPDATE orders SET id = 5 WHERE id = $1", want: "23503 order_items_order_fk, 23505 orders_pkey, P0401 P0401"},
+		// users.id is GENERATED ALWAYS AS IDENTITY: PG rejects the assignment outright (428C9), see TestIdentityUpdate
 		{sql: "UPDATE users SET balance = $1 WHERE id = $2", want: "23502 users.balance@1, 23514 yen_check"},
 		{sql: "UPDATE users SET name = $1 WHERE id = $2", want: ""},
 		// DELETE: referencing FKs with NO ACTION / RESTRICT
@@ -119,6 +120,32 @@ WHEN NOT MATCHED THEN INSERT (user_id, total, note) VALUES (u.id, 0, u.name)`)
 		}
 		if !found {
 			t.Errorf("missing %s in %v", want, got)
+		}
+	}
+}
+
+// TestIdentityUpdate: a GENERATED ALWAYS identity column takes no explicit value
+// (428C9), on INSERT unless OVERRIDING SYSTEM VALUE, and on UPDATE except to DEFAULT.
+func TestIdentityUpdate(t *testing.T) {
+	schemaSQL, _ := os.ReadFile("testdata/schema.sql")
+	s, err := schema.Load(string(schemaSQL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sql, want := range map[string]string{
+		"UPDATE users SET id = 5 WHERE id = $1":                                   "428C9",
+		"UPDATE users SET id = DEFAULT WHERE id = $1":                             "",
+		"INSERT INTO users (id, email) VALUES (5, 'a@x')":                         "428C9",
+		"INSERT INTO users (id, email) OVERRIDING SYSTEM VALUE VALUES (5, 'a@x')": "",
+		"INSERT INTO users (id, email) SELECT 5, 'a@x'":                           "428C9",
+		"INSERT INTO users (id, email) VALUES (DEFAULT, 'a@x')":                   "",
+	} {
+		_, err := Analyze(s, sql)
+		switch {
+		case want == "" && err != nil:
+			t.Errorf("%s: %v", sql, err)
+		case want != "" && (err == nil || !strings.HasPrefix(err.Error(), want)):
+			t.Errorf("%s: want %s, got %v", sql, want, err)
 		}
 	}
 }

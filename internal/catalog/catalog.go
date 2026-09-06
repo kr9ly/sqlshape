@@ -10,7 +10,9 @@ import (
 	"bufio"
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +35,11 @@ const (
 	Int4                    OID = 23
 	Text                    OID = 25
 	OIDType                 OID = 26
+	Tid                     OID = 27
+	Xid                     OID = 28
+	Cid                     OID = 29
 	JSON                    OID = 114
+	XML                     OID = 142
 	Float4                  OID = 700
 	Float8                  OID = 701
 	Unknown                 OID = 705
@@ -87,6 +93,27 @@ type Type struct {
 // IsArray reports whether t is a true array type: it has an element type and is a
 // varlena (get_element_type). Fixed-length types with typelem (point, line, ...) are not.
 func (t *Type) IsArray() bool { return t.Elem != 0 && t.Len == -1 && t.Kind != 'p' }
+
+// Relation is a system table or view (pg_class + pg_attribute) the analyzer can resolve
+// like a user table: pg_catalog's, information_schema's, or an extension's.
+type Relation struct {
+	OID     OID
+	Name    string
+	Kind    byte // relkind: r table, v view
+	Schema  string
+	Columns []RelColumn
+}
+
+// RelColumn is one attribute of a system relation.
+type RelColumn struct {
+	Name    string
+	Type    OID
+	Typmod  int32
+	NotNull bool
+}
+
+// RelationByName returns the system relation schema.name, or nil.
+func (c *Catalog) RelationByName(schema, name string) *Relation { return c.relByName[schema+"."+name] }
 
 // Well-known OIDs of the vector types PG never coerces arrays into (find_coercion_pathway).
 const (
@@ -178,7 +205,11 @@ type Catalog struct {
 	Casts      []Cast
 	Aggregates []Aggregate
 	Ranges     []Range
+	// Relations are the system tables and views (pg_catalog, information_schema, an
+	// extension's), with their columns.
+	Relations []Relation
 
+	relByName  map[string]*Relation // "schema.name"
 	typeByOID  map[OID]*Type
 	typeByName map[string]*Type
 	funcByOID  map[OID]*Func
@@ -242,6 +273,7 @@ func parse() (*Catalog, error) {
 
 func newCatalog() *Catalog {
 	return &Catalog{
+		relByName:  map[string]*Relation{},
 		typeByOID:  map[OID]*Type{},
 		typeByName: map[string]*Type{},
 		funcByOID:  map[OID]*Func{},
@@ -326,6 +358,17 @@ func (c *Catalog) load(dir, ns string, remap func(OID) OID) error {
 	}); err != nil {
 		return err
 	}
+	if err := rows(dir, "pg_class", 9, func(f []string) error {
+		oid := r(f[0])
+		if n := len(c.Relations); n == 0 || c.Relations[n-1].OID != oid {
+			c.Relations = append(c.Relations, Relation{OID: oid, Name: f[1], Kind: f[2][0], Schema: f[3]})
+		}
+		rel := &c.Relations[len(c.Relations)-1]
+		rel.Columns = append(rel.Columns, RelColumn{Name: f[5], Type: r(f[6]), Typmod: int32(num(f[7])), NotNull: f[8] == "t"})
+		return nil
+	}); err != nil && !errors.Is(err, fs.ErrNotExist) { // older extension dumps have no pg_class.tsv
+		return err
+	}
 	return rows(dir, "pg_range", 3, func(f []string) error {
 		c.Ranges = append(c.Ranges, Range{OID: r(f[0]), Subtype: r(f[1]), Multi: r(f[2])})
 		return nil
@@ -334,6 +377,10 @@ func (c *Catalog) load(dir, ns string, remap func(OID) OID) error {
 
 // index rebuilds the lookup maps over the slices.
 func (c *Catalog) index() {
+	for i := range c.Relations {
+		rel := &c.Relations[i]
+		c.relByName[rel.Schema+"."+rel.Name] = rel
+	}
 	for i := range c.Types {
 		t := &c.Types[i]
 		c.typeByOID[t.OID] = t

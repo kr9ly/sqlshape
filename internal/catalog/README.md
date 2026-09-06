@@ -1,7 +1,15 @@
 # catalog
 
-Static `pg_catalog` (types, functions, operators, casts, aggregates, ranges) embedded as TSV.
-This is what the analyzer resolves against; user schema is layered on top elsewhere.
+Static `pg_catalog` (types, functions, operators, casts, aggregates, ranges, and the system
+relations) embedded as TSV. This is what the analyzer resolves against; user schema is layered on
+top elsewhere.
+
+System relations (`pg_class.tsv`, one row per column): every pg_catalog and information_schema
+table / view with its columns' types and NOT NULL, so `SELECT relname FROM pg_class` or a query
+over `information_schema.columns` types like any table. information_schema's domains
+(`sql_identifier`, `cardinal_number`, ...) ride along in `pg_type.tsv` with their schema; they
+resolve only qualified, as in PG. `schema.findRelation` consults these after the user's relations
+of the search path (pg_catalog implicitly first, as PG does).
 
 Extensions: `data/ext/<name>/` holds the same six TSVs plus `META` (version, schema, requires) for
 one extension, dumped from a fresh database right after `CREATE EXTENSION ... CASCADE` (so a dump

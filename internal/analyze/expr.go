@@ -265,12 +265,21 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		if len(es) == 0 {
 			return nil, errAt(codeIndeterminateDatatype, v.AArrayExpr.Location, "cannot determine type of empty array")
 		}
-		// nested ARRAY[ARRAY[..]] : elements are arrays; the result is the same array type
+		// nested ARRAY[ARRAY[..]]: written arrays as elements make one multidimensional
+		// array of the same type; an array-typed element written any other way is an
+		// element (int2vector[] over int2vector), and only when no such array type exists
+		// does the result stay the element's array type
 		t, coll, err := a.unify(es, v.AArrayExpr.Location, "ARRAY")
 		if err != nil {
 			return nil, err
 		}
-		if et := a.typ(t.OID); et != nil && et.IsArray() {
+		written := false
+		for _, el := range v.AArrayExpr.Elements {
+			if el.GetAArrayExpr() != nil {
+				written = true
+			}
+		}
+		if et := a.typ(t.OID); et != nil && et.IsArray() && (written || a.s.Types.ArrayOf(t.OID) == 0) {
 			return &expr{typ: ref(t.OID), node: n, coll: coll}, nil
 		}
 		arr := a.s.Types.ArrayOf(t.OID)
@@ -285,12 +294,16 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		}
 		var fields []rteCol
 		for i, e := range args {
+			lit := false
 			if e.oid() == catalog.Unknown {
+				// an unknown literal field becomes text, but stays coercible to whatever a
+				// row(...)::composite cast asks of that position
+				lit = e.lit
 				if err := a.bind(e, catalog.Text, loc(v.RowExpr.Args[i])); err != nil {
 					return nil, err
 				}
 			}
-			fields = append(fields, rteCol{name: "f" + strconv.Itoa(i+1), typ: e.typ, nullable: e.nullable, src: e.src, fields: e.fields})
+			fields = append(fields, rteCol{name: "f" + strconv.Itoa(i+1), typ: e.typ, nullable: e.nullable, src: e.src, fields: e.fields, lit: lit})
 		}
 		return &expr{typ: ref(catalog.Record), node: n, fields: fields}, nil
 	case *pg_query.Node_SubLink:
@@ -386,6 +399,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		return &expr{typ: ref(catalog.Bool), node: n}, nil
 	case *pg_query.Node_MergeSupportFunc:
 		// merge_action() in MERGE ... RETURNING (PG 17)
+		if !a.inMerge {
+			return nil, errAt(codeSyntaxError, v.MergeSupportFunc.Location, "MERGE_ACTION() can only be used in the RETURNING list of a MERGE command")
+		}
 		return &expr{typ: ref(catalog.Text), node: n}, nil
 	case *pg_query.Node_JsonIsPredicate:
 		e, err := a.analyzeExpr(v.JsonIsPredicate.Expr, sc)
@@ -493,6 +509,14 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 		}
 	}
 	if star {
+		if len(names) > 0 {
+			if r := sc.wholeRow(names[len(names)-1]); r != nil {
+				if r.rowType != 0 {
+					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
+				}
+				return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.cols}, nil
+			}
+		}
 		return nil, errAt(codeSyntaxError, c.Location, "improper use of \"*\"")
 	}
 	var tbl, col string
@@ -509,8 +533,13 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	rc, err := a.resolveColumn(sc, tbl, col, c.Location)
 	if err != nil {
 		if tbl == "" {
-			if r := sc.wholeRow(col); r != nil && r.rowType != 0 {
-				return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
+			if r := sc.wholeRow(col); r != nil {
+				if r.rowType != 0 {
+					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
+				}
+				if r.join == nil {
+					return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.cols}, nil
+				}
 			}
 			// a SQL function's parameter (a column of the same name takes precedence)
 			for i, p := range a.funcParams {
@@ -548,15 +577,16 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 	} else if e.oid() == catalog.Record && len(e.fields) > 0 {
-		// row(a, b)::composite (coerce_record_to_complex): field by field, by position
-		rel := relByRowType(a.s, target.OID)
+		// row(a, b)::composite (coerce_record_to_complex): field by field, by position; a
+		// domain over a composite casts through its base type
+		rel := relByRowType(a.s, a.baseType(target.OID))
 		if rel == nil || len(rel.Columns) != len(e.fields) {
 			return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type record to %s", a.s.Types.Format(target))
 		}
 		var cols []rteCol
 		for i, f := range e.fields {
 			c := rel.Columns[i]
-			if f.typ.OID != catalog.Unknown && !a.canCoerce(f.typ.OID, c.Type.OID, assignmentCoercion) {
+			if f.typ.OID != catalog.Unknown && !f.lit && !a.canCoerce(f.typ.OID, c.Type.OID, assignmentCoercion) {
 				return nil, errAt(codeCannotCoerce, tc.Location, "cannot cast type %s to %s in column %d of %s", a.s.Types.Format(f.typ), a.s.Types.Format(c.Type), i+1, a.s.Types.Format(target))
 			}
 			cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: f.nullable})
@@ -769,6 +799,14 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		schemaName = names[len(names)-2]
 	}
 	var args []*expr
+	isAgg := f.AggStar || f.AggFilter != nil || f.AggWithinGroup || f.AggDistinct || len(f.AggOrder) > 0 || a.isAggregateName(names)
+	if isAgg && f.Over == nil {
+		if a.inAggArgs > 0 {
+			return nil, errAt(codeGroupingError, f.Location, "aggregate function calls cannot be nested")
+		}
+		a.inAggArgs++
+		defer func() { a.inAggArgs-- }()
+	}
 	if f.AggStar {
 		// count(*)
 	} else {
@@ -807,8 +845,24 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			args = append(args, e)
 		}
 	}
+	// f(x) with x a composite row that has a field f is the field (ParseFuncOrColumn
+	// tries the projection before any function)
+	if len(args) == 1 && !f.AggStar && f.AggFilter == nil && f.Over == nil && len(f.AggOrder) == 0 && schemaName == "" {
+		if t := a.typ(args[0].oid()); t != nil && t.Kind == 'c' {
+			if fe := a.fieldOf(args[0], name); fe != nil {
+				fe.node = self
+				return fe, nil
+			}
+		}
+	}
 	actual := a.argOIDs(args)
-	c, ambiguous := a.resolveFunction(schemaName, name, actual, f.AggWithinGroup)
+	named := make([]string, len(f.Args))
+	for i, n := range f.Args {
+		if na := n.GetNamedArgExpr(); na != nil {
+			named[i] = na.Name
+		}
+	}
+	c, ambiguous := a.resolveFunction(schemaName, name, actual, f.AggWithinGroup, named, f.FuncVariadic)
 	if c == nil {
 		// type-name(x) is a cast
 		if len(args) == 1 {
@@ -1110,6 +1164,21 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 				if !slice {
 					cur = ref(t.Elem)
 				}
+			case t != nil && t.Elem != 0 && t.Len > 0:
+				// raw_array_subscript_handler: a fixed-length type over elements (point, box,
+				// name) subscripts to one element; no slices
+				ai := v.AIndices
+				if ai.IsSlice {
+					return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "cannot slice type %s", a.s.Types.Format(cur))
+				}
+				ie, err := a.analyzeExpr(ai.Uidx, sc)
+				if err != nil {
+					return nil, err
+				}
+				if err := a.bind(ie, catalog.Int4, loc(ai.Uidx)); err != nil {
+					return nil, err
+				}
+				cur = ref(t.Elem)
 			default:
 				return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(cur))
 			}
@@ -1279,4 +1348,21 @@ func funcNames(f *pg_query.FuncCall) []string {
 		names = append(names, n.GetString_().GetSval())
 	}
 	return names
+}
+
+// fieldOf is the field name of composite value e, nil when e's type has no such field.
+func (a *analyzer) fieldOf(e *expr, name string) *expr {
+	t := a.typ(e.oid())
+	if t == nil || t.Kind != 'c' {
+		return nil
+	}
+	rel := a.relByRowType(t.OID)
+	if rel == nil {
+		return nil
+	}
+	col := rel.Column(name)
+	if col == nil {
+		return nil
+	}
+	return &expr{typ: col.Type, nullable: true}
 }

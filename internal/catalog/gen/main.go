@@ -30,7 +30,7 @@ var dumps = map[string]string{
 		       t.typlen, t.typbyval, t.typelem, t.typarray, t.typrelid, t.typbasetype, t.typtypmod,
 		       n.nspname
 		  FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-		 WHERE %[1]s
+		 WHERE %[6]s
 		 ORDER BY t.oid`,
 	"pg_proc": `
 		SELECT p.oid, p.proname, p.prokind, p.prorettype, p.proretset, p.provariadic,
@@ -65,16 +65,28 @@ var dumps = map[string]string{
 		  FROM pg_range r
 		 WHERE %[4]s
 		 ORDER BY r.rngtypid`,
+	// system relations: pg_catalog and information_schema tables / views, one row per column
+	"pg_class": `
+		SELECT c.oid, c.relname, c.relkind, n.nspname,
+		       a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		  JOIN pg_attribute a ON a.attrelid = c.oid
+		 WHERE %[5]s AND c.relkind IN ('r', 'v') AND a.attnum > 0 AND NOT a.attisdropped
+		 ORDER BY c.oid, a.attnum`,
 }
 
-// filters are [namespace rows, pg_cast rows, pg_aggregate rows, pg_range rows].
+// filters are [namespace rows, pg_cast rows, pg_aggregate rows, pg_range rows, pg_class rows, pg_type rows].
 var (
-	bootstrapFilters = [4]string{"n.nspname = 'pg_catalog'", "true", "true", "true"}
-	extFilters       = [4]string{
+	// information_schema's domains type its views' columns, so they ride along in pg_type
+	bootstrapFilters = [6]string{"n.nspname = 'pg_catalog'", "true", "true", "true",
+		"n.nspname IN ('pg_catalog', 'information_schema')", "n.nspname IN ('pg_catalog', 'information_schema')"}
+	extFilters = [6]string{
 		"%s.oid IN (SELECT objid FROM ext_members)",
 		"c.oid IN (SELECT objid FROM ext_members)",
 		"a.aggfnoid::oid IN (SELECT objid FROM ext_members)",
 		"r.rngtypid IN (SELECT objid FROM ext_members)",
+		"c.oid IN (SELECT objid FROM ext_members)",
+		"t.oid IN (SELECT objid FROM ext_members)",
 	}
 )
 
@@ -182,14 +194,14 @@ func serverVersion(ctx context.Context, o *oracle.Oracle) string {
 	return version
 }
 
-func dump(ctx context.Context, o *oracle.Oracle, outDir string, filters [4]string) {
+func dump(ctx context.Context, o *oracle.Oracle, outDir string, filters [6]string) {
 	for name, q := range dumps {
 		alias := map[string]string{"pg_type": "t", "pg_proc": "p", "pg_operator": "o"}[name]
 		nsFilter := filters[0]
 		if strings.Contains(nsFilter, "%s") {
 			nsFilter = fmt.Sprintf(nsFilter, alias)
 		}
-		q = fmt.Sprintf(q, nsFilter, filters[1], filters[2], filters[3])
+		q = fmt.Sprintf(q, nsFilter, filters[1], filters[2], filters[3], filters[4], filters[5])
 		f, err := os.Create(filepath.Join(outDir, name+".tsv"))
 		if err != nil {
 			log.Fatal(err)

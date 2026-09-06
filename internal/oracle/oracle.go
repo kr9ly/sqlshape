@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/jackc/pgx/v5"
@@ -230,3 +231,32 @@ func (o *Oracle) Conn() *pgx.Conn { return o.conn }
 
 // ConnString is the connection string of the running server (for pools and other clients).
 func (o *Oracle) ConnString() string { return o.dsn }
+
+// Reconnect closes the current connection and opens one to another database on the
+// same server. Used by the regress probe, which isolates each test file in its own
+// database created from a template.
+func (o *Oracle) Reconnect(ctx context.Context, database string) error {
+	if o.conn != nil {
+		o.conn.Close(ctx)
+		o.conn = nil
+	}
+	i := strings.LastIndex(o.dsn, "/")
+	j := strings.Index(o.dsn[i:], "?")
+	dsn := o.dsn[:i+1] + database + o.dsn[i+j:]
+	// A crashed backend puts the server into recovery for a moment; wait it out.
+	var err error
+	for attempt := 0; attempt < 60; attempt++ {
+		var conn *pgx.Conn
+		conn, err = pgx.Connect(ctx, dsn)
+		if err == nil {
+			o.conn = conn
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("connect %s: %w", database, err)
+}
