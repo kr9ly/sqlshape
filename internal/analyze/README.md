@@ -35,6 +35,11 @@ parameters in FROM, WHERE CURRENT OF, and utility statements (TRUNCATE / LOCK / 
 SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR / CREATE TABLE AS). FETCH stays
 0A000: a cursor's columns are not known statically.
 
+- Recursive CTEs: forward references, a WITH nested on the recursive union, SEARCH / CYCLE columns and their
+  name rules, and checkWellFormedRecursion (`recursive.go`: the query name once, not in a subquery / the nullable
+  side of an outer join / EXCEPT / INTERSECT / the non-recursive term, no aggregates, no data-modifying body)
+- Windows: named windows (duplicates, unknown references), RANGE offset frames need one ORDER BY column, GROUPS
+  needs ORDER BY, no window functions inside window definitions / GROUP BY / RETURNING / JOIN conditions
 - Writes through views (`viewdml.go`): INSERT / UPDATE / DELETE / MERGE on an automatically updatable view
   (one table in FROM, no set operation / DISTINCT / GROUP BY / HAVING / LIMIT / OFFSET / WITH / window / aggregate /
   set-returning target) are typed and their violations computed against the base table under the view's column
@@ -52,7 +57,18 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
 - `regress_test.go`: `-regress /path/to/postgres/src/test/regress` replays PG's own regression corpus against a
   live PG and the analyzer side by side and writes every disagreement to `-regress-report`, grouped by kind
   (DIFF column name / type / nullability, STRICT = analyzer rejects what PG takes, LENIENT = the reverse, CODE =
-  different SQLSTATE). A discovery tool, not a gate: `-regress-tests select,join` limits it to some files
+  different SQLSTATE). A discovery tool, not a gate: `-regress-tests select,join` limits it to some files.
+  `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
+  only raises at execution (assignment length coercion of a literal into varchar(n) / bit(n) / numeric(p,s),
+  view updatability decided by view-column defaults) count as STRICT there even though the analyzer is right
+- `literal_oracle_test.go`: with `-regress`, every `'literal'::type` in the corpus goes through the real input
+  function and the analyzer (`-literal-types` narrows it); seconds, not minutes. The input functions are ported
+  from PG's C: `datetime.go` (ParseDateTime / DecodeDateTime / DecodeTimeOnly / DecodeInterval /
+  DecodeISO8601Interval with the token tables and the default time zone abbreviations; `SET datestyle` /
+  `intervalstyle` / `timezone` in schema.sql are honoured), `literal_compound.go` (array_in with dimensions and
+  element input by type, range / multirange, record, geo_ops, pg_lsn, bytea, inet / cidr, macaddr, bit),
+  `jsonpath.go` (the jsonpath scanner / grammar acceptance rules), `literal.go` (numbers, money, macaddr8,
+  tid, xid, snapshots, xml, json surrogates, regtype / regproc / regclass names)
 - Error fixtures agree on SQLSTATE; the message text is informative only
 - GROUP BY validity (`grouping.go`): grouping expressions matched by deparsed text, aggregate arguments
   exempt, ungrouped columns allowed when their table's primary key is grouped; GROUPING SETS / ROLLUP / CUBE checked against the union of their expressions, grouped columns become nullable
