@@ -35,7 +35,15 @@ const (
 	Int4                    OID = 23
 	Text                    OID = 25
 	OIDType                 OID = 26
+	RegProc                 OID = 24
 	Tid                     OID = 27
+	MacAddr8                OID = 774
+	Money                   OID = 790
+	RegProcedure            OID = 2202
+	RegType                 OID = 2206
+	TxidSnapshot            OID = 2970
+	PgSnapshot              OID = 5038
+	Xid8                    OID = 5069
 	Xid                     OID = 28
 	Cid                     OID = 29
 	JSON                    OID = 114
@@ -63,6 +71,7 @@ const (
 	AnyEnum                 OID = 3500
 	UUID                    OID = 2950
 	JSONB                   OID = 3802
+	JSONPath                OID = 4072
 	AnyRange                OID = 3831
 	AnyCompatible           OID = 5077
 	AnyCompatibleArray      OID = 5078
@@ -92,7 +101,9 @@ type Type struct {
 
 // IsArray reports whether t is a true array type: it has an element type and is a
 // varlena (get_element_type). Fixed-length types with typelem (point, line, ...) are not.
-func (t *Type) IsArray() bool { return t.Elem != 0 && t.Len == -1 && t.Kind != 'p' }
+func (t *Type) IsArray() bool {
+	return t.Elem != 0 && t.Len == -1 && (t.Kind != 'p' || t.Elem == Record)
+}
 
 // Relation is a system table or view (pg_class + pg_attribute) the analyzer can resolve
 // like a user table: pg_catalog's, information_schema's, or an extension's.

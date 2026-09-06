@@ -58,6 +58,9 @@ func (a *analyzer) jsonContext(v *pg_query.JsonValueExpr, sc *scope, at int32) (
 	if err := a.bind(e, catalog.JSONB, loc(v.RawExpr)); err != nil {
 		return nil, err
 	}
+	if v.Format != nil && v.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT && a.baseType(e.oid()) != catalog.Bytea {
+		return nil, errAt(codeDatatypeMismatch, v.Format.Location, "JSON ENCODING clause is only allowed for bytea input type")
+	}
 	switch a.baseType(e.oid()) {
 	case catalog.JSON, catalog.JSONB:
 	default:

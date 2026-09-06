@@ -14,6 +14,7 @@ import (
 
 type analyzer struct {
 	s        *schema.Schema
+	dts      *dtSession // datetime GUC view, built lazily from s
 	params   map[int32]catalog.OID
 	paramSrc map[int32]*Source
 	maxParam int32

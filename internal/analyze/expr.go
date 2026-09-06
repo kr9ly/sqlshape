@@ -39,6 +39,12 @@ func (e expr) oid() catalog.OID { return e.typ.OID }
 // bind gives an unknown-typed expression (untyped literal or $n) the type the context demands.
 // For $n this records the parameter type; conflicting demands are an error.
 func (a *analyzer) bind(e *expr, to catalog.OID, loc int32) *Error {
+	return a.bindTypmod(e, ref(to), loc)
+}
+
+// bindTypmod is bind with the target's typmod (a cast's INTERVAL '1' YEAR range).
+func (a *analyzer) bindTypmod(e *expr, target schema.TypeRef, loc int32) *Error {
+	to := target.OID
 	if e.oid() != catalog.Unknown || to == catalog.Unknown || to == 0 {
 		return nil
 	}
@@ -48,7 +54,7 @@ func (a *analyzer) bind(e *expr, to catalog.OID, loc int32) *Error {
 		}
 	} else if c := e.node.GetAConst(); c != nil {
 		if sv, ok := c.Val.(*pg_query.A_Const_Sval); ok {
-			if err := a.validateLiteral(sv.Sval.GetSval(), to, c.Location); err != nil {
+			if err := a.validateLiteralTypmod(sv.Sval.GetSval(), to, target.Typmod, c.Location); err != nil {
 				return err
 			}
 		}
@@ -514,7 +520,7 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 				if r.rowType != 0 {
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 				}
-				return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.cols}, nil
+				return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.expand()}, nil
 			}
 		}
 		return nil, errAt(codeSyntaxError, c.Location, "improper use of \"*\"")
@@ -573,10 +579,10 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 		return nil, err
 	}
 	if e.oid() == catalog.Unknown {
-		if err := a.bind(e, target.OID, tc.Location); err != nil {
+		if err := a.bindTypmod(e, target, tc.Location); err != nil {
 			return nil, err
 		}
-	} else if e.oid() == catalog.Record && len(e.fields) > 0 {
+	} else if tt := a.typ(a.baseType(target.OID)); e.oid() == catalog.Record && len(e.fields) > 0 && tt != nil && tt.Kind == 'c' {
 		// row(a, b)::composite (coerce_record_to_complex): field by field, by position; a
 		// domain over a composite casts through its base type
 		rel := relByRowType(a.s, a.baseType(target.OID))
@@ -616,7 +622,13 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 				return nil, err
 			}
 		}
-		r, err := a.analyzeExpr(x.Rexpr, sc)
+		var r *expr
+		if l != nil && l.oid() == catalog.Record && x.Rexpr.GetSubLink() != nil {
+			// ROW(a, b) = (SELECT x, y): a row comparison against a multi-column subquery
+			r, err = a.rowSubquery(x.Rexpr.GetSubLink(), sc)
+		} else {
+			r, err = a.analyzeExpr(x.Rexpr, sc)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1121,6 +1133,9 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 			case t != nil && t.OID == catalog.JSONB:
 				// jsonb subscripting (PG 14): each subscript is a key (text) or an array index
 				// (integer) and yields jsonb
+				if v.AIndices.IsSlice {
+					return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "jsonb subscript does not support slices")
+				}
 				for _, idx := range []*pg_query.Node{v.AIndices.Lidx, v.AIndices.Uidx} {
 					if idx == nil {
 						continue
@@ -1168,22 +1183,45 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 				// raw_array_subscript_handler: a fixed-length type over elements (point, box,
 				// name) subscripts to one element; no slices
 				ai := v.AIndices
-				if ai.IsSlice {
-					return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "cannot slice type %s", a.s.Types.Format(cur))
+				for _, idx := range []*pg_query.Node{ai.Lidx, ai.Uidx} {
+					if idx == nil {
+						continue
+					}
+					ie, err := a.analyzeExpr(idx, sc)
+					if err != nil {
+						return nil, err
+					}
+					if err := a.bind(ie, catalog.Int4, loc(idx)); err != nil {
+						return nil, err
+					}
 				}
-				ie, err := a.analyzeExpr(ai.Uidx, sc)
-				if err != nil {
-					return nil, err
+				if !ai.IsSlice {
+					cur = ref(t.Elem) // a slice of a point is still a point
 				}
-				if err := a.bind(ie, catalog.Int4, loc(ai.Uidx)); err != nil {
-					return nil, err
-				}
-				cur = ref(t.Elem)
 			default:
 				return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(cur))
 			}
 		case *pg_query.Node_String_:
-			t := a.typ(cur.OID)
+			t := a.typ(a.baseType(cur.OID))
+			if t != nil && t.OID == catalog.Record {
+				// (f(x)).name on a function returning record through OUT parameters, or on a
+				// row constructor / whole-row value that carries its fields
+				fields := e.fields
+				if len(fields) == 0 && x.Arg.GetFuncCall() != nil {
+					fields = a.outParamCols()
+				}
+				found := false
+				for _, fc := range fields {
+					if fc.name == v.String_.Sval {
+						cur, found = fc.typ, true
+						break
+					}
+				}
+				if !found {
+					return nil, errAt(codeUndefinedColumn, loc(x.Arg), "could not identify column %q in record data type", v.String_.Sval)
+				}
+				break
+			}
 			if t == nil || t.Kind != 'c' {
 				return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "column notation .%s applied to type %s, which is not a composite type", v.String_.Sval, a.s.Types.Format(cur))
 			}
@@ -1365,4 +1403,21 @@ func (a *analyzer) fieldOf(e *expr, name string) *expr {
 		return nil
 	}
 	return &expr{typ: col.Type, nullable: true}
+}
+
+// rowSubquery analyzes a scalar subquery used as one side of a row comparison: its
+// columns form an anonymous record (ROWCOMPARE_SUBLINK).
+func (a *analyzer) rowSubquery(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
+	sel := s.Subselect.GetSelectStmt()
+	if s.SubLinkType != pg_query.SubLinkType_EXPR_SUBLINK || sel == nil {
+		return a.subLink(s, sc)
+	}
+	cols, err := a.selectStmt(sel, newScope(sc))
+	if err != nil {
+		return nil, err
+	}
+	if len(cols) == 1 {
+		return a.subLink(s, sc)
+	}
+	return &expr{typ: ref(catalog.Record), nullable: true, node: nodeOf(s), fields: cols}, nil
 }

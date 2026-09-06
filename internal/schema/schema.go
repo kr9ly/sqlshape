@@ -42,6 +42,8 @@ type Schema struct {
 	pending    []string             // directives preceding the statement being applied
 	nextOID    catalog.OID
 	searchPath []string // SET search_path, nil = public
+	// datetime input GUCs (SET datestyle / intervalstyle / timezone); "" = PG default
+	dateOrder, intervalStyle, timeZone string
 }
 
 // Problem is a DDL statement (or part) that was skipped or rejected.
@@ -88,6 +90,21 @@ type Relation struct {
 	// InsteadRules (views): the write commands ("insert" / "update" / "delete") a
 	// CREATE RULE ... DO INSTEAD makes the view take.
 	InsteadRules map[string]bool
+	// Parents are the tables this one INHERITS from / is a PARTITION OF.
+	Parents []*Relation
+}
+
+// InheritsFrom reports whether rel is anc or descends from it.
+func (rel *Relation) InheritsFrom(anc *Relation) bool {
+	if rel == anc {
+		return true
+	}
+	for _, p := range rel.Parents {
+		if p.InheritsFrom(anc) {
+			return true
+		}
+	}
+	return false
 }
 
 // Column is one attribute.
@@ -573,6 +590,23 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		// search path); the hidden relation stays for its other references
 	}
 	rel := s.newRelation(schema, name, Table)
+	// CREATE TABLE ... OF type: the composite type's attributes are the columns
+	if st.OfTypename != nil {
+		tr, err := s.resolveType(st.OfTypename)
+		if err != nil {
+			s.problem(loc, "table %s: %v", name, err)
+		} else {
+			for _, r := range s.Relations {
+				if r.RowType == tr.OID && r.Kind == 'c' {
+					for _, c := range r.Columns {
+						cp := *c
+						cp.Num = int16(len(rel.Columns) + 1)
+						rel.Columns = append(rel.Columns, &cp)
+					}
+				}
+			}
+		}
+	}
 	// a partition takes its parent's columns and constraints; an INHERITS child takes
 	// the parent's columns (and CHECKs) and adds its own
 	for _, pn := range st.InhRelations {
@@ -771,6 +805,12 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 		switch cmd.GetSubtype() {
 		case pg_query.AlterTableType_AT_AddColumn:
 			s.addColumn(rel, cmd.Def.GetColumnDef())
+			// children (INHERITS / partitions) gain the column too
+			for _, child := range s.Relations {
+				if child != rel && child.InheritsFrom(rel) && child.Column(cmd.Def.GetColumnDef().GetColname()) == nil {
+					s.addColumn(child, cmd.Def.GetColumnDef())
+				}
+			}
 		case pg_query.AlterTableType_AT_AddConstraint:
 			s.addTableConstraint(rel, cmd.Def.GetConstraint())
 		case pg_query.AlterTableType_AT_SetNotNull:

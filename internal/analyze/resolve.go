@@ -93,9 +93,19 @@ func (a *analyzer) canCoerce(from, to catalog.OID, ctx coercionContext) bool {
 	if ft != nil && tt2 != nil && ft.IsArray() && tt2.IsArray() && to != catalog.OIDVector && to != catalog.Int2Vector {
 		return a.canCoerce(ft.Elem, tt2.Elem, ctx)
 	}
-	// composite / record: any row type to record
+	// composite / record: any row type to record; an anonymous record to a composite
+	// (coerce_record_to_complex, checked field by field where the fields are known); a
+	// child table's row type to its parent's (inheritance)
 	if to == catalog.Record && ft != nil && ft.Kind == 'c' {
 		return true
+	}
+	if from == catalog.Record && tt2 != nil && tt2.Kind == 'c' && ctx != implicitCoercion {
+		return true
+	}
+	if ft != nil && tt2 != nil && ft.Kind == 'c' && tt2.Kind == 'c' && ctx == explicitCoercion {
+		if fr, tr := relByRowType(a.s, from), relByRowType(a.s, to); fr != nil && tr != nil && fr.InheritsFrom(tr) {
+			return true
+		}
 	}
 	// I/O coercion: to/from string types, explicit only (plus assignment to string)
 	if ctx == explicitCoercion {
@@ -561,6 +571,15 @@ func expandArgs(declared []catalog.OID, ndefault int, variadic catalog.OID, n in
 // resolvePolymorphic binds any*-typed declared args to actual types (enforce_generic_type_consistency)
 // and returns the concrete return type. ok=false on inconsistency.
 func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.OID, ret catalog.OID) (catalog.OID, bool) {
+	anyPoly := false
+	for _, d := range declared {
+		if dt := a.typ(d); dt != nil && dt.IsPolymorphic() {
+			anyPoly = true
+		}
+	}
+	if !anyPoly {
+		return ret, true // array_in(cstring, oid, integer) returns anyarray as such
+	}
 	var elem, arr, rng, mrng catalog.OID
 	var compatElems []catalog.OID
 	haveCompatArr := catalog.OID(0)
@@ -573,6 +592,10 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 			continue
 		}
 		act = a.baseType(act)
+		if at := a.typ(act); at != nil && at.IsPolymorphic() {
+			// a column of type anyarray (pg_statistic.stavalues1): the call stays polymorphic
+			return ret, true
+		}
 		switch d {
 		case catalog.AnyElement, catalog.AnyNonArray, catalog.AnyEnum:
 			if elem != 0 && elem != act {
@@ -586,8 +609,18 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 			arr = act
 		case catalog.AnyRange, catalog.AnyCompatibleRange:
 			rng = act
+			if d == catalog.AnyCompatibleRange {
+				if r := a.s.Types.RangeOf(act); r != nil {
+					compatElems = append(compatElems, r.Subtype)
+				}
+			}
 		case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
 			mrng = act
+			if d == catalog.AnyCompatibleMultirange {
+				if r := a.s.Types.RangeOfMulti(act); r != nil {
+					compatElems = append(compatElems, r.Subtype)
+				}
+			}
 		case catalog.AnyCompatible, catalog.AnyCompatibleNonArray:
 			compatElems = append(compatElems, act)
 		case catalog.AnyCompatibleArray:
@@ -606,9 +639,6 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 			return 0, false
 		}
 		elem = at.Elem
-	}
-	if elem != 0 && arr == 0 {
-		arr = a.s.Types.ArrayOf(elem)
 	}
 	// ranges: anyrange ↔ anyelement ↔ anymultirange through pg_range
 	if mrng != 0 && rng == 0 {
@@ -631,6 +661,9 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 		if r := a.s.Types.RangeForSubtype(elem); r != nil {
 			rng, mrng = r.OID, r.Multi
 		}
+	}
+	if elem != 0 && arr == 0 {
+		arr = a.s.Types.ArrayOf(elem)
 	}
 	var compat catalog.OID
 	if len(compatElems) > 0 {

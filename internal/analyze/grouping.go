@@ -234,6 +234,10 @@ func groupingLeaves(items []*pg_query.Node) []*pg_query.Node {
 			out = append(out, groupingLeaves(l.Items)...)
 			continue
 		}
+		if re := n.GetRowExpr(); re != nil && re.RowFormat == pg_query.CoercionForm_COERCE_IMPLICIT_CAST {
+			out = append(out, groupingLeaves(re.Args)...)
+			continue
+		}
 		out = append(out, n)
 	}
 	return out

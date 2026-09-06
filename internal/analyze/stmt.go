@@ -294,10 +294,14 @@ func (a *analyzer) aliasCols(cols []rteCol, aliases []*pg_query.Node) []rteCol {
 }
 
 func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error) {
+	// each arm keeps its unknown literals (select null, 42 union all select x, y): the
+	// common type of the pair types them, text only when every arm is unknown
+	a.keepUnknown = true
 	left, err := a.selectStmt(sel.Larg, newScope(sc))
 	if err != nil {
 		return nil, err
 	}
+	a.keepUnknown = true
 	right, err := a.selectStmt(sel.Rarg, newScope(sc))
 	if err != nil {
 		return nil, err
@@ -443,7 +447,15 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 	case *pg_query.Node_RangeTableFunc:
 		return a.xmlTable(v.RangeTableFunc, sc)
 	case *pg_query.Node_JoinExpr:
-		return a.joinExpr(v.JoinExpr, sc)
+		r, err := a.joinExpr(v.JoinExpr, sc)
+		if err != nil {
+			return nil, err
+		}
+		if al := v.JoinExpr.Alias; al != nil {
+			r.alias = al.Aliasname
+			r.join.colAliases = strs(al.Colnames)
+		}
+		return r, nil
 	case *pg_query.Node_JsonTable:
 		return a.jsonTable(v.JsonTable, sc)
 	case *pg_query.Node_RangeTableSample:
@@ -751,6 +763,12 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 		return a.bind(e, col.Type.OID, at)
 	}
 	if !a.canCoerce(e.oid(), col.Type.OID, assignmentCoercion) {
+		if ct := a.typ(a.baseType(col.Type.OID)); e.oid() == catalog.Record && ct != nil && ct.Kind == 'c' {
+			// row(...) into a composite column: coerce_record_to_complex, field by field
+			if rel := relByRowType(a.s, ct.OID); rel != nil && (len(e.fields) == 0 || len(rel.Columns) == len(e.fields)) {
+				return nil
+			}
+		}
 		return errAt(codeDatatypeMismatch, at, "column %q is of type %s but expression is of type %s", col.Name, a.s.Types.Format(col.Type), a.s.Types.Format(e.typ))
 	}
 	a.domainAssign(e, col.Type.OID, relName, col.Name, at)
@@ -807,7 +825,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 					return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
 				}
 				for i, it := range items {
-					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override != pg_query.OverridingKind_OVERRIDING_SYSTEM_VALUE {
+					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
 						return nil, errAt(codeGeneratedAlways, loc(it), "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
 					}
 					e, err := a.analyzeExpr(it, sc)
@@ -831,7 +849,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 				return nil, errAt(codeSyntaxError, -1, "INSERT has more expressions than target columns")
 			}
 			for i := range src {
-				if cols[i].Identity == 'a' && ins.Override != pg_query.OverridingKind_OVERRIDING_SYSTEM_VALUE {
+				if cols[i].Identity == 'a' && ins.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
 					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
 				}
 			}
@@ -1484,7 +1502,7 @@ func (a *analyzer) indirectTarget(col *schema.Column, ind []*pg_query.Node, at i
 				return nil, errAt(codeDatatypeMismatch, at, "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(ref(cur)))
 			}
 			if !v.AIndices.IsSlice {
-				cur = t.Elem
+				cur = a.baseType(t.Elem)
 			}
 		case *pg_query.Node_String_:
 			t := a.typ(cur)

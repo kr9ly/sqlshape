@@ -41,11 +41,13 @@ type joinInfo struct {
 	usingCols   []rteCol
 	jointype    pg_query.JoinType
 	quals       *pg_query.Node
+	colAliases  []string // (a JOIN b) AS x (c1, c2, ...): the output columns renamed in order
 }
 
-// leaves returns the leaf rtes (the ones that can be referenced by alias).
+// leaves returns the rtes that can be referenced by alias: the leaf tables, or an aliased
+// join as a whole (its tables are hidden behind the alias).
 func (r *rte) leaves() []*rte {
-	if r.join == nil {
+	if r.join == nil || r.alias != "" {
 		return []*rte{r}
 	}
 	return append(r.join.left.leaves(), r.join.right.leaves()...)
@@ -72,6 +74,11 @@ func (r *rte) expand() []rteCol {
 			out = append(out, c)
 		}
 	}
+	for i, n := range j.colAliases {
+		if i < len(out) {
+			out[i].name = n
+		}
+	}
 	return out
 }
 
@@ -82,6 +89,15 @@ func (r *rte) find(name string) []rteCol {
 		var out []rteCol
 		for _, c := range r.cols {
 			if c.name == name && !r.hidden[name] {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	if len(r.join.colAliases) > 0 {
+		var out []rteCol
+		for _, c := range r.expand() {
+			if c.name == name {
 				out = append(out, c)
 			}
 		}
@@ -157,6 +173,14 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 			if len(hits) == 0 {
 				if c, ok := a.systemColumn(sc, tbl, col); ok {
 					return c, nil
+				}
+				if r.rowType != 0 {
+					// t.f for a function f(t): functional notation on a whole row
+					for _, fn := range a.s.Functions {
+						if fn.Name == col && len(fn.Args) == 1 && fn.Args[0].Type.OID == r.rowType && a.s.OnSearchPath(fn.Schema) {
+							return rteCol{name: col, typ: fn.RetType, nullable: true}, nil
+						}
+					}
 				}
 				return rteCol{}, errAt(codeUndefinedColumn, loc, "column %s.%s does not exist", tbl, col)
 			}

@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"strconv"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -42,8 +43,86 @@ func (s *Schema) OnSearchPath(schema string) bool {
 // creationSchema is where an unqualified CREATE lands.
 func (s *Schema) creationSchema() string { return s.SearchPath()[0] }
 
+// DateTimeSettings is the datetime input state SET statements in the schema left behind:
+// the DateStyle field order ("mdy" / "dmy" / "ymd"), the IntervalStyle and the TimeZone.
+// Empty means the PG default (MDY, postgres, the session's zone).
+func (s *Schema) DateTimeSettings() (dateOrder, intervalStyle, timeZone string) {
+	return s.dateOrder, s.intervalStyle, s.timeZone
+}
+
+// setVariableValues flattens SET's argument list: constants, identifiers and the
+// comma-separated lists DateStyle accepts inside one string.
+func setVariableValues(st *pg_query.VariableSetStmt) []string {
+	var out []string
+	for _, n := range st.Args {
+		var v string
+		if c := n.GetAConst(); c != nil {
+			if sv := c.GetSval(); sv != nil {
+				v = sv.GetSval()
+			} else if iv := c.GetIval(); iv != nil {
+				v = strconv.Itoa(int(iv.Ival))
+			} else if fv := c.GetFval(); fv != nil {
+				v = fv.Fval
+			}
+		} else if str := n.GetString_(); str != nil {
+			v = str.Sval
+		} else if tc := n.GetTypeCast(); tc != nil {
+			// SET TIME ZONE INTERVAL '+05:30' HOUR TO MINUTE
+			if c := tc.Arg.GetAConst(); c != nil {
+				v = c.GetSval().GetSval()
+			}
+		}
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
 func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
-	if st.Name != "search_path" {
+	reset := st.Kind == pg_query.VariableSetKind_VAR_RESET || st.Kind == pg_query.VariableSetKind_VAR_RESET_ALL ||
+		st.Kind == pg_query.VariableSetKind_VAR_SET_DEFAULT
+	switch strings.ToLower(st.Name) {
+	case "datestyle":
+		if reset {
+			s.dateOrder = ""
+			return
+		}
+		for _, v := range setVariableValues(st) {
+			switch strings.ToLower(v) {
+			case "ymd", "iso":
+				if strings.ToLower(v) == "ymd" {
+					s.dateOrder = "ymd"
+				}
+			case "dmy", "euro", "european", "german":
+				s.dateOrder = "dmy"
+			case "mdy", "us", "noneuro", "noneuropean", "american":
+				s.dateOrder = "mdy"
+			case "default":
+				s.dateOrder = ""
+			}
+		}
+		return
+	case "intervalstyle":
+		s.intervalStyle = ""
+		if !reset {
+			if vs := setVariableValues(st); len(vs) > 0 {
+				s.intervalStyle = strings.ToLower(vs[0])
+			}
+		}
+		return
+	case "timezone":
+		s.timeZone = ""
+		if !reset {
+			if vs := setVariableValues(st); len(vs) > 0 && !strings.EqualFold(vs[0], "default") {
+				s.timeZone = vs[0]
+			}
+		}
+		return
+	case "search_path":
+	default:
 		return
 	}
 	if st.Kind == pg_query.VariableSetKind_VAR_RESET || st.Kind == pg_query.VariableSetKind_VAR_RESET_ALL {
@@ -75,6 +154,7 @@ func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
 
 // inherit copies a parent's columns (and, for partitions, its constraints) into rel.
 func (s *Schema) inherit(rel *Relation, parent *Relation, partition bool, loc int32) {
+	rel.Parents = append(rel.Parents, parent)
 	for _, pc := range parent.Columns {
 		if rel.Column(pc.Name) != nil {
 			continue // a child may redeclare a parent column with the same type
@@ -808,30 +888,60 @@ func (s *Schema) createAggregate(schema, name string, st *pg_query.DefineStmt, d
 		if ff.GetTypeName() != nil { // a bare name parses as a TypeName
 			fschema, fname = qualified(strs(ff.GetTypeName().GetNames()))
 		}
-		if ret, ok := s.functionReturn(fschema, fname, []TypeRef{st2}); ok {
-			fn.RetType = ret
+		if ret, first, ok := s.functionReturn(fschema, fname, []TypeRef{st2}); ok {
+			fn.RetType = s.resolveAggFinal(ret, first, st2)
 		}
 	}
 	s.Functions = append(s.Functions, fn)
 }
 
-// functionReturn finds the return type of a user or catalog function whose first
-// parameters are args (extra parameters may follow: finalfunc_extra).
-func (s *Schema) functionReturn(schema, name string, args []TypeRef) (TypeRef, bool) {
+// resolveAggFinal is the aggregate's result when its final function is polymorphic: the
+// state type stands in for the final function's first parameter (ffp(anyarray) returns
+// anyarray over an int4[] state is int4[]).
+func (s *Schema) resolveAggFinal(ret TypeRef, first catalog.OID, stype TypeRef) TypeRef {
+	rt := s.Types.ByOID(ret.OID)
+	if rt == nil || !rt.IsPolymorphic() {
+		return ret
+	}
+	st := s.Types.ByOID(stype.OID)
+	switch {
+	case first == ret.OID:
+		return stype
+	case (first == catalog.AnyElement || first == catalog.AnyCompatible) && (ret.OID == catalog.AnyArray || ret.OID == catalog.AnyCompatibleArray):
+		if arr := s.Types.ArrayOf(stype.OID); arr != 0 {
+			return TypeRef{OID: arr, Typmod: -1}
+		}
+	case (first == catalog.AnyArray || first == catalog.AnyCompatibleArray) && (ret.OID == catalog.AnyElement || ret.OID == catalog.AnyCompatible):
+		if st != nil && st.IsArray() {
+			return TypeRef{OID: st.Elem, Typmod: -1}
+		}
+	}
+	return ret
+}
+
+// functionReturn finds the return type and first parameter type of a user or catalog
+// function whose first parameters are args (extra parameters may follow: finalfunc_extra).
+func (s *Schema) functionReturn(schema, name string, args []TypeRef) (ret TypeRef, first catalog.OID, ok bool) {
 	for _, f := range s.Functions {
 		if f.Name != name || (schema != "" && f.Schema != schema) {
 			continue
 		}
-		return f.RetType, true
+		if len(f.Args) > 0 {
+			first = f.Args[0].Type.OID
+		}
+		return f.RetType, first, true
 	}
 	if schema == "" || schema == "pg_catalog" {
 		for _, f := range s.Catalog.FuncsByName(name) {
 			if len(f.ArgTypes) >= len(args) && (len(args) == 0 || f.ArgTypes[0] == args[0].OID) {
-				return TypeRef{OID: f.RetType, Typmod: -1}, true
+				if len(f.ArgTypes) > 0 {
+					first = f.ArgTypes[0]
+				}
+				return TypeRef{OID: f.RetType, Typmod: -1}, first, true
 			}
 		}
 	}
-	return TypeRef{}, false
+	return TypeRef{}, 0, false
 }
 
 // createOperator registers CREATE OPERATOR name (leftarg = ..., rightarg = ..., function = ...).
@@ -879,7 +989,7 @@ func (s *Schema) createOperator(schema, name string, defs map[string]*pg_query.N
 		args = append(args, TypeRef{OID: op.Left, Typmod: -1})
 	}
 	args = append(args, TypeRef{OID: op.Right, Typmod: -1})
-	ret, ok := s.functionReturn(fschema, fname, args)
+	ret, _, ok := s.functionReturn(fschema, fname, args)
 	if !ok {
 		s.problem(loc, "operator %s: function %q does not exist", name, fname)
 		return

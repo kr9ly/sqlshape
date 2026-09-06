@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
 var uuidRe = regexp.MustCompile(`^\{?[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}\}?$`)
@@ -17,6 +18,12 @@ var uuidRe = regexp.MustCompile(`^\{?[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]
 // untyped string literal is coerced to a type (SQLSTATE 22P02). Only types whose
 // syntax is simple and stable are checked; others are accepted.
 func (a *analyzer) validateLiteral(s string, to catalog.OID, loc int32) *Error {
+	return a.validateLiteralTypmod(s, to, -1, loc)
+}
+
+// validateLiteralTypmod is validateLiteral with the target's typmod, which changes how an
+// interval literal is read (INTERVAL '1' YEAR).
+func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32, loc int32) *Error {
 	base := a.baseType(to)
 	bad := func(what string) *Error {
 		return errAt("22P02", loc, "invalid input syntax for type %s: %q", what, s)
@@ -36,6 +43,7 @@ func (a *analyzer) validateLiteral(s string, to catalog.OID, loc int32) *Error {
 		if _, err := parsePGInt(v, 64); err == nil {
 			return nil // non-decimal integer literals and digit separators are numeric input too
 		}
+		v = stripDigitSeparators(v)
 		if !isNumberish(v) || strings.Count(v, ".") > 1 {
 			switch strings.ToLower(strings.TrimLeft(v, "+-")) {
 			case "nan", "inf", "infinity": // NaN, [+-]inf, [+-]Infinity
@@ -44,22 +52,45 @@ func (a *analyzer) validateLiteral(s string, to catalog.OID, loc int32) *Error {
 			}
 		}
 	case catalog.Float4, catalog.Float8:
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil && !strings.EqualFold(v, "nan") && !strings.Contains(strings.ToLower(v), "inf") {
-			if errors.Is(err, strconv.ErrRange) {
-				return errAt("22003", loc, "%q is out of range for type double precision", s)
-			}
-			if base == catalog.Float4 {
-				return bad("real")
-			}
-			return bad("double precision")
-		}
-		if err == nil && base == catalog.Float4 && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
-			return errAt("22003", loc, "%q is out of range for type real", s)
-		}
+		return validateFloatLiteral(s, base == catalog.Float4, loc)
 	case catalog.JSON, catalog.JSONB:
 		if !json.Valid([]byte(s)) {
 			return bad(map[catalog.OID]string{catalog.JSON: "json", catalog.JSONB: "jsonb"}[base])
+		}
+		if base == catalog.JSONB && jsonHasNulEscape(s) {
+			return errAt("22P05", loc, "unsupported Unicode escape sequence")
+		}
+	case catalog.JSONPath:
+		return validateJsonpathLiteral(s, loc)
+	case catalog.RegType:
+		return a.validateRegtypeLiteral(s, loc)
+	case catalog.RegProc, catalog.RegProcedure:
+		return a.validateRegprocLiteral(s, base == catalog.RegProcedure, loc)
+	case catalog.Money:
+		return validateMoneyLiteral(s, loc)
+	case catalog.MacAddr8:
+		if !validMacaddr8(s) {
+			return bad("macaddr8")
+		}
+	case catalog.Tid:
+		if !validTid(s) {
+			return bad("tid")
+		}
+	case catalog.Xid, catalog.Xid8, catalog.OIDType, catalog.Cid:
+		name := map[catalog.OID]string{catalog.Xid: "xid", catalog.Xid8: "xid8", catalog.OIDType: "oid", catalog.Cid: "cid"}[base]
+		bits := 32
+		if base == catalog.Xid8 {
+			bits = 64
+		}
+		if code := uintInSubr(s, bits); code != "" {
+			if code == "22003" {
+				return errAt("22003", loc, "value %q is out of range for type %s", s, name)
+			}
+			return bad(name)
+		}
+	case catalog.PgSnapshot, catalog.TxidSnapshot:
+		if !validSnapshot(s) {
+			return bad(map[catalog.OID]string{catalog.PgSnapshot: "pg_snapshot", catalog.TxidSnapshot: "txid_snapshot"}[base])
 		}
 	case catalog.Bool:
 		switch strings.ToLower(v) {
@@ -71,7 +102,18 @@ func (a *analyzer) validateLiteral(s string, to catalog.OID, loc int32) *Error {
 		if !uuidRe.MatchString(v) {
 			return bad("uuid")
 		}
+	case catalog.Timestamp, catalog.TimestampTZ:
+		return validateTimestampLiteral(s, base == catalog.TimestampTZ, a.dtSession(), loc)
+	case catalog.Date:
+		return validateDateLiteral(s, a.dtSession(), loc)
+	case catalog.Time, catalog.TimeTZ:
+		return validateTimeLiteral(s, base == catalog.TimeTZ, a.dtSession(), loc)
+	case catalog.Interval:
+		return validateIntervalLiteral(s, typmod, a.dtSession(), loc)
 	default:
+		if e, ok := a.validateCompoundLiteral(s, base, typmod, loc); ok {
+			return e
+		}
 		if labels, ok := a.s.Types.Enums[base]; ok {
 			for _, l := range labels {
 				if l == s {
@@ -132,4 +174,375 @@ func parsePGInt(v string, bits int) (int64, error) {
 		v = "-" + v
 	}
 	return strconv.ParseInt(v, base, bits)
+}
+
+// validateFloatLiteral is float4in / float8in: strtod with PG's spellings of NaN and
+// Infinity, out-of-range (including underflow to zero) is 22003, trailing junk 22P02.
+func validateFloatLiteral(s string, single bool, loc int32) *Error {
+	name := "double precision"
+	if single {
+		name = "real"
+	}
+	bad := func() *Error { return errAt("22P02", loc, "invalid input syntax for type %s: %q", name, s) }
+	num := strings.TrimLeft(s, " \t\n\v\f\r")
+	if num == "" {
+		return bad()
+	}
+	f, rest, ok := strtod(num)
+	if !ok || len(rest) == len(num) {
+		// strtod failed or overflowed: PG then tries its own spellings
+		low := strings.ToLower(num)
+		matched := false
+		for _, w := range []string{"nan", "infinity", "+infinity", "-infinity", "inf", "+inf", "-inf"} {
+			if strings.HasPrefix(low, w) {
+				rest, matched = num[len(w):], true
+				break
+			}
+		}
+		if !matched {
+			if len(rest) != len(num) && (math.IsInf(f, 0) || f == 0) {
+				return errAt("22003", loc, "%q is out of range for type %s", strings.TrimSpace(num[:len(num)-len(rest)]), name)
+			}
+			return bad()
+		}
+	} else if single && !math.IsInf(f, 0) && !math.IsNaN(f) {
+		// strtof: beyond float4 range, or a nonzero value that rounds to zero
+		if f32 := float64(float32(f)); math.IsInf(f32, 0) || (f != 0 && f32 == 0) {
+			return errAt("22003", loc, "%q is out of range for type real", strings.TrimSpace(num[:len(num)-len(rest)]))
+		}
+	}
+	if strings.TrimRight(rest, " \t\n\v\f\r") != "" {
+		return bad()
+	}
+	return nil
+}
+
+// jsonHasNulEscape reports a \u0000 inside a JSON string, which jsonb rejects.
+func jsonHasNulEscape(s string) bool {
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case !inStr:
+			inStr = c == '"'
+		case c == '\\':
+			if i+5 < len(s) && s[i+1] == 'u' && s[i+2:i+6] == "0000" {
+				return true
+			}
+			i++
+		case c == '"':
+			inStr = false
+		}
+	}
+	return false
+}
+
+// validateMoneyLiteral is cash_in under the C locale.
+func validateMoneyLiteral(str string, loc int32) *Error {
+	outOfRange := func() *Error { return errAt("22003", loc, "value %q is out of range for type money", str) }
+	s := strings.TrimLeft(str, " \t\n\v\f\r")
+	s = strings.TrimPrefix(s, "$")
+	s = strings.TrimLeft(s, " \t\n\v\f\r")
+	switch {
+	case strings.HasPrefix(s, "-"):
+		s = s[1:]
+	case strings.HasPrefix(s, "("):
+		s = s[1:]
+	case strings.HasPrefix(s, "+"):
+		s = s[1:]
+	}
+	s = strings.TrimLeft(s, " \t\n\v\f\r")
+	s = strings.TrimPrefix(s, "$")
+	s = strings.TrimLeft(s, " \t\n\v\f\r")
+	var value int64
+	dec, seenDot := 0, false
+	i := 0
+	for ; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case cIsDigit(c) && (!seenDot || dec < 2):
+			var over bool
+			if value, over = mul64(value, 10); over {
+				return outOfRange()
+			}
+			if value, over = add64(value, -int64(c-'0')); over {
+				return outOfRange()
+			}
+			if seenDot {
+				dec++
+			}
+		case c == '.' && !seenDot:
+			seenDot = true
+		case c == ',':
+		default:
+			goto done
+		}
+	}
+done:
+	if i < len(s) && cIsDigit(s[i]) && s[i] >= '5' {
+		var over bool
+		if value, over = add64(value, -1); over {
+			return outOfRange()
+		}
+	}
+	for ; dec < 2; dec++ {
+		var over bool
+		if value, over = mul64(value, 10); over {
+			return outOfRange()
+		}
+	}
+	for i < len(s) && cIsDigit(s[i]) {
+		i++
+	}
+	for i < len(s) {
+		switch c := s[i]; {
+		case cIsSpace(c) || c == ')' || c == '-' || c == '+' || c == '$':
+			i++
+		default:
+			return errAt("22P02", loc, "invalid input syntax for type money: %q", str)
+		}
+	}
+	// the sign is applied last; only -value can overflow
+	neg := strings.Contains(str, "-") || strings.Contains(str, "(")
+	if !neg && value == math.MinInt64 {
+		return outOfRange()
+	}
+	return nil
+}
+
+// validMacaddr8 is macaddr8_in: 6 or 8 hex pairs with one consistent separator.
+func validMacaddr8(s string) bool {
+	i := 0
+	for i < len(s) && cIsSpace(s[i]) {
+		i++
+	}
+	count := 0
+	var spacer byte
+	hex := func(c byte) bool { return cIsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
+	for i < len(s) && i+1 < len(s) {
+		count++
+		if count > 8 || !hex(s[i]) || !hex(s[i+1]) {
+			return false
+		}
+		i += 2
+		if i < len(s) && (s[i] == ':' || s[i] == '-' || s[i] == '.') {
+			if spacer == 0 {
+				spacer = s[i]
+			} else if spacer != s[i] {
+				return false
+			}
+			i++
+		}
+		if (count == 6 || count == 8) && i < len(s) && cIsSpace(s[i]) {
+			for i < len(s) && cIsSpace(s[i]) {
+				i++
+			}
+			if i < len(s) {
+				return false
+			}
+		}
+	}
+	if count != 6 && count != 8 {
+		return false
+	}
+	return i >= len(s)
+}
+
+// validTid is tidin: "(block,offset)" with block a uint32 (or int32) and offset a uint16.
+func validTid(s string) bool {
+	if !strings.HasPrefix(s, "(") {
+		return false
+	}
+	body, _, ok := strings.Cut(s[1:], ")")
+	if !ok {
+		return false
+	}
+	a, b, ok := strings.Cut(body, ",")
+	if !ok {
+		return false
+	}
+	blk, rest, erange := strtoNum(a, 64)
+	if erange || rest != "" || len(a) == 0 || blk < math.MinInt32 || blk > math.MaxUint32 {
+		return false
+	}
+	off, rest, erange := strtoNum(b, 64)
+	return !erange && rest == "" && len(b) > 0 && off >= 0 && off <= math.MaxUint16
+}
+
+// uintInSubr is uint32in_subr / uint64in_subr (strtoul base 0, trailing whitespace ok):
+// "" for a good value, else "22P02" or "22003".
+func uintInSubr(s string, bits int) string {
+	i := 0
+	for i < len(s) && cIsSpace(s[i]) {
+		i++
+	}
+	neg := false
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		neg = s[i] == '-'
+		i++
+	}
+	base := 10
+	if i+1 < len(s) && s[i] == '0' && (s[i+1] == 'x' || s[i+1] == 'X') && i+2 < len(s) && isHexDigit(s[i+2]) {
+		base, i = 16, i+2
+	} else if i < len(s) && s[i] == '0' {
+		base = 8
+	}
+	start := i
+	var v uint64
+	over := false
+	for i < len(s) {
+		d, ok := digitVal(s[i], base)
+		if !ok {
+			break
+		}
+		if v > (math.MaxUint64-uint64(d))/uint64(base) {
+			over = true
+		} else {
+			v = v*uint64(base) + uint64(d)
+		}
+		i++
+	}
+	if i == start {
+		return "22P02"
+	}
+	if bits == 32 {
+		// strtoul on a 64-bit long: the value must fit uint32 after sign wrap
+		if over || (!neg && v > math.MaxUint32) || (neg && v > 1<<31 && v != 0 && (math.MaxUint64-v+1) > math.MaxUint32) {
+			return "22003"
+		}
+	} else if over {
+		return "22003"
+	}
+	if strings.TrimRight(s[i:], " \t\n\v\f\r") != "" {
+		return "22P02"
+	}
+	return ""
+}
+
+func isHexDigit(c byte) bool { return cIsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
+
+func digitVal(c byte, base int) (int, bool) {
+	var d int
+	switch {
+	case cIsDigit(c):
+		d = int(c - '0')
+	case c >= 'a' && c <= 'z':
+		d = int(c-'a') + 10
+	case c >= 'A' && c <= 'Z':
+		d = int(c-'A') + 10
+	default:
+		return 0, false
+	}
+	return d, d < base
+}
+
+// validSnapshot is parse_snapshot: "xmin:xmax:[xip,...]" with 0 < xmin <= xmax and the
+// xip list ascending within [xmin, xmax).
+func validSnapshot(s string) bool {
+	u64 := func(str string) (uint64, string, bool) {
+		v, rest, erange := strtoNum(str, 64)
+		if erange || len(rest) == len(str) || v < 0 {
+			return 0, str, false
+		}
+		return uint64(v), rest, true
+	}
+	xmin, rest, ok := u64(s)
+	if !ok || !strings.HasPrefix(rest, ":") {
+		return false
+	}
+	xmax, rest, ok := u64(rest[1:])
+	if !ok || !strings.HasPrefix(rest, ":") {
+		return false
+	}
+	rest = rest[1:]
+	if xmin == 0 || xmax == 0 || xmax < xmin {
+		return false
+	}
+	var last uint64
+	for rest != "" {
+		v, r, ok := u64(rest)
+		if !ok || v < xmin || v >= xmax || v < last {
+			return false
+		}
+		last, rest = v, r
+		if strings.HasPrefix(rest, ",") {
+			rest = rest[1:]
+		} else if rest != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// stripDigitSeparators removes the single underscores numeric_in allows between digits;
+// an underscore anywhere else is left in place so the syntax check rejects it.
+func stripDigitSeparators(v string) string {
+	var b strings.Builder
+	for i := 0; i < len(v); i++ {
+		if v[i] == '_' && i > 0 && i+1 < len(v) && cIsDigit(v[i-1]) && cIsDigit(v[i+1]) {
+			continue
+		}
+		b.WriteByte(v[i])
+	}
+	return b.String()
+}
+
+// validateRegtypeLiteral is regtypein: a numeric OID, or a type name the parser accepts
+// (42601 otherwise) that resolves (42704 otherwise).
+func (a *analyzer) validateRegtypeLiteral(s string, loc int32) *Error {
+	v := strings.TrimSpace(s)
+	if v == "" || v == "-" {
+		return nil
+	}
+	if _, err := parsePGInt(v, 64); err == nil {
+		return nil
+	}
+	res, err := pg_query.Parse("SELECT NULL::" + v)
+	if err != nil || len(res.Stmts) != 1 {
+		return errAt("42601", loc, "syntax error at or near %q", v)
+	}
+	tc := res.Stmts[0].Stmt.GetSelectStmt().GetTargetList()[0].GetResTarget().GetVal().GetTypeCast()
+	if tc == nil || tc.TypeName == nil {
+		return errAt("42601", loc, "syntax error at or near %q", v)
+	}
+	if _, rerr := a.s.ResolveType(tc.TypeName); rerr != nil {
+		return errAt("42704", loc, "type %q does not exist", v)
+	}
+	return nil
+}
+
+// validateRegprocLiteral is regprocin / regprocedurein on the function's name only: a
+// numeric OID, or a (qualified) function name that exists somewhere.
+func (a *analyzer) validateRegprocLiteral(s string, withArgs bool, loc int32) *Error {
+	v := strings.TrimSpace(s)
+	if v == "" || v == "-" {
+		return nil
+	}
+	if _, err := parsePGInt(v, 64); err == nil {
+		return nil
+	}
+	name := v
+	if withArgs {
+		name, _, _ = strings.Cut(v, "(")
+		name = strings.TrimSpace(name)
+	}
+	parts := strings.Split(name, ".")
+	for i := range parts {
+		parts[i] = strings.Trim(parts[i], `"`)
+	}
+	schemaName, fname := "", parts[len(parts)-1]
+	if len(parts) > 1 {
+		schemaName = parts[len(parts)-2]
+	}
+	for _, fn := range a.s.Functions {
+		if fn.Name == fname && (schemaName == "" && a.s.OnSearchPath(fn.Schema) || fn.Schema == schemaName) {
+			return nil
+		}
+	}
+	if schemaName == "" || schemaName == "pg_catalog" {
+		if len(a.s.Catalog.FuncsByName(fname)) > 0 {
+			return nil
+		}
+	}
+	return errAt("42883", loc, "function %q does not exist", v)
 }
