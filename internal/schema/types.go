@@ -281,11 +281,24 @@ func (ts *Types) BaseOf(r TypeRef) TypeRef {
 
 // addRange registers CREATE TYPE name AS RANGE (subtype = sub) and its multirange
 // (<name>multirange when name ends in "range", <name>_multirange otherwise, as PG).
-func (ts *Types) addRange(schema, name string, sub catalog.OID) *catalog.Type {
+func (ts *Types) addRange(schema, name string, sub catalog.OID, mname string) *catalog.Type {
 	r := ts.addUser(schema, name, 'r', 'R', 0, 0)
-	mname := name + "_multirange"
-	if strings.HasSuffix(name, "range") {
-		mname = strings.TrimSuffix(name, "range") + "multirange"
+	if mname == "" {
+		mname = name + "_multirange"
+		if strings.HasSuffix(name, "range") {
+			mname = strings.TrimSuffix(name, "range") + "multirange"
+		}
+	}
+	// a multirange_type_name that an array type already holds pushes the array type
+	// aside (moveArrayTypeName: another leading underscore until the name is free)
+	if old := ts.byName[schema+"."+mname]; old != nil && old.Kind == 'b' && old.Category == 'A' && old.Elem != 0 && ts.Schemas[old.OID] == schema {
+		free := "_" + mname
+		for ts.byName[schema+"."+free] != nil {
+			free = "_" + free
+		}
+		delete(ts.byName, schema+"."+mname)
+		old.Name = free
+		ts.byName[schema+"."+free] = old
 	}
 	m := ts.addUser(schema, mname, 'm', 'R', 0, 0)
 	ts.Ranges = append(ts.Ranges, catalog.Range{OID: r.OID, Subtype: sub, Multi: m.OID})
@@ -339,6 +352,22 @@ func (ts *Types) renameUser(oid catalog.OID, name string) {
 		delete(ts.byName, schema+"."+arr.Name)
 		arr.Name = "_" + name
 		ts.byName[schema+"."+arr.Name] = arr
+	}
+}
+
+// moveUser puts a user type (and its array type) in another schema; catalog types stay.
+func (ts *Types) moveUser(oid catalog.OID, schema string) {
+	t := ts.byOID[oid]
+	if t == nil {
+		return
+	}
+	for _, x := range []*catalog.Type{t, ts.byOID[t.Array]} {
+		if x == nil {
+			continue
+		}
+		delete(ts.byName, ts.Schemas[x.OID]+"."+x.Name)
+		ts.Schemas[x.OID] = schema
+		ts.byName[schema+"."+x.Name] = x
 	}
 }
 

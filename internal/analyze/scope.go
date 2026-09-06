@@ -23,6 +23,9 @@ type rte struct {
 	alias   string
 	cols    []rteCol
 	rowType catalog.OID // whole-row reference type, 0 for joins / subqueries
+	// scalarFn: a function in FROM returning a scalar; a whole-row reference to it is
+	// the scalar itself (makeWholeRowVar), not a one-column record
+	scalarFn bool
 	// join structure (nil for leaves)
 	join *joinInfo
 	// unqualified-lookup hiding: names merged away by USING on the right side
@@ -132,10 +135,11 @@ type scope struct {
 }
 
 type cte struct {
-	name      string
-	cols      []rteCol
-	recursive bool
-	sub       *subquery // defining query for cardinality proofs (nil when recursive)
+	noReturning bool // a data-modifying CTE without RETURNING: cannot be referenced
+	name        string
+	cols        []rteCol
+	recursive   bool
+	sub         *subquery // defining query for cardinality proofs (nil when recursive)
 	// forbidden: the CTE is being defined and may not be referenced here (the
 	// non-recursive term of a recursive query)
 	forbidden bool

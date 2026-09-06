@@ -62,6 +62,14 @@ type analyzer struct {
 	// inFuncArgs / inCase / inFromFunc: nesting a set-returning function is refused there
 	inFuncArgs, inCase int
 	inFromFunc         bool
+	// srfBan names the clause being analyzed when set-returning functions are not allowed
+	// in it (COALESCE, UPDATE, RETURNING, VALUES, LIMIT, aggregate / window arguments);
+	// srfBanNext hands a ban to the next selectStmt (RETURNING is analyzed as one).
+	srfBan, srfBanNext string
+	// inInsertValues: the VALUES being analyzed is an INSERT's source (SRFs allowed there)
+	inInsertValues bool
+	// selectDepth counts the SELECTs being analyzed: a data-modifying WITH is legal only at 0
+	selectDepth int
 	// calledFuncs are the user functions the statement calls (with their arguments): their
 	// bodies' failure modes are the statement's too
 	calledFuncs []calledFunc

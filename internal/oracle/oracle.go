@@ -92,7 +92,16 @@ func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
 		Database("sqlshape").
 		Username("sqlshape").
 		Password("sqlshape").
+		// a throwaway server: durability only costs time (the regress probe runs many
+		// sessions at once, and every fsync serializes them)
+		StartParameters(map[string]string{"fsync": "off", "synchronous_commit": "off", "full_page_writes": "off", "max_connections": "50"}).
 		Logger(nil)
+	if path := os.Getenv("SQLSHAPE_ORACLE_LOG"); path != "" {
+		// the server log, for tracking down backend crashes in the regress probe
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			cfg = cfg.Logger(f)
+		}
+	}
 	pg := embeddedpostgres.NewDatabase(cfg)
 	if err := pg.Start(); err != nil {
 		os.RemoveAll(runtimePath)
@@ -231,6 +240,16 @@ func (o *Oracle) Conn() *pgx.Conn { return o.conn }
 
 // ConnString is the connection string of the running server (for pools and other clients).
 func (o *Oracle) ConnString() string { return o.dsn }
+
+// Session opens another connection to the same server, to the given database, for
+// callers that work in parallel. Closing a session closes only its connection.
+func (o *Oracle) Session(ctx context.Context, database string) (*Oracle, error) {
+	s := &Oracle{dsn: o.dsn}
+	if err := s.Reconnect(ctx, database); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
 
 // Reconnect closes the current connection and opens one to another database on the
 // same server. Used by the regress probe, which isolates each test file in its own

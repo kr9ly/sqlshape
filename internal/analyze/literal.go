@@ -45,13 +45,20 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 			return bad(name)
 		}
 	case catalog.Numeric:
+		if strings.Contains(v, "__") || strings.HasPrefix(v, "_") || strings.HasSuffix(v, "_") {
+			return bad("numeric") // a digit separator sits between two digits, alone
+		}
 		if _, err := parsePGInt(v, 64); err == nil || isNonDecimalInt(v) {
 			return nil // non-decimal integer literals and digit separators are numeric input too
 		}
 		v = stripDigitSeparators(v)
 		if !isNumberish(v) || strings.Count(v, ".") > 1 {
 			switch strings.ToLower(strings.TrimLeft(v, "+-")) {
-			case "nan", "inf", "infinity": // NaN, [+-]inf, [+-]Infinity
+			case "inf", "infinity": // [+-]inf, [+-]Infinity
+			case "nan":
+				if v[0] == '+' || v[0] == '-' {
+					return bad("numeric") // NaN takes no sign
+				}
 			default:
 				return bad("numeric")
 			}
@@ -75,6 +82,8 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		return a.validateRegclassLiteral(s, loc)
 	case catalog.RegProc, catalog.RegProcedure:
 		return a.validateRegprocLiteral(s, base == catalog.RegProcedure, loc)
+	case catalog.RegOper, catalog.RegOperator:
+		return a.validateRegoperLiteral(s, base == catalog.RegOperator, loc)
 	case catalog.Money:
 		return validateMoneyLiteral(s, loc)
 	case catalog.MacAddr8:
@@ -108,7 +117,7 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 			return bad("boolean")
 		}
 	case catalog.UUID:
-		if !uuidRe.MatchString(v) {
+		if !uuidRe.MatchString(s) { // uuid_in does not trim
 			return bad("uuid")
 		}
 	case catalog.Timestamp, catalog.TimestampTZ:
@@ -520,6 +529,21 @@ func (a *analyzer) validateRegtypeLiteral(s string, loc int32) *Error {
 	return nil
 }
 
+// qualifiedNameParts is textToQualifiedNameList: a dotted name split into identifiers,
+// quoted ones kept as written, unquoted ones folded to lower case.
+func qualifiedNameParts(v string) []string {
+	parts := strings.Split(v, ".")
+	for i := range parts {
+		p := strings.TrimSpace(parts[i])
+		if strings.HasPrefix(p, `"`) {
+			parts[i] = strings.ReplaceAll(strings.Trim(p, `"`), `""`, `"`)
+		} else {
+			parts[i] = strings.ToLower(p)
+		}
+	}
+	return parts
+}
+
 // validateRegprocLiteral is regprocin / regprocedurein on the function's name only: a
 // numeric OID, or a (qualified) function name that exists somewhere.
 func (a *analyzer) validateRegprocLiteral(s string, withArgs bool, loc int32) *Error {
@@ -535,10 +559,7 @@ func (a *analyzer) validateRegprocLiteral(s string, withArgs bool, loc int32) *E
 		name, _, _ = strings.Cut(v, "(")
 		name = strings.TrimSpace(name)
 	}
-	parts := strings.Split(name, ".")
-	for i := range parts {
-		parts[i] = strings.Trim(parts[i], `"`)
-	}
+	parts := qualifiedNameParts(name)
 	schemaName, fname := "", parts[len(parts)-1]
 	if len(parts) > 1 {
 		schemaName = parts[len(parts)-2]
@@ -554,6 +575,39 @@ func (a *analyzer) validateRegprocLiteral(s string, withArgs bool, loc int32) *E
 		}
 	}
 	return errAt("42883", loc, "function %q does not exist", v)
+}
+
+// validateRegoperLiteral is regoperin / regoperatorin on the operator's symbol only: a
+// numeric OID, or a (qualified) operator name that exists somewhere.
+func (a *analyzer) validateRegoperLiteral(s string, withArgs bool, loc int32) *Error {
+	v := strings.TrimSpace(s)
+	if v == "" || v == "0" {
+		return nil
+	}
+	if _, err := parsePGInt(v, 64); err == nil {
+		return nil
+	}
+	name := v
+	if withArgs {
+		name, _, _ = strings.Cut(v, "(")
+		name = strings.TrimSpace(name)
+	}
+	// OPERATOR(schema.+) style qualification: the symbol is the last dotted part
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		if sch := strings.ToLower(strings.TrimSpace(name[:i])); !a.s.HasSchema(sch) {
+			return errAt("42883", loc, "operator does not exist: %s", v)
+		}
+		name = name[i+1:]
+	}
+	if len(a.s.Catalog.OperatorsByName(name)) > 0 {
+		return nil
+	}
+	for _, op := range a.s.Operators {
+		if op.Name == name {
+			return nil
+		}
+	}
+	return errAt("42883", loc, "operator does not exist: %s", v)
 }
 
 // jsonSurrogatesOK checks the \uXXXX escapes inside JSON strings pair their UTF-16
@@ -799,10 +853,7 @@ func (a *analyzer) validateRegclassLiteral(s string, loc int32) *Error {
 	if _, err := parsePGInt(v, 64); err == nil {
 		return nil
 	}
-	parts := strings.Split(v, ".")
-	for i := range parts {
-		parts[i] = strings.Trim(strings.TrimSpace(parts[i]), `"`)
-	}
+	parts := qualifiedNameParts(v)
 	schemaName, name := "", parts[len(parts)-1]
 	if len(parts) > 1 {
 		schemaName = parts[len(parts)-2]
@@ -826,4 +877,21 @@ func (a *analyzer) validateRegclassLiteral(s string, loc int32) *Error {
 		}
 	}
 	return errAt("42P01", loc, "relation %q does not exist", v)
+}
+
+// validateBitConst checks a B'...' / X'...' constant: only binary / hex digits inside.
+func validateBitConst(s string, loc int32) *Error {
+	if s == "" {
+		return nil
+	}
+	hex := s[0] == 'x' || s[0] == 'X'
+	for _, ch := range s[1:] {
+		if hex && !isHexDigit(byte(ch)) {
+			return errAt("22P02", loc, "%q is not a valid hexadecimal digit", string(ch))
+		}
+		if !hex && ch != '0' && ch != '1' {
+			return errAt("22P02", loc, "%q is not a valid binary digit", string(ch))
+		}
+	}
+	return nil
 }

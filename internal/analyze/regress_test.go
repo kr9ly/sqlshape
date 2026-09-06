@@ -2,13 +2,16 @@ package analyze
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +31,7 @@ var (
 	regressDir    = flag.String("regress", "", "path to PG's src/test/regress; enables TestRegress")
 	regressTests  = flag.String("regress-tests", "", "comma-separated test names to run (default: parallel_schedule order)")
 	regressReport = flag.String("regress-report", "", "write the per-statement report here (default: stderr summary only)")
+	regressJobs   = flag.Int("regress-jobs", 0, "parallel workers for the non-promoted files (default: NumCPU, at most 8)")
 )
 
 // The schedule lines whose objects later tests build on. Files in these lines run
@@ -89,17 +93,68 @@ func TestRegress(t *testing.T) {
 
 	p := &regressProbe{t: t, ctx: ctx, o: o, dir: dir}
 	p.stats = map[string]int{}
+	// Promoted files build the shared database in order; the rest each run in a
+	// throwaway copy of it, so they run in parallel once the promoted ones are done.
+	type job struct {
+		name  string
+		quiet bool
+	}
+	var pending []job
 	for _, name := range tests {
+		quiet := false
 		if len(only) > 0 && !only[name] {
 			// Promoted tests still run so the shared database has their objects.
 			if !promoted[name] {
 				continue
 			}
-			p.quiet = true
-		} else {
-			p.quiet = false
+			quiet = true
 		}
-		p.runFile(name, promoted[name])
+		if promoted[name] {
+			p.hits = append(p.hits, p.runFile(o, "sqlshape", name, true, quiet)...)
+		} else {
+			pending = append(pending, job{name, quiet})
+		}
+	}
+	if len(pending) > 0 {
+		// CREATE DATABASE ... TEMPLATE sqlshape needs no other session on the template
+		if err := o.Reconnect(ctx, "postgres"); err != nil {
+			t.Fatal(err)
+		}
+		workers := *regressJobs
+		if workers <= 0 {
+			workers = min(runtime.NumCPU(), 8)
+		}
+		workers = min(workers, len(pending))
+		results := make([][]regressHit, len(pending))
+		jobs := make(chan int)
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func(w int) {
+				defer wg.Done()
+				sess, err := o.Session(ctx, "postgres")
+				if err != nil {
+					t.Errorf("worker %d: %v", w, err)
+					for range jobs {
+					}
+					return
+				}
+				defer sess.Close()
+				for i := range jobs {
+					// a fresh name per file: a database a file leaves pinned (object_address
+					// leaves a logical replication subscription) must not block the next
+					results[i] = p.runFile(sess, fmt.Sprintf("regress_probe_%d_%d", w, i), pending[i].name, false, pending[i].quiet)
+				}
+			}(w)
+		}
+		for i := range pending {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+		for _, r := range results {
+			p.hits = append(p.hits, r...)
+		}
 	}
 
 	// Summary: class × key, most frequent first.
@@ -121,8 +176,8 @@ func TestRegress(t *testing.T) {
 	}
 	sort.Slice(aggs, func(i, j int) bool { return aggs[i].n > aggs[j].n })
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "statements: %d compared, %d agree, %d skipped (aborted txn), %d unparsed, %d hits\n",
-		p.stats["compared"], p.stats["agree"], p.stats["aborted"], p.stats["unparsed"], len(p.hits))
+	fmt.Fprintf(&sb, "statements: %d compared, %d agree, %d skipped (aborted txn), %d skipped (oracle crash), %d unparsed, %d hits\n",
+		p.stats["compared"], p.stats["agree"], p.stats["aborted"], p.stats["crash-skipped"], p.stats["unparsed"], len(p.hits))
 	for _, a := range aggs {
 		fmt.Fprintf(&sb, "%5d  %-7s %s\n", a.n, a.class, a.key)
 	}
@@ -153,15 +208,21 @@ func TestRegress(t *testing.T) {
 }
 
 type regressProbe struct {
-	t     *testing.T
-	ctx   context.Context
-	o     *oracle.Oracle
-	dir   string
-	quiet bool
+	t   *testing.T
+	ctx context.Context
+	o   *oracle.Oracle
+	dir string
 
 	baseDDL []string // DDL accepted by PG in the promoted tests; the analyzer's shared schema
 	hits    []regressHit
+	mu      sync.Mutex // guards stats (hits are merged by the caller)
 	stats   map[string]int
+}
+
+func (p *regressProbe) count(key string) {
+	p.mu.Lock()
+	p.stats[key]++
+	p.mu.Unlock()
 }
 
 var (
@@ -169,49 +230,74 @@ var (
 	reGset  = regexp.MustCompile(`\\g[a-z]*\b[^\n]*`)
 	reTemp  = regexp.MustCompile(`pg_temp_\d+\.`)
 	reStdin = regexp.MustCompile(`(?i)\bfrom\s+std(in|out)\b`)
+	// reCrash matches statements whose Prepare segfaults the oracle (PG 17: MERGE ...
+	// INSERT into a partitioned table with a VALUES source referencing a target column);
+	// every crash restarts the server under all the workers, so they are skipped
+	reCrash = regexp.MustCompile(`(?s)MERGE INTO measurement m\s+USING \(VALUES.*VALUES \(city_id - 1`)
 )
 
-// runFile replays one test file. Promoted files run in the shared database and
-// extend baseDDL; others run in a copy of it and leave it untouched.
-func (p *regressProbe) runFile(name string, promote bool) {
+// runFile replays one test file on the given oracle session and returns its hits.
+// Promoted files run in the shared database and extend baseDDL; others run in a copy of
+// it (database dbName, created here and dropped after) and leave it untouched.
+func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, quiet bool) (hits []regressHit) {
 	src, err := os.ReadFile(filepath.Join(p.dir, "sql", name+".sql"))
 	if err != nil {
 		p.t.Logf("%s: %v", name, err)
-		return
+		return nil
 	}
 	stmts := p.split(string(src))
 	if stmts == nil {
-		return
+		return nil
 	}
 	start := time.Now()
 	defer func() { p.t.Logf("%-28s %4d stmts %6.1fs", name, len(stmts), time.Since(start).Seconds()) }()
 	ctx := p.ctx
-	conn := p.o.Conn()
-	dbName := "sqlshape"
-	if !promote {
-		dbName = "regress_probe"
-		if _, err := conn.Exec(ctx, "CREATE DATABASE regress_probe TEMPLATE sqlshape"); err != nil {
-			p.t.Logf("%s: create database: %v", name, err)
-			return
-		}
-		if err := p.o.Reconnect(ctx, "regress_probe"); err != nil {
-			p.t.Fatalf("%s: %v", name, err)
-		}
-		defer func() {
-			if err := p.o.Reconnect(ctx, "sqlshape"); err != nil {
-				p.t.Fatal(err)
+	conn := o.Conn()
+	const session = "SET statement_timeout = '5s'; SET lock_timeout = '2s'; SET client_min_messages = warning"
+	// exec runs a statement on the current database; a crashed backend (the server
+	// restarts and drops every connection, in every worker) is reconnected once.
+	current := dbName
+	exec := func(sql string) error {
+		_, err := conn.Exec(ctx, sql)
+		if err != nil && strings.Contains(err.Error(), "conn closed") {
+			if rerr := o.Reconnect(ctx, current); rerr != nil {
+				return rerr
 			}
-			if _, err := p.o.Conn().Exec(ctx, "DROP DATABASE regress_probe"); err != nil {
-				p.t.Fatalf("%s: drop database: %v", name, err)
+			conn = o.Conn()
+			if current == dbName {
+				conn.Exec(ctx, session)
+			}
+			_, err = conn.Exec(ctx, sql)
+		}
+		return err
+	}
+	if !promote {
+		current = "postgres"
+		if err := exec("CREATE DATABASE " + dbName + " TEMPLATE sqlshape"); err != nil {
+			p.t.Logf("%s: create database: %v", name, err)
+			return nil
+		}
+		if err := o.Reconnect(ctx, dbName); err != nil {
+			p.t.Errorf("%s: %v", name, err)
+			return nil
+		}
+		current = dbName
+		defer func() {
+			if err := o.Reconnect(ctx, "postgres"); err != nil {
+				p.t.Error(err)
+				return
+			}
+			conn, current = o.Conn(), "postgres"
+			if err := exec("DROP DATABASE " + dbName); err != nil {
+				p.t.Logf("%s: drop database: %v (left behind)", name, err)
 			}
 		}()
-		conn = p.o.Conn()
+		conn = o.Conn()
 	}
-	conn.Exec(ctx, "SET statement_timeout = '5s'; SET lock_timeout = '2s'; SET client_min_messages = warning")
+	conn.Exec(ctx, session)
 
 	ddl := append([]string(nil), p.baseDDL...)
-	var s *schema.Schema
-	dirty := true
+	var s *schema.Schema // the analyzer's schema; nil = rebuild from ddl on next use
 	txSnap := -1
 	type savepoint struct {
 		name string
@@ -224,43 +310,56 @@ func (p *regressProbe) runFile(name string, promote bool) {
 		}
 		tree, err := pg_query.Parse(sql)
 		if err != nil || len(tree.Stmts) == 0 {
-			p.stats["unparsed"]++
-			conn.Exec(ctx, sql)
+			p.count("unparsed")
+			exec(sql)
 			continue
 		}
 		node := tree.Stmts[0].Stmt
 		if isRegressQuery(node) {
-			if dirty {
-				s = loadRegressSchema(&ddl)
-				dirty = false
+			if reCrash.MatchString(sql) {
+				p.count("crash-skipped")
+				continue
 			}
-			want := reTemp.ReplaceAllString(renderOracle(ctx, p.o, sql), "")
-			if strings.Contains(want, "conn closed") { // a backend crash took the connection: reconnect and retry
-				if err := p.o.Reconnect(ctx, dbName); err != nil {
-					p.t.Fatal(err)
+			if s == nil {
+				s = loadRegressSchema(&ddl)
+			}
+			want := reTemp.ReplaceAllString(renderOracle(ctx, o, sql), "")
+			if strings.Contains(want, "conn closed") || strings.Contains(want, "unexpected EOF") { // a backend crash took the connection: reconnect and retry
+				if err := o.Reconnect(ctx, dbName); err != nil {
+					p.t.Error(err)
+					return hits
 				}
-				conn = p.o.Conn()
-				conn.Exec(ctx, "SET statement_timeout = '5s'; SET lock_timeout = '2s'; SET client_min_messages = warning")
-				want = reTemp.ReplaceAllString(renderOracle(ctx, p.o, sql), "")
+				conn = o.Conn()
+				conn.Exec(ctx, session)
+				want = reTemp.ReplaceAllString(renderOracle(ctx, o, sql), "")
 			}
 			if strings.HasPrefix(want, "error: 25P02") {
-				p.stats["aborted"]++
+				p.count("aborted")
 			} else {
 				got := renderAnalyzerSafe(s, sql)
-				p.stats["compared"]++
+				p.count("compared")
 				if match(want, got) {
-					p.stats["agree"]++
-				} else if !p.quiet {
+					p.count("agree")
+				} else if !quiet {
 					class, key := classify(want, got)
-					p.hits = append(p.hits, regressHit{test: name, n: i + 1, class: class, key: key, sql: sql, oracle: want, analyzer: got})
+					hits = append(hits, regressHit{test: name, n: i + 1, class: class, key: key, sql: sql, oracle: want, analyzer: got})
 				}
 			}
 			if _, isSel := node.Node.(*pg_query.Node_SelectStmt); !isSel || node.GetSelectStmt().IntoClause != nil {
-				conn.Exec(ctx, sql) // keep data / SELECT INTO state moving; failures mirror psql
+				err := exec(sql) // keep data / SELECT INTO state moving; failures mirror psql
+				if err == nil && node.GetSelectStmt().GetIntoClause() != nil {
+					// SELECT INTO made a table: the analyzer's schema gets it too
+					if s == nil {
+						s = loadRegressSchema(&ddl)
+					}
+					if s.Apply(sql+";\n") == nil {
+						ddl = append(ddl, sql)
+					}
+				}
 			}
 			continue
 		}
-		_, err = conn.Exec(ctx, sql)
+		err = exec(sql)
 		if ts, ok := node.Node.(*pg_query.Node_TransactionStmt); ok {
 			switch ts.TransactionStmt.Kind {
 			case pg_query.TransactionStmtKind_TRANS_STMT_BEGIN, pg_query.TransactionStmtKind_TRANS_STMT_START:
@@ -269,7 +368,7 @@ func (p *regressProbe) runFile(name string, promote bool) {
 			case pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK, pg_query.TransactionStmtKind_TRANS_STMT_PREPARE:
 				if txSnap >= 0 && len(ddl) > txSnap {
 					ddl = ddl[:txSnap]
-					dirty = true
+					s = nil
 				}
 				txSnap = -1
 				saves = nil
@@ -280,7 +379,7 @@ func (p *regressProbe) runFile(name string, promote bool) {
 					if saves[i].name == ts.TransactionStmt.SavepointName {
 						if len(ddl) > saves[i].n {
 							ddl = ddl[:saves[i].n]
-							dirty = true
+							s = nil
 						}
 						saves = saves[:i+1]
 						break
@@ -299,9 +398,19 @@ func (p *regressProbe) runFile(name string, promote bool) {
 			}
 			continue
 		}
-		if err == nil && loadsAlone(sql) {
+		if err != nil {
+			continue
+		}
+		// extend the analyzer's schema in place; only CREATE EXTENSION forces a rebuild
+		if s == nil {
+			s = loadRegressSchema(&ddl)
+		}
+		switch aerr := s.Apply(sql + ";\n"); {
+		case aerr == nil:
 			ddl = append(ddl, sql)
-			dirty = true
+		case errors.Is(aerr, schema.ErrNeedsReload) && loadsAlone(sql):
+			ddl = append(ddl, sql)
+			s = nil
 		}
 	}
 	if promote {
@@ -327,6 +436,8 @@ func (p *regressProbe) runFile(name string, promote bool) {
 			}
 		}
 		for name := range temps {
+			// the oracle's session lives on across files, so drop them there too
+			exec("DROP TABLE IF EXISTS " + name)
 			ddl = append(ddl, "DROP TABLE IF EXISTS "+name)
 		}
 		// and so did its session settings: the template database starts every later file
@@ -334,6 +445,7 @@ func (p *regressProbe) runFile(name string, promote bool) {
 		ddl = append(ddl, "RESET search_path", "RESET datestyle", "RESET intervalstyle", "RESET timezone")
 		p.baseDDL = ddl
 	}
+	return hits
 }
 
 // loadsAlone reports whether the loader takes the statement without a hard error, so

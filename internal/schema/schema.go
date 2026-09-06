@@ -5,6 +5,7 @@
 package schema
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -38,6 +39,7 @@ type Schema struct {
 	Problems []Problem
 
 	relByName  map[string]*Relation
+	schemas    map[string]bool      // CREATE SCHEMA names
 	sysRels    map[string]*Relation // system relations named so far (systemRelation)
 	pending    []string             // directives preceding the statement being applied
 	nextOID    catalog.OID
@@ -71,6 +73,8 @@ type Relation struct {
 	Name    string
 	Kind    RelKind
 	RowType catalog.OID // the composite type of a row
+	// OfType is the composite type of a typed table (CREATE TABLE ... OF type), 0 otherwise.
+	OfType  catalog.OID
 	Columns []*Column
 	// Constraints: PK / UNIQUE / FK / CHECK on the table, plus unique indexes (as Unique).
 	Constraints []*Constraint
@@ -81,6 +85,10 @@ type Relation struct {
 	// Indexes are every index on the table (unique ones also appear in Constraints), for
 	// the advisory "no index leads with a predicate column".
 	Indexes []*Index
+	// queryRefs caches the range vars of Query (see queryRangeVars); queryRefsFor is the
+	// tree they were taken from.
+	queryRefs    []rangeRef
+	queryRefsFor Expr
 	// Visible is the `-- sqlshape: visible where <predicate>` policy: rows of the table are
 	// only meant to be seen through this predicate, so every statement reading it (and
 	// every view over it) must carry the predicate. Nil when none.
@@ -171,8 +179,10 @@ type Function struct {
 	RetType TypeRef // Record for RETURNS TABLE / OUT params without explicit type
 	RetSet  bool
 	IsProc  bool
-	// IsAgg marks a CREATE AGGREGATE (RetType is the final / state type).
+	// IsAgg marks a CREATE AGGREGATE (RetType is the final / state type); AggKind is
+	// pg_aggregate.aggkind: n normal, o ordered-set, h hypothetical-set.
 	IsAgg    bool
+	AggKind  byte
 	Language string
 	Volatile byte // i / s / v (default v)
 	Strict   bool
@@ -200,6 +210,77 @@ type Index struct {
 	Columns   []string
 	Unique    bool
 	Predicate Expr
+	// nameParts is what PG's ChooseIndexNameAddition sees: every index element's column
+	// name, "expr" for expressions. Copies of the index (partitions, LIKE) are renamed from it.
+	nameParts []string
+}
+
+// chooseIndexName is ChooseIndexName + ChooseRelationName for an unnamed CREATE INDEX:
+// <table>_<elem1>_<elem2>_idx, the pieces cut down to fit NAMEDATALEN, a taken name
+// numbered idx1, idx2, ... Index names share the relation namespace of their schema.
+func (s *Schema) chooseIndexName(rel *Relation, parts []string) string {
+	// ChooseIndexNameAddition: append "<name>_" while the buffer stays under NAMEDATALEN
+	var add strings.Builder
+	for _, p := range parts {
+		if add.Len()+len(p) >= 63 {
+			break
+		}
+		add.WriteString(p)
+		add.WriteByte('_')
+	}
+	addition := strings.TrimSuffix(add.String(), "_")
+	taken := func(n string) bool {
+		for _, r := range s.Relations {
+			if r.Schema != rel.Schema {
+				continue
+			}
+			if r.Name == n {
+				return true
+			}
+			for _, ix := range r.Indexes {
+				if ix.Name == n {
+					return true
+				}
+			}
+			for _, c := range r.Constraints {
+				if c.Name == n && (c.Kind == PrimaryKey || c.Kind == Unique) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for pass := 0; ; pass++ {
+		label := "idx"
+		if pass > 0 {
+			label += strconv.Itoa(pass)
+		}
+		if n := makeObjectName(rel.Name, addition, label); !taken(n) {
+			return n
+		}
+	}
+}
+
+// makeObjectName is PG's makeObjectName: name1[_name2]_label, the longer of name1 / name2
+// trimmed until the whole fits in NAMEDATALEN-1 bytes.
+func makeObjectName(name1, name2, label string) string {
+	overhead := len(label) + 1
+	if name2 != "" {
+		overhead++
+	}
+	n1, n2 := len(name1), len(name2)
+	for n1+n2 > 63-overhead {
+		if n1 > n2 {
+			n1--
+		} else {
+			n2--
+		}
+	}
+	name := name1[:n1]
+	if name2 != "" {
+		name += "_" + name2[:n2]
+	}
+	return name + "_" + label
 }
 
 // Trigger is a row / statement trigger on a table.
@@ -265,6 +346,12 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 		nextOID:   FirstUserOID + 100000, // relations / functions live in a separate range from types
 	}
 	s.Problems = append(s.Problems, extProblems...)
+	s.applyAll(tree, schemaSQL)
+	return s, nil
+}
+
+// applyAll applies every statement of a parsed schema text in order.
+func (s *Schema) applyAll(tree *pg_query.ParseResult, schemaSQL string) {
 	prev := int32(0)
 	for _, raw := range tree.Stmts {
 		// `-- sqlshape: ...` comment lines in front of a statement annotate it (a statement's
@@ -277,8 +364,27 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 		s.apply(raw.Stmt, raw.StmtLocation)
 		prev = end
 	}
-	return s, nil
 }
+
+// Apply extends a loaded schema with more DDL, as if it had been appended to the text
+// Load saw. CREATE EXTENSION cannot be added after the fact (the catalog is fixed at
+// Load): it returns ErrNeedsReload and leaves the schema untouched.
+func (s *Schema) Apply(schemaSQL string) error {
+	tree, err := pg_query.Parse(schemaSQL)
+	if err != nil {
+		return fmt.Errorf("parse schema: %w", err)
+	}
+	for _, raw := range tree.Stmts {
+		if raw.Stmt.GetCreateExtensionStmt() != nil {
+			return ErrNeedsReload
+		}
+	}
+	s.applyAll(tree, schemaSQL)
+	return nil
+}
+
+// ErrNeedsReload is Apply's answer to DDL that only Load can take.
+var ErrNeedsReload = errors.New("schema: statement needs a full reload")
 
 // leadingComments returns the run of blank and `--` comment lines that opens text.
 func leadingComments(text string) string {
@@ -361,6 +467,8 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		s.alterTable(st.AlterTableStmt, loc)
 	case *pg_query.Node_IndexStmt:
 		s.createIndex(st.IndexStmt, loc)
+	case *pg_query.Node_AlterObjectSchemaStmt:
+		s.alterObjectSchema(st.AlterObjectSchemaStmt, loc)
 	case *pg_query.Node_CreateFunctionStmt:
 		s.createFunction(st.CreateFunctionStmt, loc)
 	case *pg_query.Node_CommentStmt:
@@ -384,6 +492,10 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 	case *pg_query.Node_VariableSetStmt:
 		s.setVariable(st.VariableSetStmt)
 	case *pg_query.Node_CreateSchemaStmt:
+		if s.schemas == nil {
+			s.schemas = map[string]bool{}
+		}
+		s.schemas[st.CreateSchemaStmt.Schemaname] = true
 		// CREATE SCHEMA s CREATE TABLE t (...) ...: the elements are created in s
 		saved, savedT := s.searchPath, s.Types.searchPath
 		s.searchPath = append([]string{st.CreateSchemaStmt.Schemaname}, s.SearchPath()...)
@@ -420,7 +532,7 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 	case *pg_query.Node_CreateExtensionStmt,
 		*pg_query.Node_GrantStmt, *pg_query.Node_AlterSeqStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt,
 		*pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
-		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterPolicyStmt, *pg_query.Node_AlterExtensionStmt, *pg_query.Node_AlterObjectSchemaStmt,
+		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterPolicyStmt, *pg_query.Node_AlterExtensionStmt,
 		*pg_query.Node_CreateEventTrigStmt, *pg_query.Node_AlterEventTrigStmt, *pg_query.Node_CreatePublicationStmt, *pg_query.Node_AlterPublicationStmt,
 		*pg_query.Node_CreateSubscriptionStmt, *pg_query.Node_CreateRoleStmt, *pg_query.Node_AlterRoleStmt, *pg_query.Node_GrantRoleStmt,
 		*pg_query.Node_CreateTableSpaceStmt, *pg_query.Node_SecLabelStmt, *pg_query.Node_ClusterStmt, *pg_query.Node_VacuumStmt,
@@ -464,6 +576,23 @@ func (s *Schema) rangeVar(rv *pg_query.RangeVar) (schema, name string) {
 func (s *Schema) resolveType(tn *pg_query.TypeName) (TypeRef, error) {
 	if tn == nil {
 		return TypeRef{}, fmt.Errorf("missing type")
+	}
+	if tn.PctType {
+		// table.column%TYPE: the column's declared type
+		names := strs(tn.Names)
+		if len(names) < 2 {
+			return TypeRef{}, fmt.Errorf("improper %%TYPE reference (too few dotted names): %s", strings.Join(names, "."))
+		}
+		rschema, rname := qualified(names[:len(names)-1])
+		rel := s.Relation(rschema, rname)
+		if rel == nil {
+			return TypeRef{}, fmt.Errorf("relation %q does not exist", strings.Join(names[:len(names)-1], "."))
+		}
+		col := rel.Column(names[len(names)-1])
+		if col == nil {
+			return TypeRef{}, fmt.Errorf("column %q of relation %q does not exist", names[len(names)-1], rname)
+		}
+		return col.Type, nil
 	}
 	schema, name := qualified(strs(tn.Names))
 	// serial pseudo-types (only valid in column definitions; caller handles NOT NULL/default)
@@ -613,6 +742,7 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		if err != nil {
 			s.problem(loc, "table %s: %v", name, err)
 		} else {
+			rel.OfType = tr.OID
 			for _, r := range s.Relations {
 				if r.RowType == tr.OID && r.Kind == 'c' {
 					for _, c := range r.Columns {
@@ -704,6 +834,7 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 		case pg_query.ConstrType_CONSTR_IDENTITY:
 			col.NotNull = true
 			col.Identity = c.GeneratedWhen[0]
+			s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: rel.Name + "_" + cd.Colname + "_seq"}, cd.GetLocation())
 		case pg_query.ConstrType_CONSTR_GENERATED:
 			col.Generated = c.RawExpr
 		case pg_query.ConstrType_CONSTR_PRIMARY:
@@ -860,12 +991,34 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				s.problem(loc, "%s: constraint %q does not exist", rel.Name, cmd.Name)
 			}
 		case pg_query.AlterTableType_AT_AddIdentity:
-			if col := rel.Column(cmd.Name); col != nil {
+			if col := rel.Column(cmd.Name); col != nil && col.Identity == 0 {
 				col.NotNull = true
 				col.Identity = 'd'
 				if c := cmd.Def.GetConstraint(); c != nil && len(c.GeneratedWhen) > 0 {
 					col.Identity = c.GeneratedWhen[0]
 				}
+				s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: rel.Name + "_" + col.Name + "_seq"}, loc)
+			}
+		case pg_query.AlterTableType_AT_AttachPartition, pg_query.AlterTableType_AT_DetachPartition:
+			pc := cmd.Def.GetPartitionCmd()
+			pschema, pname := s.rangeVar(pc.GetName())
+			part := s.relByName[pschema+"."+pname]
+			if part == nil {
+				s.problem(loc, "%s: partition %q does not exist", rel.Name, pname)
+				continue
+			}
+			if cmd.Subtype == pg_query.AlterTableType_AT_AttachPartition {
+				part.Parents = append(part.Parents, rel)
+				part.IsPartition = true
+			} else {
+				var kept []*Relation
+				for _, p := range part.Parents {
+					if p != rel {
+						kept = append(kept, p)
+					}
+				}
+				part.Parents = kept
+				part.IsPartition = false // a detached partition stands on its own
 			}
 		case pg_query.AlterTableType_AT_DropIdentity:
 			if col := rel.Column(cmd.Name); col != nil {
@@ -881,7 +1034,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			pg_query.AlterTableType_AT_EnableTrig, pg_query.AlterTableType_AT_DisableTrig, pg_query.AlterTableType_AT_EnableAlwaysTrig,
 			pg_query.AlterTableType_AT_EnableReplicaTrig, pg_query.AlterTableType_AT_EnableTrigAll, pg_query.AlterTableType_AT_DisableTrigAll,
 			pg_query.AlterTableType_AT_EnableTrigUser, pg_query.AlterTableType_AT_DisableTrigUser,
-			pg_query.AlterTableType_AT_AttachPartition, pg_query.AlterTableType_AT_DetachPartition, pg_query.AlterTableType_AT_DetachPartitionFinalize,
+			pg_query.AlterTableType_AT_DetachPartitionFinalize,
 			pg_query.AlterTableType_AT_ValidateConstraint, pg_query.AlterTableType_AT_ReplicaIdentity, pg_query.AlterTableType_AT_SetLogged,
 			pg_query.AlterTableType_AT_SetUnLogged, pg_query.AlterTableType_AT_SetTableSpace, pg_query.AlterTableType_AT_SetStorage,
 			pg_query.AlterTableType_AT_SetCompression, pg_query.AlterTableType_AT_AlterConstraint, pg_query.AlterTableType_AT_ResetRelOptions,
@@ -908,15 +1061,22 @@ func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
 	for _, pn := range st.IndexParams {
 		ie := pn.GetIndexElem()
 		if ie.GetName() == "" {
-			break // expression element: the columns up to here still lead the index
+			idx.nameParts = append(idx.nameParts, "expr")
+			continue
 		}
-		idx.Columns = append(idx.Columns, ie.GetName())
+		idx.nameParts = append(idx.nameParts, ie.GetName())
+		if len(idx.Columns) == len(idx.nameParts)-1 {
+			idx.Columns = append(idx.Columns, ie.GetName()) // columns up to the first expression lead the index
+		}
+	}
+	if idx.Name == "" {
+		idx.Name = s.chooseIndexName(rel, idx.nameParts)
 	}
 	rel.Indexes = append(rel.Indexes, idx)
 	if !st.Unique || len(idx.Columns) != len(st.IndexParams) {
 		return // only whole-column unique indexes give uniqueness proofs
 	}
-	c := &Constraint{Name: st.Idxname, Kind: Unique, Predicate: st.WhereClause, NullsNotDistinct: st.NullsNotDistinct, Columns: idx.Columns}
+	c := &Constraint{Name: idx.Name, Kind: Unique, Predicate: st.WhereClause, NullsNotDistinct: st.NullsNotDistinct, Columns: idx.Columns}
 	s.addConstraint(rel, c)
 }
 
@@ -1329,4 +1489,32 @@ func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
 	}{{"last_value", catalog.Int8}, {"log_cnt", catalog.Int8}, {"is_called", catalog.Bool}} {
 		rel.Columns = append(rel.Columns, &Column{Num: int16(i + 1), Name: c.name, Type: TypeRef{OID: c.typ, Typmod: -1}, NotNull: true})
 	}
+}
+
+// HasSchema is whether a schema of that name exists: built in, created with CREATE SCHEMA,
+// or holding an object.
+func (s *Schema) HasSchema(name string) bool {
+	switch name {
+	case "public", "pg_catalog", "pg_temp", "information_schema", "pg_toast":
+		return true
+	}
+	if s.schemas[name] {
+		return true
+	}
+	for _, r := range s.Relations {
+		if r.Schema == name {
+			return true
+		}
+	}
+	for _, f := range s.Functions {
+		if f.Schema == name {
+			return true
+		}
+	}
+	for _, sch := range s.Types.Schemas {
+		if sch == name {
+			return true
+		}
+	}
+	return false
 }

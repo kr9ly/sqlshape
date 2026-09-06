@@ -102,8 +102,13 @@ func (a *analyzer) canCoerce(from, to catalog.OID, ctx coercionContext) bool {
 	if from == catalog.Record && tt2 != nil && tt2.Kind == 'c' {
 		return true
 	}
-	if ft != nil && tt2 != nil && ft.Kind == 'c' && tt2.Kind == 'c' && ctx == explicitCoercion {
+	if ft != nil && tt2 != nil && ft.Kind == 'c' && tt2.Kind == 'c' {
+		// can_coerce_type: a child's row type passes for its parent's at any level, and a
+		// typed table's row type for the type it is OF
 		if fr, tr := relByRowType(a.s, from), relByRowType(a.s, to); fr != nil && tr != nil && fr.InheritsFrom(tr) {
+			return true
+		}
+		if fr := relByRowType(a.s, from); fr != nil && fr.OfType == to {
 			return true
 		}
 	}
@@ -482,7 +487,7 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 			if fn.Name != name || (schemaName != "" && fn.Schema != schemaName) || (schemaName == "" && !a.s.OnSearchPath(fn.Schema)) {
 				continue
 			}
-			if fn.IsAgg && withinGroup {
+			if fn.IsAgg && (fn.AggKind == 'o' || fn.AggKind == 'h') != withinGroup {
 				continue
 			}
 			var in []catalog.OID
@@ -510,6 +515,8 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 						variadic = catalog.AnyElement
 					case catalog.AnyCompatibleArray:
 						variadic = catalog.AnyCompatible
+					case catalog.Any: // VARIADIC "any": each value keeps its own type
+						variadic = catalog.Any
 					default:
 						if t := a.typ(arg.Type.OID); t != nil {
 							variadic = t.Elem
@@ -544,8 +551,9 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 func expandArgs(declared []catalog.OID, ndefault int, variadic catalog.OID, n int) ([]catalog.OID, bool) {
 	if variadic != 0 {
 		// last declared arg is the variadic array; actual args from there on are elements
+		// (at least one: a VARIADIC parameter has no default)
 		fixed := len(declared) - 1
-		if n < fixed {
+		if n < len(declared) {
 			return nil, false
 		}
 		out := make([]catalog.OID, n)
@@ -583,6 +591,7 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 	var elem, arr, rng, mrng catalog.OID
 	var compatElems []catalog.OID
 	haveCompatArr := catalog.OID(0)
+	compatRangeSub := catalog.OID(0) // the subtype an anycompatible(multi)range arg fixes
 	for i, d := range declared {
 		if i >= len(actual) {
 			break
@@ -598,8 +607,8 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 		}
 		switch d {
 		case catalog.AnyElement, catalog.AnyNonArray, catalog.AnyEnum:
-			if elem != 0 && elem != act {
-				return 0, false
+			if elem != 0 && a.baseType(elem) != a.baseType(act) {
+				return 0, false // domains match through their base type (func_select_candidate)
 			}
 			elem = act
 		case catalog.AnyArray:
@@ -608,17 +617,25 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 			}
 			arr = act
 		case catalog.AnyRange, catalog.AnyCompatibleRange:
+			if rng != 0 && rng != act {
+				return 0, false // range types are never coerced: all range args must agree
+			}
 			rng = act
 			if d == catalog.AnyCompatibleRange {
 				if r := a.s.Types.RangeOf(act); r != nil {
 					compatElems = append(compatElems, r.Subtype)
+					compatRangeSub = r.Subtype
 				}
 			}
 		case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
+			if mrng != 0 && mrng != act {
+				return 0, false
+			}
 			mrng = act
 			if d == catalog.AnyCompatibleMultirange {
 				if r := a.s.Types.RangeOfMulti(act); r != nil {
 					compatElems = append(compatElems, r.Subtype)
+					compatRangeSub = r.Subtype
 				}
 			}
 		case catalog.AnyCompatible, catalog.AnyCompatibleNonArray:
@@ -650,7 +667,7 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 		if r := a.s.Types.RangeOf(a.baseType(rng)); r != nil {
 			if elem == 0 {
 				elem = r.Subtype
-			} else if elem != r.Subtype {
+			} else if a.baseType(elem) != a.baseType(r.Subtype) {
 				return 0, false
 			}
 			if mrng == 0 {
@@ -670,6 +687,9 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 		c, ok := a.commonType(compatElems)
 		if !ok {
 			return 0, false
+		}
+		if compatRangeSub != 0 && a.baseType(c) != a.baseType(compatRangeSub) {
+			return 0, false // the range's subtype cannot be coerced to the common type
 		}
 		compat = c
 	}
@@ -834,4 +854,88 @@ func catInputNames(fn *catalog.Func) []string {
 		}
 	}
 	return out
+}
+
+// catIs is whether a type falls in the given pg_type category.
+func (a *analyzer) catIs(oid catalog.OID, cat byte) bool {
+	c, _ := a.category(oid)
+	return c == cat
+}
+
+// polyUnknownInput is enforce_generic_type_consistency's "could not determine polymorphic
+// type because input has type unknown": the function has anyelement-family parameters
+// (or an anycompatible range / multirange one) and every actual argument at them is an
+// untyped literal. Returns the offending declared type name, or "".
+func (a *analyzer) polyUnknownInput(declared, actual []catalog.OID) string {
+	family, known := false, false
+	for i, d := range declared {
+		if i >= len(actual) {
+			break
+		}
+		switch d {
+		case catalog.AnyElement, catalog.AnyNonArray, catalog.AnyEnum, catalog.AnyArray, catalog.AnyRange, catalog.AnyMultirange:
+			family = true
+			if actual[i] != catalog.Unknown {
+				known = true
+			}
+		case catalog.AnyCompatibleRange, catalog.AnyCompatibleMultirange:
+			if actual[i] == catalog.Unknown {
+				return a.s.Types.Format(ref(d))
+			}
+		}
+	}
+	if family && !known {
+		return "anyelement"
+	}
+	return ""
+}
+
+// hasComparisonOp is whether values of a type can be sorted (op "<") or tested for
+// equality (op "="): PG needs a btree / hash operator for ORDER BY, DISTINCT, GROUP BY.
+func (a *analyzer) hasComparisonOp(oid catalog.OID, op string) bool {
+	oid = a.baseType(oid)
+	t := a.typ(oid)
+	if t == nil {
+		return true
+	}
+	switch t.Kind {
+	case 'e', 'r', 'm', 'p':
+		return true // anyenum / anyrange / anymultirange operators, pseudo-types
+	}
+	if oid == catalog.Record || oid == catalog.Unknown {
+		return true
+	}
+	if t.IsArray() {
+		return a.hasComparisonOp(t.Elem, op)
+	}
+	if t.Kind == 'c' {
+		// a row type compares column by column (record_cmp needs every column comparable)
+		if rel := a.relByRowType(oid); rel != nil {
+			for _, c := range rel.Columns {
+				if !a.hasComparisonOp(c.Type.OID, op) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return a.resolveOperator(op, oid, oid) != nil
+}
+
+// checkComparable reports the missing operator for a sort / grouping item.
+func (a *analyzer) checkComparable(typ schema.TypeRef, what string, at int32) *Error {
+	if typ.OID == 0 {
+		return nil
+	}
+	switch what {
+	case "ORDER BY", "DISTINCT ON":
+		if !a.hasComparisonOp(typ.OID, "<") {
+			return errAt(codeUndefinedFunction, at, "could not identify an ordering operator for type %s", a.s.Types.Format(typ))
+		}
+	default:
+		if !a.hasComparisonOp(typ.OID, "=") {
+			return errAt(codeUndefinedFunction, at, "could not identify an equality operator for type %s", a.s.Types.Format(typ))
+		}
+	}
+	return nil
 }

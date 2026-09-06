@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"google.golang.org/protobuf/proto"
 	"strconv"
 	"strings"
 
@@ -15,15 +16,24 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	keepUnknown := a.keepUnknown
 	a.keepUnknown = false
 	// a subquery is its own level for aggregate nesting and SRF placement
-	savedAggArgs, savedFuncArgs, savedCase, savedFromFunc := a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc
+	savedAggArgs, savedFuncArgs, savedCase, savedFromFunc, savedBan := a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc, a.srfBan
 	a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc = 0, 0, 0, false
+	a.srfBan, a.srfBanNext = a.srfBanNext, ""
+	if len(sel.ValuesLists) > 0 && a.srfBan == "" && !a.inInsertValues {
+		a.srfBan = "VALUES" // a standalone VALUES list; an INSERT's source may hold SRFs
+	}
 	defer func() {
-		a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc = savedAggArgs, savedFuncArgs, savedCase, savedFromFunc
+		a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc, a.srfBan = savedAggArgs, savedFuncArgs, savedCase, savedFromFunc, savedBan
 	}()
 	if sel.WithClause != nil {
 		if err := a.withClause(sel.WithClause, sc); err != nil {
 			return nil, err
 		}
+	}
+	a.selectDepth++
+	defer func() { a.selectDepth-- }()
+	if len(sel.LockingClause) > 0 && sel.Op != pg_query.SetOperation_SETOP_NONE {
+		return nil, errAt(codeFeatureNotSupported, -1, "%s is not allowed with UNION/INTERSECT/EXCEPT", lockStrength(sel.LockingClause[0]))
 	}
 	if sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Op != pg_query.SetOperation_SET_OPERATION_UNDEFINED {
 		return a.setOp(sel, sc)
@@ -134,11 +144,32 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 			// plain DISTINCT compares every output column
 			for _, c := range cols {
 				a.noteCollConflict(c.coll, loc(d), "DISTINCT")
+				if err := a.checkComparable(c.typ, "DISTINCT", loc(d)); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
 		if err := a.orderOrGroupItem(d, sc, cols, "DISTINCT ON"); err != nil {
 			return nil, err
+		}
+	}
+	if len(sel.DistinctClause) > 0 && sel.DistinctClause[0].Node != nil && len(sel.SortClause) > 0 {
+		// transformDistinctOnClause: the ORDER BY must start with the DISTINCT ON
+		// expressions (in any order), or the rows to keep would be undefined
+		n := min(len(sel.DistinctClause), len(sel.SortClause))
+		for _, sb := range sel.SortClause[:n] {
+			node := sb.GetSortBy().GetNode()
+			matched := false
+			for _, d := range sel.DistinctClause {
+				if proto.Equal(d, node) || positionalMatch(d, node, cols) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, errAt(codeInvalidColumnRef, loc(node), "SELECT DISTINCT ON expressions must match initial ORDER BY expressions")
+			}
 		}
 	}
 	if err := a.checkGrouping(sel, sc, cols); err != nil {
@@ -148,7 +179,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if lim == nil {
 			continue
 		}
+		a.srfBan = "LIMIT"
 		e, err := a.analyzeExpr(lim, sc)
+		a.srfBan = ""
 		if err != nil {
 			return nil, err
 		}
@@ -158,6 +191,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		if !a.canCoerce(e.oid(), catalog.Int8, implicitCoercion) {
 			return nil, errAt(codeDatatypeMismatch, loc(lim), "argument of LIMIT must be type bigint, not type %s", a.s.Types.Format(e.typ))
 		}
+	}
+	if err := a.checkLocking(sel, sc, cols); err != nil {
+		return nil, err
 	}
 	return cols, nil
 }
@@ -170,6 +206,7 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 		if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
 			if i := int(iv.Ival.Ival); i >= 1 && i <= len(cols) {
 				a.noteCollConflict(cols[i-1].coll, loc(n), what)
+				return a.checkComparable(cols[i-1].typ, what, loc(n))
 			}
 			return nil
 		}
@@ -180,7 +217,7 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 		for _, c := range cols {
 			if c.name == name {
 				a.noteCollConflict(c.coll, loc(n), what)
-				return nil
+				return a.checkComparable(c.typ, what, loc(n))
 			}
 		}
 	}
@@ -189,7 +226,7 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 		return err
 	}
 	a.noteCollConflict(e.coll, loc(n), what)
-	return nil
+	return a.checkComparable(e.typ, what, loc(n))
 }
 
 func (a *analyzer) boolClause(n *pg_query.Node, sc *scope, what string) *Error {
@@ -290,6 +327,9 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 	sel := c.Ctequery.GetSelectStmt()
 	if sel == nil {
 		// data-modifying CTE: its RETURNING rows are the CTE's columns
+		if a.selectDepth > 0 {
+			return errAt(codeFeatureNotSupported, c.Location, "WITH clause containing a data-modifying statement must be at the top level")
+		}
 		csc := newScope(sc)
 		var cols []rteCol
 		var err *Error
@@ -312,10 +352,29 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 			return err
 		}
 		a.dmlCTEs = append(a.dmlCTEs, c.Ctequery)
-		sc.ctes[c.Ctename] = &cte{name: c.Ctename, cols: a.aliasCols(cols, c.Aliascolnames)}
+		if err := a.checkCTEColumnList(c, cols); err != nil {
+			return err
+		}
+		sc.ctes[c.Ctename] = &cte{name: c.Ctename, cols: a.aliasCols(cols, c.Aliascolnames), noReturning: !hasReturning(c.Ctequery)}
 		return nil
 	}
 	def := &cte{name: c.Ctename, recursive: w.Recursive}
+	if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+		// the recursive union itself takes no ORDER BY / LIMIT / OFFSET / FOR UPDATE
+		switch {
+		case len(sel.SortClause) > 0:
+			return errAt(codeFeatureNotSupported, c.Location, "ORDER BY in a recursive query is not implemented")
+		case sel.LimitCount != nil:
+			return errAt(codeFeatureNotSupported, c.Location, "LIMIT in a recursive query is not implemented")
+		case sel.LimitOffset != nil:
+			return errAt(codeFeatureNotSupported, c.Location, "OFFSET in a recursive query is not implemented")
+		case len(sel.LockingClause) > 0 || sel.Rarg != nil && len(sel.Rarg.LockingClause) > 0 || sel.Larg != nil && len(sel.Larg.LockingClause) > 0:
+			return errAt(codeFeatureNotSupported, c.Location, "FOR UPDATE/SHARE in a recursive query is not implemented")
+		}
+		if (c.SearchClause != nil || c.CycleClause != nil) && sel.Larg != nil && sel.Larg.Op != pg_query.SetOperation_SETOP_NONE {
+			return errAt(codeFeatureNotSupported, c.Location, "with a SEARCH or CYCLE clause, the left side of the UNION must be a SELECT")
+		}
+	}
 	if w.Recursive && sel.Op != pg_query.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
 		return errAt(codeInvalidRecursion, c.Location, "recursive query %q does not have the form non-recursive-term UNION [ALL] recursive-term", c.Ctename)
 	}
@@ -337,6 +396,9 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 			return err
 		}
 		def.forbidden = false
+		if err := a.checkCTEColumnList(c, left); err != nil {
+			return err
+		}
 		def.cols = a.aliasCols(left, c.Aliascolnames)
 		if err := a.checkRecursiveTerm(c.Ctename, selNode(sel.Rarg)); err != nil {
 			return err
@@ -348,6 +410,20 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 			names := map[string]bool{}
 			for _, col := range def.cols {
 				names[col.name] = true
+			}
+			if sc2 := c.SearchClause; sc2 != nil {
+				for _, sn := range sc2.SearchColList {
+					if n := sn.GetString_().GetSval(); !names[n] {
+						return errAt(codeSyntaxError, sc2.Location, "search column %q not in WITH query column list", n)
+					}
+				}
+			}
+			if cy := c.CycleClause; cy != nil {
+				for _, cn := range cy.CycleColList {
+					if n := cn.GetString_().GetSval(); !names[n] {
+						return errAt(codeSyntaxError, cy.Location, "cycle column %q not in WITH query column list", n)
+					}
+				}
 			}
 			if sc2 := c.SearchClause; sc2 != nil {
 				if names[sc2.SearchSeqColumn] {
@@ -386,12 +462,34 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		for i := range left {
 			def.cols[i].nullable = def.cols[i].nullable || right[i].nullable
 			def.cols[i].src = nil
+			// the CTE's column types are the non-recursive term's; the recursive term must
+			// not pull the union to a wider type (transformSetOperationTree's check)
+			lt, rt := left[i].typ.OID, right[i].typ.OID
+			if lt != catalog.Unknown && rt != catalog.Unknown && lt != rt {
+				if common, ok := a.commonType([]catalog.OID{lt, rt}); ok && common != lt {
+					return errAt(codeDatatypeMismatch, c.Location, "recursive query %q column %d has type %s in non-recursive term but type %s overall",
+						c.Ctename, i+1, a.s.Types.Format(left[i].typ), a.s.Types.Format(ref(common)))
+				}
+			} else if lt == rt && lt != catalog.Unknown && left[i].typ.Typmod != right[i].typ.Typmod && left[i].typ.Typmod >= 0 {
+				// same type, different typmod: the recursive term drops the typmod, so the
+				// non-recursive term's typmod cannot hold either (checkWellFormedRecursion)
+				return errAt(codeDatatypeMismatch, c.Location, "recursive query %q column %d has type %s in non-recursive term but type %s overall",
+					c.Ctename, i+1, a.s.Types.Format(left[i].typ), a.s.Types.Format(ref(lt)))
+			}
+		}
+		if cy := c.CycleClause; cy != nil {
+			if err := a.checkCycleTypes(cy, sc); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 	csc := newScope(sc)
 	cols, err := a.selectStmt(sel, csc)
 	if err != nil {
+		return err
+	}
+	if err := a.checkCTEColumnList(c, cols); err != nil {
 		return err
 	}
 	def.cols = a.aliasCols(cols, c.Aliascolnames)
@@ -473,7 +571,9 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 		if lim == nil {
 			continue
 		}
+		a.srfBan = "LIMIT"
 		e, err := a.analyzeExpr(lim, sc)
+		a.srfBan = ""
 		if err != nil {
 			return nil, err
 		}
@@ -535,6 +635,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			if c := sc.findCTE(rv.Relname); c != nil {
 				if c.forbidden {
 					return nil, errAt(codeInvalidRecursion, rv.Location, "recursive reference to query %q must not appear within its non-recursive term", rv.Relname)
+				}
+				if c.noReturning {
+					return nil, errAt(codeFeatureNotSupported, rv.Location, "WITH query %q does not have a RETURNING clause", rv.Relname)
 				}
 				r := &rte{alias: rv.Relname, cols: append([]rteCol{}, c.cols...), sub: c.sub}
 				if rv.Alias != nil {
@@ -732,15 +835,24 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		fname := names[len(names)-1]
 		r.alias = fname
 		t := a.typ(e.typ.OID)
-		scalar = !(t != nil && t.Kind == 'c' && t.RelID != 0) && e.typ.OID != catalog.Record
+		if t != nil && t.IsPolymorphic() {
+			return nil, errAt(codeDatatypeMismatch, fc.Location, "function %q in FROM has unsupported return type %s", fname, a.s.Types.Format(e.typ))
+		}
+		composite := t != nil && t.Kind == 'c' && a.relByRowType(t.OID) != nil
+		scalar = !composite && e.typ.OID != catalog.Record
 		outName = a.singleOutName()
 		switch {
-		case t != nil && t.Kind == 'c' && t.RelID != 0:
+		case composite:
+			if len(coldefs) > 0 {
+				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is redundant for a function returning a named composite type")
+			}
 			rel := a.relByRowType(t.OID)
 			r.rowType = t.OID
 			for _, c := range rel.Columns {
 				cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: !c.NotNull})
 			}
+		case e.typ.OID == catalog.Record && len(a.outParamCols()) > 0 && len(coldefs) > 0:
+			return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is redundant for a function with OUT parameters")
 		case e.typ.OID == catalog.Record:
 			// RETURNS TABLE / OUT params of a user function, or of a catalog function
 			// (jsonb_each, json_each_text, ...)
@@ -749,10 +861,14 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is required for functions returning \"record\"")
 			}
 		default:
+			if len(coldefs) > 0 {
+				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is only allowed for functions returning \"record\"")
+			}
 			cols = []rteCol{{name: fname, typ: e.typ, nullable: true}}
 			if outName != "" {
 				cols[0].name = outName
 			}
+			r.scalarFn = true
 		}
 	}
 	for _, cd := range coldefs {
@@ -959,6 +1075,7 @@ func (a *analyzer) returning(list []*pg_query.Node, sc *scope) ([]rteCol, *Error
 		}
 	}
 	sel := &pg_query.SelectStmt{TargetList: list}
+	a.srfBanNext = "RETURNING"
 	return a.selectStmt(sel, sc)
 }
 
@@ -999,6 +1116,8 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 	}
 	if ins.SelectStmt != nil {
 		sel := ins.SelectStmt.GetSelectStmt()
+		a.inInsertValues = true
+		defer func() { a.inInsertValues = false }()
 		if sel.IntoClause != nil {
 			return nil, errAt(codeSyntaxError, sel.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
 		}
@@ -1214,7 +1333,10 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 		}
 		sc.items = append(sc.items, r)
 	}
-	if err := a.setClause(upd.TargetList, rel, sc); err != nil {
+	a.srfBan = "UPDATE"
+	err = a.setClause(upd.TargetList, rel, sc)
+	a.srfBan = ""
+	if err != nil {
 		return nil, err
 	}
 	if err := a.boolClause(upd.WhereClause, sc, "WHERE"); err != nil {
@@ -1322,7 +1444,14 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 		case pg_query.SubLinkType_ARRAY_SUBLINK:
 			return "array", 2
 		case pg_query.SubLinkType_EXPR_SUBLINK:
-			if sel := v.SubLink.Subselect.GetSelectStmt(); sel != nil && len(sel.TargetList) == 1 {
+			sel := v.SubLink.Subselect.GetSelectStmt()
+			for sel != nil && sel.Op != pg_query.SetOperation_SETOP_NONE {
+				sel = sel.Larg // a set operation is named by its left arm
+			}
+			if sel != nil && len(sel.ValuesLists) > 0 {
+				return "column1", 2
+			}
+			if sel != nil && len(sel.TargetList) == 1 {
 				t := sel.TargetList[0].GetResTarget()
 				if t.Name != "" {
 					return t.Name, 2
@@ -1363,7 +1492,7 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 		case pg_query.XmlExprOp_IS_XMLSERIALIZE:
 			return "xmlserialize", 2
 		case pg_query.XmlExprOp_IS_DOCUMENT:
-			return "is_document", 2
+			return "", 0 // ?column?
 		}
 	case *pg_query.Node_XmlSerialize:
 		return "xmlserialize", 2
@@ -1733,6 +1862,9 @@ func (a *analyzer) xmlTable(x *pg_query.RangeTableFunc, sc *scope) (*rte, *Error
 		r.cols = []rteCol{{name: "xmltable", typ: ref(catalog.XML), nullable: true}}
 	}
 	if x.Alias != nil {
+		if len(x.Alias.Colnames) > len(r.cols) {
+			return nil, errAt(codeInvalidColumnRef, -1, "XMLTABLE function has %d columns available but %d columns specified", len(r.cols), len(x.Alias.Colnames))
+		}
 		if x.Alias.Aliasname != "" {
 			r.alias = x.Alias.Aliasname
 		}
@@ -1869,4 +2001,200 @@ func (a *analyzer) checkDuplicateBase(cols []*schema.Column) *Error {
 		seen[base] = true
 	}
 	return nil
+}
+
+// checkCycleTypes is the CYCLE clause's typing: the mark value and default share a type,
+// which must have an equality operator.
+func (a *analyzer) checkCycleTypes(cy *pg_query.CTECycleClause, sc *scope) *Error {
+	mark := ref(catalog.Bool)
+	if cy.CycleMarkValue != nil {
+		me, err := a.analyzeExpr(cy.CycleMarkValue, newScope(sc))
+		if err != nil {
+			return err
+		}
+		de, err := a.analyzeExpr(cy.CycleMarkDefault, newScope(sc))
+		if err != nil {
+			return err
+		}
+		if me.oid() != catalog.Unknown && de.oid() != catalog.Unknown {
+			if _, ok := a.commonType([]catalog.OID{me.oid(), de.oid()}); !ok {
+				return errAt(codeDatatypeMismatch, cy.Location, "CYCLE types %s and %s cannot be matched", a.s.Types.Format(me.typ), a.s.Types.Format(de.typ))
+			}
+		}
+		if me.oid() != catalog.Unknown {
+			mark = me.typ
+		} else if de.oid() != catalog.Unknown {
+			mark = de.typ
+		}
+	}
+	if !a.hasComparisonOp(mark.OID, "=") {
+		return errAt(codeUndefinedFunction, cy.Location, "could not identify an equality operator for type %s", a.s.Types.Format(mark))
+	}
+	return nil
+}
+
+// checkCTEColumnList is the WITH column list arity check.
+func (a *analyzer) checkCTEColumnList(c *pg_query.CommonTableExpr, cols []rteCol) *Error {
+	if len(c.Aliascolnames) > len(cols) {
+		return errAt(codeInvalidColumnRef, c.Location, "WITH query %q has %d columns available but %d columns specified", c.Ctename, len(cols), len(c.Aliascolnames))
+	}
+	return nil
+}
+
+// hasReturning is whether a data-modifying statement has a RETURNING list.
+func hasReturning(n *pg_query.Node) bool {
+	switch v := n.Node.(type) {
+	case *pg_query.Node_InsertStmt:
+		return len(v.InsertStmt.ReturningList) > 0
+	case *pg_query.Node_UpdateStmt:
+		return len(v.UpdateStmt.ReturningList) > 0
+	case *pg_query.Node_DeleteStmt:
+		return len(v.DeleteStmt.ReturningList) > 0
+	case *pg_query.Node_MergeStmt:
+		return len(v.MergeStmt.ReturningList) > 0
+	}
+	return true
+}
+
+// lockStrength spells a locking clause the way PG's messages do.
+func lockStrength(lc *pg_query.Node) string {
+	switch lc.GetLockingClause().GetStrength() {
+	case pg_query.LockClauseStrength_LCS_FORKEYSHARE:
+		return "FOR KEY SHARE"
+	case pg_query.LockClauseStrength_LCS_FORSHARE:
+		return "FOR SHARE"
+	case pg_query.LockClauseStrength_LCS_FORNOKEYUPDATE:
+		return "FOR NO KEY UPDATE"
+	}
+	return "FOR UPDATE"
+}
+
+// checkLocking applies the FOR UPDATE / SHARE restrictions of a plain SELECT
+// (CheckSelectLocking) and resolves the locked relation names against the FROM list.
+func (a *analyzer) checkLocking(sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *Error {
+	if len(sel.LockingClause) == 0 {
+		return nil
+	}
+	what := lockStrength(sel.LockingClause[0])
+	switch {
+	case len(sel.DistinctClause) > 0:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with DISTINCT clause", what)
+	case len(sel.GroupClause) > 0:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with GROUP BY clause", what)
+	case sel.HavingClause != nil:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with HAVING clause", what)
+	case sc.agg:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with aggregate functions", what)
+	case len(sel.WindowClause) > 0 || windowInTargets(sel.TargetList):
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with window functions", what)
+	case len(sel.ValuesLists) > 0:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with VALUES", what)
+	}
+	for _, tn := range sel.TargetList {
+		if a.srfIn(tn.GetResTarget().GetVal()) {
+			return errAt(codeFeatureNotSupported, -1, "%s is not allowed with set-returning functions in the target list", what)
+		}
+	}
+	for _, lcn := range sel.LockingClause {
+		for _, rn := range lcn.GetLockingClause().GetLockedRels() {
+			rv := rn.GetRangeVar()
+			found := false
+			for _, it := range sc.items {
+				if it.join != nil && it.join.usingAlias != nil && it.join.usingAlias.alias == rv.Relname {
+					return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a join", what)
+				}
+				if it.alias == rv.Relname {
+					found = true
+					if it.join != nil {
+						return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a join", what)
+					}
+					if it.sub != nil && it.rel == nil && it.sub.what == "CTE" {
+						return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a WITH query", what)
+					}
+				}
+				if it.join != nil && !found {
+					found = joinHasAlias(it, rv.Relname)
+				}
+			}
+			if !found {
+				return errAt(codeUndefinedTable, rv.Location, "relation %q in %s clause not found in FROM clause", rv.Relname, what)
+			}
+		}
+	}
+	return nil
+}
+
+// joinHasAlias finds an alias among the leaves of a join tree.
+func joinHasAlias(r *rte, name string) bool {
+	if r == nil {
+		return false
+	}
+	if r.alias == name {
+		return true
+	}
+	if r.join != nil {
+		return joinHasAlias(r.join.left, name) || joinHasAlias(r.join.right, name)
+	}
+	return false
+}
+
+// windowInTargets / srfIn: syntactic presence checks on a target list / expression.
+func windowInTargets(list []*pg_query.Node) bool {
+	for _, tn := range list {
+		if windowIn(tn.GetResTarget().GetVal()) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// srfIn is whether the expression syntactically calls a set-returning function (a
+// catalog function by name; user functions by their declaration).
+func (a *analyzer) srfIn(n *pg_query.Node) bool {
+	if n == nil {
+		return false
+	}
+	if fc := n.GetFuncCall(); fc != nil {
+		names := strs(fc.Funcname)
+		name := names[len(names)-1]
+		for _, fn := range a.s.Catalog.FuncsByName(name) {
+			if fn.RetSet {
+				return true
+			}
+		}
+		for _, fn := range a.s.Functions {
+			if fn.Name == name && fn.RetSet {
+				return true
+			}
+		}
+	}
+	for _, c := range children(n) {
+		if a.srfIn(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// positionalMatch is whether two ORDER BY / DISTINCT ON items name the same output
+// column, one by position or alias and the other by expression.
+func positionalMatch(x, y *pg_query.Node, cols []rteCol) bool {
+	idx := func(n *pg_query.Node) int {
+		if c := n.GetAConst(); c != nil {
+			if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+				return int(iv.Ival.Ival) - 1
+			}
+		}
+		if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
+			name := cr.Fields[0].GetString_().GetSval()
+			for i, c := range cols {
+				if c.name == name {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	i, j := idx(x), idx(y)
+	return i >= 0 && i == j
 }

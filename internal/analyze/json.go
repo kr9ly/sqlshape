@@ -28,6 +28,9 @@ func (a *analyzer) jsonOutput(o *pg_query.JsonOutput, def catalog.OID) (schema.T
 	if tt := a.typ(t.OID); tt != nil && tt.Kind == 'p' {
 		return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.TypeName.Location, "returning pseudo-types is not supported in SQL/JSON functions")
 	}
+	if o.Returning != nil && o.Returning.Format != nil && o.Returning.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT && a.baseType(t.OID) != catalog.Bytea {
+		return schema.TypeRef{}, errAt(codeFeatureNotSupported, o.Returning.Format.Location, "cannot set JSON encoding for non-bytea output types")
+	}
 	return t, nil
 }
 
@@ -59,6 +62,18 @@ func (a *analyzer) jsonValue(v *pg_query.JsonValueExpr, sc *scope) (*expr, *Erro
 	}
 	if err := a.bind(e, catalog.Text, loc(v.RawExpr)); err != nil {
 		return nil, err
+	}
+	if v.Format != nil && v.Format.FormatType != pg_query.JsonFormatType_JS_FORMAT_DEFAULT {
+		// transformJsonValueExpr: an explicit FORMAT JSON wants a string / bytea / json
+		// value, and ENCODING a bytea one
+		base := a.baseType(e.oid())
+		cat, _ := a.category(base)
+		if v.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT && base != catalog.Bytea {
+			return nil, errAt(codeDatatypeMismatch, v.Format.Location, "JSON ENCODING clause is only allowed for bytea input type")
+		}
+		if cat != 'S' && base != catalog.Bytea && base != catalog.JSON && base != catalog.JSONB {
+			return nil, errAt(codeDatatypeMismatch, loc(v.RawExpr), "cannot use non-string types with explicit FORMAT JSON clause")
+		}
 	}
 	return e, nil
 }
@@ -115,6 +130,9 @@ func (a *analyzer) jsonBehavior(b *pg_query.JsonBehavior, sc *scope, want catalo
 	if b.Btype == pg_query.JsonBehaviorType_JSON_BEHAVIOR_DEFAULT && (containsSubLink(b.Expr) || a.aggregateIn(b.Expr) != nil || windowIn(b.Expr) != nil) {
 		return errAt(codeDatatypeMismatch, loc(b.Expr), "can only specify a constant, non-aggregate function, or operator expression for DEFAULT")
 	}
+	if b.Btype == pg_query.JsonBehaviorType_JSON_BEHAVIOR_DEFAULT && a.srfIn(b.Expr) {
+		return errAt(codeDatatypeMismatch, loc(b.Expr), "DEFAULT expression must not return a set")
+	}
 	e, err := a.analyzeExpr(b.Expr, sc)
 	if err != nil {
 		return err
@@ -158,6 +176,9 @@ func (a *analyzer) jsonFuncExpr(f *pg_query.JsonFuncExpr, sc *scope, n *pg_query
 		def = catalog.Bool
 	case pg_query.JsonExprOp_JSON_VALUE_OP:
 		def = catalog.Text
+		if r := f.Output.GetReturning(); r != nil && r.Format != nil && r.Format.FormatType != pg_query.JsonFormatType_JS_FORMAT_DEFAULT {
+			return nil, errAt(codeSyntaxError, r.Format.Location, "cannot specify FORMAT JSON in RETURNING clause of JSON_VALUE()")
+		}
 	}
 	t, err := a.jsonOutput(f.Output, def)
 	if err != nil {
@@ -281,6 +302,9 @@ func (a *analyzer) jsonTable(jt *pg_query.JsonTable, sc *scope) (*rte, *Error) {
 		return nil, err
 	}
 	r := &rte{alias: "json_table"}
+	if err := a.checkJsonTableNames(jt.Columns, map[string]bool{}); err != nil {
+		return nil, err
+	}
 	cols, err := a.jsonTableColumns(jt.Columns, sc)
 	if err != nil {
 		return nil, err
@@ -296,6 +320,43 @@ func (a *analyzer) jsonTable(jt *pg_query.JsonTable, sc *scope) (*rte, *Error) {
 		applyColnames(r.cols, jt.Alias)
 	}
 	return r, nil
+}
+
+// checkJsonTableNames is the column / path name uniqueness rule (registerAllJsonTableColumns):
+// every column name and every NESTED PATH name across the whole tree must be distinct, and
+// only one FOR ORDINALITY column is allowed per COLUMNS list.
+func (a *analyzer) checkJsonTableNames(nodes []*pg_query.Node, seen map[string]bool) *Error {
+	ordinality := false
+	for _, n := range nodes {
+		c := n.GetJsonTableColumn()
+		if c == nil {
+			continue
+		}
+		if c.Coltype == pg_query.JsonTableColumnType_JTC_FOR_ORDINALITY {
+			if ordinality {
+				return errAt(codeSyntaxError, c.Location, "only one FOR ORDINALITY column is allowed")
+			}
+			ordinality = true
+		}
+		if path := c.Pathspec.GetName(); path != "" {
+			if seen[path] {
+				return errAt(codeDuplicateAlias, c.Location, "duplicate JSON_TABLE column or path name: %s", path)
+			}
+			seen[path] = true
+		}
+		if c.Name != "" {
+			if seen[c.Name] {
+				return errAt(codeDuplicateAlias, c.Location, "duplicate JSON_TABLE column or path name: %s", c.Name)
+			}
+			seen[c.Name] = true
+		}
+		if c.Coltype == pg_query.JsonTableColumnType_JTC_NESTED {
+			if err := a.checkJsonTableNames(c.Columns, seen); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (a *analyzer) jsonTableColumns(nodes []*pg_query.Node, sc *scope) ([]rteCol, *Error) {
@@ -363,6 +424,27 @@ func (a *analyzer) jsonTableColumns(nodes []*pg_query.Node, sc *scope) ([]rteCol
 
 // xmlExpr types the SQL/XML constructors and predicates.
 func (a *analyzer) xmlExpr(x *pg_query.XmlExpr, sc *scope, n *pg_query.Node) (*expr, *Error) {
+	if x.Op == pg_query.XmlExprOp_IS_XMLELEMENT {
+		// xmlattributes: an unnamed value must be a column reference (it names the
+		// attribute), and no name twice
+		seen := map[string]bool{}
+		for _, na := range x.NamedArgs {
+			rt := na.GetResTarget()
+			name := rt.GetName()
+			if name == "" {
+				cr := rt.GetVal().GetColumnRef()
+				if cr == nil {
+					return nil, errAt(codeSyntaxError, rt.GetLocation(), "unnamed XML attribute value must be a column reference")
+				}
+				fields := cr.Fields
+				name = fields[len(fields)-1].GetString_().GetSval()
+			}
+			if seen[name] {
+				return nil, errAt(codeSyntaxError, rt.GetLocation(), "XML attribute name %q appears more than once", name)
+			}
+			seen[name] = true
+		}
+	}
 	for _, arg := range append(append([]*pg_query.Node{}, x.NamedArgs...), x.Args...) {
 		if ra := arg.GetResTarget(); ra != nil {
 			arg = ra.Val // xmlattributes(expr AS name), xmlforest(expr AS name)
@@ -383,7 +465,14 @@ func (a *analyzer) xmlExpr(x *pg_query.XmlExpr, sc *scope, n *pg_query.Node) (*e
 			if a.baseType(e.oid()) != xmlOID {
 				return nil, errAt(codeDatatypeMismatch, loc(arg), "argument of IS DOCUMENT must be type xml, not type %s", a.s.Types.Format(e.typ))
 			}
-		case pg_query.XmlExprOp_IS_XMLCONCAT, pg_query.XmlExprOp_IS_XMLROOT:
+		case pg_query.XmlExprOp_IS_XMLCONCAT:
+			if err := a.bind(e, xmlOID, loc(arg)); err != nil {
+				return nil, err
+			}
+			if a.baseType(e.oid()) != xmlOID {
+				return nil, errAt(codeDatatypeMismatch, loc(arg), "argument of XMLCONCAT must be type xml, not type %s", a.s.Types.Format(e.typ))
+			}
+		case pg_query.XmlExprOp_IS_XMLROOT:
 			if err := a.bind(e, xmlOID, loc(arg)); err != nil {
 				return nil, err
 			}

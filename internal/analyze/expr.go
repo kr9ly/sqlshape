@@ -205,6 +205,11 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 	}
 	switch v := n.Node.(type) {
 	case *pg_query.Node_AConst:
+		if bs := v.AConst.GetBsval(); bs != nil {
+			if err := validateBitConst(bs.GetBsval(), v.AConst.Location); err != nil {
+				return nil, err
+			}
+		}
 		return a.constExpr(v.AConst, n), nil
 	case *pg_query.Node_ParamRef:
 		num := v.ParamRef.Number
@@ -260,6 +265,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 	case *pg_query.Node_CaseExpr:
 		return a.caseExpr(v.CaseExpr, sc)
 	case *pg_query.Node_CoalesceExpr:
+		savedBan := a.srfBan
+		a.srfBan = "COALESCE"
+		defer func() { a.srfBan = savedBan }()
 		es, err := a.analyzeList(v.CoalesceExpr.Args, sc)
 		if err != nil {
 			return nil, err
@@ -404,8 +412,14 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 	case *pg_query.Node_JsonFuncExpr:
 		return a.jsonFuncExpr(v.JsonFuncExpr, sc, n)
 	case *pg_query.Node_JsonParseExpr:
-		if _, err := a.jsonValue(v.JsonParseExpr.Expr, sc); err != nil {
+		je, err := a.jsonValue(v.JsonParseExpr.Expr, sc)
+		if err != nil {
 			return nil, err
+		}
+		if v.JsonParseExpr.UniqueKeys {
+			if c, _ := a.category(a.baseType(je.oid())); c != 'S' && a.baseType(je.oid()) != catalog.Bytea {
+				return nil, errAt(codeDatatypeMismatch, n.GetJsonParseExpr().Location, "cannot use non-string types with WITH UNIQUE KEYS clause")
+			}
 		}
 		t, err := a.jsonOutput(v.JsonParseExpr.Output, catalog.JSON)
 		if err != nil {
@@ -428,6 +442,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		t, err := a.jsonOutput(v.JsonSerializeExpr.Output, catalog.Text)
 		if err != nil {
 			return nil, err
+		}
+		if c, _ := a.category(a.baseType(t.OID)); c != 'S' && a.baseType(t.OID) != catalog.Bytea {
+			return nil, errAt(codeDatatypeMismatch, v.JsonSerializeExpr.Location, "cannot use type %s in RETURNING clause of JSON_SERIALIZE()", a.s.Types.Format(t))
 		}
 		return &expr{typ: t, nullable: true, node: n}, nil
 	case *pg_query.Node_XmlExpr:
@@ -581,6 +598,9 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 				if r.rowType != 0 {
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 				}
+				if r.scalarFn && len(r.cols) == 1 {
+					return &expr{typ: r.cols[0].typ, nullable: true, node: nodeOf(c)}, nil
+				}
 				if r.join == nil {
 					return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.cols}, nil
 				}
@@ -675,6 +695,31 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && len(lr.Args) == 0 && len(rr.Args) == 0 {
+			return nil, errAt(codeFeatureNotSupported, x.Location, "cannot compare rows of zero length")
+		}
+		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && rowPatternOps[name] {
+			// make_row_comparison: ROW(..) op ROW(..) is compared column by column, with any
+			// btree comparison operator; the text pattern family has no record operator of
+			// its own, so it is resolved here per column
+			if len(lr.Args) != len(rr.Args) {
+				return nil, errAt(codeSyntaxError, x.Location, "unequal number of entries in row expressions")
+			}
+			ls, err := a.analyzeList(lr.Args, sc)
+			if err != nil {
+				return nil, err
+			}
+			rs, err := a.analyzeList(rr.Args, sc)
+			if err != nil {
+				return nil, err
+			}
+			for i := range ls {
+				if _, err := a.applyOperator(name, ls[i], rs[i], x.Location, self); err != nil {
+					return nil, err
+				}
+			}
+			return &expr{typ: ref(catalog.Bool), nullable: l.nullable || r.nullable, node: self}, nil
 		}
 		if x.Kind == pg_query.A_Expr_Kind_AEXPR_SIMILAR {
 			// x SIMILAR TO y is  x ~ similar_to_escape(y)
@@ -868,10 +913,27 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	} else {
 		var err *Error
 		a.inFuncArgs++
+		savedBan := a.srfBan
+		if isAgg && f.Over == nil {
+			a.srfBan = "aggregate"
+		} else if f.Over != nil {
+			a.srfBan = "window"
+		}
 		args, err = a.analyzeList(f.Args, sc)
+		a.srfBan = savedBan
 		a.inFuncArgs--
 		if err != nil {
 			return nil, err
+		}
+	}
+	if len(args) == 1 && !isAgg && f.Over == nil && !f.FuncVariadic && args[0].oid() == catalog.Unknown && args[0].node.GetAConst() != nil && args[0].node.GetAConst().GetSval() != nil && f.Args[0].GetNamedArgExpr() == nil {
+		// func_get_detail: type-name('literal') is a cast when no function takes an
+		// unknown argument exactly, so the literal is read by the type's input function
+		if t := a.s.Types.Lookup(schemaName, name); t != nil {
+			if err := a.bind(args[0], t.OID, f.Location); err != nil {
+				return nil, err
+			}
+			return &expr{typ: ref(t.OID), nullable: args[0].nullable, node: self}, nil
 		}
 	}
 	if f.AggFilter != nil {
@@ -949,10 +1011,15 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 					}
 				} else if !a.canCoerce(args[0].oid(), t.OID, explicitCoercion) {
 					return nil, errAt(codeCannotCoerce, f.Location, "cannot cast type %s to %s", a.s.Types.Format(args[0].typ), t.Name)
+				} else if st := a.typ(args[0].oid()); (args[0].oid() == catalog.Record || st != nil && st.Kind == 'c') && a.catIs(t.OID, 'S') {
+					// func_get_detail: a row type reaching a string type only via I/O
+					// coercion is not a cast in function syntax (text(row(..)) is 42883)
+					goto notCast
 				}
 				return &expr{typ: ref(t.OID), nullable: args[0].nullable, node: self}, nil
 			}
 		}
+	notCast:
 		if ambiguous {
 			return nil, errAt(codeAmbiguousFunction, f.Location, "function %s(%s) is not unique", name, a.typeNames(actual))
 		}
@@ -972,6 +1039,36 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	if c.ufn != nil && c.ufn.IsProc && !a.inCall {
 		return nil, errAt(codeWrongObjectType, f.Location, "%s(%s) is a procedure", name, a.typeNames(actual))
 	}
+	if f.FuncVariadic && len(args) > 0 {
+		if last := args[len(args)-1]; last.oid() != catalog.Unknown {
+			if lt := a.typ(a.baseType(last.oid())); lt == nil || !lt.IsArray() {
+				return nil, errAt(codeDatatypeMismatch, loc(f.Args[len(f.Args)-1]), "VARIADIC argument must be an array")
+			}
+		}
+	}
+	if f.AggWithinGroup && a.isHypothetical(c) {
+		// a hypothetical-set aggregate takes one direct argument per ORDER BY expression,
+		// each pair unified to a common type (WITHIN GROUP types x and y cannot be matched)
+		ndirect := len(f.Args)
+		if ndirect != len(f.AggOrder) {
+			return nil, errAt(codeUndefinedFunction, f.Location, "function %s(%s) does not exist", name, a.typeNames(actual))
+		}
+		for i := 0; i < ndirect; i++ {
+			d, o := args[i], args[ndirect+i]
+			if d.oid() == catalog.Unknown || o.oid() == catalog.Unknown {
+				continue
+			}
+			if _, ok := a.commonType([]catalog.OID{d.oid(), o.oid()}); !ok {
+				return nil, errAt(codeDatatypeMismatch, loc(f.AggOrder[i].GetSortBy().GetNode()), "WITHIN GROUP types %s and %s cannot be matched", a.s.Types.Format(o.typ), a.s.Types.Format(d.typ))
+			}
+		}
+	}
+	if u := a.polyUnknownInput(c.args, actual); u != "" {
+		if u == "anyelement" {
+			return nil, errAt(codeDatatypeMismatch, f.Location, "could not determine polymorphic type because input has type unknown")
+		}
+		return nil, errAt(codeDatatypeMismatch, f.Location, "could not determine polymorphic type %s because input has type unknown", u)
+	}
 	if err := a.bindArgs(args, c, f.Location); err != nil {
 		return nil, err
 	}
@@ -988,6 +1085,13 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 		if a.inCase > 0 {
 			return nil, errAt(codeFeatureNotSupported, f.Location, "set-returning functions are not allowed in CASE")
+		}
+		switch a.srfBan {
+		case "":
+		case "aggregate", "window":
+			return nil, errAt(codeFeatureNotSupported, f.Location, "%s function calls cannot contain set-returning function calls", a.srfBan)
+		default:
+			return nil, errAt(codeFeatureNotSupported, f.Location, "set-returning functions are not allowed in %s", a.srfBan)
 		}
 	}
 	switch {
@@ -1146,12 +1250,14 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
 		}
-		if ct := a.typ(a.baseType(cols[0].typ.OID)); ct != nil && ct.IsArray() {
-			// ARRAY(SELECT int[] ...) is an int[] (array_agg semantics), not int[][]
-			return &expr{typ: ref(ct.OID), nullable: false, node: self}, nil
-		}
+		// get_promoted_array_type: the element's array type when it has one (int2vector
+		// has int2vector[]), else the element itself when it is already an array
+		// (ARRAY(SELECT int[] ...) is an int[], not int[][])
 		arr := a.s.Types.ArrayOf(cols[0].typ.OID)
 		if arr == 0 {
+			if ct := a.typ(a.baseType(cols[0].typ.OID)); ct != nil && ct.IsArray() {
+				return &expr{typ: ref(ct.OID), nullable: false, node: self}, nil
+			}
 			return nil, errAt(codeUndefinedObject, s.Location, "could not find array type for data type %s", a.s.Types.Format(cols[0].typ))
 		}
 		return &expr{typ: ref(arr), nullable: false, node: self}, nil
@@ -1562,5 +1668,107 @@ func (a *analyzer) checkWindowDef(def *pg_query.WindowDef, sc *scope) *Error {
 	if fo&frameOptionGroups != 0 && len(order) == 0 {
 		return errAt(codeWindowingError, def.Location, "GROUPS mode requires an ORDER BY clause")
 	}
+	if fo&frameOptionOffsets != 0 {
+		mode := "ROWS"
+		switch {
+		case fo&frameOptionRange != 0:
+			mode = "RANGE"
+		case fo&frameOptionGroups != 0:
+			mode = "GROUPS"
+		}
+		for _, off := range []*pg_query.Node{def.StartOffset, def.EndOffset} {
+			if off == nil {
+				continue
+			}
+			if hasColumnRef(off) {
+				return errAt(codeInvalidColumnRef, loc(off), "argument of %s must not contain variables", mode)
+			}
+			oe, err := a.analyzeExpr(off, sc)
+			if err != nil {
+				return err
+			}
+			if mode == "RANGE" {
+				// transformFrameOffset: the ORDER BY column's btree opfamily must have an
+				// in_range support function for the offset's type
+				ce, err := a.analyzeExpr(order[0].GetSortBy().GetNode(), sc)
+				if err != nil {
+					return err
+				}
+				if err := a.checkInRange(ce, oe, loc(off)); err != nil {
+					return err
+				}
+			} else if err := a.bind(oe, catalog.Int8, loc(off)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// inRangeOffsets lists, per ORDER BY column type, the offset types PG has in_range
+// support functions for (pg_amproc, btree in_range).
+var inRangeOffsets = map[catalog.OID][]catalog.OID{
+	catalog.Int2:        {catalog.Int2, catalog.Int4, catalog.Int8},
+	catalog.Int4:        {catalog.Int2, catalog.Int4, catalog.Int8},
+	catalog.Int8:        {catalog.Int8},
+	catalog.Float4:      {catalog.Float8},
+	catalog.Float8:      {catalog.Float8},
+	catalog.Numeric:     {catalog.Numeric},
+	catalog.Date:        {catalog.Interval},
+	catalog.Timestamp:   {catalog.Interval},
+	catalog.TimestampTZ: {catalog.Interval},
+	catalog.Time:        {catalog.Interval},
+	catalog.TimeTZ:      {catalog.Interval},
+	catalog.Interval:    {catalog.Interval},
+}
+
+// checkInRange is whether RANGE offset frames work for the ORDER BY column and offset types.
+func (a *analyzer) checkInRange(col, off *expr, at int32) *Error {
+	ct := a.baseType(col.oid())
+	if ct == catalog.Unknown {
+		return nil
+	}
+	allowed, ok := inRangeOffsets[ct]
+	if !ok {
+		return errAt(codeFeatureNotSupported, at, "RANGE with offset PRECEDING/FOLLOWING is not supported for column type %s", a.s.Types.Format(col.typ))
+	}
+	if off.oid() == catalog.Unknown {
+		return a.bind(off, allowed[len(allowed)-1], at) // a literal offset takes the widest offset type
+	}
+	ot := a.baseType(off.oid())
+	for _, t := range allowed {
+		if ot == t || a.canCoerce(ot, t, implicitCoercion) {
+			return nil
+		}
+	}
+	return errAt(codeFeatureNotSupported, at, "RANGE with offset PRECEDING/FOLLOWING is not supported for column type %s and offset type %s", a.s.Types.Format(col.typ), a.s.Types.Format(off.typ))
+}
+
+// hasColumnRef reports a column reference anywhere in the expression.
+func hasColumnRef(n *pg_query.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.GetColumnRef() != nil {
+		return true
+	}
+	for _, c := range children(n) {
+		if hasColumnRef(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// rowPatternOps are the btree comparison operators of the text_pattern_ops family, which
+// exist for text types but not for record.
+var rowPatternOps = map[string]bool{"~<~": true, "~<=~": true, "~>~": true, "~>=~": true}
+
+// isHypothetical is whether the chosen candidate is a hypothetical-set aggregate.
+func (a *analyzer) isHypothetical(c *candidate) bool {
+	if c.fn != nil {
+		agg := a.s.Catalog.AggregateByFn(c.fn.OID)
+		return agg != nil && agg.Kind == 'h'
+	}
+	return c.ufn != nil && c.ufn.AggKind == 'h'
 }

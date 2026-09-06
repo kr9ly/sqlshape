@@ -58,7 +58,11 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
   live PG and the analyzer side by side and writes every disagreement to `-regress-report`, grouped by kind
   (DIFF column name / type / nullability, STRICT = analyzer rejects what PG takes, LENIENT = the reverse, CODE =
   different SQLSTATE). A discovery tool, not a gate: `-regress-tests select,join` limits it to some files.
-  `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
+  A full run takes about half a minute: the schedule's first 8 lines build the shared database in order
+  (`schema.Apply` extends the analyzer's schema statement by statement), every later file runs in its own copy
+  of it, `-regress-jobs` (default NumCPU, at most 8) of them at a time on a server started with fsync off.
+  `SQLSHAPE_ORACLE_LOG=/path` keeps the server log (one MERGE in merge.sql segfaults PG 17's Prepare and is
+  skipped by `reCrash`). `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
   only raises at execution (assignment length coercion of a literal into varchar(n) / bit(n) / numeric(p,s),
   view updatability decided by view-column defaults) count as STRICT there even though the analyzer is right
 - `literal_oracle_test.go`: with `-regress`, every `'literal'::type` in the corpus goes through the real input

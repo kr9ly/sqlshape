@@ -174,6 +174,7 @@ func (s *Schema) inherit(rel *Relation, parent *Relation, partition bool, loc in
 	if partition {
 		for _, ix := range parent.Indexes {
 			c := *ix
+			c.Name = s.chooseIndexName(rel, c.nameParts) // partition indexes get their own names
 			rel.Indexes = append(rel.Indexes, &c)
 		}
 	}
@@ -217,7 +218,7 @@ func (s *Schema) likeClause(rel *Relation, lk *pg_query.TableLikeClause, loc int
 	if has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_INDEXES) {
 		for _, ix := range src.Indexes {
 			c := *ix
-			c.Name = strings.Replace(c.Name, src.Name, rel.Name, 1)
+			c.Name = s.chooseIndexName(rel, c.nameParts)
 			rel.Indexes = append(rel.Indexes, &c)
 		}
 	}
@@ -244,6 +245,11 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 		rel.Name = st.Newname
 		s.relByName[schema+"."+st.Newname] = rel
 		s.Types.renameUser(rel.RowType, st.Newname)
+		for _, r := range s.Relations {
+			if r != rel && r.Schema == schema && r.Name == name {
+				s.relByName[schema+"."+name] = r // a permanent table the renamed temp one hid
+			}
+		}
 		for _, tg := range s.Triggers {
 			if tg.Table == fullName(schema, name) {
 				tg.Table = fullName(schema, st.Newname)
@@ -334,7 +340,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 		schema, name := qualified(strs(owa.GetObjname()))
 		found := false
 		for _, f := range s.Functions {
-			if f.Name == name && (schema == "" && s.OnSearchPath(f.Schema) || f.Schema == schema) {
+			if f.Name == name && (schema == "" && s.OnSearchPath(f.Schema) || f.Schema == schema) && s.funcArgsMatch(f, owa) {
 				f.Name = st.Newname
 				found = true
 			}
@@ -435,6 +441,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 				continue
 			}
+			s.dropTypeDependents(t, st.Behavior == pg_query.DropBehavior_DROP_CASCADE)
 			s.Types.removeUser(t.OID)
 			if rel := s.relByName[schema+"."+name]; rel != nil && rel.Kind == 'c' {
 				s.removeRelation(rel)
@@ -782,22 +789,26 @@ func (s *Schema) createRange(st *pg_query.CreateRangeStmt, loc int32) {
 	}
 	var sub TypeRef
 	found := false
+	mname := ""
 	for _, pn := range st.Params {
 		d := pn.GetDefElem()
-		if d.GetDefname() == "subtype" {
+		switch d.GetDefname() {
+		case "subtype":
 			tr, err := s.resolveType(d.GetArg().GetTypeName())
 			if err != nil {
 				s.problem(loc, "range %s: %v", name, err)
 				return
 			}
 			sub, found = tr, true
+		case "multirange_type_name":
+			_, mname = qualified(strs(d.GetArg().GetTypeName().GetNames()))
 		}
 	}
 	if !found {
 		s.problem(loc, "range %s: subtype is required", name)
 		return
 	}
-	r := s.Types.addRange(schema, name, sub.OID)
+	r := s.Types.addRange(schema, name, sub.OID, mname)
 	rng := s.Types.RangeOf(r.OID)
 	// CREATE TYPE AS RANGE also creates the constructors and the range → multirange cast
 	// (DefineRange): name(sub, sub), name(sub, sub, text), multi(), multi(range),
@@ -878,9 +889,16 @@ func (s *Schema) createBaseType(schema, name string, defs map[string]*pg_query.N
 // finalfunc = ...) as a function of kind aggregate: the result is finalfunc's return type
 // when there is one, the state type otherwise.
 func (s *Schema) createAggregate(schema, name string, st *pg_query.DefineStmt, defs map[string]*pg_query.Node, loc int32) {
-	fn := &Function{OID: s.nextOID, Schema: schema, Name: name, IsAgg: true, Volatile: 'i'}
+	fn := &Function{OID: s.nextOID, Schema: schema, Name: name, IsAgg: true, AggKind: 'n', Volatile: 'i'}
 	s.nextOID++
 	// Args: [list of FunctionParameter (nil for the old syntax), numDirectArgs]
+	// (numDirectArgs >= 0 is an ordered-set aggregate; hypothetical marks the hypothetical kind)
+	if len(st.Args) > 1 && st.Args[1].GetInteger().GetIval() >= 0 {
+		fn.AggKind = 'o'
+		if _, ok := defs["hypothetical"]; ok {
+			fn.AggKind = 'h'
+		}
+	}
 	if len(st.Args) > 0 {
 		for _, pn := range st.Args[0].GetList().GetItems() {
 			p := pn.GetFunctionParameter()
@@ -908,6 +926,9 @@ func (s *Schema) createAggregate(schema, name string, st *pg_query.DefineStmt, d
 		}
 	}
 	stype := defs["stype"]
+	if stype == nil {
+		stype = defs["stype1"] // the pre-8.2 spelling (sfunc1 / stype1 / initcond1)
+	}
 	if stype == nil {
 		s.problem(loc, "aggregate %s: stype is required", name)
 		return
@@ -1085,18 +1106,153 @@ func (s *Schema) dropDependentViews(rel *Relation) {
 		if r.Query == nil {
 			continue
 		}
-		refs := false
-		WalkNodes(r.Query, func(n *pg_query.Node) {
-			if rv := n.GetRangeVar(); rv != nil && rv.Relname == rel.Name && (rv.Schemaname == "" || rv.Schemaname == rel.Schema) {
-				refs = true
+		for _, rv := range r.queryRangeVars() {
+			if rv.name == rel.Name && (rv.schema == "" || rv.schema == rel.Schema) {
+				dependents = append(dependents, r)
+				break
 			}
-		})
-		if refs {
-			dependents = append(dependents, r)
 		}
 	}
 	for _, r := range dependents {
 		s.removeRelation(r)
 		s.dropDependentViews(r)
+	}
+}
+
+// queryRangeVars lists the relations a view's query names, cached per query tree (the
+// reflective walk is what made every DROP expensive).
+func (r *Relation) queryRangeVars() []rangeRef {
+	if r.Query == nil {
+		return nil
+	}
+	if r.queryRefsFor != r.Query {
+		r.queryRefs = r.queryRefs[:0]
+		WalkNodes(r.Query, func(n *pg_query.Node) {
+			if rv := n.GetRangeVar(); rv != nil {
+				r.queryRefs = append(r.queryRefs, rangeRef{rv.Schemaname, rv.Relname})
+			}
+		})
+		r.queryRefsFor = r.Query
+	}
+	return r.queryRefs
+}
+
+type rangeRef struct{ schema, name string }
+
+// alterObjectSchema is ALTER ... SET SCHEMA for the objects the loader models.
+func (s *Schema) alterObjectSchema(st *pg_query.AlterObjectSchemaStmt, loc int32) {
+	to := st.Newschema
+	switch st.ObjectType {
+	case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW,
+		pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
+		schema, name := s.rangeVar(st.Relation)
+		rel := s.relByName[schema+"."+name]
+		if rel == nil {
+			if !st.MissingOk {
+				s.problem(loc, "ALTER ... SET SCHEMA: relation %q does not exist", name)
+			}
+			return
+		}
+		delete(s.relByName, rel.Schema+"."+rel.Name)
+		rel.Schema = to
+		s.relByName[to+"."+name] = rel
+		s.Types.moveUser(rel.RowType, to)
+	case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+		tn := st.Object.GetTypeName()
+		tr, err := s.resolveType(tn)
+		if err != nil {
+			s.problem(loc, "ALTER TYPE SET SCHEMA: %v", err)
+			return
+		}
+		s.Types.moveUser(tr.OID, to)
+	case pg_query.ObjectType_OBJECT_FUNCTION, pg_query.ObjectType_OBJECT_PROCEDURE, pg_query.ObjectType_OBJECT_AGGREGATE, pg_query.ObjectType_OBJECT_ROUTINE:
+		owa := st.Object.GetObjectWithArgs()
+		schema, name := qualified(strs(owa.GetObjname()))
+		if schema == "" {
+			schema = s.creationSchema()
+		}
+		moved := false
+		for _, fn := range s.Functions {
+			if fn.Name == name && fn.Schema == schema && s.funcArgsMatch(fn, owa) {
+				fn.Schema = to
+				moved = true
+			}
+		}
+		if !moved && !st.MissingOk {
+			s.problem(loc, "ALTER FUNCTION SET SCHEMA: function %s does not exist", name)
+		}
+	}
+}
+
+// funcArgsMatch is whether an ObjectWithArgs signature (no args given = any) picks fn.
+func (s *Schema) funcArgsMatch(fn *Function, owa *pg_query.ObjectWithArgs) bool {
+	if owa.ArgsUnspecified || (len(owa.Objargs) == 0 && len(owa.Objfuncargs) == 0) {
+		return true
+	}
+	var want []catalog.OID
+	for _, n := range owa.Objargs {
+		tr, err := s.resolveType(n.GetTypeName())
+		if err != nil {
+			return false
+		}
+		want = append(want, tr.OID)
+	}
+	var have []catalog.OID
+	for _, a := range fn.Args {
+		if a.Mode != 'o' && a.Mode != 't' {
+			have = append(have, a.Type.OID)
+		}
+	}
+	if len(want) != len(have) {
+		return false
+	}
+	for i := range want {
+		if want[i] != have[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// dropTypeDependents removes what a DROP TYPE takes along: the range / multirange
+// constructor functions and casts made with the type (internal dependencies), and, with
+// CASCADE, the typed tables OF it.
+func (s *Schema) dropTypeDependents(t *catalog.Type, cascade bool) {
+	gone := map[catalog.OID]bool{t.OID: true, t.Array: true}
+	if r := s.Types.RangeOf(t.OID); r != nil && t.Kind == 'r' {
+		gone[r.Multi] = true
+		if mt := s.Types.ByOID(r.Multi); mt != nil {
+			gone[mt.Array] = true
+		}
+	}
+	var kept []*Function
+	goneFns := map[catalog.OID]bool{}
+	for _, f := range s.Functions {
+		if f.Language == "internal" && (gone[f.RetType.OID] || len(f.Args) > 0 && gone[f.Args[0].Type.OID]) {
+			goneFns[f.OID] = true
+			continue
+		}
+		kept = append(kept, f)
+	}
+	s.Functions = kept
+	var casts []*catalog.Cast
+	for _, c := range s.Casts {
+		if gone[c.Source] || gone[c.Target] || goneFns[c.Func] {
+			continue
+		}
+		casts = append(casts, c)
+	}
+	s.Casts = casts
+	if cascade {
+		var typed []*Relation
+		for _, r := range s.Relations {
+			if r.OfType == t.OID {
+				typed = append(typed, r)
+			}
+		}
+		for _, r := range typed {
+			s.removeRelation(r)
+			s.dropDependentViews(r)
+		}
 	}
 }
