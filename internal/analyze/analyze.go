@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -427,6 +428,22 @@ func (a *analyzer) subStatement(n *pg_query.Node, sc *scope) ([]rteCol, *Error) 
 }
 
 func init() {
+	// INSERT in schema.sql (seed rows): typed like any statement against the schema so far
+	// so, and its certain failures (a NOT NULL column left out) and domain / policy
+	// findings are problems too
+	schema.CheckStatement = func(s *schema.Schema, stmt *pg_query.Node) error {
+		r, err := analyzeStmt(s, stmt, nil, map[string]bool{})
+		if err != nil {
+			return err
+		}
+		for _, n := range r.Notes {
+			switch n.Code {
+			case noteAlwaysFails, noteDomainMismatch, notePolicy:
+				return errors.New(n.Message)
+			}
+		}
+		return nil
+	}
 	// PARTITION BY (expr): ComputePartitionAttrs' rules on the key expression
 	schema.PartitionKeyProblem = func(s *schema.Schema, rel *schema.Relation, expr *pg_query.Node) string {
 		a := newAnalyzer(s, nil, nil)

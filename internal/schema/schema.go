@@ -156,6 +156,9 @@ type Relation struct {
 	OwnedBy string
 	// OnCommitDrop: a temporary table created ON COMMIT DROP (gone at transaction end).
 	OnCommitDrop bool
+	// Seed (tables): the rows the schema text's INSERT statements give the table, nil
+	// for a table that holds runtime data.
+	Seed *Seed
 	// PartKey (partitioned tables): the columns the partition key names or its expressions
 	// reference (they cannot be dropped; a type they depend on takes the table with it);
 	// PartKeyFuncs: the functions the key expressions call (DROP FUNCTION CASCADE takes
@@ -590,6 +593,8 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		}
 	case *pg_query.Node_ViewStmt:
 		s.createView(st.ViewStmt, loc)
+	case *pg_query.Node_InsertStmt:
+		s.insert(st.InsertStmt, n, loc)
 	case *pg_query.Node_SelectStmt:
 		if st.SelectStmt.IntoClause != nil {
 			s.createTableAs(st.SelectStmt.IntoClause, n, loc)

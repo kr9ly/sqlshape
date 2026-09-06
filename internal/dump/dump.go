@@ -8,10 +8,16 @@
 // Canonical forms, and Load reads the live side the same way. The `-- sqlshape:` directives
 // live in comments and do not survive the round trip: a canonical schema carries only what
 // PostgreSQL holds.
+//
+// Seeded tables (schema.Relation.Seed, the rows schema.sql gives a lookup table) are
+// data, which pg_dump --schema-only leaves out; both readers take the seed declarations of
+// a schema and read those tables' declared columns back as INSERT statements appended to
+// the dump, so content compares like the rest.
 package dump
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +25,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/oracle"
 	"github.com/kr9ly/sqlshape/internal/schema"
@@ -69,35 +77,130 @@ func Normalize(text string) string {
 	return setConfig.ReplaceAllString(b.String(), "SET search_path = '$1';")
 }
 
-// Load reads the database at connString into a Schema.
-func Load(ctx context.Context, connString string) (*schema.Schema, error) {
+// Load reads the database at connString into a Schema. seeds names the tables whose
+// rows are part of the schema (the relations with a schema.Seed, typically the target's):
+// their declared columns are read back as INSERT statements so the content compares
+// like the rest; nil reads no rows.
+func Load(ctx context.Context, connString string, seeds *schema.Schema) (*schema.Schema, error) {
 	text, err := Run(ctx, connString)
 	if err != nil {
 		return nil, err
 	}
-	s, err := analyze.Load(Normalize(text))
+	text = Normalize(text)
+	if seeds != nil {
+		conn, err := pgx.Connect(ctx, connString)
+		if err != nil {
+			return nil, err
+		}
+		defer conn.Close(ctx)
+		data, err := readSeeds(ctx, conn, seeds)
+		if err != nil {
+			return nil, err
+		}
+		text += data
+	}
+	s, err := analyze.Load(text)
 	if err != nil {
 		return nil, fmt.Errorf("load dump: %w", err)
 	}
+	adoptSeeds(s, seeds)
 	return s, nil
 }
+
+// readSeeds renders the current rows of every seeded table of spec as INSERT statements
+// over the declared columns (values as text literals, ordered by key). A table or column
+// the database does not have yet contributes nothing.
+func readSeeds(ctx context.Context, conn *pgx.Conn, spec *schema.Schema) (string, error) {
+	var b strings.Builder
+	for _, rel := range spec.Relations {
+		sd := rel.Seed
+		if sd == nil {
+			continue
+		}
+		var sel, ord []string
+		for _, c := range sd.Columns {
+			sel = append(sel, q(c)+"::text")
+		}
+		for _, k := range sd.Key {
+			ord = append(ord, q(k))
+		}
+		sql := fmt.Sprintf("SELECT %s FROM %s.%s ORDER BY %s", strings.Join(sel, ", "), q(rel.Schema), q(rel.Name), strings.Join(ord, ", "))
+		rows, err := conn.Query(ctx, sql)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && (pgErr.Code == "42P01" || pgErr.Code == "42703") {
+				continue // undefined table / column: not there yet
+			}
+			return "", fmt.Errorf("read rows of %s: %w", rel.FullName(), err)
+		}
+		var lines []string
+		for rows.Next() {
+			vals, err := rows.Values()
+			if err != nil {
+				return "", err
+			}
+			parts := make([]string, len(vals))
+			for i, v := range vals {
+				if v == nil {
+					parts[i] = "NULL"
+				} else {
+					parts[i] = "'" + strings.ReplaceAll(v.(string), "'", "''") + "'"
+				}
+			}
+			lines = append(lines, "  ("+strings.Join(parts, ", ")+")")
+		}
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		cols := make([]string, len(sd.Columns))
+		for i, c := range sd.Columns {
+			cols[i] = q(c)
+		}
+		if sd.Additive {
+			b.WriteString("\n-- sqlshape: seed")
+		}
+		fmt.Fprintf(&b, "\nINSERT INTO %s.%s (%s) VALUES\n%s;\n", q(rel.Schema), q(rel.Name), strings.Join(cols, ", "), strings.Join(lines, ",\n"))
+	}
+	return b.String(), nil
+}
+
+// adoptSeeds carries what the round trip loses from spec onto s: the seed directive.
+func adoptSeeds(s, spec *schema.Schema) {
+	if spec == nil {
+		return
+	}
+	for _, rel := range spec.Relations {
+		if rel.Seed == nil {
+			continue
+		}
+		if r := s.Relation(rel.Schema, rel.Name); r != nil && r.Seed != nil {
+			r.Seed.Additive = rel.Seed.Additive
+		}
+	}
+}
+
+func q(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
 
 // Canonicalizer gives schema text its canonical form. Server is the implementation;
 // Canonical below is the one-shot convenience.
 type Canonicalizer interface {
-	Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, string, error)
+	Canonical(ctx context.Context, schemaSQL string, seeds *schema.Schema) (*schema.Schema, string, error)
 }
 
 // Canonical applies schemaSQL to a fresh PostgreSQL and reads it back. The returned text
-// is the normalized dump the Schema was loaded from. Each call boots its own server;
-// for several canonical forms use one Server.
-func Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, string, error) {
+// is the normalized dump the Schema was loaded from, followed by the rows of the seeded
+// tables (see Load; nil takes the seeds schemaSQL itself declares). Each call boots its
+// own server; for several canonical forms use one Server.
+func Canonical(ctx context.Context, schemaSQL string, seeds *schema.Schema) (*schema.Schema, string, error) {
 	srv, err := NewServer(ctx)
 	if err != nil {
 		return nil, "", err
 	}
 	defer srv.Close()
-	return srv.Canonical(ctx, schemaSQL)
+	return srv.Canonical(ctx, schemaSQL, seeds)
 }
 
 // Server is one running PostgreSQL that canonicalizes many schema texts, each in a
@@ -122,7 +225,14 @@ func (s *Server) Close() error { return s.o.Close() }
 
 // Canonical applies schemaSQL to a fresh database on the server and reads it back. Safe
 // for concurrent use.
-func (s *Server) Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, string, error) {
+func (s *Server) Canonical(ctx context.Context, schemaSQL string, seeds *schema.Schema) (*schema.Schema, string, error) {
+	if seeds == nil {
+		raw, err := analyze.Load(schemaSQL)
+		if err != nil {
+			return nil, "", fmt.Errorf("load schema: %w", err)
+		}
+		seeds = raw
+	}
 	s.mu.Lock()
 	s.n++
 	name := fmt.Sprintf("canonical_%d", s.n)
@@ -146,9 +256,15 @@ func (s *Server) Canonical(ctx context.Context, schemaSQL string) (*schema.Schem
 		return nil, "", err
 	}
 	text = Normalize(text)
+	data, err := readSeeds(ctx, sess.Conn(), seeds)
+	if err != nil {
+		return nil, "", err
+	}
+	text += data
 	sc, err := analyze.Load(text)
 	if err != nil {
 		return nil, "", fmt.Errorf("load dump: %w", err)
 	}
+	adoptSeeds(sc, seeds)
 	return sc, text, nil
 }

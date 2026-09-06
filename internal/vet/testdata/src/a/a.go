@@ -508,3 +508,30 @@ type Handle string // want Handle:`carries citext`
 var handleOK = sqlshape.Query[struct{ Handle Handle }, struct{ H Handle }](`SELECT handle FROM users WHERE handle = {{.H}}`)
 
 var handleMisuse = sqlshape.Query[struct{ Name Handle }, struct{}](`SELECT name FROM users`) // want `field Name is a.Handle but column "name" is character varying\(100\)`
+
+// a lookup table's rows are a value set like enum labels: the key column, and the
+// columns referencing it, bind the Go type to the declared rows
+type Plan string // want Plan:`consts free,team,trial` Plan:`bound l plans.code`
+
+const (
+	PlanFree  Plan = "free"
+	PlanTeam  Plan = "team"
+	PlanTrial Plan = "trial"
+)
+
+var byPlan = sqlshape.Query[int64, struct{ P Plan }](`SELECT id FROM subscriptions WHERE plan = {{.P}}`) // want `value set of plans.code \(lookup table\) has label "pro" but Plan has no constant for it` `Plan has constant "trial" which is not a label of value set of plans.code \(lookup table\)`
+
+var planLabels = sqlshape.Query[struct {
+	Code  Plan
+	Label string
+}, struct{}](`SELECT code, label FROM plans`)
+
+func planName(p Plan) string {
+	switch p { // want `switch on Plan does not handle value set of plans.code \(lookup table\) labels: pro`
+	case PlanFree:
+		return "f"
+	case PlanTeam:
+		return "t"
+	}
+	return ""
+}

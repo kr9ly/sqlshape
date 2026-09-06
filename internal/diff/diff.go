@@ -377,7 +377,77 @@ func (d *differ) relations(a, b *schema.Schema) {
 			trule[rn] = ruleProps(rd)
 		}
 		d.parts("rule", n, frule, trule)
+		d.rows(n, f, r)
 	}
+}
+
+// rows diffs the seeded content of a table (RowChanges) as one "rows" change.
+func (d *differ) rows(n string, f, r *schema.Relation) {
+	if fields := RowChanges(f, r); len(fields) > 0 {
+		d.add(Alter, "rows", n, fields...)
+	}
+}
+
+// RowChanges compares the seeded content of a table: the rows the target declares
+// against the rows the source holds, by key. Each field names the key and shows the row
+// texts (From empty for a row to insert, To empty for one to delete). A column left out
+// of the declaration does not count, rows an additive seed does not list are not a
+// change, and a target without a seed declares nothing about the content.
+func RowChanges(from, to *schema.Relation) []Field {
+	if to == nil || to.Seed == nil {
+		return nil
+	}
+	sd := to.Seed
+	var have map[string][]schema.Expr
+	if from != nil && from.Seed != nil {
+		have = projectRows(from.Seed, sd.Columns)
+	}
+	var fields []Field
+	for _, row := range sd.Rows {
+		k := sd.KeyText(row)
+		fr, ok := have[k]
+		switch {
+		case !ok:
+			fields = append(fields, Field{Name: "row " + k, To: sd.RowText(row)})
+		case sd.RowText(fr) != sd.RowText(row):
+			fields = append(fields, Field{Name: "row " + k, From: sd.RowText(fr), To: sd.RowText(row)})
+		}
+	}
+	if !sd.Additive {
+		declared := sd.ByKey()
+		for _, k := range sortedKeys(have) {
+			if declared[k] == nil {
+				fields = append(fields, Field{Name: "row " + k, From: sd.RowText(have[k])})
+			}
+		}
+	}
+	return fields
+}
+
+// projectRows indexes the rows of sd by the key of cols' seed, keeping the values of cols
+// (nil where sd does not have the column).
+func projectRows(sd *schema.Seed, cols []string) map[string][]schema.Expr {
+	idx := make([]int, len(cols))
+	for i, c := range cols {
+		idx[i] = -1
+		for j, sc := range sd.Columns {
+			if sc == c {
+				idx[i] = j
+			}
+		}
+	}
+	view := &schema.Seed{Columns: cols, Key: sd.Key}
+	out := map[string][]schema.Expr{}
+	for _, row := range sd.Rows {
+		pr := make([]schema.Expr, len(cols))
+		for i, j := range idx {
+			if j >= 0 {
+				pr[i] = row[j]
+			}
+		}
+		out[view.KeyText(pr)] = pr
+	}
+	return out
 }
 
 // constraints are the relation's constraints by name, without the Unique entries the

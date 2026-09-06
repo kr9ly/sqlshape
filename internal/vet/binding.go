@@ -7,15 +7,18 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/schema"
+	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
-// Interpretation sharing: a Go named type that meets a DB nominal type — an enum,
-// a domain, or the identity of a key column (PK, or FK-derived) — is bound to it by
-// use. Bindings are compared for consistency, enum label sets are diffed against the
+// Interpretation sharing: a Go named type that meets a DB nominal type — an enum, a
+// CHECK IN value set, the key of a seeded lookup table, a domain, or the identity of a
+// key column (PK, or FK-derived) — is bound to it by use. Bindings are compared for
+// consistency, value sets (enum labels, CHECK values, lookup rows) are diffed against the
 // type's constants, and conversions / switches over bound types are checked.
 
 // ConstSetFact records the string constants declared for a named string type.
@@ -26,7 +29,7 @@ func (f *ConstSetFact) String() string { return "consts " + strings.Join(f.Value
 
 // BindingFact records what a Go type was bound to in the package that declares it or uses it.
 type BindingFact struct {
-	Kind   byte // 'e' enum, 'd' domain, 'k' key identity
+	Kind   byte // 'e' enum, 'v' CHECK IN value set, 'l' lookup table rows, 'd' domain, 'k' key identity
 	Key    string
 	Labels []string // enum labels, for downstream conversion / switch checks
 }
@@ -58,6 +61,8 @@ func (n nominal) String() string {
 		return "enum " + n.key
 	case 'v':
 		return "value set of " + n.key + " (CHECK)"
+	case 'l':
+		return "value set of " + n.key + " (lookup table)"
 	case 'd':
 		return "domain " + n.key
 	}
@@ -89,10 +94,59 @@ func (c *checker) nominalOf(pg schema.TypeRef, src *analyze.Source) (nominal, bo
 			}
 		}
 		if id, ok := c.identity(src.Table, src.Column, 0); ok {
+			// a key column of a seeded table (or a column referencing it) carries one of the
+			// declared rows: a value set like enum labels
+			if labels, ok := c.lookupLabels(id); ok {
+				return nominal{kind: 'l', key: id, labels: labels}, true
+			}
 			return nominal{kind: 'k', key: id}, true
 		}
 	}
 	return nominal{}, false
+}
+
+// lookupLabels returns the values of the key column "table.column" when the table is
+// seeded with rows identified by that column alone.
+func (c *checker) lookupLabels(id string) ([]string, bool) {
+	dot := strings.LastIndex(id, ".")
+	if dot < 0 {
+		return nil, false
+	}
+	rel := c.relByFullName(id[:dot])
+	if rel == nil || rel.Seed == nil || len(rel.Seed.Key) != 1 || rel.Seed.Key[0] != id[dot+1:] {
+		return nil, false
+	}
+	labels := make([]string, 0, len(rel.Seed.Rows))
+	for _, row := range rel.Seed.Rows {
+		labels = append(labels, constText(row[seedIndex(rel.Seed, id[dot+1:])]))
+	}
+	return labels, true
+}
+
+func seedIndex(sd *schema.Seed, col string) int {
+	for i, c := range sd.Columns {
+		if c == col {
+			return i
+		}
+	}
+	return -1
+}
+
+// constText is the value of a constant as Go constants spell it: the string itself for a
+// string, digits for an integer; other expressions as SQL text.
+func constText(e schema.Expr) string {
+	if ac := e.GetAConst(); ac != nil {
+		switch v := ac.Val.(type) {
+		case *pg_query.A_Const_Sval:
+			return v.Sval.GetSval()
+		case *pg_query.A_Const_Ival:
+			return strconv.Itoa(int(v.Ival.GetIval()))
+		}
+	}
+	if tc := e.GetTypeCast(); tc != nil {
+		return constText(tc.Arg)
+	}
+	return schema.Deparse(e)
 }
 
 // identity follows single-column PK / FK structure to the root key column.
@@ -238,7 +292,7 @@ func (c *checker) finishBindings() {
 		if tn.Pkg() == c.pass.Pkg {
 			c.pass.ExportObjectFact(tn, &BindingFact{Kind: b.kind, Key: b.key, Labels: b.labels})
 		}
-		if b.kind != 'e' && b.kind != 'v' {
+		if b.kind != 'e' && b.kind != 'v' && b.kind != 'l' {
 			continue
 		}
 		consts, have := local[tn]
@@ -279,17 +333,17 @@ func (c *checker) finishBindings() {
 }
 
 // enumLabels returns the labels a Go type is bound to (locally or via fact), if it is
-// bound to a value set (an enum or a CHECK IN column); key describes the set.
+// bound to a value set (an enum, a CHECK IN column, or a lookup table's key); key describes the set.
 func (c *checker) enumLabels(t types.Type) (*types.Named, []string, string, bool) {
 	named, ok := t.(*types.Named)
 	if !ok {
 		return nil, nil, "", false
 	}
-	if b, ok := c.bindings[named.Obj()]; ok && (b.kind == 'e' || b.kind == 'v') {
+	if b, ok := c.bindings[named.Obj()]; ok && (b.kind == 'e' || b.kind == 'v' || b.kind == 'l') {
 		return named, b.labels, nominal{kind: b.kind, key: b.key}.String(), true
 	}
 	var f BindingFact
-	if c.pass.ImportObjectFact(named.Obj(), &f) && (f.Kind == 'e' || f.Kind == 'v') {
+	if c.pass.ImportObjectFact(named.Obj(), &f) && (f.Kind == 'e' || f.Kind == 'v' || f.Kind == 'l') {
 		return named, f.Labels, nominal{kind: f.Kind, key: f.Key}.String(), true
 	}
 	return nil, nil, "", false

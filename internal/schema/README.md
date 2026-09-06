@@ -11,5 +11,6 @@ Layers `schema.sql` over the bootstrap catalog. Parsed with libpg_query (pg_quer
   (COLLATE names are validated against built-ins, declarations and locale-style names), CREATE AGGREGATE /
   OPERATOR / CAST (resolved like catalog ones), `SET search_path` (lookup order and where unqualified CREATE lands),
   interval field / precision typmods
+- `seed.go`: `INSERT ... VALUES` into a table records its rows as `Relation.Seed` (a lookup table's fixed content, keyed by the PK or a NOT NULL unique constraint the rows give as constants); non-idempotent INSERTs (no key, volatile values, `DEFAULT`, `ON CONFLICT`, duplicate keys, differing column lists) are Problems, and the analyzer type-checks each INSERT through `CheckStatement`. `-- sqlshape: seed` marks the rows additive
 - Unsupported DDL lands in `Problems` with a byte offset; loading never aborts on it
 - `TestAgainstOracle` boots real PG on the same file and diffs every table's columns

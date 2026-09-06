@@ -93,3 +93,37 @@ COMMENT ON COLUMN t.name IS 'the name';
 		})
 	}
 }
+
+func TestCompareRows(t *testing.T) {
+	base := `
+CREATE TABLE statuses (code text PRIMARY KEY, label text NOT NULL, sort_order int NOT NULL DEFAULT 0, note text);
+`
+	rows := func(additive bool, rows string) string {
+		d := ""
+		if additive {
+			d = "-- sqlshape: seed\n"
+		}
+		return base + d + "INSERT INTO statuses (code, label, sort_order) VALUES " + rows + ";"
+	}
+	pending := "('pending', 'Pending', 10)"
+	cases := []struct {
+		name, from, to, want string
+	}{
+		{"same", rows(false, pending), rows(false, pending), ""},
+		{"target not seeded", rows(false, pending), base, ""},
+		{"new seed", base, rows(false, pending), "~ rows statuses\n    row 'pending':  -> 'pending', 'Pending', 10"},
+		{"changed and added", rows(false, pending), rows(false, "('pending', 'Waiting', 10), ('paid', 'Paid', 20)"),
+			"~ rows statuses\n    row 'pending': 'pending', 'Pending', 10 -> 'pending', 'Waiting', 10\n    row 'paid':  -> 'paid', 'Paid', 20"},
+		{"removed", rows(false, "('pending', 'Pending', 10), ('paid', 'Paid', 20)"), rows(false, pending),
+			"~ rows statuses\n    row 'paid': 'paid', 'Paid', 20 -> "},
+		{"additive keeps extra rows", rows(false, "('pending', 'Pending', 10), ('paid', 'Paid', 20)"), rows(true, pending), ""},
+		{"undeclared column does not count", base + "INSERT INTO statuses (code, label, sort_order, note) VALUES ('pending', 'Pending', 10, 'x');", rows(false, pending), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := compare(t, c.from, c.to); got != c.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, c.want)
+			}
+		})
+	}
+}

@@ -51,7 +51,7 @@ func requirePgDump(t *testing.T) {
 
 func mustCanonical(t *testing.T, sql string) canonical {
 	t.Helper()
-	s, text, err := server.Canonical(context.Background(), sql)
+	s, text, err := server.Canonical(context.Background(), sql, nil)
 	if err != nil {
 		t.Fatalf("canonical: %v", err)
 	}
@@ -252,4 +252,63 @@ func TestPlanEmptyForIdentical(t *testing.T) {
 		t.Errorf("plan for identical schemas: %v, %v", p, err)
 	}
 	_ = diff.Compare
+}
+
+// Seed rows: the plan brings a seeded table's content to its declared rows with a MERGE,
+// after the table and its keys exist and parents before children; an additive seed
+// leaves undeclared rows alone.
+func TestPlanSeeds(t *testing.T) {
+	requirePgDump(t)
+	lookup := `
+CREATE TABLE order_kinds (code text PRIMARY KEY, label text NOT NULL, sort_order integer NOT NULL DEFAULT 0, note text);
+CREATE TABLE kind_groups (kind text NOT NULL REFERENCES order_kinds, grp text NOT NULL, PRIMARY KEY (kind, grp));
+`
+	v1 := lookup + `
+INSERT INTO order_kinds (code, label, sort_order) VALUES ('retail', 'Retail', 10), ('bulk', 'Bulk', 20), ('gift', 'Gift', 30);
+INSERT INTO kind_groups VALUES ('retail', 'b2c'), ('gift', 'b2c');
+`
+	v2 := lookup + `
+INSERT INTO order_kinds (code, label, sort_order) VALUES ('retail', 'Retail', 10), ('bulk', 'Wholesale', 20), ('sample', 'Sample', 40);
+INSERT INTO kind_groups VALUES ('retail', 'b2c'), ('sample', 'b2b');
+`
+	base := example(t, "1-tables")
+	t.Run("new seeded tables", func(t *testing.T) {
+		roundTrip(t, mustCanonical(t, base), mustCanonical(t, base+v1), "-- @migrate drop order_kinds\n-- @migrate drop kind_groups", false)
+	})
+	t.Run("rows change", func(t *testing.T) {
+		from, to := mustCanonical(t, base+v1), mustCanonical(t, base+v2)
+		plan, err := Plan(from.s, to.s, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if n := strings.Count(ddl, "MERGE INTO"); n != 2 || strings.Index(ddl, `"order_kinds"`) > strings.Index(ddl, `"kind_groups"`) {
+			t.Errorf("want two MERGEs, parent first:\n%s", ddl)
+		}
+		roundTrip(t, from, to, "", false)
+	})
+	t.Run("additive", func(t *testing.T) {
+		from := mustCanonical(t, base+v1)
+		to := mustCanonical(t, base+lookup+"-- sqlshape: seed\nINSERT INTO order_kinds (code, label) VALUES ('retail', 'Retail'), ('bulk', 'Bulk');")
+		plan, err := Plan(from.s, to.s, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(plan) != 0 {
+			t.Errorf("declared rows are all there; want an empty plan, got:\n%s", strings.Join(plan, "\n"))
+		}
+		to = mustCanonical(t, base+lookup+"-- sqlshape: seed\nINSERT INTO order_kinds (code, label) VALUES ('retail', 'Retail'), ('sample', 'Sample');")
+		plan, err = Plan(from.s, to.s, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if strings.Contains(ddl, "BY SOURCE") || !strings.Contains(ddl, "MERGE INTO") {
+			t.Errorf("additive seed: want a MERGE without the delete arm:\n%s", ddl)
+		}
+		changes, _, err := Verify(context.Background(), server, from.text, ddl, to.s)
+		if err != nil || len(changes) > 0 {
+			t.Errorf("verify: %v %v\n%s", err, changes, ddl)
+		}
+	})
 }

@@ -122,3 +122,16 @@ CREATE TABLE hosts (
     at_tz   timetz NOT NULL,
     rel     oid NOT NULL
 );
+
+CREATE TABLE plans (
+    code  text PRIMARY KEY,
+    label text NOT NULL,
+    seats int NOT NULL DEFAULT 1
+);
+INSERT INTO plans (code, label) VALUES ('free', 'Free'), ('pro', 'Pro'), ('team', 'Team');
+
+CREATE TABLE subscriptions (
+    id      bigserial PRIMARY KEY,
+    user_id bigint NOT NULL REFERENCES users(id),
+    plan    text NOT NULL REFERENCES plans
+);

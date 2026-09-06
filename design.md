@@ -512,7 +512,7 @@ INSERT INTO order_statuses (code, label, sort_order) VALUES
   ('shipped', '発送済', 30);
 ```
 
-- loader は InsertStmt を受けて `Relation.Rows` に定数行を持つ。冪等でない INSERT はエラー:
+- loader は InsertStmt を受けて `Relation.Seed` に定数行を持つ。冪等でない INSERT はエラー:
   ① PK / NOT NULL UNIQUE が無い ② キー列が定数で埋まっていない（serial PK 省略で code UNIQUE も無い等。
   定数で埋まったキーが同一性、複数あれば全一致）③ 値が非 immutable（now() / random() / サブクエリ /
   nextval。volatility で判定）④ ON CONFLICT 付き ⑤ 宣言内でキー重複
@@ -520,8 +520,11 @@ INSERT INTO order_statuses (code, label, sort_order) VALUES
   「追加のみ・削除しない」の逃げ道。INSERT に無い列（DEFAULT 任せ）は比較しない
 - 差分は PG にやらせる。テーブルごとに 1 文の MERGE〔`USING (VALUES ...) ON key` / MATCHED AND
   IS DISTINCT FROM → UPDATE / NOT MATCHED → INSERT / NOT MATCHED BY SOURCE → DELETE（PG 17）〕を生成、
-  ドライランは `RETURNING merge_action()` + ROLLBACK。FK 依存で親 → 子の INSERT、子 → 親の DELETE、
-  削除前に参照件数で止める
+  ドライランは `RETURNING merge_action()` + ROLLBACK。seed 同士が FK で結ばれているときは親 → 子の
+  MERGE（削除腕なし）と子 → 親の `DELETE ... WHERE key NOT IN (VALUES ...)` に分割。参照中の行の削除は
+  FK が apply 時に止める（そこで「使われている値」と知るのが正しい）。比較は両側正準形: dump は
+  seed 宣言のあるテーブルの宣言列を `SELECT col::text` で読み戻して INSERT として付け足す（宣言側の
+  Schema が「どのテーブルのどの列を読むか」を決める。宣言に無い列は読まない = 比較しない）
 - **検査器は Rows を値集合として読める**。キー列を enum と同じ経路で Go typed const と両方向 diff。
   lookup テーブルが enum と同じ精度で「値集合の共有」検査に乗り、enum の落とし穴（DROP VALUE 不在・
   宣言順比較・LoadType）は構造的に無い
@@ -555,7 +558,7 @@ analyzer で型検査のみ、非トランザクション文（CONCURRENTLY / AD
    連鎖ロジックを再利用）、enum 値削除の新型作成 + USING、ADD VALUE のトランザクション分離
 5. **消費者インデックス**: vet の Result を集計して「table.column → 参照 statement の位置」を出す層
 6. **意図宣言 `@migrate`** と diff の整合検査、backfill 式の型検査
-7. **固定値テーブル**（INSERT → Rows → MERGE 生成、値集合としての読み取り）
+7. **固定値テーブル**（INSERT → `Relation.Seed` → MERGE 生成、値集合としての読み取り）— 済
 8. **CLI サブコマンド化**
 
 アナライザー本体（型検査・スコープ・nullability）が無いと影響分析も backfill の検査も成立しないので、
@@ -766,11 +769,11 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | 状態 | 項目 | 備考 |
 |---|---|---|
 | ✅ | schema.sql → テーブル / ビュー / MV / enum / ドメイン / 複合型 / 関数 / 制約 / ユニークインデックス / COMMENT | 無名制約は PG と同じ命名 |
-| ⬜ | 実 DB → Schema の逆ロード（`pg_dump --schema-only` を loader に）、ドリフト検出 | D1。apply の終点比較の核 |
-| ⬜ | Schema 同士の差分 → DDL 生成 + 依存順序、embedded PG での機械検証 | 裁定 2026-09-06: sqldef を捨てて自前 |
-| ⬜ | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、DROP ゲート | analyzer は列参照を全部見ているが、集計して出す層が無い |
-| ⬜ | 意図宣言 `@migrate`（rename / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
-| ⬜ | 固定値テーブル: schema.sql の INSERT → `Relation.Rows` → MERGE 生成 + ドリフト検出、値集合としての読み取り | 本命。`@data` コメント構文は不採用 |
+| ✅ | 実 DB → Schema の逆ロード（`internal/dump`: pg_dump → Normalize → analyze.Load、Canonical = embedded PG に当てて dump）、ドリフト検出 | D1。apply の終点比較の核。CLI 表面は ⑧ |
+| ✅ | Schema 同士の差分 → DDL 生成 + 依存順序（`internal/diff` / `migrate.Plan`）、embedded PG での機械検証（`migrate.Verify`） | 裁定 2026-09-06: sqldef を捨てて自前 |
+| 🔶 | 参照の全数解析: DROP 影響分析、死んだスキーマ検出、HEAD~1 との世代跨ぎ検査、DROP ゲート | `internal/consumers.Index`（vet Analyzer の ResultType）まで。集計の表面は ⑧ |
+| ✅ | 意図宣言 `@migrate`（rename / drop / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
+| ✅ | 固定値テーブル: schema.sql の INSERT → `Relation.Seed` → MERGE 生成 + ドリフト検出、値集合としての読み取り | 本命。`@data` コメント構文は不採用。FK で結ばれた seed 同士は親→子 MERGE + 子→親 DELETE に分割 |
 | ⬜ | CLI サブコマンド化（vet / diff / apply / verify-schema） | 現状 vet 一本 |
 | 🔶 | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | CREATE EXTENSION と SET search_path は schema 層が読む。ロール・PG 版は未 |
 

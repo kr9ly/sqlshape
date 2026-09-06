@@ -83,6 +83,7 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 - a Go named string type that meets an **enum** column (or a column with `CHECK (col IN (...))`) is bound to it; its typed constants are diffed
   against the labels both ways (across packages via `go/analysis` facts), `T("typo")` conversions and
   non-exhaustive `switch`es are reported
+- a **lookup table** is seeded in schema.sql with an ordinary `INSERT ... VALUES` (the recommended home for a value set: rows can carry a label and a sort order, a row in use is protected by the foreign key, and a JOIN gives analysts the names). The rows are part of the schema: the checker diffs the key column's values with the Go type's constants exactly like enum labels, wherever the key or a column referencing it is used; the migration keeps the table's content in step with the declaration (one `MERGE` per table; `-- sqlshape: seed` before the INSERT makes it additive, so rows the declaration does not list stay). The INSERT must be idempotent — a key every row gives as constants, constant values, no `ON CONFLICT` — and is type-checked like any statement
 - a Go named type that meets a **key column** (PK, or FK-derived) is bound to that identity;
   `UserID` passed where `orders.id` is expected is reported even though both are `bigint`
 - a Go named type that meets a **domain** is bound to it; mixing domains is reported

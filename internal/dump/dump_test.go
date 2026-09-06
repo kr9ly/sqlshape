@@ -41,14 +41,14 @@ func TestCanonicalFixedPoint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			s1, text, err := srv.Canonical(ctx, string(sql))
+			s1, text, err := srv.Canonical(ctx, string(sql), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, p := range s1.Problems {
 				t.Errorf("problem loading dump: %s", p)
 			}
-			s2, _, err := srv.Canonical(ctx, text)
+			s2, _, err := srv.Canonical(ctx, text, nil)
 			if err != nil {
 				t.Fatalf("re-applying the dump: %v", err)
 			}
@@ -79,11 +79,11 @@ CREATE INDEX orders_status_idx ON orders (status) WHERE status <> 'paid';
 ALTER TYPE order_status ADD VALUE 'refunded';
 COMMENT ON TABLE orders IS 'orders placed';
 `
-	from, _, err := Canonical(ctx, string(base))
+	from, _, err := Canonical(ctx, string(base), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	to, _, err := Canonical(ctx, edit)
+	to, _, err := Canonical(ctx, edit, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

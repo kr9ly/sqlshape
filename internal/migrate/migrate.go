@@ -8,6 +8,9 @@
 // that declared them (Relation.Definition and friends); parts (columns, constraints,
 // labels) are rendered from the model.
 //
+// Seeded tables (schema.Relation.Seed) are brought to their declared rows last, with a
+// MERGE per table whose content differs (seed.go).
+//
 // The plan is a proposal: it does not know how to rename, which value an enum label
 // should map to when it goes, or what to backfill a new NOT NULL column with. Those show
 // up as statements PostgreSQL will refuse or as a leftover difference in Verify, and are
@@ -27,7 +30,8 @@ import (
 )
 
 // Plan lists the statements that turn from into to: drops (dependents first), the
-// declared renames, then alterations, then additions in the target's order. The intents
+// declared renames, then alterations, then additions in the target's order, then the
+// rows of the seeded tables (a MERGE per table whose content differs). The intents
 // (ParseIntents of the target's source) decide what the diff cannot: a table or column
 // that disappears must be declared dropped or renamed, an enum label that disappears
 // must say which label its values become, and backfills fill new columns before they
@@ -41,6 +45,7 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.renames()
 	p.alters()
 	p.adds()
+	p.seeds()
 	if len(p.in.problems) > 0 {
 		return p.out, errors.New(strings.Join(p.in.problems, "\n"))
 	}
@@ -60,7 +65,7 @@ func (p *planner) check(sql string) error {
 func Verify(ctx context.Context, c dump.Canonicalizer, currentSQL, ddl string, target *schema.Schema) (changes, notes []diff.Change, err error) {
 	// the current schema is a dump, whose session has search_path emptied; the plan's
 	// rendered statements name public objects unqualified
-	got, _, err := c.Canonical(ctx, currentSQL+"\nRESET search_path;\n"+ddl)
+	got, _, err := c.Canonical(ctx, currentSQL+"\nRESET search_path;\n"+ddl, target)
 	if err != nil {
 		return nil, nil, err
 	}
