@@ -164,6 +164,39 @@ type scope struct {
 	windows map[string]*pg_query.WindowDef
 	// agg: this level's target list / HAVING has an aggregate (one row without GROUP BY)
 	agg bool
+	// grouped: this level has a GROUP BY clause
+	grouped bool
+	// passthrough: not a query level of its own (a join's inner scopes): the level is the
+	// parent's
+	passthrough bool
+	// fromOf: this scope is a subquery in the FROM clause of that query level (an
+	// aggregate belonging to that level may not appear here)
+	fromOf *scope
+}
+
+// queryScope is the query level sc belongs to: itself unless it is a passthrough scope.
+func (sc *scope) queryScope() *scope {
+	for sc != nil && sc.passthrough && sc.parent != nil {
+		sc = sc.parent
+	}
+	return sc
+}
+
+// levelsUp counts the query levels from sc up to outer (0 when the same level); ok is
+// false when outer is not an enclosing level.
+func (sc *scope) levelsUp(outer *scope) (int, bool) {
+	outer = outer.queryScope()
+	d := 0
+	for s := sc.queryScope(); s != nil; s = s.parent {
+		if s.passthrough {
+			continue
+		}
+		if s == outer {
+			return d, true
+		}
+		d++
+	}
+	return 0, false
 }
 
 type cte struct {
@@ -208,7 +241,9 @@ func (sc *scope) byAlias(alias string) *rte {
 
 // resolveColumn resolves [tbl.]col across the scope chain.
 func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol, *Error) {
+	a.lastResolvedScope = nil
 	for s := sc; s != nil; s = s.parent {
+		a.lastResolvedScope = s
 		if tbl != "" {
 			r := s.byAlias(tbl)
 			if r == nil {
@@ -250,6 +285,7 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 			return hits[0], nil
 		}
 	}
+	a.lastResolvedScope = nil
 	if c, ok := a.systemColumn(sc, tbl, col); ok {
 		if a.mergeWhen && col != "tableoid" {
 			return rteCol{}, errAt(codeInvalidColumnRef, loc, "cannot use system column %q in MERGE WHEN condition", col)
@@ -266,6 +302,31 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 		return rteCol{}, errAt(codeUndefinedTable, loc, "missing FROM-clause entry for table %q", tbl)
 	}
 	return rteCol{}, errAt(codeUndefinedColumn, loc, "column %q does not exist", col)
+}
+
+// scopeOf is the scope (this one or an enclosing one) whose FROM list holds r.
+func (sc *scope) scopeOf(r *rte) *scope {
+	for s := sc; s != nil; s = s.parent {
+		for _, it := range s.items {
+			if it == r || joinHasRTE(it, r) {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
+func joinHasRTE(it, r *rte) bool {
+	if it == nil {
+		return false
+	}
+	if it == r {
+		return true
+	}
+	if it.join != nil {
+		return joinHasRTE(it.join.left, r) || joinHasRTE(it.join.right, r) || it.join.usingAlias == r
+	}
+	return false
 }
 
 // wholeRow finds an rte by alias for a bare `t` reference; returns nil if none.

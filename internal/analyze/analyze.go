@@ -54,6 +54,11 @@ type analyzer struct {
 	polyErr *Error
 	// inDMLCTE is set while a data-modifying WITH item is analyzed
 	inDMLCTE bool
+	// lastResolvedScope is the scope the last resolveColumn found its column in
+	lastResolvedScope *scope
+	// aggFrames are the aggregate calls whose arguments are being analyzed, innermost
+	// last (check_agg_arguments: an aggregate's level is its arguments' nearest level)
+	aggFrames []*aggFrame
 	// inAggArgs is the depth of aggregate calls whose arguments are being analyzed
 	// (aggregates do not nest)
 	inAggArgs int

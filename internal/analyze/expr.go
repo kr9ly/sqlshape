@@ -374,6 +374,22 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 	case *pg_query.Node_NamedArgExpr:
 		return a.analyzeExpr(v.NamedArgExpr.Arg, sc)
 	case *pg_query.Node_GroupingFunc:
+		// the arguments' level (the nearest one their columns resolve to) is the grouped
+		// query the GROUPING belongs to
+		fr := &aggFrame{sc: sc}
+		a.aggFrames = append(a.aggFrames, fr)
+		_, err := a.analyzeList(v.GroupingFunc.Args, sc)
+		a.aggFrames = a.aggFrames[:len(a.aggFrames)-1]
+		if err != nil {
+			return nil, err
+		}
+		owner := fr.owner
+		if owner == nil {
+			owner = sc.queryScope()
+		}
+		if !owner.grouped {
+			return nil, errAt(codeGroupingError, v.GroupingFunc.Location, "arguments to GROUPING must be grouping expressions of the associated query level")
+		}
 		return &expr{typ: ref(catalog.Int4), node: n}, nil
 	case *pg_query.Node_JsonObjectConstructor:
 		return a.jsonConstructorList(v.JsonObjectConstructor.Exprs, v.JsonObjectConstructor.Output, sc, n)
@@ -603,6 +619,7 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	if err != nil {
 		if tbl == "" {
 			if r := sc.wholeRow(col); r != nil {
+				a.noteVarScope(sc.scopeOf(r))
 				if r.rowType != 0 {
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols, rowOf: r}, nil
 				}
@@ -624,6 +641,7 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 		}
 		return nil, err
 	}
+	a.noteVarScope(a.lastResolvedScope)
 	e := &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields, coll: rc.coll.asVar()}
 	if e.coll.strength == collNone && a.collatable(rc.typ.OID) {
 		e.coll = collation{strength: collImplicit, loc: c.Location}
@@ -953,12 +971,16 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	}
 	var args []*expr
 	isAgg := f.AggStar || f.AggFilter != nil || f.AggWithinGroup || f.AggDistinct || len(f.AggOrder) > 0 || a.isAggregateName(names)
+	var frame *aggFrame
 	if isAgg && f.Over == nil {
 		if a.inAggArgs > 0 {
 			return nil, errAt(codeGroupingError, f.Location, "aggregate function calls cannot be nested")
 		}
 		a.inAggArgs++
 		defer func() { a.inAggArgs-- }()
+		frame = &aggFrame{sc: sc, inDirect: f.AggWithinGroup}
+		a.aggFrames = append(a.aggFrames, frame)
+		defer func() { a.aggFrames = a.aggFrames[:len(a.aggFrames)-1] }()
 	}
 	if f.AggStar {
 		// count(*)
@@ -987,6 +1009,9 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			}
 			return &expr{typ: ref(t.OID), nullable: args[0].nullable, node: self}, nil
 		}
+	}
+	if frame != nil {
+		frame.inDirect = false
 	}
 	if f.AggFilter != nil {
 		fe, err := a.analyzeExpr(f.AggFilter, sc)
@@ -1040,6 +1065,13 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 			// an ordered-set aggregate's signature is its direct arguments followed by the
 			// WITHIN GROUP (ORDER BY ...) expressions
 			args = append(args, e)
+		}
+	}
+	var aggOwner *scope
+	if frame != nil {
+		var err *Error
+		if aggOwner, err = a.settleAggFrame(frame, f); err != nil {
+			return nil, err
 		}
 	}
 	// f(x) with x a composite row that has a field f is the field, unless a function f
@@ -1197,7 +1229,11 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		return nil, errAt(codeWrongObjectType, f.Location, "OVER specified, but %s is not a window function nor an aggregate function", name)
 	}
 	if isAggFn && f.Over == nil {
-		sc.agg = true
+		if aggOwner != nil {
+			aggOwner.agg = true // an outer-level aggregate makes that query grouped
+		} else {
+			sc.agg = true
+		}
 	}
 	res := c.result()
 	if t := a.typ(res); t != nil && t.IsPolymorphic() {
@@ -1854,6 +1890,86 @@ func (a *analyzer) checkInRange(col, off *expr, at int32) *Error {
 }
 
 // hasColumnRef reports a column reference anywhere in the expression.
+// aggFrame follows one aggregate call while its arguments are analyzed: the query level
+// its columns resolve to decides which query the aggregate belongs to
+// (check_agg_arguments: the nearest level among the aggregated arguments' columns).
+type aggFrame struct {
+	sc *scope // where the call is written
+	// owner / ownerDepth: the nearest level a column of the aggregated arguments (FILTER,
+	// ORDER BY, plain arguments) resolved to; nil until one does (constants only: this level)
+	owner      *scope
+	ownerDepth int
+	// direct / directDepth: the same for an ordered-set aggregate's direct arguments
+	direct      *scope
+	directDepth int
+	inDirect    bool
+	// nested: aggregates written inside the arguments, with the level each belongs to
+	nested []nestedAgg
+}
+
+type nestedAgg struct {
+	owner *scope
+	loc   int32
+}
+
+// noteVarScope records that a column resolved in scope s for every aggregate whose
+// arguments are being analyzed; a column of a deeper level (a subquery's own table) is
+// not that aggregate's business.
+func (a *analyzer) noteVarScope(s *scope) {
+	if s == nil {
+		return
+	}
+	for _, fr := range a.aggFrames {
+		d, ok := fr.sc.levelsUp(s)
+		if !ok {
+			continue
+		}
+		if fr.inDirect {
+			if fr.direct == nil || d < fr.directDepth {
+				fr.direct, fr.directDepth = s.queryScope(), d
+			}
+		} else if fr.owner == nil || d < fr.ownerDepth {
+			fr.owner, fr.ownerDepth = s.queryScope(), d
+		}
+	}
+}
+
+// settleAggFrame applies check_agg_arguments once an aggregate's arguments are analyzed:
+// an ordered-set aggregate's direct arguments may not reach below its level, an aggregate
+// of the same level inside the arguments is a nested aggregate, and an aggregate may not
+// sit in a FROM item of the level it belongs to. It returns the level the aggregate
+// belongs to (nil for the level it is written in).
+func (a *analyzer) settleAggFrame(fr *aggFrame, f *pg_query.FuncCall) (*scope, *Error) {
+	owner, depth := fr.owner, fr.ownerDepth
+	if owner == nil {
+		owner, depth = fr.sc.queryScope(), 0
+	}
+	if fr.direct != nil && fr.directDepth < depth {
+		return nil, errAt(codeGroupingError, f.Location, "outer-level aggregate cannot contain a lower-level variable in its direct arguments")
+	}
+	for _, n := range fr.nested {
+		if n.owner == owner {
+			return nil, errAt(codeGroupingError, n.loc, "aggregate function calls cannot be nested")
+		}
+	}
+	if depth > 0 {
+		for s := fr.sc; s != nil && s != owner; s = s.parent {
+			if s.fromOf == owner {
+				return nil, errAt(codeGroupingError, f.Location, "aggregate functions are not allowed in FROM clause of their own query level")
+			}
+		}
+	}
+	for _, outer := range a.aggFrames {
+		if outer != fr {
+			outer.nested = append(outer.nested, nestedAgg{owner: owner, loc: f.Location})
+		}
+	}
+	if depth == 0 {
+		return nil, nil
+	}
+	return owner, nil
+}
+
 // maxArrayDim is PG's MAXDIM.
 const maxArrayDim = 6
 

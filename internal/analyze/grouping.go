@@ -30,9 +30,15 @@ func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rte
 		}
 		groups = append(groups, resolved)
 	}
-	g := &grouping{a: a, p: &prover{a: a, sc: sc}, keys: map[string]bool{}, grouped: map[colKey]bool{}}
+	g := &grouping{a: a, p: &prover{a: a, sc: sc}, keys: map[string]bool{}, grouped: map[colKey]bool{}, usingKeys: map[string]bool{}}
 	for _, n := range groups {
 		if n != nil {
+			if a.coercedUsingColumn(n, sc) {
+				// GROUP BY f1 on a USING column coerced to another type groups by
+				// t1.f1::bigint, which covers f1 but not the bare t1.f1
+				g.usingKeys[n.GetColumnRef().Fields[0].GetString_().GetSval()] = true
+				continue
+			}
 			g.keys[g.key(n)] = true
 			if k, ok := g.p.resolve(n); ok {
 				g.cols = append(g.cols, k)
@@ -58,6 +64,37 @@ func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rte
 		}
 	}
 	return nil
+}
+
+// coercedUsingColumn reports whether n is an unqualified reference to a JOIN USING column
+// whose merged type differs from the left input's column (the merged column is then a
+// coercion of the input, not the input itself; flatten_join_alias_vars keeps them apart).
+func (a *analyzer) coercedUsingColumn(n *pg_query.Node, sc *scope) bool {
+	cr := n.GetColumnRef()
+	if cr == nil || len(cr.Fields) != 1 || cr.Fields[0].GetString_() == nil {
+		return false
+	}
+	name := cr.Fields[0].GetString_().GetSval()
+	var coerced func(r *rte) bool
+	coerced = func(r *rte) bool {
+		if r == nil || r.join == nil {
+			return false
+		}
+		for i, u := range r.join.using {
+			if u == name && i < len(r.join.usingCols) {
+				for _, lc := range r.join.left.find(name) {
+					return lc.typ.OID != r.join.usingCols[i].typ.OID
+				}
+			}
+		}
+		return coerced(r.join.left) || coerced(r.join.right)
+	}
+	for _, it := range sc.items {
+		if coerced(it) {
+			return true
+		}
+	}
+	return false
 }
 
 // groupExpr resolves a GROUP BY item to the expression it groups by: an ordinal or an
@@ -104,6 +141,9 @@ type grouping struct {
 	keys    map[string]bool // deparsed grouping expressions
 	grouped map[colKey]bool // grouped plain columns, by identity
 	cols    []colKey        // grouped plain columns (for functional dependency)
+	// usingKeys: unqualified names of grouped JOIN USING columns that are coercions of
+	// their inputs (only the unqualified reference is covered)
+	usingKeys map[string]bool
 }
 
 // check walks an expression and reports the first ungrouped column reference.
@@ -118,6 +158,9 @@ func (g *grouping) check(n *pg_query.Node) *Error {
 	case *pg_query.Node_AConst, *pg_query.Node_ParamRef, *pg_query.Node_SubLink, *pg_query.Node_SetToDefault:
 		return nil
 	case *pg_query.Node_ColumnRef:
+		if len(v.ColumnRef.Fields) == 1 && g.usingKeys[v.ColumnRef.Fields[0].GetString_().GetSval()] {
+			return nil
+		}
 		k, ok := g.p.resolve(n)
 		if !ok {
 			return nil // outer reference, whole-row or unresolved: not this level's problem
@@ -128,6 +171,14 @@ func (g *grouping) check(n *pg_query.Node) *Error {
 		return errAt(codeGroupingError, v.ColumnRef.Location, "column %q must appear in the GROUP BY clause or be used in an aggregate function", strings.Join(strs(v.ColumnRef.Fields), "."))
 	case *pg_query.Node_FuncCall:
 		if v.FuncCall.Over == nil && g.a.isAggregateName(strs(v.FuncCall.Funcname)) {
+			if v.FuncCall.AggWithinGroup {
+				// an ordered-set aggregate's direct arguments are evaluated once per group
+				for _, d := range v.FuncCall.Args {
+					if err := g.check(d); err != nil {
+						return err
+					}
+				}
+			}
 			return nil // aggregate arguments see ungrouped rows
 		}
 	}

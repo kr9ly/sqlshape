@@ -41,6 +41,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	if len(sel.ValuesLists) > 0 {
 		return a.values(sel.ValuesLists, sc)
 	}
+	sc.grouped = len(sel.GroupClause) > 0
 	// FROM
 	for _, item := range sel.FromClause {
 		r, err := a.fromItem(item, sc)
@@ -209,13 +210,14 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, what string) *Error {
 	if c := n.GetAConst(); c != nil {
 		if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
-			if i := int(iv.Ival.Ival); i >= 1 && i <= len(cols) {
-				if err := collConflictError(cols[i-1].coll, loc(n)); err != nil {
-					return err
-				}
-				return a.checkComparable(cols[i-1].typ, what, loc(n))
+			i := int(iv.Ival.Ival)
+			if i < 1 || i > len(cols) {
+				return errAt(codeInvalidColumnRef, loc(n), "%s position %d is not in select list", what, i)
 			}
-			return nil
+			if err := collConflictError(cols[i-1].coll, loc(n)); err != nil {
+				return err
+			}
+			return a.checkComparable(cols[i-1].typ, what, loc(n))
 		}
 	}
 	// an unqualified name may refer to an output column alias first
@@ -745,6 +747,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 				}
 			}
 		}
+		child.fromOf = sc.queryScope()
 		cols, err := a.selectStmt(sub.Subquery.GetSelectStmt(), child)
 		if err != nil {
 			return nil, err
@@ -998,6 +1001,7 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	}
 	// the right side may be LATERAL and see the left side
 	inner := newScope(sc)
+	inner.passthrough = true
 	inner.items = []*rte{left}
 	right, err := a.fromItem(j.Rarg, inner)
 	if err != nil {
@@ -1019,6 +1023,7 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	r := &rte{join: &joinInfo{left: left, right: right, jointype: j.Jointype, quals: j.Quals}}
 	// qualification / USING / NATURAL are checked in a scope holding both sides
 	both := newScope(sc)
+	both.passthrough = true
 	both.items = []*rte{left, right}
 	var using []string
 	if j.IsNatural {

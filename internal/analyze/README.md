@@ -42,6 +42,11 @@ parameters in FROM, WHERE CURRENT OF, and utility statements (TRUNCATE / LOCK / 
 SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR / CREATE TABLE AS). FETCH stays
 0A000: a cursor's columns are not known statically.
 
+- Aggregate levels (`aggFrame`, check_agg_arguments): an aggregate belongs to the nearest query level
+  its aggregated arguments' columns resolve to; that level becomes grouped, an aggregate of the same
+  level inside the arguments is nested (42803), an aggregate may not sit in a FROM item of its own
+  level, an ordered-set aggregate's direct arguments may not reach below its level and are checked
+  as per-group expressions, GROUPING's arguments must belong to a grouped level
 - Recursive CTEs: forward references, a WITH nested on the recursive union, SEARCH / CYCLE columns and their
   name rules, and checkWellFormedRecursion (`recursive.go`: the query name once, not in a subquery / the nullable
   side of an outer join / EXCEPT / INTERSECT / the non-recursive term, no aggregates, no data-modifying body)
