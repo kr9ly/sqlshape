@@ -44,6 +44,7 @@ const (
 	codeGeneratedAlways              = "428C9"
 	codeWindowingError               = "42P20"
 	codeDuplicateAlias               = "42712"
+	codeInvalidRecursion             = "42P19"
 )
 
 // errAt builds an Error; loc is the 0-based node location (PG reports 1-based).

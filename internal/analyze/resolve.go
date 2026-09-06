@@ -99,7 +99,7 @@ func (a *analyzer) canCoerce(from, to catalog.OID, ctx coercionContext) bool {
 	if to == catalog.Record && ft != nil && ft.Kind == 'c' {
 		return true
 	}
-	if from == catalog.Record && tt2 != nil && tt2.Kind == 'c' && ctx != implicitCoercion {
+	if from == catalog.Record && tt2 != nil && tt2.Kind == 'c' {
 		return true
 	}
 	if ft != nil && tt2 != nil && ft.Kind == 'c' && tt2.Kind == 'c' && ctx == explicitCoercion {

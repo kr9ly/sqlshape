@@ -210,9 +210,25 @@ func (p *regressProbe) runFile(name string, promote bool) {
 	conn.Exec(ctx, "SET statement_timeout = '5s'; SET lock_timeout = '2s'; SET client_min_messages = warning")
 
 	ddl := append([]string(nil), p.baseDDL...)
+	if !promote {
+		// the template database carries the promoted files' objects but not their session
+		// settings (SET search_path ...), so the loader must not replay those either
+		ddl = ddl[:0]
+		for _, d := range p.baseDDL {
+			if tree, err := pg_query.Parse(d); err == nil && len(tree.Stmts) == 1 && tree.Stmts[0].Stmt.GetVariableSetStmt() != nil {
+				continue
+			}
+			ddl = append(ddl, d)
+		}
+	}
 	var s *schema.Schema
 	dirty := true
 	txSnap := -1
+	type savepoint struct {
+		name string
+		n    int
+	}
+	var saves []savepoint
 	for i, sql := range stmts {
 		if reStdin.MatchString(sql) { // would wait for client data
 			continue
@@ -260,14 +276,37 @@ func (p *regressProbe) runFile(name string, promote bool) {
 			switch ts.TransactionStmt.Kind {
 			case pg_query.TransactionStmtKind_TRANS_STMT_BEGIN, pg_query.TransactionStmtKind_TRANS_STMT_START:
 				txSnap = len(ddl)
+				saves = nil
 			case pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK, pg_query.TransactionStmtKind_TRANS_STMT_PREPARE:
 				if txSnap >= 0 && len(ddl) > txSnap {
 					ddl = ddl[:txSnap]
 					dirty = true
 				}
 				txSnap = -1
+				saves = nil
+			case pg_query.TransactionStmtKind_TRANS_STMT_SAVEPOINT:
+				saves = append(saves, savepoint{ts.TransactionStmt.SavepointName, len(ddl)})
+			case pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK_TO:
+				for i := len(saves) - 1; i >= 0; i-- {
+					if saves[i].name == ts.TransactionStmt.SavepointName {
+						if len(ddl) > saves[i].n {
+							ddl = ddl[:saves[i].n]
+							dirty = true
+						}
+						saves = saves[:i+1]
+						break
+					}
+				}
+			case pg_query.TransactionStmtKind_TRANS_STMT_RELEASE:
+				for i := len(saves) - 1; i >= 0; i-- {
+					if saves[i].name == ts.TransactionStmt.SavepointName {
+						saves = saves[:i]
+						break
+					}
+				}
 			default:
 				txSnap = -1
+				saves = nil
 			}
 			continue
 		}

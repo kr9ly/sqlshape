@@ -37,6 +37,26 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 		}
 		sc.items = append(sc.items, r)
 	}
+	// WINDOW clause
+	for _, wn := range sel.WindowClause {
+		wd := wn.GetWindowDef()
+		if wd == nil {
+			continue
+		}
+		if sc.windows == nil {
+			sc.windows = map[string]*pg_query.WindowDef{}
+		}
+		if _, dup := sc.windows[wd.Name]; dup {
+			return nil, errAt(codeWindowingError, wd.Location, "window %q is already defined", wd.Name)
+		}
+		if wd.Refname != "" {
+			if _, ok := sc.windows[wd.Refname]; !ok {
+				return nil, errAt(codeUndefinedObject, wd.Location, "window %q does not exist", wd.Refname)
+			}
+		}
+		sc.windows[wd.Name] = wd
+	}
+
 	// WHERE / GROUP BY / HAVING
 	if err := a.boolClause(sel.WhereClause, sc, "WHERE"); err != nil {
 		return nil, err
@@ -223,63 +243,149 @@ func (a *analyzer) expandStar(cr *pg_query.ColumnRef, sc *scope) ([]rteCol, *Err
 }
 
 func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
+	pending := w.Ctes
+	for len(pending) > 0 {
+		var deferred []*pg_query.Node
+		var firstErr *Error
+		progress := false
+		for _, cn := range pending {
+			c := cn.GetCommonTableExpr()
+			err := a.defineCTE(c, w, sc)
+			if err == nil {
+				progress = true
+				continue
+			}
+			// WITH RECURSIVE lets a query name a CTE defined further down: try it after the rest
+			if w.Recursive && err.Code == codeUndefinedTable && a.namesLaterCTE(err, w) {
+				deferred = append(deferred, cn)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			return err
+		}
+		if !progress {
+			return firstErr
+		}
+		pending = deferred
+	}
+	return nil
+}
+
+// namesLaterCTE reports whether a "relation does not exist" error names one of w's CTEs.
+func (a *analyzer) namesLaterCTE(err *Error, w *pg_query.WithClause) bool {
 	for _, cn := range w.Ctes {
-		c := cn.GetCommonTableExpr()
-		sel := c.Ctequery.GetSelectStmt()
-		if sel == nil {
-			// data-modifying CTE: its RETURNING rows are the CTE's columns
-			csc := newScope(sc)
-			var cols []rteCol
-			var err *Error
-			switch st := c.Ctequery.Node.(type) {
-			case *pg_query.Node_InsertStmt:
-				cols, err = a.insertStmt(st.InsertStmt, csc)
-			case *pg_query.Node_UpdateStmt:
-				cols, err = a.updateStmt(st.UpdateStmt, csc)
-			case *pg_query.Node_DeleteStmt:
-				cols, err = a.deleteStmt(st.DeleteStmt, csc)
-			default:
-				return errAt(codeFeatureNotSupported, c.Location, "unsupported CTE query %T", c.Ctequery.Node)
-			}
-			if err != nil {
-				return err
-			}
-			a.dmlCTEs = append(a.dmlCTEs, c.Ctequery)
-			sc.ctes[c.Ctename] = &cte{name: c.Ctename, cols: a.aliasCols(cols, c.Aliascolnames)}
-			continue
+		if strings.Contains(err.Message, "\""+cn.GetCommonTableExpr().Ctename+"\"") {
+			return true
 		}
-		def := &cte{name: c.Ctename, recursive: w.Recursive}
-		if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION {
-			// analyze the non-recursive term first, then expose the CTE with those types for the recursive term
-			left, err := a.selectStmt(sel.Larg, newScope(sc))
-			if err != nil {
-				return err
-			}
-			def.cols = a.aliasCols(left, c.Aliascolnames)
-			sc.ctes[c.Ctename] = def
-			right, err := a.selectStmt(sel.Rarg, newScope(sc))
-			if err != nil {
-				return err
-			}
-			if len(right) != len(left) {
-				return errAt(codeSyntaxError, c.Location, "each UNION query must have the same number of columns")
-			}
-			for i := range def.cols {
-				def.cols[i].nullable = def.cols[i].nullable || right[i].nullable
-				def.cols[i].src = nil
-			}
-			continue
-		}
+	}
+	return false
+}
+
+// defineCTE analyzes one WITH item and exposes it in sc.
+func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause, sc *scope) *Error {
+	sel := c.Ctequery.GetSelectStmt()
+	if sel == nil {
+		// data-modifying CTE: its RETURNING rows are the CTE's columns
 		csc := newScope(sc)
-		cols, err := a.selectStmt(sel, csc)
+		var cols []rteCol
+		var err *Error
+		switch st := c.Ctequery.Node.(type) {
+		case *pg_query.Node_InsertStmt:
+			cols, err = a.insertStmt(st.InsertStmt, csc)
+		case *pg_query.Node_UpdateStmt:
+			cols, err = a.updateStmt(st.UpdateStmt, csc)
+		case *pg_query.Node_DeleteStmt:
+			cols, err = a.deleteStmt(st.DeleteStmt, csc)
+		case *pg_query.Node_MergeStmt:
+			cols, err = a.mergeStmt(st.MergeStmt, csc)
+		default:
+			return errAt(codeFeatureNotSupported, c.Location, "unsupported CTE query %T", c.Ctequery.Node)
+		}
+		if w.Recursive && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+			return errAt(codeInvalidRecursion, c.Location, "recursive query %q must not contain data-modifying statements", c.Ctename)
+		}
 		if err != nil {
 			return err
 		}
-		def.cols = a.aliasCols(cols, c.Aliascolnames)
-		def.sub = &subquery{what: "CTE", sel: sel, sc: csc}
-		sc.ctes[c.Ctename] = def
+		a.dmlCTEs = append(a.dmlCTEs, c.Ctequery)
+		sc.ctes[c.Ctename] = &cte{name: c.Ctename, cols: a.aliasCols(cols, c.Aliascolnames)}
+		return nil
 	}
+	def := &cte{name: c.Ctename, recursive: w.Recursive}
+	if w.Recursive && sel.Op != pg_query.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+		return errAt(codeInvalidRecursion, c.Location, "recursive query %q does not have the form non-recursive-term UNION [ALL] recursive-term", c.Ctename)
+	}
+	if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION {
+		// a WITH on the whole recursive union is visible to both arms
+		armSc := sc
+		if sel.WithClause != nil {
+			armSc = newScope(sc)
+			if err := a.withClause(sel.WithClause, armSc); err != nil {
+				return err
+			}
+		}
+		// analyze the non-recursive term first (the CTE may not appear in it), then expose
+		// the CTE with those types for the recursive term
+		def.forbidden = true
+		sc.ctes[c.Ctename] = def
+		left, err := a.selectStmt(sel.Larg, newScope(armSc))
+		if err != nil {
+			return err
+		}
+		def.forbidden = false
+		def.cols = a.aliasCols(left, c.Aliascolnames)
+		if err := a.checkRecursiveTerm(c.Ctename, selNode(sel.Rarg)); err != nil {
+			return err
+		}
+		// SEARCH / CYCLE columns are visible to the recursive term (WHERE NOT is_cycle)
+		a.addSearchCycleCols(def, c, sc)
+		right, err := a.selectStmt(sel.Rarg, newScope(armSc))
+		if err != nil {
+			return err
+		}
+		if len(right) != len(left) {
+			return errAt(codeSyntaxError, c.Location, "each UNION query must have the same number of columns")
+		}
+		for i := range left {
+			def.cols[i].nullable = def.cols[i].nullable || right[i].nullable
+			def.cols[i].src = nil
+		}
+		return nil
+	}
+	csc := newScope(sc)
+	cols, err := a.selectStmt(sel, csc)
+	if err != nil {
+		return err
+	}
+	def.cols = a.aliasCols(cols, c.Aliascolnames)
+	def.sub = &subquery{what: "CTE", sel: sel, sc: csc}
+	sc.ctes[c.Ctename] = def
 	return nil
+}
+
+// addSearchCycleCols appends the columns a SEARCH / CYCLE clause adds to a recursive CTE.
+func (a *analyzer) addSearchCycleCols(def *cte, c *pg_query.CommonTableExpr, sc *scope) {
+	{
+		if sc2 := c.SearchClause; sc2 != nil {
+			// SEARCH DEPTH FIRST ... SET seq is a record[] path, BREADTH FIRST a record
+			seq := ref(a.s.Types.ArrayOf(catalog.Record))
+			if sc2.SearchBreadthFirst {
+				seq = ref(catalog.Record)
+			}
+			def.cols = append(def.cols, rteCol{name: sc2.SearchSeqColumn, typ: seq})
+		}
+		if cy := c.CycleClause; cy != nil {
+			mark := ref(catalog.Bool)
+			if cy.CycleMarkValue != nil {
+				if me, err := a.analyzeExpr(cy.CycleMarkValue, newScope(sc)); err == nil && me.oid() != catalog.Unknown {
+					mark = me.typ
+				}
+			}
+			def.cols = append(def.cols, rteCol{name: cy.CycleMarkColumn, typ: mark}, rteCol{name: cy.CyclePathColumn, typ: ref(a.s.Types.ArrayOf(catalog.Record))})
+		}
+	}
 }
 
 func (a *analyzer) aliasCols(cols []rteCol, aliases []*pg_query.Node) []rteCol {
@@ -392,10 +498,16 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		rv := v.RangeVar
 		if rv.Schemaname == "" {
 			if c := sc.findCTE(rv.Relname); c != nil {
+				if c.forbidden {
+					return nil, errAt(codeInvalidRecursion, rv.Location, "recursive reference to query %q must not appear within its non-recursive term", rv.Relname)
+				}
 				r := &rte{alias: rv.Relname, cols: append([]rteCol{}, c.cols...), sub: c.sub}
 				if rv.Alias != nil {
 					if rv.Alias.Aliasname != "" {
 						r.alias = rv.Alias.Aliasname
+					}
+					if len(rv.Alias.Colnames) > len(r.cols) {
+						return nil, errAt(codeInvalidColumnRef, rv.Location, "WITH query %q has %d columns available but %d columns specified", rv.Relname, len(r.cols), len(rv.Alias.Colnames))
 					}
 					for i, cn := range rv.Alias.Colnames {
 						if i < len(r.cols) {
@@ -434,6 +546,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			sub.Alias = &pg_query.Alias{Aliasname: "unnamed_subquery"} // optional since PG 16
 		}
 		r := &rte{alias: sub.Alias.Aliasname, sub: &subquery{what: "subquery", sel: sub.Subquery.GetSelectStmt(), sc: child}}
+		if len(sub.Alias.Colnames) > len(cols) {
+			return nil, errAt(codeInvalidColumnRef, -1, "table %q has %d columns available but %d columns specified", sub.Alias.Aliasname, len(cols), len(sub.Alias.Colnames))
+		}
 		for i, c := range cols {
 			// PG traces column origins through subqueries and CTEs (but not views)
 			if i < len(sub.Alias.Colnames) {
@@ -451,8 +566,14 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		if err != nil {
 			return nil, err
 		}
+		if ua := v.JoinExpr.JoinUsingAlias; ua != nil {
+			r.join.usingAlias = &rte{alias: ua.Aliasname, cols: r.join.usingCols}
+		}
 		if al := v.JoinExpr.Alias; al != nil {
 			r.alias = al.Aliasname
+			if n := len(r.expand()); len(al.Colnames) > n {
+				return nil, errAt(codeInvalidColumnRef, -1, "join expression %q has %d columns available but %d columns specified", al.Aliasname, n, len(al.Colnames))
+			}
 			r.join.colAliases = strs(al.Colnames)
 		}
 		return r, nil
@@ -576,6 +697,7 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		switch {
 		case t != nil && t.Kind == 'c' && t.RelID != 0:
 			rel := a.relByRowType(t.OID)
+			r.rowType = t.OID
 			for _, c := range rel.Columns {
 				cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: !c.NotNull})
 			}
@@ -605,11 +727,12 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 		if rf.Alias.Aliasname != "" {
 			r.alias = rf.Alias.Aliasname
 		}
+		if n := len(cols); len(rf.Alias.Colnames) > n && !rf.Ordinality {
+			return nil, errAt(codeInvalidColumnRef, -1, "table %q has %d columns available but %d columns specified", r.alias, n, len(rf.Alias.Colnames))
+		}
 		for i, cn := range rf.Alias.Colnames {
 			if i < len(cols) {
 				cols[i].name = cn.GetString_().GetSval()
-			} else if i == len(cols) && len(cols) == 1 {
-				// alias(colname) on a scalar function renames the single column
 			}
 		}
 		if len(rf.Alias.Colnames) == 0 && len(coldefs) == 0 && len(cols) == 1 && scalar && outName == "" {
@@ -753,6 +876,9 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 	if err := a.checkViewColumnWritable(col, at); err != nil {
 		return err
 	}
+	if col.Generated != nil && (e.node == nil || e.node.GetSetToDefault() == nil) {
+		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
+	}
 	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e})
 	if e.param > 0 {
 		if _, done := a.paramSrc[e.param]; !done {
@@ -760,7 +886,15 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 		}
 	}
 	if e.oid() == catalog.Unknown {
-		return a.bind(e, col.Type.OID, at)
+		if err := a.bind(e, col.Type.OID, at); err != nil {
+			return err
+		}
+		if c := e.node.GetAConst(); c != nil {
+			if sv, ok := c.Val.(*pg_query.A_Const_Sval); ok {
+				return a.validateAssignLength(sv.Sval.GetSval(), col.Type, c.Location)
+			}
+		}
+		return nil
 	}
 	if !a.canCoerce(e.oid(), col.Type.OID, assignmentCoercion) {
 		if ct := a.typ(a.baseType(col.Type.OID)); e.oid() == catalog.Record && ct != nil && ct.Kind == 'c' {
@@ -778,6 +912,11 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 func (a *analyzer) returning(list []*pg_query.Node, sc *scope) ([]rteCol, *Error) {
 	if len(list) == 0 {
 		return nil, nil
+	}
+	for _, n := range list {
+		if w := windowIn(n.GetResTarget().GetVal()); w != nil {
+			return nil, errAt(codeWindowingError, w.Location, "window functions are not allowed in RETURNING")
+		}
 	}
 	sel := &pg_query.SelectStmt{TargetList: list}
 	return a.selectStmt(sel, sc)
@@ -920,6 +1059,9 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 		}
 		if len(t.Indirection) > 0 {
 			var err *Error
+			if t.Val.GetSetToDefault() != nil {
+				return errAt(codeFeatureNotSupported, t.Location, "cannot set an array element to DEFAULT")
+			}
 			if col, err = a.indirectTarget(col, t.Indirection, t.Location); err != nil {
 				return err
 			}
@@ -952,6 +1094,22 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 // expressions, or a subquery whose columns are taken as the values.
 func (a *analyzer) multiAssignSource(src *pg_query.Node, n int, sc *scope) ([]*expr, *Error) {
 	if row := src.GetRowExpr(); row != nil {
+		if len(row.Args) == 1 && row.Args[0].GetColumnRef() != nil && len(row.Args[0].GetColumnRef().Fields) > 0 &&
+			row.Args[0].GetColumnRef().Fields[len(row.Args[0].GetColumnRef().Fields)-1].GetAStar() != nil {
+			// ROW(t.*): the row's fields are the values
+			e, err := a.analyzeExpr(row.Args[0], sc)
+			if err != nil {
+				return nil, err
+			}
+			if len(e.fields) != n {
+				return nil, errAt(codeSyntaxError, loc(src), "number of columns does not match number of values")
+			}
+			var out []*expr
+			for _, f := range e.fields {
+				out = append(out, &expr{typ: f.typ, nullable: f.nullable, src: f.src})
+			}
+			return out, nil
+		}
 		if len(row.Args) != n {
 			return nil, errAt(codeSyntaxError, loc(src), "number of columns does not match number of values")
 		}
@@ -1093,6 +1251,10 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 		return "array", 2
 	case *pg_query.Node_RowExpr:
 		return "row", 2
+	case *pg_query.Node_AExpr:
+		if v.AExpr.Kind == pg_query.A_Expr_Kind_AEXPR_NULLIF {
+			return "nullif", 2
+		}
 	case *pg_query.Node_SubLink:
 		switch v.SubLink.SubLinkType {
 		case pg_query.SubLinkType_EXISTS_SUBLINK:
@@ -1249,6 +1411,39 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	}
 	if err != nil {
 		return nil, err
+	}
+	if orig := a.s.Relation(m.Relation.Schemaname, m.Relation.Relname); orig != nil && writes {
+		// MERGE refuses an action kind that has a rule, and a view whose INSTEAD OF triggers
+		// cover only some of the action kinds used (a computed view column fails where an
+		// action assigns it)
+		used := map[string]bool{}
+		for _, wn := range m.MergeWhenClauses {
+			switch wn.GetMergeWhenClause().CommandType {
+			case pg_query.CmdType_CMD_INSERT:
+				used["insert into"] = true
+			case pg_query.CmdType_CMD_UPDATE:
+				used["update"] = true
+			case pg_query.CmdType_CMD_DELETE:
+				used["delete from"] = true
+			}
+		}
+		covered, uncovered := 0, 0
+		for cmd := range used {
+			ev := map[string]string{"insert into": "insert", "update": "update", "delete from": "delete"}[cmd]
+			if orig.RuleEvents[ev] {
+				return nil, errAt(codeFeatureNotSupported, m.Relation.Location, "cannot execute MERGE on relation %q", orig.Name)
+			}
+			if orig.Kind == schema.View {
+				if a.hasInsteadOfTrigger(orig, cmd) {
+					covered++
+				} else {
+					uncovered++
+				}
+			}
+		}
+		if covered > 0 && uncovered > 0 {
+			return nil, errAt(codeFeatureNotSupported, m.Relation.Location, "cannot execute MERGE on relation %q", orig.Name)
+		}
 	}
 	source, err := a.fromItem(m.SourceRelation, sc)
 	if err != nil {
@@ -1549,6 +1744,11 @@ func (a *analyzer) outParamCols() []rteCol {
 	for i := range cols {
 		if cols[i].name == "" {
 			cols[i].name = "column" + strconv.Itoa(i+1) // an unnamed OUT parameter
+		}
+		if t := a.typ(cols[i].typ.OID); t != nil && t.IsPolymorphic() {
+			if r, ok := a.resolvePolymorphic(a.lastCallArgs, a.lastCallActual, cols[i].typ.OID); ok {
+				cols[i].typ = ref(r)
+			}
 		}
 	}
 	return cols

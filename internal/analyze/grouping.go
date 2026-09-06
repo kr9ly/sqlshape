@@ -24,7 +24,11 @@ func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rte
 	}
 	var groups []*pg_query.Node
 	for _, g := range groupingLeaves(sel.GroupClause) {
-		groups = append(groups, a.groupExpr(g, sel, sc, cols))
+		resolved := a.groupExpr(g, sel, sc, cols)
+		if w := windowIn(resolved); w != nil {
+			return errAt(codeWindowingError, w.Location, "window functions are not allowed in GROUP BY")
+		}
+		groups = append(groups, resolved)
 	}
 	g := &grouping{a: a, p: &prover{a: a, sc: sc}, keys: map[string]bool{}, grouped: map[colKey]bool{}}
 	for _, n := range groups {

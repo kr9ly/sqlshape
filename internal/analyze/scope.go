@@ -42,6 +42,7 @@ type joinInfo struct {
 	jointype    pg_query.JoinType
 	quals       *pg_query.Node
 	colAliases  []string // (a JOIN b) AS x (c1, c2, ...): the output columns renamed in order
+	usingAlias  *rte     // JOIN USING (...) AS x: x exposes the merged USING columns
 }
 
 // leaves returns the rtes that can be referenced by alias: the leaf tables, or an aliased
@@ -50,7 +51,11 @@ func (r *rte) leaves() []*rte {
 	if r.join == nil || r.alias != "" {
 		return []*rte{r}
 	}
-	return append(r.join.left.leaves(), r.join.right.leaves()...)
+	out := append(r.join.left.leaves(), r.join.right.leaves()...)
+	if r.join.usingAlias != nil {
+		out = append(out, r.join.usingAlias)
+	}
+	return out
 }
 
 // expand returns the columns in SELECT * order.
@@ -120,6 +125,8 @@ type scope struct {
 	parent *scope
 	items  []*rte
 	ctes   map[string]*cte
+	// windows are this level's WINDOW clause definitions by name
+	windows map[string]*pg_query.WindowDef
 	// agg: this level's target list / HAVING has an aggregate (one row without GROUP BY)
 	agg bool
 }
@@ -129,6 +136,9 @@ type cte struct {
 	cols      []rteCol
 	recursive bool
 	sub       *subquery // defining query for cardinality proofs (nil when recursive)
+	// forbidden: the CTE is being defined and may not be referenced here (the
+	// non-recursive term of a recursive query)
+	forbidden bool
 }
 
 func newScope(parent *scope) *scope {
@@ -165,7 +175,7 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 				continue
 			}
 			var hits []rteCol
-			for _, c := range r.cols {
+			for _, c := range r.expand() {
 				if c.name == col {
 					hits = append(hits, c)
 				}
@@ -241,7 +251,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 	}
 	var cols []rteCol
 	switch rel.Kind {
-	case schema.Table, 'c':
+	case schema.Table, schema.Sequence, 'c':
 		r.rel = rel
 		for _, c := range rel.Columns {
 			cols = append(cols, rteCol{
@@ -258,13 +268,16 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 		r.sub = a.viewScopes[rel]
 		for _, c := range vc {
 			cols = append(cols, rteCol{
-				name: c.name, typ: c.typ, nullable: c.nullable, coll: c.coll.asVar(),
+				name: c.name, typ: c.typ, nullable: c.nullable || rel.Kind == schema.MatView, coll: c.coll.asVar(),
 				// PG's Describe reports the view itself as the source, never the base table
 				src: &Source{Table: rel.FullName(), Column: c.name, NotNull: false},
 			})
 		}
 	}
 	if alias != nil {
+		if len(alias.Colnames) > len(cols) {
+			return nil, errAt(codeInvalidColumnRef, loc, "table %q has %d columns available but %d columns specified", r.alias, len(cols), len(alias.Colnames))
+		}
 		for i, n := range alias.Colnames {
 			if i < len(cols) {
 				cols[i].name = n.GetString_().GetSval()

@@ -54,6 +54,14 @@ func (a *analyzer) viewWriteTarget(rel *schema.Relation, cmd string, loc int32) 
 		a.viewTargets[rel] = syn
 		return syn, nil
 	}
+	// a conditional DO INSTEAD rule does not take the write, and the view can no longer be
+	// auto-updated either
+	if q := rel.QualifiedRules; q != nil {
+		ev := map[string]string{"insert into": "insert", "update": "update", "delete from": "delete"}[cmd]
+		if q[ev] || (cmd == "merge into" && (q["insert"] || q["update"] || q["delete"])) {
+			return nil, errAt(codeObjectNotInPrerequisiteState, loc, "cannot %s view %q", cmd, rel.Name)
+		}
+	}
 	baseRV := autoUpdatableBase(a, rel.Query.GetSelectStmt())
 	if baseRV == nil {
 		return nil, errAt(codeObjectNotInPrerequisiteState, loc, "cannot %s view %q", cmd, rel.Name)
@@ -81,6 +89,9 @@ func (a *analyzer) viewWriteTarget(rel *schema.Relation, cmd string, loc int32) 
 				cp := *bc
 				cp.Name = c.name
 				col = &cp
+				if inner, ok := a.viewComputed[bc]; ok {
+					a.viewComputed[col] = inner // computed further down the view stack
+				}
 			}
 		}
 		if col == nil {

@@ -7,9 +7,13 @@ package analyze
 
 import (
 	"math"
+	"net"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 const (
@@ -24,6 +28,11 @@ const (
 
 	oidInt2Vector catalog.OID = 22
 	oidOidVector  catalog.OID = 30
+	oidInet       catalog.OID = 869
+	oidCidr       catalog.OID = 650
+	oidMacaddr    catalog.OID = 829
+	oidBit        catalog.OID = 1560
+	oidVarbit     catalog.OID = 1562
 )
 
 // scannerIsSpace is scanner_isspace: the SQL lexer's notion of whitespace.
@@ -59,6 +68,11 @@ func (a *analyzer) validateCompoundLiteral(s string, base catalog.OID, typmod in
 		return a.validateRangeLiteral(s, base, loc), true
 	case t.Kind == 'm':
 		return a.validateMultirangeLiteral(s, base, loc), true
+	case t.Kind == 'c':
+		if rel := relByRowType(a.s, base); rel != nil {
+			return a.validateRecordLiteral(s, rel, loc), true
+		}
+		return nil, true
 	}
 	switch base {
 	case oidPoint, oidLseg, oidPath, oidBox, oidPolygon, oidLine, oidCircle:
@@ -70,8 +84,216 @@ func (a *analyzer) validateCompoundLiteral(s string, base catalog.OID, typmod in
 		return nil, true
 	case catalog.Bytea:
 		return validateByteaLiteral(s, loc), true
+	case oidInet, oidCidr:
+		return validateInetLiteral(s, base == oidCidr, loc), true
+	case oidMacaddr:
+		return validateMacaddrLiteral(s, loc), true
+	case oidBit, oidVarbit:
+		return validateBitLiteral(s, base == oidVarbit, typmod, loc), true
 	}
 	return nil, false
+}
+
+// --- records ------------------------------------------------------------------------------
+
+// validateRecordLiteral is record_in: "(f1,f2,...)" with one field per attribute, each
+// read by its own input function.
+func (a *analyzer) validateRecordLiteral(str string, rel *schema.Relation, loc int32) *Error {
+	malformed := func() *Error { return errAt("22P02", loc, "malformed record literal: %q", str) }
+	p := 0
+	for p < len(str) && cIsSpace(str[p]) {
+		p++
+	}
+	if p >= len(str) || str[p] != '(' {
+		return malformed()
+	}
+	p++
+	needComma := false
+	for _, col := range rel.Columns {
+		if needComma {
+			if p >= len(str) || str[p] != ',' {
+				return malformed()
+			}
+			p++
+		}
+		if p < len(str) && (str[p] == ',' || str[p] == ')') {
+			needComma = true
+			continue // NULL field
+		}
+		var buf []byte
+		inquote := false
+		for inquote || !(p < len(str) && (str[p] == ',' || str[p] == ')')) {
+			if p >= len(str) {
+				return malformed()
+			}
+			ch := str[p]
+			p++
+			switch {
+			case ch == '\\':
+				if p >= len(str) {
+					return malformed()
+				}
+				buf = append(buf, str[p])
+				p++
+			case ch == '"':
+				if !inquote {
+					inquote = true
+				} else if p < len(str) && str[p] == '"' {
+					buf = append(buf, '"')
+					p++
+				} else {
+					inquote = false
+				}
+			default:
+				buf = append(buf, ch)
+			}
+		}
+		if e := a.validateLiteralTypmod(string(buf), col.Type.OID, col.Type.Typmod, loc); e != nil {
+			return e
+		}
+		needComma = true
+	}
+	if p >= len(str) || str[p] != ')' {
+		return malformed()
+	}
+	p++
+	for p < len(str) && cIsSpace(str[p]) {
+		p++
+	}
+	if p != len(str) {
+		return malformed()
+	}
+	return nil
+}
+
+// --- network / mac / bit ------------------------------------------------------------------
+
+// validateInetLiteral is network_in: dotted IPv4 with 1-4 octets (cidr fills the rest
+// with zeros and takes 8 bits per octet given) or an IPv6 address, an optional /bits;
+// a cidr may not have bits set right of the mask.
+func validateInetLiteral(s string, isCidr bool, loc int32) *Error {
+	name := "inet"
+	if isCidr {
+		name = "cidr"
+	}
+	bad := func() *Error { return errAt("22P02", loc, "invalid input syntax for type %s: %q", name, s) }
+	addr, maskStr, hasMask := strings.Cut(s, "/")
+	var ip net.IP
+	maxBits := 32
+	bits := -1
+	if hasMask {
+		v, rest, erange := strtoNum(maskStr, 32)
+		if erange || rest != "" || len(maskStr) == 0 || maskStr[0] == '+' || maskStr[0] == '-' {
+			return bad()
+		}
+		bits = int(v)
+	}
+	if strings.Contains(addr, ":") {
+		maxBits = 128
+		ip = net.ParseIP(addr)
+		if ip == nil || strings.Contains(addr, "%") {
+			return bad()
+		}
+		if bits < 0 {
+			bits = 128
+		}
+	} else {
+		parts := strings.Split(addr, ".")
+		if len(parts) < 1 || len(parts) > 4 {
+			return bad()
+		}
+		ip = make(net.IP, 4)
+		for i, part := range parts {
+			v, rest, erange := strtoNum(part, 32)
+			if part == "" || erange || rest != "" || v < 0 || v > 255 || !cIsDigit(part[0]) {
+				return bad()
+			}
+			ip[i] = byte(v)
+		}
+		if len(parts) < 4 && !isCidr && !hasMask {
+			return bad()
+		}
+		if bits < 0 {
+			bits = 32
+			if isCidr {
+				bits = 8 * len(parts)
+			}
+		}
+	}
+	if bits > maxBits {
+		return bad()
+	}
+	if isCidr {
+		mask := net.CIDRMask(bits, maxBits)
+		for i := range ip {
+			if ip[i]&^mask[i] != 0 {
+				return errAt("22P02", loc, "invalid cidr value: %q", s)
+			}
+		}
+	}
+	return nil
+}
+
+var macaddrForms = []*regexp.Regexp{
+	regexp.MustCompile(`^\s*([0-9a-fA-F]+):([0-9a-fA-F]+):([0-9a-fA-F]+):([0-9a-fA-F]+):([0-9a-fA-F]+):([0-9a-fA-F]+)$`),
+	regexp.MustCompile(`^\s*([0-9a-fA-F]+)-([0-9a-fA-F]+)-([0-9a-fA-F]+)-([0-9a-fA-F]+)-([0-9a-fA-F]+)-([0-9a-fA-F]+)$`),
+	regexp.MustCompile(`^\s*([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2}):([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$`),
+	regexp.MustCompile(`^\s*([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})-([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$`),
+	regexp.MustCompile(`^\s*([0-9a-fA-F]{2})([0-9a-fA-F]{2})\.([0-9a-fA-F]{2})([0-9a-fA-F]{2})\.([0-9a-fA-F]{2})([0-9a-fA-F]{2})$`),
+	regexp.MustCompile(`^\s*([0-9a-fA-F]{2})([0-9a-fA-F]{2})-([0-9a-fA-F]{2})([0-9a-fA-F]{2})-([0-9a-fA-F]{2})([0-9a-fA-F]{2})$`),
+	regexp.MustCompile(`^\s*([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$`),
+}
+
+// validateMacaddrLiteral is macaddr_in's sscanf ladder.
+func validateMacaddrLiteral(s string, loc int32) *Error {
+	for _, re := range macaddrForms {
+		m := re.FindStringSubmatch(s)
+		if m == nil {
+			continue
+		}
+		for _, g := range m[1:] {
+			if v, err := strconv.ParseUint(g, 16, 64); err != nil || v > 255 {
+				return errAt("22003", loc, "invalid octet value in \"macaddr\" value: %q", s)
+			}
+		}
+		return nil
+	}
+	return errAt("22P02", loc, "invalid input syntax for type macaddr: %q", s)
+}
+
+// validateBitLiteral is bit_in / varbit_in: B'...' binary or X'...' hex digits (a bare
+// string is binary), and the length against bit(n) / varbit(n).
+func validateBitLiteral(s string, varying bool, typmod int32, loc int32) *Error {
+	digits := s
+	hex := false
+	if len(s) > 0 && (s[0] == 'b' || s[0] == 'B') {
+		digits = s[1:]
+	} else if len(s) > 0 && (s[0] == 'x' || s[0] == 'X') {
+		digits, hex = s[1:], true
+	}
+	bitlen := len(digits)
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if hex {
+			if !isHexDigit(c) {
+				return errAt("22P02", loc, "%q is not a valid hexadecimal digit", string(c))
+			}
+		} else if c != '0' && c != '1' {
+			return errAt("22P02", loc, "%q is not a valid binary digit", string(c))
+		}
+	}
+	if hex {
+		bitlen *= 4
+	}
+	if typmod > 0 {
+		if !varying && bitlen != int(typmod) {
+			return errAt("22026", loc, "bit string length %d does not match type bit(%d)", bitlen, typmod)
+		}
+		if varying && bitlen > int(typmod) {
+			return errAt("22001", loc, "bit string too long for type bit varying(%d)", typmod)
+		}
+	}
+	return nil
 }
 
 // --- arrays ----------------------------------------------------------------------------

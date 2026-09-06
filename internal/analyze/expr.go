@@ -82,22 +82,48 @@ func (a *analyzer) bindArgs(es []*expr, c *candidate, loc int32) *Error {
 		actual[i] = e.oid()
 	}
 	var elem, rng, multi catalog.OID
+	var compatElems []catalog.OID // the anycompatible family resolves to one common type
 	for i, d := range c.args {
 		if i >= len(actual) || actual[i] == catalog.Unknown {
 			continue
 		}
 		switch d {
-		case catalog.AnyElement, catalog.AnyNonArray, catalog.AnyEnum, catalog.AnyCompatible, catalog.AnyCompatibleNonArray:
+		case catalog.AnyElement, catalog.AnyNonArray, catalog.AnyEnum:
 			elem = a.baseType(actual[i])
-		case catalog.AnyArray, catalog.AnyCompatibleArray:
+		case catalog.AnyCompatible, catalog.AnyCompatibleNonArray:
+			compatElems = append(compatElems, a.baseType(actual[i]))
+		case catalog.AnyArray:
 			if t := a.typ(a.baseType(actual[i])); t != nil {
 				elem = t.Elem
 			}
-		case catalog.AnyRange, catalog.AnyCompatibleRange:
+		case catalog.AnyCompatibleArray:
+			if t := a.typ(a.baseType(actual[i])); t != nil && t.Elem != 0 {
+				compatElems = append(compatElems, t.Elem)
+			}
+		case catalog.AnyRange:
 			rng = a.baseType(actual[i])
-		case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
+		case catalog.AnyCompatibleRange:
+			rng = a.baseType(actual[i])
+			if r := a.s.Types.RangeOf(rng); r != nil {
+				compatElems = append(compatElems, r.Subtype)
+			}
+		case catalog.AnyMultirange:
 			multi = a.baseType(actual[i])
+		case catalog.AnyCompatibleMultirange:
+			multi = a.baseType(actual[i])
+			if r := a.s.Types.RangeOfMulti(multi); r != nil {
+				compatElems = append(compatElems, r.Subtype)
+			}
 		}
+	}
+	var compat catalog.OID
+	if len(compatElems) > 0 {
+		if ct, ok := a.commonType(compatElems); ok {
+			compat = ct
+		}
+	}
+	if compat == 0 && len(compatElems) == 0 && elem != 0 {
+		compat = elem // no anycompatible argument at all: nothing to keep apart
 	}
 	// a range and its multirange (or subtype) determine each other
 	if rng == 0 && multi != 0 {
@@ -131,6 +157,13 @@ func (a *analyzer) bindArgs(es []*expr, c *candidate, loc int32) *Error {
 				to = rng
 			case catalog.AnyMultirange, catalog.AnyCompatibleMultirange:
 				to = multi
+			case catalog.AnyCompatible, catalog.AnyCompatibleNonArray:
+				to = compat
+			case catalog.AnyCompatibleArray:
+				to = 0
+				if compat != 0 {
+					to = a.s.Types.ArrayOf(compat)
+				}
 			default:
 				to = a.polymorphicArgType(to, 0, elem)
 			}
@@ -579,7 +612,13 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 		return nil, err
 	}
 	if e.oid() == catalog.Unknown {
-		if err := a.bindTypmod(e, target, tc.Location); err != nil {
+		// coerce_type: the input function sees the typmod only for interval; other types
+		// are read unconstrained and then length-coerced, which an explicit cast never fails
+		inputTarget := target
+		if a.baseType(target.OID) != catalog.Interval {
+			inputTarget.Typmod = -1
+		}
+		if err := a.bindTypmod(e, inputTarget, tc.Location); err != nil {
 			return nil, err
 		}
 	} else if tt := a.typ(a.baseType(target.OID)); e.oid() == catalog.Record && len(e.fields) > 0 && tt != nil && tt.Kind == 'c' {
@@ -837,9 +876,15 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		}
 	}
 	if f.Over != nil {
+		if err := a.checkWindowDef(f.Over, sc); err != nil {
+			return nil, err
+		}
 		for _, n := range append(append([]*pg_query.Node{}, f.Over.PartitionClause...), f.Over.OrderClause...) {
 			if sb := n.GetSortBy(); sb != nil {
 				n = sb.Node
+			}
+			if w := windowIn(n); w != nil {
+				return nil, errAt(codeWindowingError, w.Location, "window functions are not allowed in window definitions")
 			}
 			if _, err := a.analyzeExpr(n, sc); err != nil {
 				return nil, err
@@ -911,6 +956,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	if err := a.bindArgs(args, c, f.Location); err != nil {
 		return nil, err
 	}
+	a.lastCallArgs, a.lastCallActual = c.args, a.argOIDs(args)
 	a.lastUserFunc = c.ufn
 	if c.ufn != nil {
 		a.calledFuncs = append(a.calledFuncs, calledFunc{fn: c.ufn, args: f.Args})
@@ -1067,6 +1113,10 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 	case pg_query.SubLinkType_ARRAY_SUBLINK:
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
+		}
+		if ct := a.typ(a.baseType(cols[0].typ.OID)); ct != nil && ct.IsArray() {
+			// ARRAY(SELECT int[] ...) is an int[] (array_agg semantics), not int[][]
+			return &expr{typ: ref(ct.OID), nullable: false, node: self}, nil
 		}
 		arr := a.s.Types.ArrayOf(cols[0].typ.OID)
 		if arr == 0 {
@@ -1228,6 +1278,16 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 			rel := a.relByRowType(t.OID)
 			col := rel.Column(v.String_.Sval)
 			if col == nil {
+				found := false
+				for _, fn := range a.s.Functions {
+					if fn.Name == v.String_.Sval && len(fn.Args) == 1 && fn.Args[0].Type.OID == t.OID && a.s.OnSearchPath(fn.Schema) {
+						cur, found = fn.RetType, true // functional notation: (x).f is f(x)
+						break
+					}
+				}
+				if found {
+					break
+				}
 				return nil, errAt(codeUndefinedColumn, loc(x.Arg), "column %q not found in data type %s", v.String_.Sval, t.Name)
 			}
 			cur = col.Type
@@ -1420,4 +1480,55 @@ func (a *analyzer) rowSubquery(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		return a.subLink(s, sc)
 	}
 	return &expr{typ: ref(catalog.Record), nullable: true, node: nodeOf(s), fields: cols}, nil
+}
+
+// frame option bits (parsenodes.h)
+const (
+	frameOptionRange                = 0x00002
+	frameOptionGroups               = 0x00008
+	frameOptionStartOffsetPreceding = 0x00800
+	frameOptionEndOffsetPreceding   = 0x01000
+	frameOptionStartOffsetFollowing = 0x02000
+	frameOptionEndOffsetFollowing   = 0x04000
+	frameOptionOffsets              = frameOptionStartOffsetPreceding | frameOptionEndOffsetPreceding | frameOptionStartOffsetFollowing | frameOptionEndOffsetFollowing
+)
+
+// checkWindowDef resolves a named window and applies transformWindowDefinitions' frame
+// rules: an offset RANGE frame needs exactly one ORDER BY column, GROUPS mode needs an
+// ORDER BY at all.
+func (a *analyzer) checkWindowDef(def *pg_query.WindowDef, sc *scope) *Error {
+	lookup := func(name string) *pg_query.WindowDef {
+		for s := sc; s != nil; s = s.parent {
+			if w, ok := s.windows[name]; ok {
+				return w
+			}
+		}
+		return nil
+	}
+	order := def.OrderClause
+	if def.Name != "" {
+		w := lookup(def.Name)
+		if w == nil {
+			return errAt(codeUndefinedObject, def.Location, "window %q does not exist", def.Name)
+		}
+		def = w
+		order = def.OrderClause
+	}
+	if def.Refname != "" {
+		base := lookup(def.Refname)
+		if base == nil {
+			return errAt(codeUndefinedObject, def.Location, "window %q does not exist", def.Refname)
+		}
+		if len(order) == 0 {
+			order = base.OrderClause
+		}
+	}
+	fo := def.FrameOptions
+	if fo&frameOptionRange != 0 && fo&frameOptionOffsets != 0 && len(order) != 1 {
+		return errAt(codeWindowingError, def.Location, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column")
+	}
+	if fo&frameOptionGroups != 0 && len(order) == 0 {
+		return errAt(codeWindowingError, def.Location, "GROUPS mode requires an ORDER BY clause")
+	}
+	return nil
 }

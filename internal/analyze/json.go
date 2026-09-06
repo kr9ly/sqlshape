@@ -61,6 +61,9 @@ func (a *analyzer) jsonContext(v *pg_query.JsonValueExpr, sc *scope, at int32) (
 	if v.Format != nil && v.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT && a.baseType(e.oid()) != catalog.Bytea {
 		return nil, errAt(codeDatatypeMismatch, v.Format.Location, "JSON ENCODING clause is only allowed for bytea input type")
 	}
+	if v.Format != nil && (v.Format.Encoding == pg_query.JsonEncoding_JS_ENC_UTF16 || v.Format.Encoding == pg_query.JsonEncoding_JS_ENC_UTF32) {
+		return nil, errAt(codeFeatureNotSupported, v.Format.Location, "unsupported JSON encoding")
+	}
 	switch a.baseType(e.oid()) {
 	case catalog.JSON, catalog.JSONB:
 	default:
@@ -138,6 +141,13 @@ func (a *analyzer) jsonFuncExpr(f *pg_query.JsonFuncExpr, sc *scope, n *pg_query
 	if err != nil {
 		return nil, err
 	}
+	if err := jsonBehaviorAllowed(f.Op, f.OnEmpty, f.OnError, "", f.Location); err != nil {
+		return nil, err
+	}
+	if (f.Wrapper == pg_query.JsonWrapper_JSW_CONDITIONAL || f.Wrapper == pg_query.JsonWrapper_JSW_UNCONDITIONAL) &&
+		f.Quotes == pg_query.JsonQuotes_JS_QUOTES_OMIT {
+		return nil, errAt(codeSyntaxError, f.Location, "SQL/JSON QUOTES behavior must not be specified when WITH WRAPPER is used")
+	}
 	for _, b := range []*pg_query.JsonBehavior{f.OnEmpty, f.OnError} {
 		if err := a.jsonBehavior(b, sc, t.OID); err != nil {
 			return nil, err
@@ -148,6 +158,12 @@ func (a *analyzer) jsonFuncExpr(f *pg_query.JsonFuncExpr, sc *scope, n *pg_query
 
 // jsonConstructor is JSON_OBJECT / JSON_ARRAY (with a list, or a subquery).
 func (a *analyzer) jsonConstructorList(exprs []*pg_query.Node, out *pg_query.JsonOutput, sc *scope, n *pg_query.Node) (*expr, *Error) {
+	def := catalog.OID(catalog.JSON) // jsonb once any input is jsonb (transformJsonConstructorOutput)
+	note := func(e *expr) {
+		if a.baseType(e.oid()) == catalog.JSONB {
+			def = catalog.JSONB
+		}
+	}
 	for _, x := range exprs {
 		if kv := x.GetJsonKeyValue(); kv != nil {
 			k, err := a.analyzeExpr(kv.Key, sc)
@@ -157,22 +173,28 @@ func (a *analyzer) jsonConstructorList(exprs []*pg_query.Node, out *pg_query.Jso
 			if err := a.bind(k, catalog.Text, loc(kv.Key)); err != nil {
 				return nil, err
 			}
-			if _, err := a.jsonValue(kv.Value, sc); err != nil {
+			ve, err := a.jsonValue(kv.Value, sc)
+			if err != nil {
 				return nil, err
 			}
+			note(ve)
 			continue
 		}
 		if v := x.GetJsonValueExpr(); v != nil {
-			if _, err := a.jsonValue(v, sc); err != nil {
+			ve, err := a.jsonValue(v, sc)
+			if err != nil {
 				return nil, err
 			}
+			note(ve)
 			continue
 		}
-		if _, err := a.analyzeExpr(x, sc); err != nil {
+		e, err := a.analyzeExpr(x, sc)
+		if err != nil {
 			return nil, err
 		}
+		note(e)
 	}
-	t, err := a.jsonOutput(out, catalog.JSON)
+	t, err := a.jsonOutput(out, def)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +252,9 @@ func (a *analyzer) jsonTable(jt *pg_query.JsonTable, sc *scope) (*rte, *Error) {
 	if err := a.jsonPassing(jt.Passing, sc); err != nil {
 		return nil, err
 	}
+	if err := jsonBehaviorAllowed(pg_query.JsonExprOp_JSON_TABLE_OP, nil, jt.OnError, "", jt.Location); err != nil {
+		return nil, err
+	}
 	if err := a.jsonBehavior(jt.OnError, sc, 0); err != nil {
 		return nil, err
 	}
@@ -242,6 +267,9 @@ func (a *analyzer) jsonTable(jt *pg_query.JsonTable, sc *scope) (*rte, *Error) {
 	if jt.Alias != nil {
 		if jt.Alias.Aliasname != "" {
 			r.alias = jt.Alias.Aliasname
+		}
+		if len(jt.Alias.Colnames) > len(r.cols) {
+			return nil, errAt(codeInvalidColumnRef, jt.Location, "JSON_TABLE function has %d columns available but %d columns specified", len(r.cols), len(jt.Alias.Colnames))
 		}
 		applyColnames(r.cols, jt.Alias)
 	}
@@ -285,6 +313,20 @@ func (a *analyzer) jsonTableColumns(nodes []*pg_query.Node, sc *scope) ([]rteCol
 				if err := a.jsonPathspec(c.Pathspec.String_, sc); err != nil {
 					return nil, err
 				}
+			}
+			op := pg_query.JsonExprOp_JSON_VALUE_OP
+			switch {
+			case c.Coltype == pg_query.JsonTableColumnType_JTC_EXISTS:
+				op = pg_query.JsonExprOp_JSON_EXISTS_OP
+			case c.Coltype == pg_query.JsonTableColumnType_JTC_FORMATTED, c.Format != nil && c.Format.FormatType != pg_query.JsonFormatType_JS_FORMAT_DEFAULT:
+				op = pg_query.JsonExprOp_JSON_QUERY_OP
+			}
+			if err := jsonBehaviorAllowed(op, c.OnEmpty, c.OnError, c.Name, c.Location); err != nil {
+				return nil, err
+			}
+			if (c.Wrapper == pg_query.JsonWrapper_JSW_CONDITIONAL || c.Wrapper == pg_query.JsonWrapper_JSW_UNCONDITIONAL) &&
+				c.Quotes == pg_query.JsonQuotes_JS_QUOTES_OMIT {
+				return nil, errAt(codeSyntaxError, c.Location, "SQL/JSON QUOTES behavior must not be specified when WITH WRAPPER is used")
 			}
 			for _, b := range []*pg_query.JsonBehavior{c.OnEmpty, c.OnError} {
 				if err := a.jsonBehavior(b, sc, t.OID); err != nil {
@@ -350,4 +392,52 @@ func (a *analyzer) xmlSerialize(x *pg_query.XmlSerialize, sc *scope, n *pg_query
 		return nil, errAt(codeUndefinedObject, x.TypeName.Location, "%v", rerr)
 	}
 	return &expr{typ: t, nullable: e.nullable, node: n}, nil
+}
+
+// jsonBehaviorAllowed is transformJsonBehavior's table of which ON EMPTY / ON ERROR
+// behaviors each SQL/JSON function accepts (42601 otherwise).
+func jsonBehaviorAllowed(op pg_query.JsonExprOp, onEmpty, onError *pg_query.JsonBehavior, column string, loc int32) *Error {
+	allowed := func(b *pg_query.JsonBehavior, ok ...pg_query.JsonBehaviorType) bool {
+		if b == nil {
+			return true
+		}
+		for _, k := range ok {
+			if b.Btype == k {
+				return true
+			}
+		}
+		return false
+	}
+	B := func(names ...string) []pg_query.JsonBehaviorType {
+		var out []pg_query.JsonBehaviorType
+		for _, n := range names {
+			out = append(out, pg_query.JsonBehaviorType(pg_query.JsonBehaviorType_value["JSON_BEHAVIOR_"+n]))
+		}
+		return out
+	}
+	var emptyOK, errorOK []pg_query.JsonBehaviorType
+	switch op {
+	case pg_query.JsonExprOp_JSON_EXISTS_OP:
+		emptyOK = nil
+		errorOK = B("ERROR", "TRUE", "FALSE", "UNKNOWN")
+	case pg_query.JsonExprOp_JSON_QUERY_OP:
+		emptyOK = B("ERROR", "NULL", "EMPTY", "EMPTY_ARRAY", "EMPTY_OBJECT", "DEFAULT")
+		errorOK = emptyOK
+	case pg_query.JsonExprOp_JSON_VALUE_OP:
+		emptyOK = B("ERROR", "NULL", "DEFAULT")
+		errorOK = emptyOK
+	case pg_query.JsonExprOp_JSON_TABLE_OP:
+		errorOK = B("ERROR", "EMPTY", "EMPTY_ARRAY")
+	}
+	suffix := ""
+	if column != "" {
+		suffix = " for column \"" + column + "\""
+	}
+	if onEmpty != nil && !allowed(onEmpty, emptyOK...) {
+		return errAt(codeSyntaxError, loc, "invalid ON EMPTY behavior%s", suffix)
+	}
+	if onError != nil && !allowed(onError, errorOK...) {
+		return errAt(codeSyntaxError, loc, "invalid ON ERROR behavior%s", suffix)
+	}
+	return nil
 }

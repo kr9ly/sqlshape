@@ -58,9 +58,10 @@ func (p Problem) String() string { return fmt.Sprintf("@%d: %s", p.Location, p.M
 type RelKind byte
 
 const (
-	Table   RelKind = 'r'
-	View    RelKind = 'v'
-	MatView RelKind = 'm'
+	Table    RelKind = 'r'
+	View     RelKind = 'v'
+	MatView  RelKind = 'm'
+	Sequence RelKind = 'S'
 )
 
 // Relation is a table or view with its columns and constraints.
@@ -92,6 +93,13 @@ type Relation struct {
 	InsteadRules map[string]bool
 	// Parents are the tables this one INHERITS from / is a PARTITION OF.
 	Parents []*Relation
+	// QualifiedRules (views): write commands that have a conditional DO INSTEAD rule
+	// (WHERE ...), which does not make the view take the write but does stop it from
+	// being auto-updatable.
+	QualifiedRules map[string]bool
+	// RuleEvents: the write commands ("insert" / "update" / "delete") that have any rule
+	// on the relation (MERGE refuses an action kind that has one).
+	RuleEvents map[string]bool
 }
 
 // InheritsFrom reports whether rel is anc or descends from it.
@@ -385,22 +393,29 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 	case *pg_query.Node_RuleStmt:
 		// a DO INSTEAD rule on a view for INSERT / UPDATE / DELETE makes the view take that write
 		r := st.RuleStmt
-		if r.Instead {
-			if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil && rel.Kind == View {
-				if rel.InsteadRules == nil {
-					rel.InsteadRules = map[string]bool{}
-				}
-				switch r.Event {
-				case pg_query.CmdType_CMD_INSERT:
-					rel.InsteadRules["insert"] = true
-				case pg_query.CmdType_CMD_UPDATE:
-					rel.InsteadRules["update"] = true
-				case pg_query.CmdType_CMD_DELETE:
-					rel.InsteadRules["delete"] = true
+		event := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete"}[r.Event]
+		if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil && event != "" {
+			if rel.RuleEvents == nil {
+				rel.RuleEvents = map[string]bool{}
+			}
+			rel.RuleEvents[event] = true
+			if r.Instead && rel.Kind == View {
+				if r.WhereClause == nil {
+					if rel.InsteadRules == nil {
+						rel.InsteadRules = map[string]bool{}
+					}
+					rel.InsteadRules[event] = true
+				} else {
+					if rel.QualifiedRules == nil {
+						rel.QualifiedRules = map[string]bool{}
+					}
+					rel.QualifiedRules[event] = true
 				}
 			}
 		}
-	case *pg_query.Node_CreateSeqStmt, *pg_query.Node_CreateExtensionStmt,
+	case *pg_query.Node_CreateSeqStmt:
+		s.createSequence(st.CreateSeqStmt.Sequence, loc)
+	case *pg_query.Node_CreateExtensionStmt,
 		*pg_query.Node_GrantStmt, *pg_query.Node_AlterSeqStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt,
 		*pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
 		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterPolicyStmt, *pg_query.Node_AlterExtensionStmt, *pg_query.Node_AlterObjectSchemaStmt,
@@ -664,6 +679,7 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 	if isSerial(cd.TypeName) {
 		col.NotNull = true
 		col.Identity = 's' // serial: sequence default; behaves like identity for "who owns the value"
+		s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: rel.Name + "_" + cd.Colname + "_seq"}, cd.GetLocation())
 	}
 	if cd.CollClause != nil {
 		col.Collation = strings.Join(strs(cd.CollClause.Collname), ".")
@@ -1289,9 +1305,26 @@ func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, 
 	rel := s.newRelation(schema, name, Table)
 	for i, c := range cols {
 		c.Num = int16(i + 1)
+		c.NotNull = false // the created table has no constraints, whatever the query guaranteed
 		if i < len(into.ColNames) {
 			c.Name = into.ColNames[i].GetString_().GetSval()
 		}
 		rel.Columns = append(rel.Columns, c)
+	}
+}
+
+// createSequence registers a sequence as a relation with the three columns SELECT * FROM
+// seq yields; serial and identity columns create theirs implicitly.
+func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
+	schema, name := s.rangeVar(rv)
+	if s.relByName[schema+"."+name] != nil {
+		return
+	}
+	rel := s.newRelation(schema, name, Sequence)
+	for i, c := range []struct {
+		name string
+		typ  catalog.OID
+	}{{"last_value", catalog.Int8}, {"log_cnt", catalog.Int8}, {"is_called", catalog.Bool}} {
+		rel.Columns = append(rel.Columns, &Column{Num: int16(i + 1), Name: c.name, Type: TypeRef{OID: c.typ, Typmod: -1}, NotNull: true})
 	}
 }

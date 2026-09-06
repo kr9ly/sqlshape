@@ -53,6 +53,9 @@ type analyzer struct {
 	inView int
 	// lastUserFunc is the user function resolved by the most recent funcCall (for RETURNS TABLE columns)
 	lastUserFunc *schema.Function
+	// lastCallArgs / lastCallActual: the declared and actual argument types of the most
+	// recent funcCall, so polymorphic OUT parameters can be resolved for it
+	lastCallArgs, lastCallActual []catalog.OID
 	// calledFuncs are the user functions the statement calls (with their arguments): their
 	// bodies' failure modes are the statement's too
 	calledFuncs []calledFunc

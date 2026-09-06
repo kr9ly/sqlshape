@@ -270,6 +270,15 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 			return
 		}
 		col.Name = st.Newname
+		if st.Relation.Inh {
+			for _, child := range s.Relations {
+				if child != rel && child.InheritsFrom(rel) {
+					if cc := child.Column(st.Subname); cc != nil {
+						cc.Name = st.Newname
+					}
+				}
+			}
+		}
 		for _, c := range rel.Constraints {
 			renameIn(c.Columns, st.Subname, st.Newname)
 		}
@@ -382,7 +391,7 @@ func fullName(schema, name string) string {
 func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 	for _, on := range st.Objects {
 		switch st.RemoveType {
-		case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+		case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_SEQUENCE:
 			schema, name := qualified(strs(on.GetList().GetItems()))
 			rel := s.findRelation(schema, name)
 			if rel == nil {
@@ -390,6 +399,14 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 					s.problem(loc, "DROP: relation %q does not exist", name)
 				}
 				continue
+			}
+			if st.Behavior == pg_query.DropBehavior_DROP_CASCADE {
+				for _, child := range append([]*Relation{}, s.Relations...) {
+					if child != rel && child.InheritsFrom(rel) {
+						s.removeRelation(child)
+						s.dropDependentViews(child)
+					}
+				}
 			}
 			s.removeRelation(rel)
 			if st.Behavior == pg_query.DropBehavior_DROP_CASCADE {
@@ -475,7 +492,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 			}
 			s.Operators = kept
-		case pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_SCHEMA, pg_query.ObjectType_OBJECT_EXTENSION,
+		case pg_query.ObjectType_OBJECT_SCHEMA, pg_query.ObjectType_OBJECT_EXTENSION,
 			pg_query.ObjectType_OBJECT_POLICY, pg_query.ObjectType_OBJECT_RULE, pg_query.ObjectType_OBJECT_COLLATION:
 			// no typing consequence
 		default:
@@ -561,6 +578,9 @@ func (s *Schema) removeRelation(rel *Relation) {
 	for _, r := range s.Relations {
 		if r != rel {
 			kept = append(kept, r)
+			if r.Schema == rel.Schema && r.Name == rel.Name {
+				s.relByName[r.Schema+"."+r.Name] = r // a permanent table a dropped temp one hid
+			}
 		}
 	}
 	s.Relations = kept

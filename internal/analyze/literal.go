@@ -2,13 +2,18 @@ package analyze
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"errors"
+	"io"
 	"math"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/schema"
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
@@ -54,7 +59,7 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 	case catalog.Float4, catalog.Float8:
 		return validateFloatLiteral(s, base == catalog.Float4, loc)
 	case catalog.JSON, catalog.JSONB:
-		if !json.Valid([]byte(s)) {
+		if !json.Valid([]byte(s)) || !jsonSurrogatesOK(s) {
 			return bad(map[catalog.OID]string{catalog.JSON: "json", catalog.JSONB: "jsonb"}[base])
 		}
 		if base == catalog.JSONB && jsonHasNulEscape(s) {
@@ -62,6 +67,8 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		}
 	case catalog.JSONPath:
 		return validateJsonpathLiteral(s, loc)
+	case catalog.XML:
+		return validateXMLLiteral(s, loc)
 	case catalog.RegType:
 		return a.validateRegtypeLiteral(s, loc)
 	case catalog.RegProc, catalog.RegProcedure:
@@ -545,4 +552,204 @@ func (a *analyzer) validateRegprocLiteral(s string, withArgs bool, loc int32) *E
 		}
 	}
 	return errAt("42883", loc, "function %q does not exist", v)
+}
+
+// jsonSurrogatesOK checks the \uXXXX escapes inside JSON strings pair their UTF-16
+// surrogates the way PG's json parser demands (Go's validator lets lone ones through).
+func jsonSurrogatesOK(s string) bool {
+	inStr := false
+	hi := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case !inStr:
+			inStr = c == '"'
+		case c == '\\':
+			if i+5 < len(s) && s[i+1] == 'u' {
+				v, err := strconv.ParseUint(s[i+2:i+6], 16, 32)
+				if err == nil {
+					switch {
+					case v >= 0xD800 && v <= 0xDBFF:
+						if hi {
+							return false
+						}
+						hi = true
+					case v >= 0xDC00 && v <= 0xDFFF:
+						if !hi {
+							return false
+						}
+						hi = false
+					default:
+						if hi {
+							return false
+						}
+					}
+					i += 5
+					continue
+				}
+			}
+			if hi {
+				return false
+			}
+			i++
+		case c == '"':
+			if hi {
+				return false
+			}
+			inStr = false
+		default:
+			if hi {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// validateAssignLength is the assignment-context length coercion PG applies after the
+// input function when a literal is stored into a column with a type modifier: bit(n) must
+// match exactly (22026), varbit(n) / char(n) / varchar(n) must fit once trailing spaces
+// are trimmed (22001), numeric(p,s) must not overflow its integer digits (22003).
+func (a *analyzer) validateAssignLength(s string, target schema.TypeRef, loc int32) *Error {
+	if target.Typmod < 0 {
+		return nil
+	}
+	base := a.baseType(target.OID)
+	n := int(target.Typmod)
+	switch base {
+	case oidBit, oidVarbit:
+		digits := s
+		hex := false
+		if len(s) > 0 && (s[0] == 'b' || s[0] == 'B') {
+			digits = s[1:]
+		} else if len(s) > 0 && (s[0] == 'x' || s[0] == 'X') {
+			digits, hex = s[1:], true
+		}
+		bitlen := len(digits)
+		if hex {
+			bitlen *= 4
+		}
+		if base == oidBit && bitlen != n {
+			return errAt("22026", loc, "bit string length %d does not match type bit(%d)", bitlen, n)
+		}
+		if base == oidVarbit && bitlen > n {
+			return errAt("22001", loc, "bit string too long for type bit varying(%d)", n)
+		}
+	case catalog.BPChar, catalog.Varchar:
+		n -= 4 // VARHDRSZ
+		if n < 0 {
+			return nil
+		}
+		if utf8.RuneCountInString(s) > n {
+			// excess characters may only be spaces
+			runes := []rune(s)
+			for _, r := range runes[n:] {
+				if r != ' ' {
+					name := "character varying"
+					if base == catalog.BPChar {
+						name = "character"
+					}
+					return errAt("22001", loc, "value too long for type %s(%d)", name, n)
+				}
+			}
+		}
+	case catalog.Numeric:
+		precision, scale := (n-4)>>16&0xFFFF, (n-4)&0xFFFF
+		if scale >= 0x400 {
+			scale -= 0x800 // negative scale
+		}
+		v := strings.TrimSpace(stripDigitSeparators(s))
+		if !isNumberish(v) {
+			return nil
+		}
+		f, _, ok := strtod(v)
+		if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
+			return nil
+		}
+		// count integer digits of the value rounded to scale
+		r := new(big.Float).SetPrec(200)
+		if _, ok := r.SetString(v); !ok {
+			return nil
+		}
+		r.Abs(r)
+		mult := new(big.Float).SetPrec(200).SetFloat64(math.Pow10(scale))
+		if scale >= 0 {
+			r.Mul(r, mult)
+		} else {
+			r.Quo(r, new(big.Float).SetPrec(200).SetFloat64(math.Pow10(-scale)))
+		}
+		// round half away from zero
+		r.Add(r, big.NewFloat(0.5))
+		i, _ := r.Int(nil)
+		limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)
+		if i.Cmp(limit) >= 0 {
+			return errAt("22003", loc, "numeric field overflow")
+		}
+	}
+	return nil
+}
+
+// validateXMLLiteral is xml_in under XMLOPTION content: well-formed XML content, where a
+// DOCTYPE turns the value into a document with exactly one root element.
+func validateXMLLiteral(s string, loc int32) *Error {
+	bad := func() *Error { return errAt("2200N", loc, "invalid XML content") }
+	if strings.HasPrefix(s, "<?xml") {
+		if end := strings.Index(s, "?>"); end > 0 {
+			decl := strings.Replace(s[:end], `version="1.1"`, `version="1.0"`, 1)
+			decl = strings.Replace(decl, `version='1.1'`, `version='1.0'`, 1)
+			s = decl + s[end:]
+		}
+	}
+	dec := xml.NewDecoder(strings.NewReader(s))
+	dec.Strict = true
+	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
+	sawContent := false // an element or non-blank text
+	document := false
+	roots, depth := 0, 0
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return bad()
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				roots++
+				if document && roots > 1 {
+					return bad()
+				}
+			}
+			depth++
+			sawContent = true
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			if strings.TrimSpace(string(t)) != "" {
+				if depth == 0 && document {
+					return bad()
+				}
+				sawContent = true
+			}
+		case xml.Directive:
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(string(t))), "DOCTYPE") {
+				if sawContent {
+					return bad()
+				}
+				document = true
+			} else {
+				return bad()
+			}
+		case xml.ProcInst:
+			if t.Target == "xml" && sawContent {
+				return bad()
+			}
+		}
+	}
+	if depth != 0 || (document && roots != 1) {
+		return bad()
+	}
+	return nil
 }
