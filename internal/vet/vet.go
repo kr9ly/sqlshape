@@ -908,6 +908,17 @@ func (c *checker) checkRequiredColumns(ref analyze.RelationRef, r *analyze.Resul
 // adviseSchema reports advisory findings about the schema itself (-strict).
 func (c *checker) adviseSchema(at token.Pos) {
 	for _, rel := range c.s.Relations {
+		if rel.Kind == schema.Table {
+			// a value set kept as an enum cannot lose or reorder a label without the type
+			// being rebuilt under every column (see migrate); a seeded lookup table changes
+			// with a MERGE, its rows can carry a label and an order, and the checker reads
+			// it just as well
+			for _, col := range rel.Columns {
+				if t := c.s.Types.ByOID(col.Type.OID); t != nil && t.Kind == 'e' && !rel.Temp {
+					c.pass.Reportf(at, "sqlshape: schema: %s.%s is enum %s: a seeded lookup table (rows in schema.sql, referenced by a foreign key) is easier to change — an enum cannot drop or reorder a label without being recreated under every column — and is checked the same way", rel.FullName(), col.Name, t.Name)
+				}
+			}
+		}
 		if rel.Kind != schema.MatView {
 			continue
 		}
