@@ -360,6 +360,31 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 			continue
 		}
 		err = exec(sql)
+		switch st := node.Node.(type) {
+		case *pg_query.Node_DiscardStmt:
+			// DISCARD ALL (a \c too) / TEMP: the temp relations made so far are gone, and
+			// pgx must forget the statements the server deallocated
+			if err == nil {
+				conn.DeallocateAll(ctx)
+				if s == nil {
+					s = loadRegressSchema(&ddl)
+				}
+				drops := dropTemps(stmts[:i])
+				if st.DiscardStmt.Target == pg_query.DiscardMode_DISCARD_ALL {
+					drops = append(drops, sessionResets...)
+				}
+				for _, d := range drops {
+					if s.Apply(d+";\n") == nil {
+						ddl = append(ddl, d)
+					}
+				}
+			}
+			continue
+		case *pg_query.Node_DeallocateStmt:
+			if err == nil && st.DeallocateStmt.Isall {
+				conn.DeallocateAll(ctx)
+			}
+		}
 		if ts, ok := node.Node.(*pg_query.Node_TransactionStmt); ok {
 			switch ts.TransactionStmt.Kind {
 			case pg_query.TransactionStmtKind_TRANS_STMT_BEGIN, pg_query.TransactionStmtKind_TRANS_STMT_START:
@@ -423,38 +448,61 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		}
 	}
 	if promote {
-		// temp tables died with this file's session: drop the ones still standing
-		temps := map[string]bool{}
-		for _, sql := range stmts {
-			tree, err := pg_query.Parse(sql)
-			if err != nil || len(tree.Stmts) != 1 {
-				continue
-			}
-			st := tree.Stmts[0].Stmt
-			if cs := st.GetCreateStmt(); cs != nil && cs.Relation.Relpersistence == "t" {
-				temps[cs.Relation.Relname] = true
-			}
-			if ct := st.GetCreateTableAsStmt(); ct != nil && ct.Into != nil && ct.Into.Rel.Relpersistence == "t" {
-				temps[ct.Into.Rel.Relname] = true
-			}
-			if ds := st.GetDropStmt(); ds != nil && ds.RemoveType == pg_query.ObjectType_OBJECT_TABLE {
-				for _, on := range ds.Objects {
-					items := on.GetList().GetItems()
+		// the file's session ends here: its temp relations and session settings go, on the
+		// oracle (whose connection the next promoted file reuses) and in the loader's replay
+		exec("DISCARD ALL")
+		conn.DeallocateAll(ctx)
+		conn.Exec(ctx, session)
+		ddl = append(ddl, dropTemps(stmts)...)
+		ddl = append(ddl, sessionResets...)
+		p.baseDDL = ddl
+	}
+	return hits
+}
+
+// sessionResets undo, in the loader's replay, the settings a session ending resets.
+var sessionResets = []string{"RESET search_path", "RESET datestyle", "RESET intervalstyle", "RESET timezone", "RESET xmloption", "RESET restrict_nonsystem_relation_kind"}
+
+// dropTemps lists the DROPs for the temp tables and views the statements created and did
+// not drop (what the end of a session, or DISCARD TEMP, takes with it).
+func dropTemps(stmts []string) []string {
+	temps := map[string]string{} // name → TABLE / VIEW / SEQUENCE
+	for _, sql := range stmts {
+		tree, err := pg_query.Parse(sql)
+		if err != nil || len(tree.Stmts) != 1 {
+			continue
+		}
+		st := tree.Stmts[0].Stmt
+		if cs := st.GetCreateStmt(); cs != nil && cs.Relation.Relpersistence == "t" {
+			temps[cs.Relation.Relname] = "TABLE"
+		}
+		if ct := st.GetCreateTableAsStmt(); ct != nil && ct.Into != nil && ct.Into.Rel.Relpersistence == "t" {
+			temps[ct.Into.Rel.Relname] = "TABLE"
+		}
+		if vs := st.GetViewStmt(); vs != nil && vs.View.Relpersistence == "t" {
+			temps[vs.View.Relname] = "VIEW"
+		}
+		if sq := st.GetCreateSeqStmt(); sq != nil && sq.Sequence.Relpersistence == "t" {
+			temps[sq.Sequence.Relname] = "SEQUENCE"
+		}
+		if ds := st.GetDropStmt(); ds != nil {
+			for _, on := range ds.Objects {
+				items := on.GetList().GetItems()
+				if len(items) > 0 {
 					delete(temps, items[len(items)-1].GetString_().GetSval())
 				}
 			}
 		}
-		for name := range temps {
-			// the oracle's session lives on across files, so drop them there too
-			exec("DROP TABLE IF EXISTS " + name)
-			ddl = append(ddl, "DROP TABLE IF EXISTS "+name)
-		}
-		// and so did its session settings: the template database starts every later file
-		// with the defaults, and the loader's replay must land there too
-		ddl = append(ddl, "RESET search_path", "RESET datestyle", "RESET intervalstyle", "RESET timezone", "RESET xmloption", "RESET restrict_nonsystem_relation_kind")
-		p.baseDDL = ddl
 	}
-	return hits
+	var out []string
+	for _, kind := range []string{"VIEW", "TABLE", "SEQUENCE"} { // views first: they depend on the tables
+		for name, k := range temps {
+			if k == kind {
+				out = append(out, "DROP "+kind+" IF EXISTS "+name+" CASCADE")
+			}
+		}
+	}
+	return out
 }
 
 // loadsAlone reports whether the loader takes the statement without a hard error, so
@@ -492,6 +540,14 @@ func isRegressQuery(n *pg_query.Node) bool {
 // (\set and \getenv are interpreted far enough to resolve the data-file paths).
 func (p *regressProbe) split(src string) []string {
 	vars := map[string]string{"abs_srcdir": p.dir, "abs_builddir": p.dir}
+	// a variable means what it was set to at that point (a \set filename before each COPY)
+	subst := func(l string) string {
+		for k, v := range vars {
+			l = strings.ReplaceAll(l, ":'"+k+"'", "'"+v+"'")
+			l = strings.ReplaceAll(l, ":"+k, v)
+		}
+		return l
+	}
 	var lines []string
 	inCopy := false
 	for _, l := range strings.Split(src, "\n") {
@@ -526,17 +582,18 @@ func (p *regressProbe) split(src string) []string {
 			}
 			continue
 		}
+		if tl == `\c` || strings.HasPrefix(tl, `\c `) || strings.HasPrefix(tl, `\connect`) {
+			// a new session: temp objects, prepared statements and settings are gone
+			lines = append(lines, "DISCARD ALL;")
+			continue
+		}
 		if strings.HasPrefix(tl, `\`) {
 			continue
 		}
-		lines = append(lines, l)
+		lines = append(lines, subst(l))
 	}
 	text := strings.Join(lines, "\n")
 	text = reGset.ReplaceAllString(text, ";")
-	for k, v := range vars {
-		text = strings.ReplaceAll(text, ":'"+k+"'", "'"+v+"'")
-		text = strings.ReplaceAll(text, ":"+k, v)
-	}
 	text = reMeta.ReplaceAllString(text, "")
 	stmts, err := pg_query.SplitWithScanner(text, true)
 	if err != nil {

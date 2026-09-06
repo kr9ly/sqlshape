@@ -136,6 +136,9 @@ type Relation struct {
 	InsteadRules map[string]bool
 	// Parents are the tables this one INHERITS from / is a PARTITION OF.
 	Parents []*Relation
+	// Temp: CREATE TEMP; the relation is modeled in the creation schema (hiding a
+	// permanent one of the same name) but PG keeps it in pg_temp
+	Temp bool
 	// IsPartition: created as PARTITION OF (dropped with its parent).
 	IsPartition bool
 	// OwnedBy (sequences): "schema.table.column" of the serial / identity column, or the
@@ -497,9 +500,10 @@ func (r *Relation) Column(name string) *Column {
 	return nil
 }
 
-// FullName is schema.name, with public elided.
+// FullName is schema.name, with public elided; a temporary relation is its bare name
+// (regclass output: pg_temp is always visible, whatever the search path).
 func (r *Relation) FullName() string {
-	if r.Schema == "public" {
+	if r.Schema == "public" || r.Temp {
 		return r.Name
 	}
 	return r.Schema + "." + r.Name
@@ -852,6 +856,7 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		// search path); the hidden relation stays for its other references
 	}
 	rel := s.newRelation(schema, name, Table)
+	rel.Temp = st.Relation.Relpersistence == "t"
 	rel.OnCommitDrop = st.Oncommit == pg_query.OnCommitAction_ONCOMMIT_DROP
 	// CREATE TABLE ... OF type: the composite type's attributes are the columns
 	if st.OfTypename != nil {
@@ -1101,6 +1106,7 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 	}
 	if rel == nil {
 		rel = s.newRelation(schema, name, View)
+		rel.Temp = st.View.Relpersistence == "t"
 	}
 	rel.Query = st.Query
 	rel.ColumnAliases = strs(st.Aliases)
@@ -1774,6 +1780,7 @@ func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, 
 		return
 	}
 	rel := s.newRelation(schema, name, Table)
+	rel.Temp = into.Rel.Relpersistence == "t"
 	rel.OnCommitDrop = into.OnCommit == pg_query.OnCommitAction_ONCOMMIT_DROP
 	for i, c := range cols {
 		c.Num = int16(i + 1)
@@ -1793,6 +1800,7 @@ func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
 		return
 	}
 	rel := s.newRelation(schema, name, Sequence)
+	rel.Temp = rv.Relpersistence == "t"
 	for i, c := range []struct {
 		name string
 		typ  catalog.OID

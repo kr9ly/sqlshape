@@ -81,8 +81,12 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
   (DIFF column name / type / nullability, STRICT = analyzer rejects what PG takes, LENIENT = the reverse, CODE =
   different SQLSTATE). A discovery tool, not a gate: `-regress-tests select,join` limits it to some files.
   A full run takes about half a minute: the schedule's first 8 lines build the shared database in order
-  (`schema.Apply` extends the analyzer's schema statement by statement), every later file runs in its own copy
-  of it, `-regress-jobs` (default NumCPU, at most 8) of them at a time on a server started with fsync off.
+  (`schema.Apply` extends the analyzer's schema statement by statement; each file's session ends with DISCARD ALL
+  on the oracle and the matching temp-table drops / RESETs in the replay, as pg_regress gives every file its own
+  session), every later file runs in its own copy of it, `-regress-jobs` (default NumCPU, at most 8) of them at a
+  time on a server started with fsync off. psql's `\set` variables mean what they were set to at that point
+  (`\set filename` before each COPY), `\c` is a DISCARD ALL, and DISCARD / DEALLOCATE ALL reset pgx's statement
+  cache so the oracle's helper queries survive them.
   `SQLSHAPE_ORACLE_LOG=/path` keeps the server log (one MERGE in merge.sql segfaults PG 17's Prepare and is
   skipped by `reCrash`). `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
   only raises at execution (assignment length coercion of a literal into varchar(n) / bit(n) / numeric(p,s),
