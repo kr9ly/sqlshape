@@ -47,20 +47,30 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
   level inside the arguments is nested (42803), an aggregate may not sit in a FROM item of its own
   level, an ordered-set aggregate's direct arguments may not reach below its level and are checked
   as per-group expressions, GROUPING's arguments must belong to a grouped level
-- Recursive CTEs: forward references, a WITH nested on the recursive union, SEARCH / CYCLE columns and their
-  name rules, and checkWellFormedRecursion (`recursive.go`: the query name once, not in a subquery / the nullable
+- Name spaces: a LATERAL item sees the earlier FROM items of its level; the left side of a RIGHT / FULL join and an
+  UPDATE / DELETE target are in scope for a LATERAL item but illegal to reference (42P10); two items of one name at
+  one level are ambiguous (42P09) as soon as a LATERAL item names them, `excluded` against a table named excluded too
+- Recursive CTEs: forward references, a WITH nested on the recursive union, a nested WITH of the same name hiding the
+  outer one, mutual recursion between items (0A000), SEARCH / CYCLE columns and their name rules (the recursive
+  reference then has to sit in the recursive term's own FROM), and checkWellFormedRecursion (`recursive.go`: the query name once, not in a subquery / the nullable
   side of an outer join / EXCEPT / INTERSECT / the non-recursive term, no aggregates, no data-modifying body)
 - Windows: named windows (duplicates, unknown references), RANGE offset frames need one ORDER BY column, GROUPS
   needs ORDER BY, no window functions inside window definitions / GROUP BY / RETURNING / JOIN conditions
 - Writes through views (`viewdml.go`): INSERT / UPDATE / DELETE / MERGE on an automatically updatable view
   (one table in FROM, no set operation / DISTINCT / GROUP BY / HAVING / LIMIT / OFFSET / WITH / window / aggregate /
   set-returning target) are typed and their violations computed against the base table under the view's column
-  names; a computed column is not writable (0A000), any other view is 55000, a view with INSTEAD OF triggers takes
-  any write. System columns (ctid, xmin, xmax, cmin, cmax, tableoid) resolve on tables; system relations
+  names; a computed column is not writable (0A000, also when the view's own default on it fills an INSERT), any other
+  view is 55000, a view with INSTEAD OF triggers takes any write. MERGE is checked down the stack of auto-updatable
+  views: a rule for one of its actions refuses it (0A000, disabled rules do not count), triggers must cover all actions
+  or none, a non-updatable view fails for the first uncovered action (55000); a materialized view is 0A000. System columns (ctid, xmin, xmax, cmin, cmax, tableoid) resolve on tables; system relations
   (pg_catalog, information_schema) come from the catalog (see catalog/README)
 - Function calls: named arguments (`f(x => 1)`) map onto parameter names with defaults filling the rest; a
-  variadic and a non-variadic candidate with the same effective argument list are one (the non-variadic wins,
-  then the one using fewer defaults); `f(x)` on a composite value with a field `f` is the field. Result column
+  variadic and a non-variadic candidate with the same effective argument list are one (the non-variadic wins),
+  the same signature in two schemas goes to the earlier on the search path, one reached through defaults against
+  one that is not is ambiguous (42725); a VARIADIC parameter with a default takes zero arguments; `f(x)` on a
+  composite value with a field `f` is the field. type-name(x) is a cast only where the coercion is a relabeling or
+  goes through I/O (func_get_detail), and an unqualified name never means a pg_temp type; ROW(..) op ROW(..) needs
+  a btree comparison operator (0A000 otherwise). Result column
   names follow FigureColname (a cast names the column only when what it casts has no name of its own; SQL/JSON
   and XML constructors, merge_action(); a function in FROM names its one column by its single OUT parameter, then
   the alias, then the function)
@@ -77,6 +87,8 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
   skipped by `reCrash`). `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
   only raises at execution (assignment length coercion of a literal into varchar(n) / bit(n) / numeric(p,s),
   view updatability decided by view-column defaults) count as STRICT there even though the analyzer is right
+- `probe_test.go` runs one statement against one schema (`PROBE_SCHEMA=f PROBE_SQL=f [PROBE_ORACLE=1]`) for
+  one-off checks while chasing a hit
 - `literal_oracle_test.go`: with `-regress`, every `'literal'::type` in the corpus goes through the real input
   function and the analyzer (`-literal-types` narrows it); seconds, not minutes. The input functions are ported
   from PG's C: `datetime.go` (ParseDateTime / DecodeDateTime / DecodeTimeOnly / DecodeInterval /

@@ -25,6 +25,9 @@ func (a *analyzer) writeTarget(rv *pg_query.RangeVar, sc *scope, cmd string) (*s
 	}
 	switch rel.Kind {
 	case schema.MatView:
+		if cmd == "merge into" {
+			return nil, nil, errAt(codeFeatureNotSupported, rv.Location, "cannot execute MERGE on relation %q", rel.Name)
+		}
 		return nil, nil, errAt(codeWrongObjectType, rv.Location, "cannot change materialized view %q", rel.Name)
 	case schema.View:
 		base, err := a.viewWriteTarget(rel, cmd, rv.Location)
@@ -105,12 +108,61 @@ func (a *analyzer) viewWriteTarget(rel *schema.Relation, cmd string, loc int32) 
 		if col == nil {
 			col = &schema.Column{Name: c.name, Type: c.typ}
 			a.viewComputed[col] = rel.Name
+			if d, ok := rel.ViewDefaults[c.name]; ok {
+				// a default on a computed column: an INSERT leaving the column out still
+				// assigns it (rewriteTargetListIU), which the view refuses
+				col.Default = d
+				a.viewDefault[col] = true
+			}
 		}
 		col.Num = int16(i + 1)
 		syn.Columns = append(syn.Columns, col)
 	}
 	a.viewTargets[rel] = &syn
 	return &syn, nil
+}
+
+// mergeTargetCheck is the rewriter's view of a MERGE target with the given actions, down
+// the stack of automatically updatable views: a relation with a rule for one of the actions
+// refuses MERGE (0A000); a view whose INSTEAD OF triggers cover every action takes it; one
+// that is not auto-updatable fails for the first action without a trigger (55000); one that
+// is auto-updatable but has triggers for some actions only is refused (0A000).
+func (a *analyzer) mergeTargetCheck(rel *schema.Relation, actions []string, loc int32) *Error {
+	for {
+		for _, cmd := range actions {
+			ev := map[string]string{"insert into": "insert", "update": "update", "delete from": "delete"}[cmd]
+			if rel.RuleEvents[ev] {
+				return errAt(codeFeatureNotSupported, loc, "cannot execute MERGE on relation %q", rel.Name)
+			}
+		}
+		if rel.Kind != schema.View {
+			return nil
+		}
+		covered := 0
+		first := ""
+		for _, cmd := range actions {
+			if a.hasInsteadOfTrigger(rel, cmd) {
+				covered++
+			} else if first == "" {
+				first = cmd
+			}
+		}
+		if covered == len(actions) {
+			return nil
+		}
+		baseRV := autoUpdatableBase(a, rel.Query.GetSelectStmt())
+		if baseRV == nil {
+			return errAt(codeObjectNotInPrerequisiteState, loc, "cannot %s view %q", first, rel.Name)
+		}
+		if covered > 0 {
+			return errAt(codeFeatureNotSupported, loc, "cannot execute MERGE on relation %q", rel.Name)
+		}
+		base := a.s.Relation(baseRV.Schemaname, baseRV.Relname)
+		if base == nil {
+			return nil
+		}
+		rel = base
+	}
 }
 
 func (a *analyzer) hasInsteadOfTrigger(rel *schema.Relation, cmd string) bool {

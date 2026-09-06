@@ -83,6 +83,30 @@ func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop stri
 		return w.walk(j.Quals, true, inOuter, setop)
 	case *pg_query.Node_SelectStmt:
 		sel := v.SelectStmt
+		if wc := sel.WithClause; wc != nil {
+			// a nested WITH: its items are walked in the same context; one defining the
+			// name hides the outer query from what can see it (a RECURSIVE WITH's names
+			// are visible throughout, a plain WITH's to the items after it and the query)
+			for i, cn := range wc.Ctes {
+				c := cn.GetCommonTableExpr()
+				if c.Ctename == w.name {
+					if wc.Recursive {
+						return nil
+					}
+					for _, prev := range wc.Ctes[:i+1] {
+						if err := w.walk(prev.GetCommonTableExpr().Ctequery, inSub, inOuter, setop); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+			}
+			for _, cn := range wc.Ctes {
+				if err := w.walk(cn.GetCommonTableExpr().Ctequery, inSub, inOuter, setop); err != nil {
+					return err
+				}
+			}
+		}
 		switch sel.Op {
 		case pg_query.SetOperation_SETOP_EXCEPT:
 			if err := w.walk(selNode(sel.Larg), inSub, inOuter, setop); err != nil {
@@ -169,6 +193,38 @@ func selNode(sel *pg_query.SelectStmt) *pg_query.Node {
 	return &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel}}
 }
 
+// topLevelRef reports whether the recursive term names the CTE directly in its own FROM
+// list (through joins, not inside a subquery or a nested WITH): where a SEARCH / CYCLE
+// clause needs it (analyzeCTE).
+func (w *recursionWalker) topLevelRef(sel *pg_query.SelectStmt) bool {
+	if sel == nil {
+		return false
+	}
+	if wc := sel.WithClause; wc != nil && !wc.Recursive {
+		for _, cn := range wc.Ctes {
+			if cn.GetCommonTableExpr().Ctename == w.name {
+				return false
+			}
+		}
+	}
+	var inFrom func(n *pg_query.Node) bool
+	inFrom = func(n *pg_query.Node) bool {
+		if rv := n.GetRangeVar(); rv != nil {
+			return rv.Schemaname == "" && rv.Relname == w.name
+		}
+		if j := n.GetJoinExpr(); j != nil {
+			return inFrom(j.Larg) || inFrom(j.Rarg)
+		}
+		return false
+	}
+	for _, item := range sel.FromClause {
+		if inFrom(item) {
+			return true
+		}
+	}
+	return false
+}
+
 // mentions reports whether the tree names the CTE anywhere.
 func (w *recursionWalker) mentions(n *pg_query.Node) bool {
 	if n == nil {
@@ -177,8 +233,26 @@ func (w *recursionWalker) mentions(n *pg_query.Node) bool {
 	if rv := n.GetRangeVar(); rv != nil && rv.Schemaname == "" && rv.Relname == w.name {
 		return true
 	}
-	if sel := n.GetSelectStmt(); sel != nil && (w.mentions(selNode(sel.Larg)) || w.mentions(selNode(sel.Rarg))) {
-		return true
+	if sel := n.GetSelectStmt(); sel != nil {
+		if wc := sel.WithClause; wc != nil {
+			// a nested WITH defining the name hides the outer query (see walk)
+			for i, cn := range wc.Ctes {
+				if cn.GetCommonTableExpr().Ctename == w.name {
+					if wc.Recursive {
+						return false
+					}
+					for _, prev := range wc.Ctes[:i+1] {
+						if w.mentions(prev.GetCommonTableExpr().Ctequery) {
+							return true
+						}
+					}
+					return false
+				}
+			}
+		}
+		if w.mentions(selNode(sel.Larg)) || w.mentions(selNode(sel.Rarg)) {
+			return true
+		}
 	}
 	for _, c := range allNodes(n) {
 		if w.mentions(c) {

@@ -39,6 +39,22 @@ type rte struct {
 	single bool
 	// outerNullable: an outer join made every column nullable (null-extended rows)
 	outerNullable bool
+	// noLateral: in the name space but not referenceable (p_lateral_ok = false): the left
+	// side of a RIGHT / FULL join while its right side is analyzed, an UPDATE / DELETE
+	// target while its FROM / USING items are
+	noLateral bool
+}
+
+// setNoLateral marks r and, for a join, everything under it.
+func setNoLateral(r *rte, v bool) {
+	r.noLateral = v
+	if r.join != nil {
+		setNoLateral(r.join.left, v)
+		setNoLateral(r.join.right, v)
+		if r.join.usingAlias != nil {
+			r.join.usingAlias.noLateral = v
+		}
+	}
 }
 
 type joinInfo struct {
@@ -239,13 +255,53 @@ func (sc *scope) byAlias(alias string) *rte {
 	return nil
 }
 
+// aliasAt finds a FROM item by alias among those visible at sc's query level: sc's items
+// and, while sc is a join's inner scope, the enclosing scopes' up to the query level. PG
+// keeps the earlier FROM items in the name space while a later one is analyzed, so two
+// items of one name at the same level are ambiguous (42P09) as soon as a LATERAL item
+// names them, before checkNameSpaceConflicts would see the duplicate.
+func (sc *scope) aliasAt(alias string) (r *rte, ambiguous bool) {
+	for s := sc; s != nil; s = s.parent {
+		for _, it := range s.items {
+			for _, l := range it.leaves() {
+				if l.alias == alias {
+					if r != nil && r != l {
+						return r, true
+					}
+					r = l
+				}
+			}
+		}
+		if !s.passthrough {
+			break
+		}
+	}
+	return r, false
+}
+
+// refAlias is aliasAt with the errors a reference raises: an ambiguous name, or an item
+// that is visible but may not be referenced here (see rte.noLateral).
+func (sc *scope) refAlias(alias string, loc int32) (*rte, *Error) {
+	r, ambiguous := sc.aliasAt(alias)
+	if ambiguous {
+		return nil, errAt(codeAmbiguousAlias, loc, "table reference %q is ambiguous", alias)
+	}
+	if r != nil && r.noLateral {
+		return nil, errAt(codeInvalidColumnRef, loc, "invalid reference to FROM-clause entry for table %q", alias)
+	}
+	return r, nil
+}
+
 // resolveColumn resolves [tbl.]col across the scope chain.
 func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol, *Error) {
 	a.lastResolvedScope = nil
 	for s := sc; s != nil; s = s.parent {
 		a.lastResolvedScope = s
 		if tbl != "" {
-			r := s.byAlias(tbl)
+			r, err := s.refAlias(tbl, loc)
+			if err != nil {
+				return rteCol{}, err
+			}
 			if r == nil {
 				continue
 			}
@@ -276,6 +332,11 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 		}
 		var hits []rteCol
 		for _, it := range s.items {
+			for _, l := range it.leaves() {
+				if l.noLateral && len(l.find(col)) > 0 {
+					return rteCol{}, errAt(codeInvalidColumnRef, loc, "invalid reference to FROM-clause entry for table %q", l.alias)
+				}
+			}
 			hits = append(hits, it.find(col)...)
 		}
 		if len(hits) > 1 {
@@ -329,14 +390,15 @@ func joinHasRTE(it, r *rte) bool {
 	return false
 }
 
-// wholeRow finds an rte by alias for a bare `t` reference; returns nil if none.
-func (sc *scope) wholeRow(name string) *rte {
+// wholeRow finds an rte by alias for a bare `t` reference; nil, nil when there is none.
+func (sc *scope) wholeRow(name string, loc int32) (*rte, *Error) {
 	for s := sc; s != nil; s = s.parent {
-		if r := s.byAlias(name); r != nil {
-			return r
+		r, err := s.refAlias(name, loc)
+		if err != nil || r != nil {
+			return r, err
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // relationRTE builds a leaf rte for a table / view.

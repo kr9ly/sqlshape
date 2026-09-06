@@ -39,6 +39,7 @@ const (
 	codeFeatureNotSupported          = "0A000"
 	codeGroupingError                = "42803"
 	codeInvalidColumnRef             = "42P10"
+	codeAmbiguousAlias               = "42P09"
 	codeWrongObjectType              = "42809"
 	codeObjectNotInPrerequisiteState = "55000"
 	codeGeneratedAlways              = "428C9"

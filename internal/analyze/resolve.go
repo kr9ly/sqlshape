@@ -138,6 +138,34 @@ type candidate struct {
 	variadicElem catalog.OID
 }
 
+// schema is the namespace the candidate's function lives in ("" for pg_catalog).
+func (c candidate) schema() string {
+	switch {
+	case c.fn != nil:
+		return c.fn.Schema
+	case c.ufn != nil:
+		return c.ufn.Schema
+	}
+	return ""
+}
+
+// pathPos is a schema's position on the search path, pg_catalog's implicitly first
+// (recomputeNamespacePath) unless the path names it.
+func (a *analyzer) pathPos(schema string) int {
+	if schema == "" {
+		schema = "pg_catalog"
+	}
+	for i, p := range a.s.SearchPath() {
+		if p == schema {
+			return i
+		}
+	}
+	if schema == "pg_catalog" {
+		return -1
+	}
+	return len(a.s.SearchPath())
+}
+
 func (c candidate) result() catalog.OID {
 	switch {
 	case c.op != nil:
@@ -411,24 +439,26 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 	}
 	var cands []candidate
 	ambiguousExact := false
-	// two candidates with the same effective argument list (one via VARIADIC or defaults)
-	// are one: the non-variadic one wins, then the one using fewer defaults
-	// (FuncnameGetCandidates)
+	// two candidates with the same effective argument list: a non-variadic one beats a
+	// variadic one; otherwise (one reached through defaults, both variadic) the call is
+	// ambiguous, f(int) against f(int, int default 0) included (FuncnameGetCandidates)
 	add := func(c candidate) {
 		for i, o := range cands {
 			if !sameOIDs(o.args, c.args) {
 				continue
 			}
-			cDef, oDef := c.variadicElem == 0 && c.nargs > len(c.args), o.variadicElem == 0 && o.nargs > len(o.args)
+			cp, op := a.pathPos(c.schema()), a.pathPos(o.schema())
 			switch {
-			case !cDef && c.variadicElem == 0:
-				cands[i] = c // the one that needs neither defaults nor VARIADIC
-			case !oDef && o.variadicElem == 0:
+			case cp != op:
+				// the same signature in two schemas: the earlier on the search path wins
+				if cp < op {
+					cands[i] = c
+				}
 			case o.variadicElem != 0 && c.variadicElem == 0:
 				cands[i] = c
 			case c.variadicElem != 0 && o.variadicElem == 0:
 			default:
-				cands = append(cands, c) // both via defaults (or both variadic): not unique
+				cands = append(cands, c) // not unique
 			}
 			return
 		}
@@ -521,6 +551,9 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 				case 'v':
 					in = append(in, arg.Type.OID)
 					inNames = append(inNames, arg.Name)
+					if arg.HasDefault {
+						ndef++ // VARIADIC arr DEFAULT ...: callable with no variadic argument
+					}
 					switch arg.Type.OID {
 					case catalog.AnyArray: // VARIADIC anyarray takes anyelement values
 						variadic = catalog.AnyElement
@@ -562,9 +595,12 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 func expandArgs(declared []catalog.OID, ndefault int, variadic catalog.OID, n int) ([]catalog.OID, bool) {
 	if variadic != 0 {
 		// last declared arg is the variadic array; actual args from there on are elements
-		// (at least one: a VARIADIC parameter has no default)
+		// (at least one, unless the VARIADIC parameter has a default)
 		fixed := len(declared) - 1
 		if n < len(declared) {
+			if n == fixed && ndefault > 0 {
+				return declared[:fixed], true
+			}
 			return nil, false
 		}
 		out := make([]catalog.OID, n)

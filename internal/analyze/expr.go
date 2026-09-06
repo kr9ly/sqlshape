@@ -595,7 +595,11 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	}
 	if star {
 		if len(names) > 0 {
-			if r := sc.wholeRow(names[len(names)-1]); r != nil {
+			r, err := sc.wholeRow(names[len(names)-1], c.Location)
+			if err != nil {
+				return nil, err
+			}
+			if r != nil {
 				if r.rowType != 0 {
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
 				}
@@ -618,7 +622,11 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	rc, err := a.resolveColumn(sc, tbl, col, c.Location)
 	if err != nil {
 		if tbl == "" {
-			if r := sc.wholeRow(col); r != nil {
+			r, rerr := sc.wholeRow(col, c.Location)
+			if rerr != nil {
+				return nil, rerr
+			}
+			if r != nil {
 				a.noteVarScope(sc.scopeOf(r))
 				if r.rowType != 0 {
 					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols, rowOf: r}, nil
@@ -636,8 +644,6 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 					return &expr{typ: p.typ, nullable: true, node: nodeOf(c), fparam: int32(i + 1)}, nil
 				}
 			}
-		} else if r := sc.wholeRow(tbl); r != nil {
-			// t.field where field is a composite column's field? not supported; fall through
 		}
 		return nil, err
 	}
@@ -758,6 +764,27 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 		}
 		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && len(lr.Args) == 0 && len(rr.Args) == 0 {
 			return nil, errAt(codeFeatureNotSupported, x.Location, "cannot compare rows of zero length")
+		}
+		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && !rowCompareOps[name] && !rowPatternOps[name] && x.Kind == pg_query.A_Expr_Kind_AEXPR_OP {
+			// make_row_comparison_op: the operator must exist per column, and then have a
+			// btree interpretation, which ~~ and friends have not
+			if len(lr.Args) != len(rr.Args) {
+				return nil, errAt(codeSyntaxError, x.Location, "unequal number of entries in row expressions")
+			}
+			ls, err := a.analyzeList(lr.Args, sc)
+			if err != nil {
+				return nil, err
+			}
+			rs, err := a.analyzeList(rr.Args, sc)
+			if err != nil {
+				return nil, err
+			}
+			for i := range ls {
+				if _, err := a.applyOperator(name, ls[i], rs[i], x.Location, self); err != nil {
+					return nil, err
+				}
+			}
+			return nil, errAt(codeFeatureNotSupported, x.Location, "could not determine interpretation of row comparison operator %s", name)
 		}
 		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && rowPatternOps[name] {
 			// make_row_comparison: ROW(..) op ROW(..) is compared column by column, with any
@@ -1003,7 +1030,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	if len(args) == 1 && !isAgg && f.Over == nil && !f.FuncVariadic && args[0].oid() == catalog.Unknown && args[0].node.GetAConst() != nil && args[0].node.GetAConst().GetSval() != nil && f.Args[0].GetNamedArgExpr() == nil {
 		// func_get_detail: type-name('literal') is a cast when no function takes an
 		// unknown argument exactly, so the literal is read by the type's input function
-		if t := a.s.Types.Lookup(schemaName, name); t != nil {
+		if t := a.typeAsFunc(schemaName, name); t != nil {
 			if err := a.bind(args[0], t.OID, f.Location); err != nil {
 				return nil, err
 			}
@@ -1104,18 +1131,16 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		return projection, nil
 	}
 	if c == nil {
-		// type-name(x) is a cast
+		// type-name(x) is a cast (func_get_detail), but only where the coercion is a
+		// relabeling or goes through I/O: a cast function would have been found by name
+		// already, so anything else is no function (42883)
 		if len(args) == 1 {
-			if t := a.s.Types.Lookup(schemaName, name); t != nil {
+			if t := a.typeAsFunc(schemaName, name); t != nil {
 				if args[0].oid() == catalog.Unknown {
 					if err := a.bind(args[0], t.OID, f.Location); err != nil {
 						return nil, err
 					}
-				} else if !a.canCoerce(args[0].oid(), t.OID, explicitCoercion) {
-					return nil, errAt(codeCannotCoerce, f.Location, "cannot cast type %s to %s", a.s.Types.Format(args[0].typ), t.Name)
-				} else if st := a.typ(args[0].oid()); (args[0].oid() == catalog.Record || st != nil && st.Kind == 'c') && a.catIs(t.OID, 'S') {
-					// func_get_detail: a row type reaching a string type only via I/O
-					// coercion is not a cast in function syntax (text(row(..)) is 42883)
+				} else if !a.castInFuncSyntax(args[0].oid(), t.OID) {
 					goto notCast
 				}
 				return &expr{typ: ref(t.OID), nullable: args[0].nullable, node: self}, nil
@@ -2004,6 +2029,49 @@ func hasColumnRef(n *pg_query.Node) bool {
 	}
 	return false
 }
+
+// typeAsFunc is FuncNameAsType: the type a function-syntax call may be a cast to. An
+// unqualified name never reaches a pg_temp type (temp_ok = false, as for functions).
+func (a *analyzer) typeAsFunc(schemaName, name string) *catalog.Type {
+	t := a.s.Types.Lookup(schemaName, name)
+	if t != nil && schemaName == "" && a.s.Types.Schemas[t.OID] == "pg_temp" {
+		return nil
+	}
+	return t
+}
+
+// castInFuncSyntax reports whether type-name(x) of a typed x counts as a cast: the same
+// type (domains apart), a binary-coercible pair, or an I/O coercion that does not take a
+// row type to a string (find_coercion_pathway in func_get_detail).
+func (a *analyzer) castInFuncSyntax(from, to catalog.OID) bool {
+	fb, tb := a.baseType(from), a.baseType(to)
+	if fb == tb {
+		return true
+	}
+	c := a.s.Catalog.CastBetween(fb, tb)
+	if c == nil {
+		for _, uc := range a.s.Casts {
+			if uc.Source == fb && uc.Target == tb {
+				c = uc
+			}
+		}
+	}
+	if c != nil {
+		return c.Func == 0 && c.Method == 'b'
+	}
+	fc, _ := a.category(fb)
+	tc, _ := a.category(tb)
+	if fc == 'S' || tc == 'S' {
+		ft := a.typ(fb)
+		return !((fb == catalog.Record || ft != nil && ft.Kind == 'c') && tc == 'S')
+	}
+	return false
+}
+
+// rowCompareOps are the operators make_row_comparison_op can interpret: the btree
+// comparison operators (record_ops and record_image_ops); rowPatternOps are handled apart.
+var rowCompareOps = map[string]bool{"=": true, "<>": true, "!=": true, "<": true, "<=": true, ">": true, ">=": true,
+	"*=": true, "*<>": true, "*<": true, "*<=": true, "*>": true, "*>=": true}
 
 // rowPatternOps are the btree comparison operators of the text_pattern_ops family, which
 // exist for text types but not for record.

@@ -582,9 +582,9 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			if len(parts) >= 2 {
 				schema, name := qualified(parts[:len(parts)-1])
 				if rel := s.findRelation(schema, name); rel != nil {
-					if ev := rel.RuleNames[parts[len(parts)-1]]; ev != "" {
-						rel.clearRules(ev)
-					}
+					delete(rel.rules, parts[len(parts)-1])
+					delete(rel.rulesOff, parts[len(parts)-1])
+					rel.rebuildRules()
 				}
 			}
 		case pg_query.ObjectType_OBJECT_EXTENSION,

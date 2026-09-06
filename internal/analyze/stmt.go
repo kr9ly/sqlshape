@@ -287,14 +287,47 @@ func (a *analyzer) expandStar(cr *pg_query.ColumnRef, sc *scope) ([]rteCol, *Err
 		return out, nil
 	}
 	alias := cr.Fields[len(cr.Fields)-2].GetString_().GetSval()
-	r := sc.wholeRow(alias)
+	r, err := sc.wholeRow(alias, cr.Location)
+	if err != nil {
+		return nil, err
+	}
 	if r == nil {
 		return nil, errAt(codeUndefinedTable, cr.Location, "missing FROM-clause entry for table %q", alias)
 	}
-	return r.cols, nil
+	return r.expand(), nil // j.* of an aliased join: its columns, USING ones merged
 }
 
 func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
+	if w.Recursive && len(w.Ctes) > 1 {
+		// every item sees every other: a reference cycle through two or more items is
+		// mutual recursion (makeDependencyGraph / TopologicalSort)
+		n := len(w.Ctes)
+		deps := make([][]int, n)
+		for i, cn := range w.Ctes {
+			for j, dn := range w.Ctes {
+				if i != j && (&recursionWalker{a: a, name: dn.GetCommonTableExpr().Ctename}).mentions(cn.GetCommonTableExpr().Ctequery) {
+					deps[i] = append(deps[i], j)
+				}
+			}
+		}
+		state := make([]int, n) // 0 unseen, 1 on the path, 2 done
+		var visit func(i int) bool
+		visit = func(i int) bool {
+			state[i] = 1
+			for _, j := range deps[i] {
+				if state[j] == 1 || state[j] == 0 && visit(j) {
+					return true
+				}
+			}
+			state[i] = 2
+			return false
+		}
+		for i := range w.Ctes {
+			if state[i] == 0 && visit(i) {
+				return errAt(codeFeatureNotSupported, w.Ctes[i].GetCommonTableExpr().Location, "mutual recursion between WITH items is not implemented")
+			}
+		}
+	}
 	pending := w.Ctes
 	for len(pending) > 0 {
 		var deferred []*pg_query.Node
@@ -421,6 +454,9 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		if c.SearchClause != nil || c.CycleClause != nil {
 			if sel.Rarg != nil && sel.Rarg.Op != pg_query.SetOperation_SETOP_NONE {
 				return errAt(codeSyntaxError, c.Location, "with a SEARCH or CYCLE clause, the right side of the UNION must be a SELECT")
+			}
+			if rw := (&recursionWalker{a: a, name: c.Ctename}); rw.mentions(selNode(sel.Rarg)) && !rw.topLevelRef(sel.Rarg) {
+				return errAt(codeFeatureNotSupported, c.Location, "with a SEARCH or CYCLE clause, the recursive reference to WITH query %q must be at the top level of its right-hand SELECT", c.Ctename)
 			}
 			names := map[string]bool{}
 			for _, col := range def.cols {
@@ -597,6 +633,17 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 		if l.typ.OID == r.typ.OID && l.typ.Typmod == r.typ.Typmod {
 			typmod = l.typ.Typmod
 		}
+		// an arm's untyped literal is read by the common type's input function
+		for j, arm := range []*pg_query.SelectStmt{sel.Larg, sel.Rarg} {
+			if [2]catalog.OID{l.typ.OID, r.typ.OID}[j] != catalog.Unknown || t == catalog.Unknown {
+				continue
+			}
+			if c := armLiteral(arm, i); c != nil {
+				if err := a.validateLiteral(c.GetSval().GetSval(), t, c.Location); err != nil {
+					return nil, err
+				}
+			}
+		}
 		t = a.domainUnify([]*expr{{typ: l.typ, lit: l.lit}, {typ: r.typ, lit: r.lit}}, t, -1, setOpName(sel.Op))
 		coll, err := a.setOpColl(l.coll, r.coll, sel.Op, sel.All)
 		if err != nil {
@@ -646,6 +693,23 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 	return out, nil
 }
 
+// armLiteral is the string constant at position i of a plain SELECT arm's target list
+// (nil when the arm is anything else, or a * makes the position uncertain).
+func armLiteral(sel *pg_query.SelectStmt, i int) *pg_query.A_Const {
+	if sel == nil || sel.Op != pg_query.SetOperation_SETOP_NONE || len(sel.ValuesLists) > 0 || i >= len(sel.TargetList) {
+		return nil
+	}
+	for _, tn := range sel.TargetList {
+		if cr := tn.GetResTarget().GetVal().GetColumnRef(); cr != nil && isStar(cr) {
+			return nil
+		}
+	}
+	if c := sel.TargetList[i].GetResTarget().GetVal().GetAConst(); c != nil && c.GetSval() != nil {
+		return c
+	}
+	return nil
+}
+
 func setOpName(op pg_query.SetOperation) string {
 	switch op {
 	case pg_query.SetOperation_SETOP_INTERSECT:
@@ -659,9 +723,25 @@ func setOpName(op pg_query.SetOperation) string {
 func (a *analyzer) values(lists []*pg_query.Node, sc *scope) ([]rteCol, *Error) {
 	var rows [][]*expr
 	for _, ln := range lists {
-		row, err := a.analyzeList(ln.GetList().GetItems(), sc)
-		if err != nil {
-			return nil, err
+		// transformExpressionList: t.* in a VALUES row expands to t's columns (none for a
+		// zero-column table)
+		var row []*expr
+		for _, it := range ln.GetList().GetItems() {
+			if cr := it.GetColumnRef(); cr != nil && isStar(cr) && len(cr.Fields) > 1 {
+				cols, err := a.expandStar(cr, sc)
+				if err != nil {
+					return nil, err
+				}
+				for _, c := range cols {
+					row = append(row, &expr{typ: c.typ, nullable: c.nullable, src: c.src, fields: c.fields, coll: c.coll.asVar(), node: it})
+				}
+				continue
+			}
+			e, err := a.analyzeExpr(it, sc)
+			if err != nil {
+				return nil, err
+			}
+			row = append(row, e)
 		}
 		if len(rows) > 0 && len(row) != len(rows[0]) {
 			return nil, errAt(codeSyntaxError, -1, "VALUES lists must all be the same length")
@@ -999,11 +1079,15 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	if err != nil {
 		return nil, err
 	}
-	// the right side may be LATERAL and see the left side
+	// the right side may be LATERAL and see the left side; per SQL:2008 the left side
+	// of a RIGHT / FULL join is in scope there but illegal to reference (42P10)
 	inner := newScope(sc)
 	inner.passthrough = true
 	inner.items = []*rte{left}
+	lateralOK := j.Jointype == pg_query.JoinType_JOIN_INNER || j.Jointype == pg_query.JoinType_JOIN_LEFT
+	setNoLateral(left, !lateralOK)
 	right, err := a.fromItem(j.Rarg, inner)
+	setNoLateral(left, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1234,6 +1318,19 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 	if err := a.checkDuplicateBase(cols); err != nil {
 		return nil, err
 	}
+	// a view column with its own default that the INSERT leaves out is assigned the
+	// default (rewriteTargetListIU), so it must be writable
+	listed := map[*schema.Column]bool{}
+	for _, c := range cols {
+		listed[c] = true
+	}
+	for _, c := range rel.Columns {
+		if !listed[c] && a.viewDefault[c] {
+			if err := a.checkViewColumnWritable(c, -1); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if ins.SelectStmt == nil {
 		// DEFAULT VALUES through a view: see assign
 		for _, c := range rel.Columns {
@@ -1460,10 +1557,14 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 			return nil, err
 		}
 	}
+	// the FROM items may not reference the target (a LATERAL item would; a plain
+	// subquery cannot see it anyway)
 	sc.items = append(sc.items, target)
+	setNoLateral(target, true)
 	for _, item := range upd.FromClause {
 		r, err := a.fromItem(item, sc)
 		if err != nil {
+			setNoLateral(target, false)
 			return nil, err
 		}
 		if err := nameConflict(sc.items, r); err != nil {
@@ -1471,6 +1572,7 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 		}
 		sc.items = append(sc.items, r)
 	}
+	setNoLateral(target, false)
 	a.srfBan = "UPDATE"
 	err = a.setClause(upd.TargetList, rel, sc)
 	a.srfBan = ""
@@ -1500,16 +1602,20 @@ func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *E
 		}
 	}
 	sc.items = append(sc.items, target)
+	setNoLateral(target, true)
 	for _, item := range del.UsingClause {
 		r, err := a.fromItem(item, sc)
 		if err != nil {
+			setNoLateral(target, false)
 			return nil, err
 		}
 		if err := nameConflict(sc.items, r); err != nil {
+			setNoLateral(target, false)
 			return nil, err
 		}
 		sc.items = append(sc.items, r)
 	}
+	setNoLateral(target, false)
 	if err := a.boolClause(del.WhereClause, sc, "WHERE"); err != nil {
 		return nil, err
 	}
@@ -1743,45 +1849,26 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	var target *rte
 	var err *Error
 	if writes {
+		if orig := a.s.Relation(m.Relation.Schemaname, m.Relation.Relname); orig != nil {
+			var actions []string
+			seen := map[string]bool{}
+			for _, wn := range m.MergeWhenClauses {
+				cmd := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert into", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete from"}[wn.GetMergeWhenClause().CommandType]
+				if cmd != "" && !seen[cmd] {
+					seen[cmd] = true
+					actions = append(actions, cmd)
+				}
+			}
+			if err := a.mergeTargetCheck(orig, actions, m.Relation.Location); err != nil {
+				return nil, err
+			}
+		}
 		rel, target, err = a.writeTarget(m.Relation, sc, "merge into")
 	} else {
 		rel, target, err = a.targetRTE(m.Relation, sc)
 	}
 	if err != nil {
 		return nil, err
-	}
-	if orig := a.s.Relation(m.Relation.Schemaname, m.Relation.Relname); orig != nil && writes {
-		// MERGE refuses an action kind that has a rule, and a view whose INSTEAD OF triggers
-		// cover only some of the action kinds used (a computed view column fails where an
-		// action assigns it)
-		used := map[string]bool{}
-		for _, wn := range m.MergeWhenClauses {
-			switch wn.GetMergeWhenClause().CommandType {
-			case pg_query.CmdType_CMD_INSERT:
-				used["insert into"] = true
-			case pg_query.CmdType_CMD_UPDATE:
-				used["update"] = true
-			case pg_query.CmdType_CMD_DELETE:
-				used["delete from"] = true
-			}
-		}
-		covered, uncovered := 0, 0
-		for cmd := range used {
-			ev := map[string]string{"insert into": "insert", "update": "update", "delete from": "delete"}[cmd]
-			if orig.RuleEvents[ev] {
-				return nil, errAt(codeFeatureNotSupported, m.Relation.Location, "cannot execute MERGE on relation %q", orig.Name)
-			}
-			if orig.Kind == schema.View {
-				if a.hasInsteadOfTrigger(orig, cmd) {
-					covered++
-				} else {
-					uncovered++
-				}
-			}
-		}
-		if covered > 0 && uncovered > 0 {
-			return nil, errAt(codeFeatureNotSupported, m.Relation.Location, "cannot execute MERGE on relation %q", orig.Name)
-		}
 	}
 	source, err := a.fromItem(m.SourceRelation, sc)
 	if err != nil {
@@ -1916,7 +2003,7 @@ func (a *analyzer) expandCompositeStar(ind *pg_query.A_Indirection, sc *scope) (
 			return cols, nil
 		}
 	}
-	t := a.typ(e.oid())
+	t := a.typ(a.baseType(e.oid())) // a domain over a composite expands like the composite
 	if t == nil || t.Kind != 'c' {
 		return nil, errAt(codeWrongObjectType, loc(ind.Arg), "type %s is not composite", a.s.Types.Format(e.typ))
 	}
@@ -2043,7 +2130,8 @@ func (a *analyzer) xmlTable(x *pg_query.RangeTableFunc, sc *scope) (*rte, *Error
 // element or field.
 func (a *analyzer) indirectTarget(col *schema.Column, ind []*pg_query.Node, at int32) (*schema.Column, *Error) {
 	cur := a.baseType(col.Type.OID)
-	for _, n := range ind {
+	for i := 0; i < len(ind); i++ {
+		n := ind[i]
 		switch v := n.Node.(type) {
 		case *pg_query.Node_AIndices:
 			if cur == catalog.JSONB {
@@ -2053,7 +2141,15 @@ func (a *analyzer) indirectTarget(col *schema.Column, ind []*pg_query.Node, at i
 			if t == nil || t.Elem == 0 {
 				return nil, errAt(codeDatatypeMismatch, at, "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(ref(cur)))
 			}
-			if !v.AIndices.IsSlice {
+			// consecutive subscripts address one (multidimensional) array: the element
+			// type once, whatever their number, unless every one is a slice
+			// (transformContainerSubscripts)
+			slice := v.AIndices.IsSlice
+			for i+1 < len(ind) && ind[i+1].GetAIndices() != nil {
+				i++
+				slice = slice && ind[i].GetAIndices().IsSlice
+			}
+			if !slice {
 				cur = a.baseType(t.Elem)
 			}
 		case *pg_query.Node_String_:

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -160,8 +161,12 @@ type Relation struct {
 	// RuleInsertSelect: write commands with a DO INSTEAD INSERT ... SELECT action (0A000
 	// when the query also has data-modifying WITH items).
 	RuleInsertSelect map[string]bool
-	// RuleNames maps each rule's name to its event, so DROP RULE can reset the event.
+	// RuleNames maps each enabled rule's name to its event.
 	RuleNames map[string]string
+	// rules are the relation's rules by name; rulesOff the disabled ones. The Rule* maps
+	// are derived from them (rebuildRules).
+	rules    map[string]*pg_query.RuleStmt
+	rulesOff map[string]bool
 	// RuleEvents: the write commands ("insert" / "update" / "delete") that have any rule
 	// on the relation (MERGE refuses an action kind that has one).
 	RuleEvents map[string]bool
@@ -613,68 +618,12 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 	case *pg_query.Node_RuleStmt:
 		// a DO INSTEAD rule on a view for INSERT / UPDATE / DELETE makes the view take that write
 		r := st.RuleStmt
-		event := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete"}[r.Event]
-		if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil && event != "" {
-			if r.Replace || rel.RuleNames[r.Rulename] != "" {
-				rel.clearRules(event) // CREATE OR REPLACE RULE: the event's rule is this one now
+		if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil {
+			if rel.rules == nil {
+				rel.rules = map[string]*pg_query.RuleStmt{}
 			}
-			if rel.RuleNames == nil {
-				rel.RuleNames = map[string]string{}
-			}
-			rel.RuleNames[r.Rulename] = event
-			if rel.RuleEvents == nil {
-				rel.RuleEvents = map[string]bool{}
-			}
-			rel.RuleEvents[event] = true
-			set := func(m *map[string]bool) {
-				if *m == nil {
-					*m = map[string]bool{}
-				}
-				(*m)[event] = true
-			}
-			single := r.Instead && r.WhereClause == nil && len(r.Actions) == 1
-			var dml bool
-			if single {
-				switch act := r.Actions[0].Node.(type) {
-				case *pg_query.Node_InsertStmt:
-					dml = true
-					if q := act.InsertStmt.SelectStmt.GetSelectStmt(); q != nil && len(q.ValuesLists) == 0 {
-						set(&rel.RuleInsertSelect)
-					}
-					if len(act.InsertStmt.ReturningList) == 0 {
-						set(&rel.RuleNoReturning)
-					}
-				case *pg_query.Node_UpdateStmt:
-					dml = true
-					if len(act.UpdateStmt.ReturningList) == 0 {
-						set(&rel.RuleNoReturning)
-					}
-				case *pg_query.Node_DeleteStmt:
-					dml = true
-					if len(act.DeleteStmt.ReturningList) == 0 {
-						set(&rel.RuleNoReturning)
-					}
-				}
-			}
-			if r.Instead && r.WhereClause == nil && len(r.Actions) == 0 {
-				set(&rel.RuleNoReturning) // DO INSTEAD NOTHING
-			}
-			if !(single && dml) {
-				set(&rel.RuleCTEUnsupported)
-			}
-			if r.Instead && rel.Kind == View {
-				if r.WhereClause == nil {
-					if rel.InsteadRules == nil {
-						rel.InsteadRules = map[string]bool{}
-					}
-					rel.InsteadRules[event] = true
-				} else {
-					if rel.QualifiedRules == nil {
-						rel.QualifiedRules = map[string]bool{}
-					}
-					rel.QualifiedRules[event] = true
-				}
-			}
+			rel.rules[r.Rulename] = r // CREATE OR REPLACE RULE: the name's rule is this one now
+			rel.rebuildRules()
 		}
 	case *pg_query.Node_CreateSeqStmt:
 		s.createSequence(st.CreateSeqStmt.Sequence, loc)
@@ -1287,6 +1236,43 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				}
 				s.createOwnedSequence(rel, col.Name, loc)
 			}
+		case pg_query.AlterTableType_AT_EnableRule, pg_query.AlterTableType_AT_EnableAlwaysRule:
+			rel.setRuleEnabled(cmd.Name, true)
+		case pg_query.AlterTableType_AT_DisableRule, pg_query.AlterTableType_AT_EnableReplicaRule:
+			rel.setRuleEnabled(cmd.Name, false)
+		case pg_query.AlterTableType_AT_AddInherit, pg_query.AlterTableType_AT_DropInherit:
+			// the child already has the parent's columns; only the link changes (a child
+			// goes with DROP TABLE parent CASCADE, ALTER TABLE parent reaches it)
+			pschema, pname := s.rangeVar(cmd.Def.GetRangeVar())
+			parent := s.relByName[pschema+"."+pname]
+			if parent == nil {
+				s.problem(loc, "%s: relation %q does not exist", rel.Name, pname)
+				continue
+			}
+			if cmd.Subtype == pg_query.AlterTableType_AT_AddInherit {
+				rel.Parents = append(rel.Parents, parent)
+				for _, pc := range parent.Columns {
+					if c := rel.Column(pc.Name); c != nil {
+						c.Inherited = true
+					}
+				}
+			} else {
+				var kept []*Relation
+				for _, p := range rel.Parents {
+					if p != parent {
+						kept = append(kept, p)
+					}
+				}
+				rel.Parents = kept
+				for _, c := range rel.Columns {
+					c.Inherited = false
+					for _, p := range rel.Parents {
+						if p.Column(c.Name) != nil {
+							c.Inherited = true
+						}
+					}
+				}
+			}
 		case pg_query.AlterTableType_AT_AttachPartition, pg_query.AlterTableType_AT_DetachPartition:
 			pc := cmd.Def.GetPartitionCmd()
 			pschema, pname := s.rangeVar(pc.GetName())
@@ -1356,10 +1342,9 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			pg_query.AlterTableType_AT_ValidateConstraint, pg_query.AlterTableType_AT_ReplicaIdentity, pg_query.AlterTableType_AT_SetLogged,
 			pg_query.AlterTableType_AT_SetUnLogged, pg_query.AlterTableType_AT_SetTableSpace, pg_query.AlterTableType_AT_SetStorage,
 			pg_query.AlterTableType_AT_SetCompression, pg_query.AlterTableType_AT_AlterConstraint, pg_query.AlterTableType_AT_ResetRelOptions,
-			pg_query.AlterTableType_AT_AddInherit, pg_query.AlterTableType_AT_DropInherit, pg_query.AlterTableType_AT_SetAccessMethod,
+			pg_query.AlterTableType_AT_SetAccessMethod,
 			pg_query.AlterTableType_AT_NoForceRowSecurity, pg_query.AlterTableType_AT_DisableRowSecurity,
-			pg_query.AlterTableType_AT_EnableRule, pg_query.AlterTableType_AT_DisableRule,
-			pg_query.AlterTableType_AT_EnableAlwaysRule, pg_query.AlterTableType_AT_EnableReplicaRule, pg_query.AlterTableType_AT_DropOids,
+			pg_query.AlterTableType_AT_DropOids,
 			pg_query.AlterTableType_AT_SetOptions, pg_query.AlterTableType_AT_ResetOptions, pg_query.AlterTableType_AT_GenericOptions,
 			pg_query.AlterTableType_AT_AlterColumnGenericOptions, pg_query.AlterTableType_AT_SetExpression:
 		default:
@@ -1816,17 +1801,99 @@ func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
 	}
 }
 
-// clearRules forgets what the rules on event made of the relation (a rule being replaced
-// or dropped; with several rules on one event this over-clears).
-func (rel *Relation) clearRules(event string) {
-	for _, m := range []map[string]bool{rel.RuleEvents, rel.InsteadRules, rel.QualifiedRules, rel.RuleNoReturning, rel.RuleCTEUnsupported, rel.RuleInsertSelect} {
-		delete(m, event)
+// rebuildRules recomputes what the relation's enabled rules make of it (a rule created,
+// replaced, dropped, disabled or enabled). A rule disabled or firing only on replicas
+// (ALTER TABLE ... DISABLE / ENABLE REPLICA RULE) is not there for the rewriter.
+func (rel *Relation) rebuildRules() {
+	rel.RuleNames, rel.RuleEvents, rel.InsteadRules, rel.QualifiedRules, rel.RuleNoReturning, rel.RuleCTEUnsupported, rel.RuleInsertSelect = nil, nil, nil, nil, nil, nil, nil
+	names := make([]string, 0, len(rel.rules))
+	for n := range rel.rules {
+		names = append(names, n)
 	}
-	for name, ev := range rel.RuleNames {
-		if ev == event {
-			delete(rel.RuleNames, name)
+	sort.Strings(names)
+	for _, n := range names {
+		if !rel.rulesOff[n] {
+			rel.applyRule(rel.rules[n])
 		}
 	}
+}
+
+// applyRule records one enabled rule.
+func (rel *Relation) applyRule(r *pg_query.RuleStmt) {
+	event := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete"}[r.Event]
+	if event == "" {
+		return
+	}
+	if rel.RuleNames == nil {
+		rel.RuleNames = map[string]string{}
+	}
+	rel.RuleNames[r.Rulename] = event
+	if rel.RuleEvents == nil {
+		rel.RuleEvents = map[string]bool{}
+	}
+	rel.RuleEvents[event] = true
+	set := func(m *map[string]bool) {
+		if *m == nil {
+			*m = map[string]bool{}
+		}
+		(*m)[event] = true
+	}
+	single := r.Instead && r.WhereClause == nil && len(r.Actions) == 1
+	var dml bool
+	if single {
+		switch act := r.Actions[0].Node.(type) {
+		case *pg_query.Node_InsertStmt:
+			dml = true
+			if q := act.InsertStmt.SelectStmt.GetSelectStmt(); q != nil && len(q.ValuesLists) == 0 {
+				set(&rel.RuleInsertSelect)
+			}
+			if len(act.InsertStmt.ReturningList) == 0 {
+				set(&rel.RuleNoReturning)
+			}
+		case *pg_query.Node_UpdateStmt:
+			dml = true
+			if len(act.UpdateStmt.ReturningList) == 0 {
+				set(&rel.RuleNoReturning)
+			}
+		case *pg_query.Node_DeleteStmt:
+			dml = true
+			if len(act.DeleteStmt.ReturningList) == 0 {
+				set(&rel.RuleNoReturning)
+			}
+		}
+	}
+	if r.Instead && r.WhereClause == nil && len(r.Actions) == 0 {
+		set(&rel.RuleNoReturning) // DO INSTEAD NOTHING
+	}
+	if !(single && dml) {
+		set(&rel.RuleCTEUnsupported)
+	}
+	if r.Instead && rel.Kind == View {
+		if r.WhereClause == nil {
+			if rel.InsteadRules == nil {
+				rel.InsteadRules = map[string]bool{}
+			}
+			rel.InsteadRules[event] = true
+		} else {
+			if rel.QualifiedRules == nil {
+				rel.QualifiedRules = map[string]bool{}
+			}
+			rel.QualifiedRules[event] = true
+		}
+	}
+}
+
+// setRuleEnabled is ALTER TABLE ... ENABLE / DISABLE RULE.
+func (rel *Relation) setRuleEnabled(name string, enabled bool) {
+	if rel.rulesOff == nil {
+		rel.rulesOff = map[string]bool{}
+	}
+	if enabled {
+		delete(rel.rulesOff, name)
+	} else {
+		rel.rulesOff[name] = true
+	}
+	rel.rebuildRules()
 }
 
 // createOwnedSequence is the implicit sequence of a serial / identity column.

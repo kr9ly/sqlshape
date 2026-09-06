@@ -135,6 +135,8 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		if !validSnapshot(s) {
 			return bad(map[catalog.OID]string{catalog.PgSnapshot: "pg_snapshot", catalog.TxidSnapshot: "txid_snapshot"}[base])
 		}
+	case catalog.TSVector:
+		return validateTsvectorLiteral(v, loc)
 	case catalog.Bool:
 		switch strings.ToLower(v) {
 		case "t", "true", "f", "false", "y", "yes", "n", "no", "on", "off", "1", "0", "tr", "tru", "fa", "fal", "fals", "ye", "of":
@@ -927,6 +929,61 @@ func validateBitConst(s string, loc int32) *Error {
 		}
 		if !hex && ch != '0' && ch != '1' {
 			return errAt("22P02", loc, "%q is not a valid binary digit", string(ch))
+		}
+	}
+	return nil
+}
+
+// validateTsvectorLiteral is the shape of tsvector_in it is safe to enforce: a quoted
+// lexeme must not be empty and must be closed; the position list after ':' is not checked.
+func validateTsvectorLiteral(s string, loc int32) *Error {
+	bad := func() *Error { return errAt(codeSyntaxError, loc, "syntax error in tsvector: %q", s) }
+	i := 0
+	for i < len(s) {
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		if s[i] == '\'' {
+			i++
+			content := false
+			for {
+				if i >= len(s) {
+					return bad()
+				}
+				if s[i] == '\\' {
+					i += 2
+					content = true
+					continue
+				}
+				if s[i] == '\'' {
+					if i+1 < len(s) && s[i+1] == '\'' {
+						i += 2
+						content = true
+						continue
+					}
+					break
+				}
+				i++
+				content = true
+			}
+			if !content {
+				return bad()
+			}
+			i++
+		} else {
+			for i < len(s) && s[i] != ' ' && s[i] != ':' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r' {
+				if s[i] == '\\' {
+					i++
+				}
+				i++
+			}
+		}
+		// an optional position list: up to the next white space
+		for i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r' {
+			i++
 		}
 	}
 	return nil

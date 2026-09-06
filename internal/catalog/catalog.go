@@ -78,6 +78,7 @@ const (
 	UUID                    OID = 2950
 	JSONB                   OID = 3802
 	JSONPath                OID = 4072
+	TSVector                OID = 3614
 	AnyRange                OID = 3831
 	AnyCompatible           OID = 5077
 	AnyCompatibleArray      OID = 5078
