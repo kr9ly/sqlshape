@@ -87,6 +87,15 @@ indexed as consumers of the columns a change drops or retypes. pg_dump is needed
 (or $SQLSHAPE_PG_DUMP); its major version must be at least the server's.
 `
 
+// server is the embedded PostgreSQL the comparisons run on.
+type server interface {
+	dump.Canonicalizer
+	Close() error
+}
+
+// newServer boots one; tests share one across commands.
+var newServer = func(ctx context.Context) (server, error) { return dump.NewServer(ctx) }
+
 // finding is a result the command reports rather than a failure to run: exit code 1.
 type finding struct{ msg string }
 
@@ -130,7 +139,7 @@ type target struct {
 }
 
 // loadTarget reads the schema text at path and canonicalizes it on srv.
-func loadTarget(ctx context.Context, srv *dump.Server, path string) (*target, error) {
+func loadTarget(ctx context.Context, srv server, path string) (*target, error) {
 	text, err := schema.ReadSource(path)
 	if err != nil {
 		return nil, err

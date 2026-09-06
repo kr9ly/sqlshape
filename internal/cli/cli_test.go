@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +14,35 @@ import (
 	"github.com/kr9ly/sqlshape/internal/oracle"
 )
 
+// one embedded server for every command of the test binary (each command would boot
+// its own); Close is deferred to TestMain
+var shared *dump.Server
+
+func TestMain(m *testing.M) {
+	if _, err := exec.LookPath(dump.Binary()); err == nil {
+		srv, err := dump.NewServer(context.Background())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		shared = srv
+		newServer = func(context.Context) (server, error) { return sharedServer{srv}, nil }
+	}
+	code := m.Run()
+	if shared != nil {
+		shared.Close()
+	}
+	os.Exit(code)
+}
+
+// sharedServer is the shared server with a Close that does nothing.
+type sharedServer struct{ *dump.Server }
+
+func (sharedServer) Close() error { return nil }
+
 func requirePgDump(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath(dump.Binary()); err != nil {
+	if shared == nil {
 		t.Skipf("%s not found", dump.Binary())
 	}
 }

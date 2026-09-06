@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -75,8 +77,16 @@ func (e *PgError) Error() string {
 }
 
 // Start boots a fresh PostgreSQL, applies schemaSQL, and returns a ready Oracle.
-// Binaries are cached under ~/.embedded-postgres-go across runs; data lives in a temp dir.
+//
+// Booting is made cheap by a cache (see cacheDir): the binaries are extracted once, and
+// the data directory is a copy of one initialized once, so a Start costs a directory copy
+// and a server start rather than an archive extraction and an initdb (~0.3s instead of
+// ~4s). Data lives in a temp dir removed by Close.
 func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
+	cache, err := ensureCache()
+	if err != nil {
+		return nil, err
+	}
 	port, err := freePort()
 	if err != nil {
 		return nil, err
@@ -85,24 +95,14 @@ func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := embeddedpostgres.DefaultConfig().
-		Version(Version).
-		Port(uint32(port)).
-		RuntimePath(runtimePath).
-		Database("sqlshape").
-		Username("sqlshape").
-		Password("sqlshape").
-		// a throwaway server: durability only costs time (the regress probe runs many
-		// sessions at once, and every fsync serializes them)
-		StartParameters(map[string]string{"fsync": "off", "synchronous_commit": "off", "full_page_writes": "off", "max_connections": "50"}).
-		Logger(nil)
-	if path := os.Getenv("SQLSHAPE_ORACLE_LOG"); path != "" {
-		// the server log, for tracking down backend crashes in the regress probe
-		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
-			cfg = cfg.Logger(f)
-		}
+	// embedded-postgres empties its runtime path on Start, so the data directory sits
+	// beside it, not inside
+	dataPath := filepath.Join(runtimePath, "data")
+	if err := copyDir(filepath.Join(cache, "data"), dataPath); err != nil {
+		os.RemoveAll(runtimePath)
+		return nil, fmt.Errorf("copy data directory: %w", err)
 	}
-	pg := embeddedpostgres.NewDatabase(cfg)
+	pg := embeddedpostgres.NewDatabase(config(cache, filepath.Join(runtimePath, "runtime"), dataPath, port))
 	if err := pg.Start(); err != nil {
 		os.RemoveAll(runtimePath)
 		return nil, fmt.Errorf("start embedded postgres: %w", err)
@@ -123,6 +123,125 @@ func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
 		}
 	}
 	return o, nil
+}
+
+// config is the embedded-postgres configuration: binaries from cache, data at dataPath.
+func config(cache, runtimePath, dataPath string, port int) embeddedpostgres.Config {
+	cfg := embeddedpostgres.DefaultConfig().
+		Version(Version).
+		Port(uint32(port)).
+		BinariesPath(cache).
+		RuntimePath(runtimePath).
+		DataPath(dataPath).
+		Database("sqlshape").
+		Username("sqlshape").
+		Password("sqlshape").
+		// a throwaway server: durability only costs time (the regress probe runs many
+		// sessions at once, and every fsync serializes them)
+		StartParameters(map[string]string{"fsync": "off", "synchronous_commit": "off", "full_page_writes": "off", "max_connections": "50"}).
+		Logger(nil)
+	if path := os.Getenv("SQLSHAPE_ORACLE_LOG"); path != "" {
+		// the server log, for tracking down backend crashes in the regress probe
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			cfg = cfg.Logger(f)
+		}
+	}
+	return cfg
+}
+
+// cacheDir is where the extracted binaries and the template data directory live:
+// $SQLSHAPE_PG_CACHE, else <user cache dir>/sqlshape/pg-<version>.
+func cacheDir() (string, error) {
+	if p := os.Getenv("SQLSHAPE_PG_CACHE"); p != "" {
+		return p, nil
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "sqlshape", "pg-"+string(Version)), nil
+}
+
+// ensureCache fills the cache on first use: the binaries (embedded-postgres downloads
+// and extracts them) and a data directory initialized with the sqlshape user and
+// database, taken by starting a server once and stopping it. A lock file serializes
+// processes racing for the first fill; a marker file says the fill completed.
+func ensureCache() (string, error) {
+	dir, err := cacheDir()
+	if err != nil {
+		return "", err
+	}
+	marker := filepath.Join(dir, ".complete")
+	if _, err := os.Stat(marker); err == nil {
+		return dir, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return "", err
+	}
+	lock, err := os.OpenFile(dir+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	if err := lockFile(lock); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(marker); err == nil {
+		return dir, nil // another process filled it while we waited
+	}
+	// a partial fill (a crash mid-extraction) must not be taken for a complete one
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	port, err := freePort()
+	if err != nil {
+		return "", err
+	}
+	tmpRuntime, err := os.MkdirTemp("", "sqlshape-oracle-init-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpRuntime)
+	pg := embeddedpostgres.NewDatabase(config(dir, tmpRuntime, filepath.Join(dir, "data"), port))
+	if err := pg.Start(); err != nil {
+		return "", fmt.Errorf("initialize embedded postgres: %w", err)
+	}
+	if err := pg.Stop(); err != nil {
+		return "", fmt.Errorf("stop embedded postgres after initialization: %w", err)
+	}
+	if err := os.WriteFile(marker, []byte(string(Version)+"\n"), 0o644); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// copyDir copies the tree at src to dst (regular files and directories, modes kept).
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
 
 // Close stops PostgreSQL and removes its data directory.

@@ -38,7 +38,7 @@ func runDiff(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	srv, err := dump.NewServer(ctx)
+	srv, err := newServer(ctx)
 	if err != nil {
 		return err
 	}
