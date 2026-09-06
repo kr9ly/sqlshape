@@ -22,8 +22,9 @@ func typeText(s *schema.Schema, c *schema.Column) string {
 	return t
 }
 
-// columnText renders a column definition for ADD COLUMN.
-func columnText(s *schema.Schema, c *schema.Column) string {
+// columnText renders a column definition for ADD COLUMN (notNull false leaves the NOT
+// NULL off, for a column that is backfilled first).
+func columnText(s *schema.Schema, c *schema.Column, notNull bool) string {
 	var b strings.Builder
 	b.WriteString(q(c.Name) + " " + typeText(s, c))
 	if c.Generated != nil {
@@ -35,7 +36,7 @@ func columnText(s *schema.Schema, c *schema.Column) string {
 	if c.Default != nil {
 		b.WriteString(" DEFAULT " + schema.Deparse(c.Default))
 	}
-	if c.NotNull {
+	if c.NotNull && notNull {
 		b.WriteString(" NOT NULL")
 	}
 	return b.String()

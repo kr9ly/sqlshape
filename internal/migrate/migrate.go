@@ -16,22 +16,41 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/diff"
 	"github.com/kr9ly/sqlshape/internal/dump"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
-// Plan lists the statements that turn from into to: drops (dependents first), then
-// alterations, then additions in the target's order.
-func Plan(from, to *schema.Schema) []string {
-	p := &planner{from: from, to: to, recreated: map[string]bool{}}
+// Plan lists the statements that turn from into to: drops (dependents first), the
+// declared renames, then alterations, then additions in the target's order. The intents
+// (ParseIntents of the target's source) decide what the diff cannot: a table or column
+// that disappears must be declared dropped or renamed, an enum label that disappears
+// must say which label its values become, and backfills fill new columns before they
+// turn NOT NULL. The error lists every declaration the schemas do not bear out and every
+// change no declaration explains; the DDL is still returned for reading.
+func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
+	p := &planner{from: from, to: to, recreated: map[string]bool{}, backfilled: map[string]bool{}}
+	p.readIntents(list)
+	p.enumRecreates()
 	p.drops()
+	p.renames()
 	p.alters()
 	p.adds()
-	return p.out
+	if len(p.in.problems) > 0 {
+		return p.out, errors.New(strings.Join(p.in.problems, "\n"))
+	}
+	return p.out, nil
+}
+
+// check type-checks a data statement of the plan against the target schema.
+func (p *planner) check(sql string) error {
+	_, err := analyze.Analyze(p.to, sql)
+	return err
 }
 
 // Verify applies ddl to a fresh database holding currentSQL and lists what still
@@ -60,6 +79,14 @@ type planner struct {
 	out      []string
 	// recreated are relations dropped in the drop phase that the add phase creates anew
 	recreated map[string]bool
+	in        *intents
+	// fromRels / toRels cache relations(); backfilled marks "rel.col" backfills emitted
+	fromRels, toRels map[string]*schema.Relation
+	backfilled       map[string]bool
+	// enumRecreate: enums whose labels shrink, recreated under the same name with the
+	// declared label mapping; the tables whose columns carry them, and the views over
+	// those tables (dropped first, created anew)
+	enumRecreate map[string]diff.UserType
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -169,15 +196,15 @@ func (p *planner) drops() {
 	// parts of relations that survive: triggers, rules, indexes, constraints
 	for _, n := range sortedKeys(fromTrg) {
 		t := fromTrg[n]
-		if toRels[t.Table] == nil {
+		if toRels[p.toName(t.Table)] == nil {
 			continue // goes with the table
 		}
-		if tt := toTrg[n]; tt == nil || !same(p.from, p.to, t, tt) {
+		if tt := toTrg[p.toName(t.Table)+"."+t.Name]; tt == nil || !same(p.from, p.to, t, tt) {
 			p.emit("DROP TRIGGER %s ON %s", q(t.Name), qrel(fromRels[t.Table]))
 		}
 	}
 	for _, r := range fromOrder {
-		tr := toRels[r.FullName()]
+		tr := p.toOf(r)
 		if tr == nil || tr.Kind != r.Kind {
 			continue
 		}
@@ -213,12 +240,14 @@ func (p *planner) drops() {
 		if r.Kind != schema.View && r.Kind != schema.MatView {
 			continue
 		}
-		tr := toRels[r.FullName()]
-		if tr != nil && tr.Kind == r.Kind && (same(p.from, p.to, r, tr) || r.Kind == schema.View && replaceable(p.from, p.to, r, tr)) {
+		tr := p.toOf(r)
+		if tr != nil && tr.Kind == r.Kind && !p.recreated[tr.FullName()] && (same(p.from, p.to, r, tr) || r.Kind == schema.View && replaceable(p.from, p.to, r, tr)) {
 			continue // a view that only grows is replaced in place; otherwise recreated
 		}
 		p.emit("DROP %s %s", relWord(r), qrel(r))
-		p.recreated[r.FullName()] = true
+		if tr != nil {
+			p.recreated[tr.FullName()] = true
+		}
 	}
 	for _, n := range sortedKeys(fromFns) {
 		if toFns[n] == nil {
@@ -227,13 +256,16 @@ func (p *planner) drops() {
 	}
 	// columns of tables that survive
 	for _, r := range fromOrder {
-		tr := toRels[r.FullName()]
+		tr := p.toOf(r)
 		if tr == nil || r.Kind != schema.Table || tr.Kind != schema.Table {
 			continue
 		}
 		toCols := columnsOf(tr)
 		for _, c := range r.Columns {
-			if toCols[c.Name] == nil {
+			if toCols[p.toCol(r, c.Name)] == nil {
+				if !p.in.dropOK[r.FullName()+"."+c.Name] {
+					p.problem("column %s.%s is dropped, which no @migrate declares: add `-- @migrate drop %s.%s` or `-- @migrate rename %s.%s -> ...`", r.FullName(), c.Name, r.FullName(), c.Name, r.FullName(), c.Name)
+				}
 				p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
 			}
 		}
@@ -248,11 +280,14 @@ func (p *planner) drops() {
 		if r.Kind == schema.Sequence && r.OwnedBy != "" {
 			continue // goes with its column
 		}
-		if tr := toRels[r.FullName()]; tr == nil || tr.Kind != r.Kind {
+		if tr := p.toOf(r); tr == nil || tr.Kind != r.Kind {
 			gone = append(gone, r)
 		}
 	}
 	for _, r := range fkOrder(gone) {
+		if r.Kind == schema.Table && !p.in.dropOK[r.FullName()] {
+			p.problem("table %s is dropped, which no @migrate declares: add `-- @migrate drop %s` or `-- @migrate rename %s -> ...`", r.FullName(), r.FullName(), r.FullName())
+		}
 		p.emit("DROP %s %s", relWord(r), qrel(r))
 	}
 	// types
@@ -290,16 +325,16 @@ func (p *planner) alters() {
 		p.alterType(n, f, t)
 	}
 
-	fromRels, _ := relations(p.from)
 	_, toOrder := relations(p.to)
 	for _, r := range toOrder {
-		f := fromRels[r.FullName()]
+		f := p.fromOf(r)
 		if f == nil || f.Kind != r.Kind {
 			continue
 		}
 		switch r.Kind {
 		case schema.Table:
 			p.alterTable(f, r)
+			p.backfillsLeft(r, f)
 		case schema.View:
 			if !same(p.from, p.to, f, r) && replaceable(p.from, p.to, f, r) {
 				p.emit("%s", strings.Replace(r.Definition, "CREATE VIEW", "CREATE OR REPLACE VIEW", 1))
@@ -348,7 +383,12 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 			}
 		}
 		if len(gone) > 0 {
-			p.note("enum %s: labels %s are removed; PostgreSQL cannot drop enum labels (declare the mapping with @migrate)", name, strings.Join(gone, ", "))
+			if _, ok := p.enumRecreate[name]; ok {
+				p.recreateEnum(name, f, t)
+			} else {
+				p.problem("enum %s: labels %s are removed, which no @migrate declares: add `-- @migrate enum %s: drop '<label>' using '<label>'` for each", name, strings.Join(gone, ", "), name)
+			}
+			return
 		}
 		had := set(from)
 		for i, l := range to {
@@ -412,12 +452,12 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 func (p *planner) alterTable(f, r *schema.Relation) {
 	fromCols := columnsOf(f)
 	for _, c := range r.Columns {
-		fc := fromCols[c.Name]
+		fc := fromCols[p.fromCol(r, c.Name)]
 		if fc == nil {
 			continue // added below
 		}
 		fp, tp := colProps(p.from, fc), colProps(p.to, c)
-		if fp["type"] != tp["type"] {
+		if fp["type"] != tp["type"] && !p.enumColumn(fc) {
 			p.emit("ALTER TABLE %s ALTER COLUMN %s TYPE %s", qrel(r), q(c.Name), typeText(p.to, c))
 		}
 		if fp["default"] != tp["default"] {
@@ -429,6 +469,7 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 		}
 		if fp["not null"] != tp["not null"] {
 			if c.NotNull {
+				p.backfill(r, c.Name)
 				p.emit("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", qrel(r), q(c.Name))
 			} else {
 				p.emit("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL", qrel(r), q(c.Name))
@@ -450,7 +491,7 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 			} else {
 				// a generation expression cannot be added or changed in place
 				p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
-				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c))
+				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, true))
 			}
 		}
 	}
@@ -509,11 +550,11 @@ func (p *planner) adds() {
 			p.emit("%s", fn.Definition)
 		}
 	}
-	fromRels, _ := relations(p.from)
+	fromRels := p.rels(p.from)
 	toRels, toOrder := relations(p.to)
 	// relations in declaration order, with their columns
 	for _, r := range toOrder {
-		f := fromRels[r.FullName()]
+		f := p.fromOf(r)
 		if p.recreated[r.FullName()] {
 			f = nil
 		}
@@ -546,15 +587,23 @@ func (p *planner) adds() {
 		}
 		fromCols := columnsOf(f)
 		for _, c := range r.Columns {
-			if fromCols[c.Name] == nil {
-				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c))
+			if fromCols[p.fromCol(r, c.Name)] == nil {
+				if c.NotNull && len(p.in.backfills[r.FullName()]) > 0 && p.hasBackfill(r, c.Name) {
+					// the rows exist already: add nullable, fill, then constrain
+					p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, false))
+					p.backfill(r, c.Name)
+					p.emit("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", qrel(r), q(c.Name))
+					continue
+				}
+				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, true))
 			}
 		}
+		p.backfillsLeft(r, nil)
 	}
 	// constraints (keys before foreign keys), indexes, triggers, rules
 	for pass := 0; pass < 2; pass++ {
 		for _, r := range toOrder {
-			f := fromRels[r.FullName()]
+			f := p.fromOf(r)
 			var fromCon map[string]*schema.Constraint
 			if f != nil && f.Kind == r.Kind {
 				fromCon = constraints(f)
@@ -579,7 +628,7 @@ func (p *planner) adds() {
 		}
 	}
 	for _, r := range toOrder {
-		f := fromRels[r.FullName()]
+		f := p.fromOf(r)
 		var fromIdx map[string]*schema.Index
 		if f != nil && f.Kind == r.Kind {
 			fromIdx = indexes(f)
@@ -594,13 +643,13 @@ func (p *planner) adds() {
 	}
 	fromTrg := triggers(p.from)
 	for _, t := range p.to.Triggers {
-		if ft := fromTrg[t.Table+"."+t.Name]; ft != nil && toRels[t.Table] != nil && fromRels[t.Table] != nil && same(p.from, p.to, ft, t) {
+		if ft := fromTrg[p.fromName(t.Table)+"."+t.Name]; ft != nil && toRels[t.Table] != nil && fromRels[p.fromName(t.Table)] != nil && !p.recreated[t.Table] && same(p.from, p.to, ft, t) {
 			continue
 		}
 		p.emit("%s", t.Definition)
 	}
 	for _, r := range toOrder {
-		f := fromRels[r.FullName()]
+		f := p.fromOf(r)
 		var fromRules map[string]schema.RuleDef
 		if f != nil && f.Kind == r.Kind {
 			fromRules = f.Rules()

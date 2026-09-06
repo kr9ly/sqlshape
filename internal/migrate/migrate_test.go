@@ -17,6 +17,9 @@ import (
 type canonical struct {
 	s    *schema.Schema
 	text string
+	// intents are the @migrate declarations of the source this form was made from: what
+	// the step *into* this state declares
+	intents []Intent
 }
 
 // server is the one PostgreSQL every test in the package canonicalizes on (booting one
@@ -52,20 +55,36 @@ func mustCanonical(t *testing.T, sql string) canonical {
 	if err != nil {
 		t.Fatalf("canonical: %v", err)
 	}
-	return canonical{s, text}
+	in, err := ParseIntents(sql)
+	if err != nil {
+		t.Fatalf("intents: %v", err)
+	}
+	return canonical{s, text, in}
 }
 
-// roundTrip plans from → to, verifies the plan reaches to, and the same backwards.
-func roundTrip(t *testing.T, from, to canonical, oneWay bool) {
+// roundTrip plans from → to with to's declarations, verifies the plan reaches to, and the
+// same backwards with the back declarations.
+func roundTrip(t *testing.T, from, to canonical, back string, oneWay bool) {
 	t.Helper()
+	backIntents, err := ParseIntents(back)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, dir := range []struct {
 		name     string
 		from, to canonical
-	}{{"forward", from, to}, {"backward", to, from}} {
+		intents  []Intent
+	}{{"forward", from, to, to.intents}, {"backward", to, from, backIntents}} {
 		if oneWay && dir.name == "backward" {
 			continue
 		}
-		ddl := strings.Join(Plan(dir.from.s, dir.to.s), "\n")
+		plan, err := Plan(dir.from.s, dir.to.s, dir.intents)
+		ddl := strings.Join(plan, "\n")
+		if err != nil {
+			t.Errorf("%s: plan: %v\nplan:\n%s", dir.name, err, ddl)
+			continue
+		}
+		t.Logf("%s plan:\n%s", dir.name, ddl)
 		changes, _, err := Verify(context.Background(), server, dir.from.text, ddl, dir.to.s)
 		if err != nil {
 			t.Errorf("%s: %v\nplan:\n%s", dir.name, err, ddl)
@@ -94,22 +113,26 @@ func TestPlan(t *testing.T) {
 	requirePgDump(t)
 	cases := []struct {
 		name, base, edit string
-		oneWay           bool // the way back needs an intent declaration
+		back             string // declarations for the way back
+		oneWay           bool   // the way back needs more than the plan can do
 	}{
 		{name: "columns", base: "1-tables", edit: `
+-- @migrate drop order_items.qty
 ALTER TABLE customers ADD COLUMN nickname text DEFAULT 'anon';
 ALTER TABLE customers ADD COLUMN score integer NOT NULL DEFAULT 0;
 ALTER TABLE orders ALTER COLUMN total SET DEFAULT 1;
 ALTER TABLE orders ALTER COLUMN total TYPE numeric(14,2);
 ALTER TABLE customers ALTER COLUMN name DROP NOT NULL;
-ALTER TABLE order_items DROP COLUMN qty;`},
+ALTER TABLE order_items DROP COLUMN qty;`,
+			back: "-- @migrate drop customers.nickname\n-- @migrate drop customers.score"},
 		{name: "tables and keys", base: "1-tables", edit: `
 CREATE TABLE tags (id bigserial PRIMARY KEY, name text NOT NULL UNIQUE);
 CREATE TABLE order_tags (order_id bigint REFERENCES orders ON DELETE CASCADE, tag_id bigint REFERENCES tags, PRIMARY KEY (order_id, tag_id));
 CREATE INDEX order_tags_tag_idx ON order_tags (tag_id) WHERE tag_id > 0;
 ALTER TABLE orders ADD CONSTRAINT orders_total_max CHECK (total < 1000000);
 COMMENT ON TABLE tags IS 'labels';
-COMMENT ON COLUMN tags.name IS 'unique label';`},
+COMMENT ON COLUMN tags.name IS 'unique label';`,
+			back: "-- @migrate drop tags\n-- @migrate drop order_tags"},
 		{name: "types and views", oneWay: true, edit: `
 ALTER TYPE order_status ADD VALUE 'refunded' AFTER 'paid';
 CREATE DOMAIN email AS text CHECK (VALUE LIKE '%@%');
@@ -125,22 +148,108 @@ CREATE RULE orders_protect AS ON DELETE TO orders WHERE old.status = 'shipped' D
 		{name: "everything grows", base: "3-everything", edit: `
 ALTER TABLE core.rooms ADD COLUMN floor integer NOT NULL DEFAULT 1;
 CREATE OR REPLACE VIEW app.rooms AS SELECT tenant_id, id, name, capacity, hourly, 1 AS one FROM core.rooms;
-COMMENT ON COLUMN core.rooms.capacity IS 'seats';`},
+COMMENT ON COLUMN core.rooms.capacity IS 'seats';`,
+			back: "-- @migrate drop core.rooms.floor"},
+		{name: "renames", base: "1-tables", edit: `
+-- @migrate rename customers.name -> customers.full_name
+-- @migrate rename orders -> purchases
+-- @migrate rename orders.total -> purchases.amount
+ALTER TABLE customers RENAME COLUMN name TO full_name;
+ALTER TABLE orders RENAME TO purchases;
+ALTER TABLE purchases RENAME COLUMN total TO amount;
+ALTER TABLE purchases ALTER COLUMN amount TYPE numeric(14,2);`,
+			back: "-- @migrate rename customers.full_name -> customers.name\n-- @migrate rename purchases -> orders\n-- @migrate rename purchases.amount -> orders.total"},
+		{name: "enum label removed", base: "1-tables", edit: `
+-- @migrate enum order_status: drop 'cancelled' using 'pending'
+ALTER TYPE order_status RENAME TO order_status_prev;
+CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped');
+ALTER TABLE orders ALTER COLUMN status DROP DEFAULT;
+ALTER TABLE orders ALTER COLUMN status TYPE order_status USING status::text::order_status;
+ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'pending';
+DROP TYPE order_status_prev;
+CREATE VIEW open_orders AS SELECT id, status FROM orders WHERE status <> 'shipped';`},
+		{name: "backfill", base: "1-tables", edit: `
+-- @migrate backfill customers.tier = 'basic'
+-- @migrate backfill orders.memo = upper(status::text) where memo IS NULL
+ALTER TABLE customers ADD COLUMN tier text NOT NULL;
+ALTER TABLE orders ADD COLUMN memo text;`,
+			back: "-- @migrate drop customers.tier\n-- @migrate drop orders.memo"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			base := example(t, c.base)
-			roundTrip(t, mustCanonical(t, base), mustCanonical(t, base+"\n"+c.edit), c.oneWay)
+			roundTrip(t, mustCanonical(t, base), mustCanonical(t, base+"\n"+c.edit), c.back, c.oneWay)
 		})
+	}
+}
+
+// Declarations the schemas do not bear out, and changes no declaration explains, are
+// errors (the DDL still comes back for reading).
+func TestPlanProblems(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "1-tables")
+	from := mustCanonical(t, base)
+	cases := []struct {
+		name, edit, want string
+	}{
+		{"undeclared column drop", "ALTER TABLE order_items DROP COLUMN qty;", "column order_items.qty is dropped, which no @migrate declares"},
+		{"undeclared table drop", "DROP TABLE order_items;", "table order_items is dropped, which no @migrate declares"},
+		{"stale drop", "-- @migrate drop order_items.qty", "order_items.qty still exists in the target schema"},
+		{"stale rename", "-- @migrate rename customers.name -> customers.full_name", "customers.full_name is not in the target schema"},
+		{"undeclared enum label", `ALTER TYPE order_status RENAME TO o; CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped');
+ALTER TABLE orders ALTER COLUMN status DROP DEFAULT; ALTER TABLE orders ALTER COLUMN status TYPE order_status USING status::text::order_status; DROP TYPE o;`,
+			"enum order_status: labels cancelled are removed, which no @migrate declares"},
+		{"backfill type error", "-- @migrate backfill orders.total = 'abc'\nALTER TABLE orders ALTER COLUMN total SET DEFAULT 2;", "invalid input syntax for type numeric"},
+		{"backfill unknown column", "-- @migrate backfill orders.nope = 1", "orders.nope is not in the target schema"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			to := mustCanonical(t, base+"\n"+c.edit)
+			_, err := Plan(from.s, to.s, to.intents)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v\nwant a problem containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestParseIntents(t *testing.T) {
+	in, err := ParseIntents(`
+-- @migrate rename orders.state -> orders.status
+--@migrate drop core.legacy
+-- @migrate enum order_status: drop 'canceled' using 'cancelled'
+-- @migrate backfill orders.status = 'pending' where status is null
+-- @migrate backfill orders.n = 1
+CREATE TABLE t (id int); -- @migrate not a declaration (not at line start)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, i := range in {
+		got = append(got, fmt.Sprintf("%d:%s", i.Line, i))
+	}
+	want := []string{
+		"2:rename orders.state -> orders.status",
+		"3:drop core.legacy",
+		"4:enum order_status: drop 'canceled' using 'cancelled'",
+		"5:backfill orders.status = 'pending' where status is null",
+		"6:backfill orders.n = 1",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("got  %v\nwant %v", got, want)
+	}
+	if _, err := ParseIntents("-- @migrate frobnicate x"); err == nil {
+		t.Error("unknown declaration accepted")
 	}
 }
 
 func TestPlanEmptyForIdentical(t *testing.T) {
 	requirePgDump(t)
 	s := mustCanonical(t, example(t, "3-everything"))
-	if p := Plan(s.s, s.s); len(p) > 0 {
-		t.Errorf("plan for identical schemas: %v", p)
+	if p, err := Plan(s.s, s.s, nil); len(p) > 0 || err != nil {
+		t.Errorf("plan for identical schemas: %v, %v", p, err)
 	}
 	_ = diff.Compare
 }

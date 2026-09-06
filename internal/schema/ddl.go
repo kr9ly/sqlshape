@@ -1212,6 +1212,35 @@ func (s *Schema) dropDependentViews(rel *Relation) {
 	}
 }
 
+// DependentViews lists the views and materialized views whose defining query names rel,
+// and theirs in turn (what DROP ... CASCADE would take), in declaration order.
+func (s *Schema) DependentViews(rel *Relation) []*Relation {
+	seen := map[*Relation]bool{}
+	var walk func(*Relation)
+	walk = func(target *Relation) {
+		for _, r := range s.Relations {
+			if r.Query == nil || seen[r] {
+				continue
+			}
+			for _, rv := range r.queryRangeVars() {
+				if rv.name == target.Name && (rv.schema == "" || rv.schema == target.Schema) {
+					seen[r] = true
+					walk(r)
+					break
+				}
+			}
+		}
+	}
+	walk(rel)
+	var out []*Relation
+	for _, r := range s.Relations {
+		if seen[r] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // queryRangeVars lists the relations a view's query names, cached per query tree (the
 // reflective walk is what made every DROP expensive).
 func (r *Relation) queryRangeVars() []rangeRef {
