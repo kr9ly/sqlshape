@@ -133,6 +133,9 @@ func (a *analyzer) jsonBehavior(b *pg_query.JsonBehavior, sc *scope, want catalo
 	if b.Btype == pg_query.JsonBehaviorType_JSON_BEHAVIOR_DEFAULT && a.srfIn(b.Expr) {
 		return errAt(codeDatatypeMismatch, loc(b.Expr), "DEFAULT expression must not return a set")
 	}
+	if b.Btype == pg_query.JsonBehaviorType_JSON_BEHAVIOR_DEFAULT && hasVarClause(b.Expr) {
+		return errAt(codeDatatypeMismatch, loc(b.Expr), "DEFAULT expression must not contain column references")
+	}
 	e, err := a.analyzeExpr(b.Expr, sc)
 	if err != nil {
 		return err

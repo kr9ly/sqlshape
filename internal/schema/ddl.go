@@ -53,6 +53,10 @@ func (s *Schema) DateTimeSettings() (dateOrder, intervalStyle, timeZone string) 
 // XMLOptionDocument reports SET xmloption = document (XML literals are documents).
 func (s *Schema) XMLOptionDocument() bool { return s.xmlDocument }
 
+// ViewsRestricted reports SET restrict_nonsystem_relation_kind = view: user views may
+// not be accessed.
+func (s *Schema) ViewsRestricted() bool { return s.restrictViews }
+
 // setVariableValues flattens SET's argument list: constants, identifiers and the
 // comma-separated lists DateStyle accepts inside one string.
 func setVariableValues(st *pg_query.VariableSetStmt) []string {
@@ -113,6 +117,16 @@ func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
 		if !reset {
 			if vs := setVariableValues(st); len(vs) > 0 {
 				s.intervalStyle = strings.ToLower(vs[0])
+			}
+		}
+		return
+	case "restrict_nonsystem_relation_kind":
+		s.restrictViews = false
+		if !reset {
+			for _, v := range setVariableValues(st) {
+				if strings.EqualFold(strings.TrimSpace(v), "view") {
+					s.restrictViews = true
+				}
 			}
 		}
 		return
@@ -425,6 +439,9 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 			}
 			s.removeRelation(rel)
+			if rel.Kind == Table {
+				s.dropOwnedSequences(rel, "")
+			}
 			if st.Behavior == pg_query.DropBehavior_DROP_CASCADE {
 				s.dropDependentViews(rel)
 			}
@@ -656,6 +673,7 @@ func (s *Schema) dropColumn(rel *Relation, name string, loc int32, missingOk boo
 		}
 		return
 	}
+	s.dropOwnedSequences(rel, name)
 	var cols []*Column
 	for _, c := range rel.Columns {
 		if c != col {

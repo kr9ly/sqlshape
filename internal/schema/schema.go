@@ -46,7 +46,8 @@ type Schema struct {
 	searchPath []string // SET search_path, nil = public
 	// datetime input GUCs (SET datestyle / intervalstyle / timezone); "" = PG default
 	dateOrder, intervalStyle, timeZone string
-	xmlDocument                       bool // SET xmloption = document
+	xmlDocument                        bool // SET xmloption = document
+	restrictViews                      bool // SET restrict_nonsystem_relation_kind includes view
 }
 
 // Problem is a DDL statement (or part) that was skipped or rejected.
@@ -83,6 +84,9 @@ type Relation struct {
 	Query Expr
 	// ColumnAliases are explicit column names given to a view (CREATE VIEW v (a, b) AS ...).
 	ColumnAliases []string
+	// ViewDefaults (views): ALTER VIEW ... ALTER COLUMN SET DEFAULT, by column name; an
+	// INSERT through the view uses these in place of the base column's default.
+	ViewDefaults map[string]Expr
 	// Indexes are every index on the table (unique ones also appear in Constraints), for
 	// the advisory "no index leads with a predicate column".
 	Indexes []*Index
@@ -104,6 +108,9 @@ type Relation struct {
 	Parents []*Relation
 	// IsPartition: created as PARTITION OF (dropped with its parent).
 	IsPartition bool
+	// OwnedBy (sequences): "schema.table.column" of the serial / identity column, or the
+	// ALTER SEQUENCE ... OWNED BY target; the sequence goes with the table or column.
+	OwnedBy string
 	// QualifiedRules (views): write commands that have a conditional DO INSTEAD rule
 	// (WHERE ...), which does not make the view take the write but does stop it from
 	// being auto-updatable.
@@ -180,6 +187,8 @@ type Function struct {
 	RetType TypeRef // Record for RETURNS TABLE / OUT params without explicit type
 	RetSet  bool
 	IsProc  bool
+	// IsWindow marks CREATE FUNCTION ... WINDOW (callable with OVER only).
+	IsWindow bool
 	// IsAgg marks a CREATE AGGREGATE (RetType is the final / state type); AggKind is
 	// pg_aggregate.aggkind: n normal, o ordered-set, h hypothetical-set.
 	IsAgg    bool
@@ -530,8 +539,10 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		}
 	case *pg_query.Node_CreateSeqStmt:
 		s.createSequence(st.CreateSeqStmt.Sequence, loc)
+	case *pg_query.Node_AlterSeqStmt:
+		s.alterSequence(st.AlterSeqStmt, loc)
 	case *pg_query.Node_CreateExtensionStmt,
-		*pg_query.Node_GrantStmt, *pg_query.Node_AlterSeqStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt,
+		*pg_query.Node_GrantStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt,
 		*pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
 		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterPolicyStmt, *pg_query.Node_AlterExtensionStmt,
 		*pg_query.Node_CreateEventTrigStmt, *pg_query.Node_AlterEventTrigStmt, *pg_query.Node_CreatePublicationStmt, *pg_query.Node_AlterPublicationStmt,
@@ -792,6 +803,38 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 			s.problem(loc, "table %s: unsupported element %T", name, elt.Node)
 		}
 	}
+	if ps := st.Partspec; ps != nil {
+		if msg := s.partitionSpecProblem(rel, st, ps); msg != "" {
+			s.problem(loc, "table %s: %s", name, msg)
+			s.removeRelation(rel)
+		}
+	}
+}
+
+// partitionSpecProblem is the part of DefineRelation / transformPartitionSpec that needs
+// no expression analysis: PARTITION BY does not combine with INHERITS, LIST takes one
+// key column, and a named key column must be a real (non-system) column of the table.
+func (s *Schema) partitionSpecProblem(rel *Relation, st *pg_query.CreateStmt, ps *pg_query.PartitionSpec) string {
+	if len(st.InhRelations) > 0 && st.Partbound == nil {
+		return "cannot create partitioned table as inheritance child"
+	}
+	if ps.Strategy == pg_query.PartitionStrategy_PARTITION_STRATEGY_LIST && len(ps.PartParams) > 1 {
+		return "cannot use \"list\" partition strategy with more than one column"
+	}
+	for _, pn := range ps.PartParams {
+		pe := pn.GetPartitionElem()
+		if pe == nil || pe.Name == "" {
+			continue
+		}
+		switch pe.Name {
+		case "ctid", "xmin", "xmax", "cmin", "cmax", "tableoid":
+			return fmt.Sprintf("cannot use system column %q in partition key", pe.Name)
+		}
+		if rel.Column(pe.Name) == nil {
+			return fmt.Sprintf("column %q named in partition key does not exist", pe.Name)
+		}
+	}
+	return ""
 }
 
 func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
@@ -812,7 +855,7 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 	if isSerial(cd.TypeName) {
 		col.NotNull = true
 		col.Identity = 's' // serial: sequence default; behaves like identity for "who owns the value"
-		s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: rel.Name + "_" + cd.Colname + "_seq"}, cd.GetLocation())
+		s.createOwnedSequence(rel, cd.Colname, cd.GetLocation())
 	}
 	if cd.CollClause != nil {
 		col.Collation = strings.Join(strs(cd.CollClause.Collname), ".")
@@ -835,7 +878,7 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 		case pg_query.ConstrType_CONSTR_IDENTITY:
 			col.NotNull = true
 			col.Identity = c.GeneratedWhen[0]
-			s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: rel.Name + "_" + cd.Colname + "_seq"}, cd.GetLocation())
+			s.createOwnedSequence(rel, cd.Colname, cd.GetLocation())
 		case pg_query.ConstrType_CONSTR_GENERATED:
 			col.Generated = c.RawExpr
 		case pg_query.ConstrType_CONSTR_PRIMARY:
@@ -974,6 +1017,15 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 		case pg_query.AlterTableType_AT_ColumnDefault:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.Default = cmd.Def
+			} else if rel.Kind == View {
+				if cmd.Def == nil {
+					delete(rel.ViewDefaults, cmd.Name)
+				} else {
+					if rel.ViewDefaults == nil {
+						rel.ViewDefaults = map[string]Expr{}
+					}
+					rel.ViewDefaults[cmd.Name] = cmd.Def
+				}
 			}
 		case pg_query.AlterTableType_AT_AlterColumnType:
 			if col := rel.Column(cmd.Name); col != nil {
@@ -998,7 +1050,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				if c := cmd.Def.GetConstraint(); c != nil && len(c.GeneratedWhen) > 0 {
 					col.Identity = c.GeneratedWhen[0]
 				}
-				s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: rel.Name + "_" + col.Name + "_seq"}, loc)
+				s.createOwnedSequence(rel, col.Name, loc)
 			}
 		case pg_query.AlterTableType_AT_AttachPartition, pg_query.AlterTableType_AT_DetachPartition:
 			pc := cmd.Def.GetPartitionCmd()
@@ -1011,6 +1063,12 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			if cmd.Subtype == pg_query.AlterTableType_AT_AttachPartition {
 				part.Parents = append(part.Parents, rel)
 				part.IsPartition = true
+				// a partition's identity columns are the parent's
+				for _, pc := range rel.Columns {
+					if c := part.Column(pc.Name); c != nil && pc.Identity != 0 && pc.Identity != 's' {
+						c.Identity = pc.Identity
+					}
+				}
 			} else {
 				var kept []*Relation
 				for _, p := range part.Parents {
@@ -1020,10 +1078,34 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				}
 				part.Parents = kept
 				part.IsPartition = false // a detached partition stands on its own
+				for _, c := range part.Columns {
+					if c.Identity != 0 && c.Identity != 's' {
+						c.Identity = 0 // detaching removes the identity property
+					}
+				}
 			}
 		case pg_query.AlterTableType_AT_DropIdentity:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.Identity = 0
+				s.dropOwnedSequences(rel, col.Name)
+			}
+		case pg_query.AlterTableType_AT_SetIdentity:
+			// ALTER COLUMN ... SET GENERATED { ALWAYS | BY DEFAULT } [SET ... sequence options]
+			if col := rel.Column(cmd.Name); col != nil && col.Identity != 0 {
+				for _, dn := range cmd.Def.GetList().GetItems() {
+					if de := dn.GetDefElem(); de != nil && de.Defname == "generated" {
+						if iv := de.Arg.GetInteger(); iv != nil {
+							col.Identity = byte(iv.Ival)
+						}
+					}
+				}
+				for _, child := range s.Relations {
+					if child.IsPartition && child.InheritsFrom(rel) {
+						if cc := child.Column(col.Name); cc != nil && cc.Identity != 0 {
+							cc.Identity = col.Identity
+						}
+					}
+				}
 			}
 		case pg_query.AlterTableType_AT_DropExpression:
 			if col := rel.Column(cmd.Name); col != nil {
@@ -1040,7 +1122,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			pg_query.AlterTableType_AT_SetUnLogged, pg_query.AlterTableType_AT_SetTableSpace, pg_query.AlterTableType_AT_SetStorage,
 			pg_query.AlterTableType_AT_SetCompression, pg_query.AlterTableType_AT_AlterConstraint, pg_query.AlterTableType_AT_ResetRelOptions,
 			pg_query.AlterTableType_AT_AddInherit, pg_query.AlterTableType_AT_DropInherit, pg_query.AlterTableType_AT_SetAccessMethod,
-			pg_query.AlterTableType_AT_NoForceRowSecurity, pg_query.AlterTableType_AT_DisableRowSecurity, pg_query.AlterTableType_AT_SetIdentity,
+			pg_query.AlterTableType_AT_NoForceRowSecurity, pg_query.AlterTableType_AT_DisableRowSecurity,
 			pg_query.AlterTableType_AT_EnableRule, pg_query.AlterTableType_AT_DisableRule,
 			pg_query.AlterTableType_AT_EnableAlwaysRule, pg_query.AlterTableType_AT_EnableReplicaRule, pg_query.AlterTableType_AT_DropOids,
 			pg_query.AlterTableType_AT_SetOptions, pg_query.AlterTableType_AT_ResetOptions, pg_query.AlterTableType_AT_GenericOptions,
@@ -1181,6 +1263,8 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 			fn.Volatile = d.GetArg().GetString_().GetSval()[0]
 		case "strict":
 			fn.Strict = d.GetArg().GetBoolean().GetBoolval()
+		case "window":
+			fn.IsWindow = d.GetArg().GetBoolean().GetBoolval()
 		}
 	}
 	if st.Replace {
@@ -1489,6 +1573,57 @@ func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
 		typ  catalog.OID
 	}{{"last_value", catalog.Int8}, {"log_cnt", catalog.Int8}, {"is_called", catalog.Bool}} {
 		rel.Columns = append(rel.Columns, &Column{Num: int16(i + 1), Name: c.name, Type: TypeRef{OID: c.typ, Typmod: -1}, NotNull: true})
+	}
+}
+
+// createOwnedSequence is the implicit sequence of a serial / identity column.
+func (s *Schema) createOwnedSequence(rel *Relation, col string, loc int32) {
+	name := rel.Name + "_" + col + "_seq"
+	s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: name}, loc)
+	if seq := s.relByName[rel.Schema+"."+name]; seq != nil && seq.Kind == Sequence {
+		seq.OwnedBy = rel.Schema + "." + rel.Name + "." + col
+	}
+}
+
+// dropOwnedSequences drops the sequences owned by rel's column col ("" = any column):
+// dropping the table, the column or its identity takes them along.
+func (s *Schema) dropOwnedSequences(rel *Relation, col string) {
+	prefix := rel.Schema + "." + rel.Name + "."
+	for _, r := range append([]*Relation{}, s.Relations...) {
+		if r.Kind == Sequence && r.OwnedBy != "" && strings.HasPrefix(r.OwnedBy, prefix) && (col == "" || r.OwnedBy == prefix+col) {
+			s.removeRelation(r)
+		}
+	}
+}
+
+// alterSequence applies ALTER SEQUENCE ... OWNED BY { table.column | NONE }; the other
+// options do not affect typing.
+func (s *Schema) alterSequence(st *pg_query.AlterSeqStmt, loc int32) {
+	schema, name := s.rangeVar(st.Sequence)
+	seq := s.relByName[schema+"."+name]
+	if seq == nil || seq.Kind != Sequence {
+		if !st.MissingOk {
+			s.problem(loc, "ALTER SEQUENCE: relation %q does not exist", name)
+		}
+		return
+	}
+	for _, on := range st.Options {
+		de := on.GetDefElem()
+		if de == nil || de.Defname != "owned_by" {
+			continue
+		}
+		parts := strs(de.Arg.GetList().GetItems())
+		if len(parts) == 1 && strings.EqualFold(parts[0], "none") {
+			seq.OwnedBy = ""
+			continue
+		}
+		if len(parts) < 2 {
+			continue
+		}
+		tschema, tname := qualified(parts[:len(parts)-1])
+		if rel := s.findRelation(tschema, tname); rel != nil {
+			seq.OwnedBy = rel.Schema + "." + rel.Name + "." + parts[len(parts)-1]
+		}
 	}
 }
 

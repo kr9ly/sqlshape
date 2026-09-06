@@ -93,8 +93,10 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 		if _, err := parsePGInt(v, 64); err == nil {
 			return nil
 		}
-		if len(qualifiedNameParts(v)) > 1 {
+		if parts := qualifiedNameParts(v); len(parts) > 1 {
 			return errAt("42602", loc, "invalid name syntax")
+		} else if base == catalog.RegNamespace && !a.s.HasSchema(parts[0]) {
+			return errAt("3F000", loc, "schema %q does not exist", parts[0])
 		}
 	case catalog.Money:
 		return validateMoneyLiteral(s, loc)

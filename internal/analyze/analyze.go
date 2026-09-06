@@ -37,6 +37,9 @@ type analyzer struct {
 	// view computes (not writable, keyed by the synthetic column), and the current command
 	viewTargets  map[*schema.Relation]*schema.Relation
 	viewComputed map[*schema.Column]string
+	// viewDefault: view target columns carrying the view's own default (ALTER VIEW ... SET
+	// DEFAULT), which makes DEFAULT a non-DEFAULT value for the base column
+	viewDefault map[*schema.Column]bool
 	// viewBase: the base-table column a view target column stands for (two view columns
 	// over one base column may not both be assigned)
 	viewBase map[*schema.Column]*schema.Column
@@ -47,6 +50,8 @@ type analyzer struct {
 	mergeWhen bool
 	// opAmbiguous is set by resolveOperator when more than one candidate fits equally
 	opAmbiguous bool
+	// polyErr is a specific error resolvePolymorphic leaves behind a false return
+	polyErr *Error
 	// inAggArgs is the depth of aggregate calls whose arguments are being analyzed
 	// (aggregates do not nest)
 	inAggArgs int
@@ -143,6 +148,7 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilt
 		viewCache:      map[*schema.Relation][]rteCol{},
 		viewTargets:    map[*schema.Relation]*schema.Relation{},
 		viewComputed:   map[*schema.Column]string{},
+		viewDefault:    map[*schema.Column]bool{},
 		viewBase:       map[*schema.Column]*schema.Column{},
 		viewScopes:     map[*schema.Relation]*subquery{},
 		viewBusy:       map[*schema.Relation]bool{},

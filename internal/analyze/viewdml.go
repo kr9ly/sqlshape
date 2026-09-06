@@ -96,6 +96,10 @@ func (a *analyzer) viewWriteTarget(rel *schema.Relation, cmd string, loc int32) 
 				if b, ok := a.viewBase[bc]; ok {
 					a.viewBase[col] = b
 				}
+				if d, ok := rel.ViewDefaults[c.name]; ok {
+					cp.Default = d // the view's own default replaces the base column's
+					a.viewDefault[col] = true
+				}
 			}
 		}
 		if col == nil {

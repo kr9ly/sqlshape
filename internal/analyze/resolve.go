@@ -419,8 +419,16 @@ func (a *analyzer) resolveFunction(schemaName, name string, actual []catalog.OID
 			if !sameOIDs(o.args, c.args) {
 				continue
 			}
-			if (o.variadicElem != 0 && c.variadicElem == 0) || (o.variadicElem == 0) == (c.variadicElem == 0) && c.nargs < o.nargs {
+			cDef, oDef := c.variadicElem == 0 && c.nargs > len(c.args), o.variadicElem == 0 && o.nargs > len(o.args)
+			switch {
+			case !cDef && c.variadicElem == 0:
+				cands[i] = c // the one that needs neither defaults nor VARIADIC
+			case !oDef && o.variadicElem == 0:
+			case o.variadicElem != 0 && c.variadicElem == 0:
 				cands[i] = c
+			case c.variadicElem != 0 && o.variadicElem == 0:
+			default:
+				cands = append(cands, c) // both via defaults (or both variadic): not unique
 			}
 			return
 		}
@@ -606,6 +614,14 @@ func (a *analyzer) resolvePolymorphic(declared []catalog.OID, actual []catalog.O
 		act = a.baseType(act)
 		if at := a.typ(act); at != nil && at.IsPolymorphic() {
 			// a column of type anyarray (pg_statistic.stavalues1): the call stays polymorphic
+			// unless the result needs the element type
+			if act == catalog.AnyArray {
+				switch ret {
+				case catalog.AnyElement, catalog.AnyNonArray, catalog.AnyEnum:
+					a.polyErr = errAt(codeDatatypeMismatch, -1, "cannot determine element type of \"anyarray\" argument")
+					return 0, false
+				}
+			}
 			return ret, true
 		}
 		switch d {

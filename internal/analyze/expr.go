@@ -785,9 +785,12 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			elem = rt.Elem
 		}
 		re := &expr{typ: ref(elem), nullable: true, src: r.src, lit: isLit(r), coll: r.coll}
-		_, err = a.applyOperator(name, l, re, x.Location, self)
+		res, err := a.applyOperator(name, l, re, x.Location, self)
 		if err != nil {
 			return nil, err
+		}
+		if res.oid() != catalog.Bool {
+			return nil, errAt(codeWrongObjectType, x.Location, "op ANY/ALL (array) requires operator to yield boolean")
 		}
 		a.noteParamSource(r, l)
 		if r.oid() == catalog.Unknown {
@@ -1169,13 +1172,24 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	case c.ufn != nil:
 		a.funcVolatility[f] = c.ufn.Volatile
 	}
-	if (c.fn != nil && c.fn.Kind == 'a' || c.ufn != nil && c.ufn.IsAgg) && f.Over == nil {
+	isAggFn := c.fn != nil && c.fn.Kind == 'a' || c.ufn != nil && c.ufn.IsAgg
+	if isAggFn && len(f.Args) == 0 && !f.AggStar && !f.AggWithinGroup {
+		return nil, errAt(codeWrongObjectType, f.Location, "%s(*) must be used to call a parameterless aggregate function", name)
+	}
+	if f.Over != nil && !isAggFn && !(c.fn != nil && c.fn.Kind == 'w') && !(c.ufn != nil && c.ufn.IsWindow) {
+		return nil, errAt(codeWrongObjectType, f.Location, "OVER specified, but %s is not a window function nor an aggregate function", name)
+	}
+	if isAggFn && f.Over == nil {
 		sc.agg = true
 	}
 	res := c.result()
 	if t := a.typ(res); t != nil && t.IsPolymorphic() {
+		a.polyErr = nil
 		rr, ok := a.resolvePolymorphic(c.args, a.argOIDs(args), res)
 		if !ok {
+			if a.polyErr != nil {
+				return nil, a.polyErr
+			}
 			return nil, errAt(codeDatatypeMismatch, f.Location, "could not determine polymorphic type because input has type unknown")
 		}
 		res = rr

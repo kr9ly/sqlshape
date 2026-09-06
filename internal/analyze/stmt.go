@@ -584,7 +584,31 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 		}
 		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit, coll: a.resultColl(coll, t)}
 	}
-	// ORDER BY / LIMIT on the whole set operation
+	// ORDER BY on the whole set operation names output columns (or their numbers) only
+	for _, sn := range sel.SortClause {
+		n := sn.GetSortBy().GetNode()
+		if c := n.GetAConst(); c != nil {
+			if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+				if i := int(iv.Ival.Ival); i < 1 || i > len(out) {
+					return nil, errAt(codeInvalidColumnRef, c.Location, "ORDER BY position %d is not in select list", i)
+				}
+				continue
+			}
+		}
+		if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 && cr.Fields[0].GetString_() != nil {
+			name := cr.Fields[0].GetString_().GetSval()
+			found := false
+			for _, c := range out {
+				found = found || c.name == name
+			}
+			if !found {
+				return nil, errAt(codeUndefinedColumn, cr.Location, "column %q does not exist", name)
+			}
+			continue
+		}
+		return nil, errAt(codeFeatureNotSupported, loc(n), "invalid %s ORDER BY clause", "UNION/INTERSECT/EXCEPT")
+	}
+	// LIMIT on the whole set operation
 	for _, lim := range []*pg_query.Node{sel.LimitCount, sel.LimitOffset} {
 		if lim == nil {
 			continue
@@ -681,6 +705,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		if rel == nil {
 			return nil, errAt(codeUndefinedTable, rv.Location, "relation %q does not exist", qualName(rv))
 		}
+		if rel.Kind == schema.View && a.s.ViewsRestricted() {
+			return nil, errAt(codeObjectNotInPrerequisiteState, -1, "access to non-system view %q is restricted", rel.Name)
+		}
 		return a.relationRTE(rel, rv.Alias, rv.Location)
 	case *pg_query.Node_RangeSubselect:
 		sub := v.RangeSubselect
@@ -730,6 +757,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 		}
 		if ua := v.JoinExpr.JoinUsingAlias; ua != nil {
 			r.join.usingAlias = &rte{alias: ua.Aliasname, cols: r.join.usingCols}
+			if err := nameConflict([]*rte{r.join.left, r.join.right}, r.join.usingAlias); err != nil {
+				return nil, err
+			}
 		}
 		if al := v.JoinExpr.Alias; al != nil {
 			r.alias = al.Aliasname
@@ -1044,6 +1074,9 @@ func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation
 	if rel == nil {
 		return nil, nil, errAt(codeUndefinedTable, rv.Location, "relation %q does not exist", qualName(rv))
 	}
+	if rel.Kind == schema.View && a.s.ViewsRestricted() {
+		return nil, nil, errAt(codeObjectNotInPrerequisiteState, -1, "access to non-system view %q is restricted", rel.Name)
+	}
 	r, err := a.relationRTE(rel, rv.Alias, rv.Location)
 	if err != nil {
 		return nil, nil, err
@@ -1057,6 +1090,11 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 		return err
 	}
 	if col.Generated != nil && (e.node == nil || e.node.GetSetToDefault() == nil) {
+		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
+	}
+	if a.viewDefault[col] && (col.Generated != nil || col.Identity == 'a') && e.node != nil && e.node.GetSetToDefault() != nil {
+		// rewriteTargetListIU: DEFAULT through a view becomes the view column's own
+		// default, which is a non-DEFAULT value for the base column
 		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
 	}
 	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e})
@@ -1143,6 +1181,14 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 	if err := a.checkDuplicateBase(cols); err != nil {
 		return nil, err
 	}
+	if ins.SelectStmt == nil {
+		// DEFAULT VALUES through a view: see assign
+		for _, c := range rel.Columns {
+			if a.viewDefault[c] && (c.Generated != nil || c.Identity == 'a') {
+				return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", c.Name)
+			}
+		}
+	}
 	if ins.SelectStmt != nil {
 		sel := ins.SelectStmt.GetSelectStmt()
 		a.inInsertValues = true
@@ -1210,6 +1256,8 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 					if _, err := a.analyzeExpr(ex, inner); err != nil {
 						return nil, err
 					}
+				} else if n := ie.GetIndexElem().GetName(); n != "" && len(target.find(n)) == 0 {
+					return nil, errAt(codeUndefinedColumn, oc.Infer.Location, "column %q does not exist", n)
 				}
 			}
 			if err := a.boolClause(oc.Infer.WhereClause, inner, "WHERE"); err != nil {
@@ -1755,6 +1803,9 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 				return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
 			}
 			for i, vn := range w.Values {
+				if cols[i].Identity == 'a' && vn.GetSetToDefault() == nil && w.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
+					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+				}
 				e, err := a.analyzeExpr(vn, srcOnly)
 				if err != nil {
 					return nil, err
