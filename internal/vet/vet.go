@@ -944,9 +944,18 @@ func (c *checker) checkRequiredColumns(ref analyze.RelationRef, r *analyze.Resul
 				fixed = true
 			}
 		}
-		if !fixed {
-			report(at, "%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name, col, rel.Name, col, where)
+		if fixed {
+			continue
 		}
+		// a row-level security policy that fixes the column pins it for every statement;
+		// unless forced, though, not for the table's owner
+		if pol := policyPins(rel, col); pol != nil {
+			if c.strict && !rel.ForceRowSecurity {
+				report(at, "%s.%s is pinned by policy %s for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner%s", rel.Name, col, pol.Name, where)
+			}
+			continue
+		}
+		report(at, "%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name, col, rel.Name, col, where)
 	}
 }
 

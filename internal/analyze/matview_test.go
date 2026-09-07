@@ -3,7 +3,8 @@ package analyze
 import "testing"
 
 // A materialized view's columns are as nullable as its query's: a snapshot of the query,
-// not a table whose columns lost their NOT NULL.
+// not a table whose columns lost their NOT NULL. lower() of a range is nullable (an
+// unbounded range has no lower bound) even though the function is strict.
 func TestMatViewNullability(t *testing.T) {
 	s, err := Load(`
 CREATE TABLE b (tenant_id uuid NOT NULL, room_id bigint NOT NULL, slot tstzrange NOT NULL, minutes int NOT NULL, note text);
@@ -18,7 +19,7 @@ SELECT b.tenant_id, b.room_id, lower(b.slot)::date AS day, sum(b.minutes) AS boo
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"room_id": false, "day": false, "booked_minutes": true, "bookings": false, "note": true}
+	want := map[string]bool{"room_id": false, "day": true, "booked_minutes": true, "bookings": false, "note": true}
 	for _, c := range r.Columns {
 		if c.Nullable != want[c.Name] {
 			t.Errorf("%s: nullable=%v, want %v", c.Name, c.Nullable, want[c.Name])

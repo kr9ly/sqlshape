@@ -118,3 +118,15 @@ func TestRowSecurity(t *testing.T) {
 	defer Analyzer.Flags.Set("strict", "false")
 	analysistest.Run(t, td, Analyzer, "rls")
 }
+
+func TestRowSecurityPins(t *testing.T) {
+	td := analysistest.TestData()
+	for k, v := range map[string]string{"schema": filepath.Join(td, "rls_schema.sql"), "strict": "true", "require-columns": "tenant_id"} {
+		if err := Analyzer.Flags.Set(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer Analyzer.Flags.Set("strict", "false")
+	defer Analyzer.Flags.Set("require-columns", "")
+	analysistest.Run(t, td, Analyzer, "rlspin")
+}

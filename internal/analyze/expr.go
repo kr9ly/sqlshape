@@ -1301,7 +1301,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		nullable = !strings.HasPrefix(name, "count")
 	case c.fn != nil && c.fn.Kind == 'w':
 		nullable = !(name == "row_number" || name == "rank" || name == "dense_rank" || name == "ntile" || name == "percent_rank" || name == "cume_dist")
-	case c.fn != nil && c.fn.IsStrict:
+	case c.fn != nil && c.fn.IsStrict && !a.strictButNullable(name, args):
 		nullable = false
 		for _, e := range args {
 			if e.nullable {
@@ -1721,6 +1721,33 @@ var neverNullFunc = map[string]bool{
 	"concat": true, "concat_ws": true, "format": true, "num_nonnulls": true, "num_nulls": true,
 	"json_build_object": true, "json_build_array": true, "jsonb_build_object": true, "jsonb_build_array": true,
 	"json_object": true, "jsonb_object": true, "row_to_json": true,
+}
+
+// strictNullableFunc lists the strict built-ins that return NULL for non-NULL inputs
+// when there is nothing to report: no match, no such element, no such object.
+var strictNullableFunc = map[string]bool{
+	"regexp_match": true, "array_length": true, "array_lower": true, "array_upper": true, "array_position": true,
+	"array_ndims": true, "array_dims": true, "json_extract_path": true, "json_extract_path_text": true,
+	"jsonb_extract_path": true, "jsonb_extract_path_text": true, "json_object_field": true, "json_object_field_text": true,
+	"json_array_element": true, "json_array_element_text": true, "jsonb_object_field": true, "jsonb_object_field_text": true,
+	"jsonb_array_element": true, "jsonb_array_element_text": true, "jsonb_path_query_first": true, "json_typeof": false,
+	"to_regclass": true, "to_regtype": true, "to_regproc": true, "to_regprocedure": true, "to_regoper": true,
+	"to_regoperator": true, "to_regnamespace": true, "to_regrole": true, "to_regcollation": true,
+	"substring_index": true, "split_part": false, "nullif": true, "pg_get_userbyid": false,
+}
+
+// strictButNullable: a strict function that still yields NULL from non-NULL inputs: the
+// listed ones, and lower / upper of a range or multirange (an unbounded side has no value).
+func (a *analyzer) strictButNullable(name string, args []*expr) bool {
+	if strictNullableFunc[name] {
+		return true
+	}
+	if (name == "lower" || name == "upper") && len(args) == 1 {
+		if t := a.s.Types.ByOID(a.s.Types.BaseOf(args[0].typ).OID); t != nil && (t.Kind == 'r' || t.Kind == 'm') {
+			return true
+		}
+	}
+	return false
 }
 
 // zeroArgNullable lists the nullary built-ins that do return NULL (no value to report).

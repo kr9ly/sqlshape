@@ -4,6 +4,7 @@ CREATE TABLE tenants (id uuid PRIMARY KEY);
 CREATE TABLE docs (id bigint PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, body text);
 ALTER TABLE docs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY docs_tenant ON docs USING (tenant_id = current_setting('app.tenant', true)::uuid);
+CREATE INDEX docs_tenant_idx ON docs (tenant_id);
 
 -- policies without ENABLE: a schema problem
 CREATE TABLE drafts (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
@@ -16,3 +17,9 @@ ALTER TABLE vault ENABLE ROW LEVEL SECURITY;
 -- a SECURITY DEFINER function past the policies
 CREATE FUNCTION all_docs() RETURNS SETOF docs LANGUAGE sql SECURITY DEFINER STABLE RETURN (SELECT docs FROM docs);
 CREATE FUNCTION count_docs() RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) FROM docs);
+
+-- row security forced: the policy pins tenant_id for every role, the owner included
+CREATE TABLE sealed (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
+ALTER TABLE sealed ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sealed FORCE ROW LEVEL SECURITY;
+CREATE POLICY sealed_tenant ON sealed USING (tenant_id = current_setting('app.tenant')::uuid);
