@@ -794,6 +794,22 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 - 「runtime が接続時に検査で見た enum 型を全部 LoadType」は、結果列の未知 OID を見つけたときの遅延ロード +
   `LoadUserTypes` の一括登録に置き換えた（runtime は検査結果を持たないため）
 
+## コード配置
+
+| package | role |
+|---|---|
+| `sqlshape` | public API: `Query[R, P]` / `One[R, P]` / `Batch` / `Copy[R]` / `MatView`, the pgx runtime (row mapper, type registration, `ConstraintError`, byte-for-byte rendering check) |
+| `pgtest` | a real PostgreSQL with schema.sql applied for the application's tests; `Verify` compares the analyzer with it |
+| `internal/expand` | exhaustive template expansion; `{{.X}}` → `$n` with its path on `P` |
+| `internal/schema` | `schema.sql` on top of the catalog via libpg_query: tables, views, enums, domains, composites, functions, constraints, policies, seeds |
+| `internal/catalog` | embedded `pg_catalog` of PG 17 (types, functions, operators, casts, aggregates) |
+| `internal/analyze` | the analyzer: chapter-10 type conversion, scopes, DML, `$n` inference, nullability, cardinality, violations, PG-compatible errors |
+| `internal/vet` | the `go/analysis` analyzer: result columns ↔ `R`, `$n` ↔ `P`, bindings, expect lines, boundaries, suggested fixes |
+| `internal/oracle` | a real PostgreSQL (embedded-postgres) as the differential-test oracle; never used at lint time |
+| `internal/dump` / `diff` / `migrate` / `consumers` / `cli` | the migration side: canonical forms via pg_dump, object-level diff, DDL plan + end-state verification, the consumer index, the subcommands |
+
+利用者向けの説明は README と docs/（checks / templates / runtime / migrations / flags）。
+
 ## 未解決
 
 - **nullability** の推論精度。NOT NULL 制約 + JOIN 種別 + COALESCE の規則で 9 割を拾い、
