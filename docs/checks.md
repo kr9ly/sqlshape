@@ -2,252 +2,837 @@
 
 [日本語](checks.ja.md)
 
-Every `sqlshape.Query[R, P](template)`, `sqlshape.One[R, P](template)`, `sqlshape.Copy[R](...)`
-and `sqlshape.MatView(...)` in a package is found by the `go/analysis` analyzer, its template is
-expanded into every branch combination ([templates.md](templates.md)), each expansion is analyzed
-against `schema.sql`, and the conclusions are compared with the Go types. This page lists what is
-compared, grouped by the question it answers.
+The checker finds every `sqlshape.Query[R, P](template)`, `sqlshape.One[R, P](template)`,
+`sqlshape.Copy[R](...)` and `sqlshape.MatView(...)` in a package, expands each template into every
+combination of its branches ([templates.md](templates.md)), analyzes each expansion against
+`schema.sql`, and compares the result with the Go types. This page goes through what you write,
+situation by situation, and shows what is rejected and what passes, together with the diagnostic
+you will see.
 
-## Shapes: does the Go code fit the statement?
+## Receiving a SELECT
 
-Result columns ↔ `R`. Every result column of every expansion must bind to exactly one field
-of `R`, by name: the `col:"..."` tag, then the `db:"..."` tag, then the field name in snake_case.
-A column no field receives and a field no column feeds are both reported. An unnamed column
-(`SELECT 1 + 1`) or two columns with the same name (`o.id, u.id`) cannot bind: the checker says
-which to alias. When `R` is a scalar (`int64`, `string`, ...) the statement must produce one column.
+For the row type `R`, the checker verifies that every result column has a field to receive it,
+every field has a column, and types and NULL handling agree. With branches in the template, this
+holds for every expansion.
 
-Nullability. A column that may be NULL needs a nullable field: a pointer, a slice, a map,
-`sql.Null*`, `pgtype.*` or any type implementing `sql.Scanner`. The analyzer derives nullability
-from the catalog (`NOT NULL`, primary keys, `GENERATED`), from the predicate (`WHERE col IS NOT
-NULL`, `col = ...`), from functions (strict functions with non-null input, `coalesce` with a
-non-null default) and through joins (an outer join's inner side becomes nullable) and views (a
-view's own WHERE refines its columns). The assertion can be overridden from either side: the
-field tag `col:",notnull"`, or the template line `-- sqlshape: not null col, col` (the SQL-side
-twin), or `-- sqlshape: not null` above a `CREATE FUNCTION` in schema.sql for its result.
+### Result columns bind to fields by name
 
-Optional projections. A column only some branches select may be received by a nullable
-field, which those branches leave nil; a field no branch selects is still an error.
+The match is looked up by the `col:"..."` tag, then the `db:"..."` tag, then the field name in
+snake_case.
 
-Parameters ↔ `P`. Every `{{.X}}` becomes a `$n` parameter, and the analyzer infers the
-PostgreSQL type each `$n` must have from where it is used (`WHERE id = $1` → `bigint`,
-`= ANY($1)` → an array). The path is resolved on `P` (`.Filter.Name` walks into a nested struct,
-a `range` variable into a slice's element) and the Go type is checked against the type table below:
-a mismatch, a lossy conversion (`int64` into `integer`) and a non-nullable Go type where the SQL
-side may need NULL are reported. Fields of `P` no expansion reads are reported with `-strict`.
+Rejected
 
-Embedded structs flatten: `type Row struct { Base; Note *string }` receives Base's columns as
-its own (two fields binding one column is an error), and `{{.ID}}` reaches a promoted field of
-`P`. A named struct field, or an embedded one carrying a `col:"..."` tag, is a nested row instead.
+```go
+type Order struct {
+	ID           int64
+	CustomerName string // field Order.CustomerName has no result column
+}
+```
 
-Nested rows. `array_agg(row(o.id, o.total))`, `array_agg(o)`, `row(...)` and composite-typed
-columns are received by a struct or a slice of structs. For an anonymous record the struct's
-fields are matched positionally; for a named composite by name and order. The runtime scans them
-field by field ([runtime.md](runtime.md#nested-rows-and-user-types)).
+```sql
+SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
+--           ^ result column "name" has no field in Order
+```
 
-Composite parameters. `{{.Price}}` where SQL expects `money_amount` takes a struct,
-`{{.Items}}` where it expects `order_items[]` a slice of structs; the fields are lined up with the
-type's columns exactly like nested rows.
+Passes: alias the column, or name the column in the tag.
 
-The Go type table is what pgx actually scans and encodes, verified against a running
-PostgreSQL:
+```sql
+SELECT o.id, c.name AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id
+```
+
+```go
+type Order struct {
+	ID           int64
+	CustomerName string `col:"name"`
+}
+```
+
+### Unnamed and duplicate columns need an alias
+
+Rejected
+
+```sql
+SELECT id, count(*) FROM orders GROUP BY id
+--         ^ result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
+
+SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
+--           ^ result columns 1 and 2 are both named "id": alias one of them (... AS other_name)
+```
+
+Passes
+
+```sql
+SELECT id, count(*) AS n FROM orders GROUP BY id
+SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.customer_id
+```
+
+### A column that may be NULL needs a field that can hold NULL
+
+Fields that can hold NULL: pointers, slices, maps, `sql.Null*`, `pgtype.*`, and any type that
+implements `sql.Scanner`.
+
+Rejected
+
+```go
+type User struct {
+	ID        int64
+	DeletedAt time.Time // field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
+}
+```
+
+```sql
+SELECT id, deleted_at FROM users
+```
+
+Passes
+
+```go
+type User struct {
+	ID        int64
+	DeletedAt *time.Time
+}
+```
+
+Whether a column may be NULL is derived from NOT NULL constraints and primary keys, from the WHERE
+clause (`deleted_at IS NOT NULL` or `deleted_at = ...` rules NULL out), from outer joins (the inner
+side may be NULL), from functions (a `strict` function of non-NULL arguments is not NULL, nor is
+`coalesce(x, 0)`), and from a view's own WHERE clause. If you know better than the checker, override
+it on the Go side with the `col:",notnull"` tag or on the SQL side with a
+`-- sqlshape: not null deleted_at` line in the template. For a function's result, put
+`-- sqlshape: not null` above its `CREATE FUNCTION` in `schema.sql`.
+
+### A column only some branches select needs a field that can hold NULL
+
+Rejected
+
+```go
+type Order struct {
+	ID    int64
+	Total string // field Order.Total is not selected in every branch [if@11:else]: make it a pointer so those branches leave it nil
+}
+```
+
+```sql
+SELECT id {{if .WithTotal}}, total{{end}} FROM orders
+```
+
+Passes
+
+```go
+type Order struct {
+	ID    int64
+	Total *string
+}
+```
+
+The branches that do not select the column leave the field nil. A field no branch selects is
+`has no result column`.
+
+### Column and field types follow the table below
+
+Rejected
+
+```go
+type Order struct {
+	ID    int64
+	Total float64 // field Total is float64 but column "total" is numeric(12,2)
+}
+```
+
+```sql
+SELECT id, total FROM orders
+```
+
+Passes
+
+```go
+type Order struct {
+	ID    int64
+	Total string // keeps every digit; decimal.Decimal (shopspring/decimal) works too
+}
+```
+
+### Nested rows are received by structs
+
+`array_agg(row(...))`, `array_agg(t)`, `row(...)` and composite-typed columns are received by a
+struct or a slice of structs. An anonymous `row(...)` matches fields by position; a named composite
+type by name and order.
+
+Rejected: the struct's fields are not in the composite type's order.
+
+```sql
+-- schema.sql
+CREATE TYPE order_item AS (sku text, qty integer);
+```
+
+```go
+type Item struct {
+	Qty int32 // field Items.Qty is at position 1 but the row type's column 1 is "sku" (fields are scanned in order)
+	Sku string
+}
+type Order struct {
+	ID    int64
+	Items []Item
+}
+```
+
+```sql
+SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items
+  FROM orders o JOIN order_items i ON i.order_id = o.id
+ GROUP BY o.id
+```
+
+Passes
+
+```go
+type Item struct {
+	Sku string
+	Qty int32
+}
+```
+
+### A single-column statement can be received by a scalar
+
+Passes
+
+```go
+var Count = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orders`)
+```
+
+Rejected
+
+```go
+var Count = sqlshape.Query[int64, struct{}](`SELECT id, total FROM orders`)
+// R is int64 but the query returns 2 columns
+```
+
+### Embedded structs are flattened
+
+Passes
+
+```go
+type Base struct {
+	ID        int64
+	CreatedAt time.Time
+}
+type Order struct {
+	Base
+	Total string
+}
+```
+
+```sql
+SELECT id, created_at, total FROM orders
+```
+
+Rejected: two fields would receive the same column.
+
+```go
+type Order struct {
+	Base
+	ID    int64 // Order: fields Base.ID and ID both bind to column "id"
+	Total string
+}
+```
+
+A named struct field, or an embedded field carrying a `col:"..."` tag, is not flattened: it is
+treated as a nested row.
+
+### The Go type table
+
+What pgx actually scans and encodes, verified against a running PostgreSQL. The same table applies
+to receiving columns and to passing parameters.
 
 | PostgreSQL | Go |
 |---|---|
 | `bool` | `bool` |
-| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int` (a narrower Go type is accepted with a note: `bigint into int32`) |
+| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int` (a narrower Go type is accepted with a note such as `bigint into int32`) |
 | `real` / `double precision` | `float32` / `float64` (`double precision into float32` is noted) |
-| `numeric` | `string` (keeps every digit), `pgtype.Numeric`, `big.Rat`, `shopspring/decimal.Decimal`, `apd.Decimal`; a float or integer is accepted with a precision note |
-| `text` / `varchar` / `char` / `name` / `citext` and other text-like extension types | `string` (a `string` also encodes as any parameter type) |
+| `numeric` | `string` (keeps every digit), `pgtype.Numeric`, `big.Rat`, `shopspring/decimal.Decimal`, `apd.Decimal`; a float or an integer is accepted with a precision note |
+| `text` / `varchar` / `char` / `name` / `citext` and other text-like extension types | `string` (a `string` also encodes as a parameter of any type) |
 | `bytea` | `[]byte` |
 | `uuid` | `uuid.UUID` (any package), `[16]byte`, `string` |
-| `timestamptz` / `timestamp` / `date` | `time.Time` (`-strict` notes that `timestamp` and `date` lose the zone / the time) |
+| `timestamptz` / `timestamp` / `date` | `time.Time` (`-strict` notes that `timestamp` and `date` lose the zone or the time) |
 | `time` | `time.Time`, `string` |
 | `interval` | `time.Duration`, `pgtype.Interval` |
-| `json` / `jsonb` | `[]byte`, `json.RawMessage`, `string`, or any struct / slice / map pgx unmarshals into |
+| `json` / `jsonb` | `[]byte`, `json.RawMessage`, `string`, or any struct, slice or map pgx unmarshals into |
 | `inet` | `netip.Addr` / `netip.Prefix` |
 | `cidr` | `netip.Prefix` |
 | `macaddr` | `net.HardwareAddr` / `string` |
 | `hstore` | `map[string]*string` |
 | `T[]` | `[]Go(T)` |
-| ranges | `pgtype.Range[T]` with `T` checked against the subtype (user-defined ranges too) |
+| ranges | `pgtype.Range[T]`, with `T` checked against the subtype (user-defined ranges too) |
 | multiranges | `pgtype.Multirange[pgtype.Range[T]]` |
 | `bit` / `point` / `tsvector` | the `pgtype` value |
 | `xml` / `money` / `tsquery` / `jsonpath` / `timetz` | `string` |
 | `oid` | `uint32` |
-| enums, seeded lookup keys, CHECK value sets | a Go named string type ([below](#meaning-what-does-the-value-stand-for)) |
+| enums, seeded lookup keys, CHECK value sets | a Go named string type ([below](#giving-types-a-meaning)) |
 | domains | the base type's Go type, or a named type bound to the domain |
 | composites, records | a struct |
 
-Declared bindings. A Go type names the PostgreSQL type it carries in its doc comment:
+A type not in the table, or one you want to receive with your own type, is declared on the Go type
+in its doc comment:
 
 ```go
 // sqlshape: type money_amount
-type Money struct{ ... }
+type Money struct{ ... }   // implements sql.Scanner / driver.Valuer
 ```
 
-The checker accepts `Money` exactly where SQL has `money_amount` (its arrays and domains over it
-included) and reports it anywhere else, and leaves the wire format to the type's own
-`sql.Scanner` / `driver.Valuer` (a Scanner receives the text form). This is how a composite
-becomes a decimal wrapper, or an extension type a named type. The binding travels with the type
-across packages.
+The checker then accepts `Money` exactly where the SQL has `money_amount` (its arrays and domains
+over it included) and reports it anywhere else. Conversion is left to the type's own
+`sql.Scanner` / `driver.Valuer`; the Scanner receives the text form.
 
-COPY. `sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)` is checked like an
-INSERT: the table and columns must exist, each column's type must fit the field feeding it, and
-every column left out must have a default or be generated.
+## Passing parameters
 
-## Meaning: what does the value stand for?
+`{{.X}}` becomes a `$n` parameter in the SQL. The checker infers the PostgreSQL type each `$n` needs
+from where it is used (`WHERE id = $1` needs `bigint`, `= ANY($1)` an array) and verifies that the
+corresponding field of `P` fits, by the type table above.
 
-A Go named type that meets a column with meaning is bound to it by use, without
-registration, and the binding is checked everywhere the type appears afterwards (across packages
-through `go/analysis` facts).
+### A parameter's type follows where it is used
 
-Enums, lookup tables, CHECK value sets. A Go named string type that meets an enum column, the
-key of a seeded lookup table, or a column with `CHECK (col IN (...))` is bound to that value set.
-Its typed constants are diffed against the labels both ways: a label with no constant and a
-constant with no label are reported, so are `T("typo")` conversions and a `switch` on the type
-that does not cover every label. The type may implement `Known() bool`; the row mapper then
-rejects labels this build does not know with `*UnknownLabelError`.
+Rejected
 
-A seeded lookup table is a table whose rows are written in schema.sql with an ordinary
-`INSERT ... VALUES`. The rows are part of the schema: the checker uses the key column's values as
-the value set wherever the key or a column referencing it is used, and the migration keeps the
-table's content in step ([migrations.md](migrations.md#seeded-tables)). It is the recommended
-home for a value set — rows can carry a label and a sort order, a row in use is protected by the
-foreign key, a value can be retired by deleting its row, and a JOIN gives analysts the names.
-`-strict` says so on every enum column.
-
-Key identity. A Go named type that meets a key column (a primary key, or a column derived
-from one through a foreign key) is bound to that identity: `UserID` passed where `orders.id` is
-expected is reported even though both are `bigint`. Composite keys bind positionally.
-
-Domains. A Go named type that meets a domain is bound to it; mixing domains, or passing the
-base type where the domain is expected, is reported. Inside SQL a domain is an opaque unit:
-`price_yen + weight_g` or `balance > total` is reported even though PostgreSQL accepts it.
-Literals and parameters adopt the unit; `yen + yen`, `yen * n`, `abs(yen)`, `coalesce(yen, 0)`
-stay yen; an explicit cast to the base type drops it.
-
-Fidelity (`-strict`). An enum, domain or key column carried by an unnamed Go type cannot be
-checked and is reported; `timestamp` / `date` received as `time.Time`, and a non-pointer enum
-parameter (its zero value `""` is no label and fails at run time) are reported.
-
-Default ownership (`-strict`). A non-nullable parameter that always writes a column with a
-`DEFAULT` means the database's default never applies: decide which side owns it (an `{{if}}`
-around the column uses the database's).
-
-## Failure modes: what can this write fail on?
-
-For each INSERT / UPDATE / DELETE / MERGE expansion the analyzer lists the constraints it may
-violate — unique keys and primary keys, foreign keys in both directions (the row inserted
-references a missing parent; the row deleted is still referenced), CHECKs, domain CHECKs, and
-NOT NULL when the value written can be NULL — and the template must declare them:
+```go
+type Params struct {
+	ID int64 // parameter .ID is int64 but SQL expects uuid
+}
+```
 
 ```sql
--- sqlshape: expect order_items_pkey, order_items_order_id_fkey, order_items_qty_check
-INSERT INTO order_items (order_id, line_no, sku, qty, price) VALUES (...)
+SELECT id, email FROM users WHERE id = {{.ID}}   -- id is uuid
 ```
 
-A possible violation the line does not name and a named one no expansion can cause are both
-reported, so the line stays an exact contract. At run time a class-23 error is wrapped as a
-`ConstraintError` under the same key, and `sqlshape.Violates(err, "order_items_qty_check")` reads
-it back ([runtime.md](runtime.md#errors)).
+Passes
 
-Keys. A named constraint is its name. An unnamed one gets the name PostgreSQL gives it, so the
-key in the diagnostic, in the expect line and in the error at run time are the same string:
+```go
+type Params struct {
+	ID uuid.UUID
+}
+```
+
+A `string` can be passed as a parameter of any type (it is sent in text form and interpreted by
+PostgreSQL). A narrower type gets a note: `int32` into a `bigint` column is
+`parameter .ID: bigint into int32`.
+
+### A parameter that may be NULL is a pointer
+
+A field whose absence is expressed by a branch, `{{if .Name}} AND name = {{.Name}} {{end}}`, is a
+pointer or a slice. A plain `string` cannot send NULL, so it assumes there is always a value.
+
+Rejected: an enum parameter that is not a pointer (`-strict`).
+
+```go
+type Params struct {
+	Status OrderStatus // parameter .Status is a non-pointer OrderStatus: its zero value "" is not a label of enum order_status and fails at runtime (SQLSTATE 22P02) when unset
+}
+```
+
+Passes
+
+```go
+type Params struct {
+	Status *OrderStatus
+}
+```
+
+### Nested paths and `range`
+
+`{{.Filter.Name}}` is the field `Name` of the field `Filter` of `P`. Inside
+`{{range .Items}} … {{.Sku}} … {{end}}`, `{{.Sku}}` is a field of the element type of the slice
+`Items`.
+
+Passes
+
+```go
+type Params struct {
+	Filter struct{ Name *string }
+	Items  []struct{ Sku string; Qty int32 }
+}
+```
+
+```sql
+SELECT id FROM products
+ WHERE true {{if .Filter.Name}} AND name = {{.Filter.Name}} {{end}}
+   AND sku IN ({{range $i, $it := .Items}}{{if $i}}, {{end}}{{$it.Sku}}{{end}})
+```
+
+### Composite parameters are structs
+
+Where the SQL expects a composite type, pass a struct; where it expects an array of one, a slice of
+structs. Fields line up with the type's columns as for nested rows.
+
+Passes
+
+```sql
+-- schema.sql
+CREATE TYPE order_item AS (sku text, qty integer);
+CREATE FUNCTION place_order(customer_id bigint, items order_item[]) RETURNS bigint ...
+```
+
+```go
+type Item struct {
+	Sku string
+	Qty int32
+}
+type Params struct {
+	CustomerID int64
+	Items      []Item
+}
+```
+
+```sql
+SELECT place_order({{.CustomerID}}, {{.Items}})
+```
+
+### Do not leave unused fields in `P` (`-strict`)
+
+```go
+type Params struct {
+	ID    int64
+	Limit int32 // sqlshape: parameter field Limit is never used by the template
+}
+```
+
+```sql
+SELECT id FROM orders WHERE id = {{.ID}}
+```
+
+### Do not always send a value into a column with a DEFAULT (`-strict`)
+
+```go
+type NewOrder struct {
+	CustomerID int64
+	Status     OrderStatus // parameter .Status always sends a value into orders.status, so its DEFAULT never applies: decide which side owns the default (make the column conditional with {{if}} to use the database's)
+}
+```
+
+```sql
+INSERT INTO orders (customer_id, status) VALUES ({{.CustomerID}}, {{.Status}})
+```
+
+Passes: to use the database's default, make the column conditional. If the application always
+decides, drop the column's `DEFAULT`.
+
+```sql
+INSERT INTO orders (customer_id {{if .Status}}, status{{end}})
+VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
+```
+
+## Giving types a meaning
+
+Values a `bigint` or `text` cannot tell apart, such as an enum label, a table's ID or an amount in
+some unit, are named types in Go. The checker binds a named type to the meaning on the SQL side
+(an enum, a lookup table's key, a CHECK value set, a primary key, a domain) from where it is used,
+and reports every later use that disagrees. Nothing is registered. The binding crosses packages.
+
+### Enum and lookup values agree with the named type's constants
+
+For a named string type used with an enum column, the key of a seeded lookup table, or a column
+with `CHECK (col IN (...))`, the typed constants are compared with the labels in both directions.
+
+```sql
+-- schema.sql
+CREATE TABLE order_statuses (code text PRIMARY KEY, label text NOT NULL);
+INSERT INTO order_statuses VALUES ('pending', 'Pending'), ('paid', 'Paid'), ('shipped', 'Shipped');
+CREATE TABLE orders (..., status text NOT NULL REFERENCES order_statuses(code));
+```
+
+Rejected
+
+```go
+type OrderStatus string
+
+const (
+	Pending  OrderStatus = "pending"
+	Paid     OrderStatus = "paid"
+	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses (lookup table)
+)
+// sqlshape: value set of order_statuses (lookup table) has label "shipped" but OrderStatus has no constant for it
+```
+
+Passes
+
+```go
+const (
+	Pending OrderStatus = "pending"
+	Paid    OrderStatus = "paid"
+	Shipped OrderStatus = "shipped"
+)
+```
+
+A conversion such as `OrderStatus("typo")` is reported as
+`sqlshape: OrderStatus("typo") is not a label of ...`, and a `switch` that does not handle every
+label as `sqlshape: switch on OrderStatus does not handle ... labels: shipped`. If the type
+implements `Known() bool`, the row mapper returns `*UnknownLabelError` at run time for a label this
+build does not know. A seeded lookup table is the recommended home for a value set, over an enum
+([migrations.md](migrations.md#seeded-tables)).
+
+### Do not pass another table's ID
+
+A named type used with a primary key column, or a column derived from one through a foreign key,
+is treated as that table's ID.
+
+Rejected
+
+```go
+type UserID int64
+type OrderID int64
+
+type Params struct {
+	ID UserID // sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id
+}
+```
+
+```sql
+SELECT total FROM orders WHERE id = {{.ID}}
+```
+
+Passes
+
+```go
+type Params struct {
+	ID OrderID
+}
+```
+
+### Do not mix domains of different units
+
+A named type used with a domain column is bound to that domain. Inside SQL too, a domain is a unit
+distinct from its base type: PostgreSQL itself falls back to the base type and allows the
+operation, the checker reports it.
+
+```sql
+-- schema.sql
+CREATE DOMAIN yen AS bigint;
+CREATE DOMAIN gram AS integer;
+CREATE TABLE products (id bigint PRIMARY KEY, price yen NOT NULL, weight gram NOT NULL);
+```
+
+Rejected
+
+```sql
+SELECT id FROM products WHERE price + weight > 1000
+--                            ^ domain mismatch: yen + gram: mixes yen with gram (cast to the base type to drop the domain)
+```
+
+```go
+type Params struct {
+	Max int64 // sqlshape: parameter .Max carries domain yen as a plain int64; declare a named type to have it checked   (-strict)
+}
+```
+
+Passes
+
+```go
+type Yen int64
+
+type Params struct {
+	Max Yen
+}
+```
+
+```sql
+SELECT id FROM products WHERE price > {{.Max}}
+```
+
+Literals and parameters take the unit of the other side: `price + 100`, `price * 2`, `abs(price)`
+and `coalesce(price, 0)` stay yen. To drop the unit, cast to the base type explicitly
+(`price::bigint + weight::bigint`).
+
+### Do not receive with a type that loses information (`-strict`)
+
+```go
+type Event struct {
+	At  time.Time // field At: timestamp without time zone into time.Time: which zone the value is in becomes the application's implicit choice (prefer timestamptz)
+	Day time.Time // field Day: date into time.Time: a zone conversion can move the day (keep it at UTC midnight or use a civil date type)
+}
+```
+
+`timestamptz` gets no such note. If a `date` is received as `time.Time`, decide in the code that it
+is UTC midnight.
+
+## Preparing for a write to fail
+
+INSERT, UPDATE, DELETE and MERGE can fail on a constraint. For each expansion the checker lists the
+constraints it can violate and verifies that the template declares them on a
+`-- sqlshape: expect` line. At run time the violation comes back as a `ConstraintError` under the
+declared name ([runtime.md](runtime.md#errors)).
+
+### Declare the constraints a write can violate
+
+Rejected
+
+```sql
+INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
+--                     ^ may violate customers_email_key (UNIQUE (email) on customers, SQLSTATE 23505); add `-- sqlshape: expect customers_email_key` to the template or make it impossible
+```
+
+Passes
+
+```sql
+-- sqlshape: expect customers_email_key
+INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
+```
+
+```go
+_, err := CreateCustomer.First(ctx, db, p)
+if sqlshape.Violates(err, "customers_email_key") { ... }
+```
+
+Listed are unique constraints and primary keys, foreign keys in both directions (the inserted row
+references a missing parent; the deleted row is still referenced by a child), CHECKs, domain CHECKs,
+and NOT NULL where the value written may be NULL. A NULL that would come from a parameter is dropped
+when the field's Go type cannot be nil (a `string`, for instance).
+
+### Do not declare a violation that cannot happen
+
+Rejected
+
+```sql
+-- sqlshape: expect orders_total_check
+--                  ^ expects orders_total_check but no expansion can violate it
+UPDATE orders SET note = {{.Note}} WHERE id = {{.ID}}
+```
+
+The expect line is kept as the exact list of reasons the statement can fail. Remove declarations
+that are no longer needed.
+
+### Constraint names
+
+A named constraint goes by its name. An unnamed one goes by the name PostgreSQL gives it, so the
+diagnostic, the expect line and the run-time error all carry the same string.
 
 | constraint | key | example |
 |---|---|---|
 | `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
 | `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
 | `REFERENCES` on `(a)` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| table `CHECK` on `(a)` | `<table>_<a>_check` (a CHECK on several columns, or on none, is `<table>_check`) | `orders_total_check` |
+| table `CHECK` referencing `(a)` | `<table>_<a>_check` (a CHECK on several columns, or on none, is `<table>_check`) | `orders_total_check` |
 | domain `CHECK` | `<domain>_check` | `yen_check` |
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
-| a trigger's error | the SQLSTATE, or the name given with `-- sqlshape: error` | `P0401`, `OrderTooLarge` |
+| an error raised by a trigger | the SQLSTATE, or the name given with `-- sqlshape: error` | `P0401`, `OrderTooLarge` |
 
 A second constraint that would get the same name is numbered, as PostgreSQL does
-(`orders_total_check1`). The diagnostic spells the origin out:
-`may violate customers_email_key (UNIQUE (email) on customers, SQLSTATE 23505)`.
+(`orders_total_check1`).
 
-NOT NULL from a parameter. When the value that may be NULL is a `{{.X}}`, the violation is
-dropped if the Go type of `X` cannot be nil (a `string` never sends NULL); a pointer, slice or map
-keeps it.
-
-Triggers. A trigger function that raises is annotated in schema.sql:
+### Name the errors a trigger raises
 
 ```sql
+-- schema.sql
 -- sqlshape: error P0401 = OrderTooLarge
-CREATE FUNCTION check_order_size() RETURNS trigger ...
+CREATE FUNCTION check_order_size() RETURNS trigger ...;
+CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
-
-The SQLSTATE (under the given name) joins the failure modes of every INSERT / UPDATE / DELETE on
-the tables the trigger is attached to, for the events it fires on.
-
-Through functions. A call to a user function carries the failure modes of its body (and of the
-functions it calls, and the errors it declares), so `SELECT place_order({{.CustomerID}}, {{.Note}})`
-declares the foreign key, the domain CHECK and the trigger's code the way the INSERT inside would;
-the diagnostic says `through place_order()`. A NOT NULL the body blames on a parameter is traced to
-the call's argument; a `STRICT` function is not even called with a NULL, so that argument drops
-the violation.
-
-## Cardinality: can `One` return two rows?
-
-`sqlshape.One[R, P]` asserts at most one row, and the checker proves it for every expansion
-separately. A SELECT is single when every FROM item has a unique key — primary key, `UNIQUE`,
-unique index, or a partial unique index whose predicate the statement repeats — fixed by equality
-to a literal, a parameter, an outer reference or an uncorrelated scalar subquery, following
-equalities through joins (an outer join's ON only fixes its nullable side), views, subqueries and
-CTEs. An aggregate without `GROUP BY`, a constant `LIMIT 0` / `LIMIT 1`, a SELECT with no FROM, a
-one-row `VALUES` and a single-row `INSERT ... RETURNING` are single too; a `FULL JOIN` never is. `{{if .ID}} AND id = {{.ID}} {{end}}` fails on
-its else branch, which is the point. At run time `Get` returns `ErrNoRows` and `Find` reports
-presence; both return `ErrManyRows` if the database ever contradicts the proof.
-
-## Boundaries: what may this code see?
-
-Visibility policies. A table annotated in schema.sql
 
 ```sql
--- sqlshape: visible where deleted_at IS NULL
-CREATE TABLE memos (...)
+-- sqlshape: expect OrderTooLarge, orders_customer_id_fkey
+INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
-must be read through that predicate everywhere, views included; a view that repeats the
-predicate satisfies it for its readers. A template opts out explicitly with
-`-- sqlshape: unfiltered memos`. A `RETURNING` list is not checked (its rows were just written).
+The SQLSTATE joins the failure modes of the statements on the trigger's table for the events it
+fires on (here INSERT and UPDATE).
 
-Row-level security is part of the schema. `CREATE POLICY` predicates are type-checked against
-their table like PostgreSQL does (boolean, no aggregates or window functions, domains respected);
-policies and `ENABLE / FORCE ROW LEVEL SECURITY` travel with the table through diff and apply.
-A policy on a table whose row security is off is a schema problem. With `-strict`: row security
-on with no policy (nobody but the owner sees rows), a `SECURITY DEFINER` function that reaches
-the table (the owner's privileges skip the policies unless the table forces them), and a policy
-reading `current_setting(name, true)` (a session that never set it sees no rows, silently).
-The checker does not ask statements to repeat a policy's predicate: the database filters.
+### A statement that calls a function declares the function's failure modes too
 
-Row ownership. `-require-columns=tenant_id` makes every statement pin that column by
-equality on each table that has it; INSERTs must assign it. A row-level security policy that
-fixes the column satisfies the requirement (with `-strict`, a note when the table does not
-`FORCE` row security, since the pin does not hold for the owner).
+A call to a user-defined function inherits the failure modes of its body (`LANGUAGE sql`), of the
+functions the body calls, and of the errors it declares.
 
-Table access. `-no-table-reads` forbids reading tables: SELECTs, and the reading parts of
-writes, go through views; a table may still be the target of INSERT / UPDATE / DELETE / MERGE.
-`-no-tables` forbids direct table references altogether: application code reads views and calls
-functions, tables are the database's private side. `-schemas=a_api,b_private` restricts the
-schemas a package may reference (a service boundary over one database).
+```sql
+SELECT place_order({{.CustomerID}}, {{.Note}})
+--     ^ may violate orders_customer_id_fkey (FOREIGN KEY (customer_id) on orders REFERENCES customers, SQLSTATE 23503, through place_order()); add `-- sqlshape: expect orders_customer_id_fkey` to the template or make it impossible
+```
 
-Raw driver calls. A `Query` / `Exec` on pgx or `database/sql` with a string built at run
-time is the hole the template guarantee does not cover. `-raw-sql=constant` (the default)
-requires their SQL argument to be a constant; `-raw-sql=forbid` rejects every statement that does
-not go through sqlshape (`-raw-sql-allow=pkg/...` exempts packages); `-raw-sql=allow` turns it
-off.
+A NOT NULL the body blames on a parameter is traced to the call's argument. A `STRICT` function is
+not called with a NULL, so that argument's violation is dropped.
 
-## Schema problems
+## Returning one row (`One`)
 
-`schema.sql` is itself analyzed when loaded, once per run: the body of every `LANGUAGE sql`
-function (parameters in scope, `RETURNS` shape checked), every view and every policy is
-type-checked like PostgreSQL does at CREATE time, and a seeded INSERT is checked for
-idempotency and types. Findings are reported at the first `Query` of the package as
-`sqlshape: schema ...`. The analyzer's non-advisory notes (a domain mismatch, a predicate that
-always fails, a collation conflict) are diagnostics too.
+`sqlshape.One[R, P]` declares that the statement returns at most one row, and the checker proves it
+from the schema for every expansion. If it cannot, that is an error. At run time `Get` returns
+`ErrNoRows` when there is no row, `Find` reports presence, and both return `ErrManyRows` if the
+database contradicts the proof with a second row.
 
-With `-strict` the checker adds advisory findings about the schema and the statements, listed in
+### Fix a unique key by equality
+
+Rejected
+
+```go
+var ByName = sqlshape.One[User, struct{ Name string }](`
+SELECT id, email FROM users WHERE name = {{.Name}}`)
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email))
+```
+
+Passes
+
+```go
+var ByEmail = sqlshape.One[User, struct{ Email string }](`
+SELECT id, email FROM users WHERE email = {{.Email}}`)
+```
+
+A statement is single when, for every table in FROM, a unique key (primary key, `UNIQUE`, unique
+index, or a partial unique index whose predicate the WHERE clause repeats) is fixed by equality to a
+literal, a parameter, an outer reference or an uncorrelated scalar subquery. Equalities are followed
+through joins (an outer join's ON fixes only the nullable side), views, subqueries and CTEs. An
+aggregate without `GROUP BY`, a constant `LIMIT 0` / `LIMIT 1`, a SELECT without FROM, a one-row
+`VALUES` and a one-row `INSERT ... RETURNING` are single too. A `FULL JOIN` never is.
+
+### Every branch must be provable
+
+Rejected
+
+```go
+var Find = sqlshape.One[User, struct{ ID *int64 }](`
+SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@39:else]
+```
+
+In the branch where `.ID` is nil the condition disappears and every row comes back. Finding that is
+the point of the check: make this a `Query`, or make `.ID` a non-pointer and drop the branch.
+
+## Enforcing team rules
+
+Rules that show up in the shape of the SQL can be enforced by the checker: always filter
+soft-deleted rows, always pin the tenant column, read tables only through views.
+
+### A predicate every read must carry
+
+```sql
+-- schema.sql
+-- sqlshape: visible where deleted_at IS NULL
+CREATE TABLE memos (...);
+```
+
+Rejected
+
+```sql
+SELECT id, body FROM memos WHERE user_id = {{.UserID}}
+-- rows of memos are visible where deleted_at IS NULL: add that predicate for memos, or opt out with `-- sqlshape: unfiltered memos`
+```
+
+Passes
+
+```sql
+SELECT id, body FROM memos WHERE user_id = {{.UserID}} AND deleted_at IS NULL
+```
+
+```sql
+-- a statement that deliberately reads every row
+-- sqlshape: unfiltered memos
+SELECT id, body FROM memos WHERE id = {{.ID}}
+```
+
+Views are checked by the same rule; reading through a view that carries the predicate satisfies it
+for the view's readers. `RETURNING` columns are not checked: they are rows just written.
+
+### Always pin the tenant column (`-require-columns=tenant_id`)
+
+Rejected
+
+```sql
+SELECT id, total FROM orders WHERE id = {{.ID}}
+-- orders.tenant_id is not pinned: every statement on orders must fix tenant_id by equality (or assign it)
+```
+
+Passes
+
+```sql
+SELECT id, total FROM orders WHERE id = {{.ID}} AND tenant_id = {{.TenantID}}
+```
+
+An INSERT must assign `tenant_id`. A row-level security policy that fixes `tenant_id` satisfies the
+rule too, but only for roles subject to row security: unless the table has
+`FORCE ROW LEVEL SECURITY`, `-strict` notes
+`orders.tenant_id is pinned by policy ... for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner`.
+
+### Do not read tables directly (`-no-table-reads` / `-no-tables`)
+
+Rejected (`-no-table-reads`)
+
+```sql
+SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
+-- table orders is read directly; with -no-table-reads application code reads views (tables are written, not read)
+```
+
+Passes
+
+```sql
+SELECT id, customer_name FROM order_summary
+```
+
+`-no-table-reads` still allows a table as the target of INSERT, UPDATE, DELETE and MERGE.
+`-no-tables` forbids every table reference, writes included
+(`table orders is referenced directly; with -no-tables application code reads views and calls functions only`).
+`-schemas=a_api,b_private` restricts the schemas a package may reference
+(`c_private.orders is outside the schemas this code may reference (a_api,b_private)`).
+
+### Do not run SQL that bypasses sqlshape (`-raw-sql`)
+
+Calling pgx's or `database/sql`'s `Query` / `Exec` with a string built at run time is the hole the
+template guarantee does not cover.
+
+Rejected (the default, `-raw-sql=constant`)
+
+```go
+rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE "+where)
+// sqlshape: SQL passed to Query must be a constant: a string built at run time can carry injected SQL; write the dynamic parts as a sqlshape.Query template (or pass -raw-sql=allow)
+```
+
+Passes
+
+```go
+rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
+```
+
+`-raw-sql=forbid` rejects every statement that does not go through sqlshape, constant or not
+(`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`).
+Packages still migrating are exempted with `-raw-sql-allow=pkg/...`.
+
+## Bulk loading with COPY
+
+`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)` is checked like an INSERT: the table
+and columns exist, each column's type fits the field that feeds it, and every column left out has a
+default or is generated.
+
+Rejected
+
+```go
+type Item struct {
+	OrderID int64
+	Sku     string
+}
+var Load = sqlshape.Copy[Item]("order_items", "order_id", "sku")
+// Copy into order_items: column "line_no" is NOT NULL without a default and is not copied
+```
+
+Passes
+
+```go
+type Item struct {
+	OrderID int64
+	LineNo  int16
+	Sku     string
+}
+var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
+```
+
+## Problems in the schema itself
+
+`schema.sql` is analyzed once when loaded. The bodies of `LANGUAGE sql` functions (parameters in
+scope, `RETURNS` shape checked), views and policies get the same type check PostgreSQL performs at
+CREATE time, and seed INSERTs are checked for idempotency and types. Problems are reported at the
+first `Query` of the package as `sqlshape: schema ...`.
+
+```sql
+-- schema.sql
+CREATE VIEW order_summary AS
+SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
+-- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
+```
+
+Row-level security policies are checked here too: a `CREATE POLICY` predicate must be boolean,
+contain no aggregates or window functions, and respect domain units. A policy on a table whose row
+security is off is reported. The checker does not ask statements to repeat a policy's predicate; the
+database does the filtering.
+
+`-strict` adds advisory findings about the schema and the statements, listed in
 [flags.md](flags.md#-strict).

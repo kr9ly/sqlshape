@@ -118,7 +118,7 @@ the declaration does not list stay.
 
 The checker reads the same rows as a value set: a Go named type that meets the key column, or a
 column referencing it, is diffed against them like enum labels
-([checks.md](checks.md#meaning-what-does-the-value-stand-for)). This is why a lookup table is the
+([checks.md](checks.md#giving-types-a-meaning)). This is why a lookup table is the
 recommended home for a value set: adding, relabelling, reordering and retiring a value are each
 a one-row change and a `MERGE`, where an enum needs the type recreated under every column.
 

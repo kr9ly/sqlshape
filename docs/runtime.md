@@ -27,8 +27,9 @@ u, ok, err := UserByEmail.Find(ctx, db, p)   // ok reports presence
 tag, err   := MarkPaid.Exec(ctx, db, p)      // ErrNoRows when no row was touched
 ```
 
-All three return `ErrManyRows` if a second row arrives: the checker proved there cannot be one,
-so the database has changed under the proof.
+All three return `ErrManyRows` if a second row arrives. The checker proved from the schema that
+there cannot be one, so this happens only when the unique constraint the proof rested on is not
+actually in place in the database.
 
 `Stmt.Unprepared()` returns a copy that runs without a server-side prepared statement, so the
 planner makes a custom plan for the actual values every time. Use it for statements whose
@@ -91,7 +92,7 @@ if sqlshape.Violates(err, "customers_email_key") {
 ```
 
 The names are the ones the checker listed, so a violation the code does not handle is one the
-expect line announced ([checks.md](checks.md#failure-modes-what-can-this-write-fail-on)).
+expect line announced ([checks.md](checks.md#preparing-for-a-write-to-fail)).
 `ErrNoRows` is `pgx.ErrNoRows`; `IsNoRows(err)` tests for it.
 
 ## Batches
@@ -139,14 +140,22 @@ err := OrderStats.RefreshConcurrently(ctx, db)  // needs a unique index on the v
 The checker verifies the name against schema.sql and, with `-strict`, that a unique index
 exists when `RefreshConcurrently` is called.
 
-## The runtime refuses SQL the checker never saw
+## Only checked SQL runs
 
-`Render(p)` evaluates the template against `p` and returns the SQL with `$n` placeholders and the
-arguments in order. It is a second implementation of the template semantics, so before running
-it compares its output with the static expansion of the same branch signature, byte for byte;
-a difference is an error, not a query. Two cases are trusted rather than compared: a `range`
-with more than two iterations has no static twin and is checked by its two-iteration shape, and
-a template the checker expanded sparsely ([templates.md](templates.md#many-branches)).
+On every execution, the SQL built from the template is compared, character for character, with the
+SQL the checker verified for the same combination of branches. If they differ, no query is sent and
+an error is returned:
+
+```
+sqlshape: rendered SQL differs from the checked expansion [if@64:then]: the runtime evaluator and the checker disagree; please report this
+```
+
+This indicates a bug in sqlshape; please report it. It does not occur in normal use.
+
+Two cases cannot be compared: a `{{range}}` with three or more elements (checking covers up to two),
+and a template whose branch combinations exceeded 256 so that only a representative set was checked
+([templates.md](templates.md#many-branches)). In those, only the shape of the branches is confirmed
+before running.
 
 ## Tests on a real PostgreSQL
 
