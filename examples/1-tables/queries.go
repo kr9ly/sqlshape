@@ -6,10 +6,10 @@ import (
 	"github.com/kr9ly/sqlshape"
 )
 
-// OrderStatus is the Go side of the order_status enum. The checker binds the type to the
-// enum where it meets the status column and diffs these constants against the labels: a
-// label added in schema.sql without a constant here is reported, and so is a constant
-// that is not a label.
+// OrderStatus is the Go side of the order_statuses lookup table. The checker binds the
+// type to the table's key where it meets orders.status and diffs these constants against
+// the seeded rows: a row added in schema.sql without a constant here is reported, and so
+// is a constant that is not a row.
 type OrderStatus string
 
 const (
@@ -129,10 +129,14 @@ UPDATE orders o
 var SetStatus = sqlshape.One[struct{}, struct {
 	ID     int64
 	Status OrderStatus
-}](`UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}}`)
+}](`
+-- sqlshape: expect orders_status_fkey
+UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}}`)
 
-// Cancel only moves a pending order; a paid one is left alone (ErrNoRows tells).
+// Cancel only moves a pending order; a paid one is left alone (ErrNoRows tells). The
+// checker cannot know 'cancelled' is a seeded row, so the FK stays in the failure modes.
 var Cancel = sqlshape.One[struct{}, struct{ ID int64 }](`
+-- sqlshape: expect orders_status_fkey
 UPDATE orders SET status = 'cancelled' WHERE id = {{.ID}} AND status = 'pending'`)
 
 type Item struct {

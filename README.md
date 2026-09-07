@@ -32,13 +32,14 @@ looks for `schema.sql`, or a `schema/` directory whose `*.sql` files apply in na
 package directory (or `-schema path`). `sqlshape diff` / `apply` / `verify-schema` are the
 migration side, see below.
 
-The examples are three stages of the same order book, one per level of trust in the database:
+The examples are four stages of the same order book, one per level of trust in the database:
 
 | | what it uses | read it when |
 |---|---|---|
-| [`examples/1-tables`](examples/1-tables) | plain tables, `Query` / `One`, templates, enum types, `expect` lines, `pgtest.Start` + `Verify` | you come from an ORM and want checked SQL on the tables you have |
-| [`examples/2-database-api`](examples/2-database-api) | views for reads, functions for writes, domains, value sets, a composite, a trigger SQLSTATE, `-no-tables` | you want the schema to carry the meaning and the application to see an API |
-| [`examples/3-everything`](examples/3-everything) | schemas as a boundary, extensions, ranges, nested rows, declared type bindings, composite array parameters, Batch, Copy, soft-delete policy, tenant pinning, every flag | you want to see the whole surface at once |
+| [`examples/1-tables`](examples/1-tables) | plain tables, `Query` / `One`, templates, a seeded lookup table as the value set, `expect` lines, `pgtest.Start` + `Verify` | you come from an ORM and want checked SQL on the tables you have |
+| [`examples/2-views`](examples/2-views) | views as the read model (joins, names, aggregates and the soft-delete predicate decided once), writes still plain INSERT / UPDATE on tables, `-no-table-reads` | you want the database to own what things are called without moving logic into it yet |
+| [`examples/3-database-api`](examples/3-database-api) | functions for writes, domains, an enum and a CHECK value set, a composite, a trigger SQLSTATE, `-no-tables` | you want the schema to carry the meaning and the application to see an API |
+| [`examples/4-everything`](examples/4-everything) | schemas as a boundary, extensions, ranges, nested rows, declared type bindings, composite array parameters, Batch, Copy, soft-delete policy, row-level security, tenant pinning, every flag | you want to see the whole surface at once |
 
 Each has its own `schema.sql`, a `doc.go` saying what it shows, and a test that runs it against a real PostgreSQL.
 
@@ -141,7 +142,7 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 - **shared fragments** are Go constants concatenated into the template (`const tenantFilter = " AND tenant_id = {{.TenantID}}"`, then `sqlshape.Query[R, P](base + tenantFilter)`): the whole is still a compile-time constant, the checker requires `P` to have every field the fragment reads, and a diagnostic about the fragment lands on the fragment's own line. Values never become SQL text, so this is the one sharing mechanism that keeps the injection guarantee
 - **hazards** the template syntax allows but SQL does not honour are reported: an action inside a string literal (`LIKE '%{{.Q}}%'`) or a comment is text, not a parameter (write `'%' || {{.Q}} || '%'`), and a bare parameter as an `ORDER BY` / `GROUP BY` item sorts by a constant (branch on the value instead: `{{if eq .Sort "total"}} total {{else}} id {{end}}`)
 - **raw driver calls** are linted too, since a `Query` / `Exec` on pgx or `database/sql` with a string built at run time is the hole the template guarantee does not cover: `-raw-sql=constant` (the default) requires their SQL argument to be a constant, `-raw-sql=forbid` rejects every statement that does not go through sqlshape (`-raw-sql-allow=pkg/...` exempts packages), `-raw-sql=allow` turns it off
-- `-no-tables` forbids direct table references (application code reads views and calls functions; tables are the database's private side) and `-schemas=a_api,b_private` enforces a service boundary
+- `-no-table-reads` forbids reading tables (SELECTs, and the reading parts of writes, go through views; a table may still be the target of INSERT / UPDATE / DELETE), the stage-2 boundary; `-no-tables` forbids direct table references altogether (application code reads views and calls functions; tables are the database's private side) and `-schemas=a_api,b_private` enforces a service boundary
 - a Go enum type may implement `Known() bool`; the row mapper then rejects labels this build does not know with `*UnknownLabelError`
 - an unnamed result column (`SELECT 1 + 1`) or two columns with the same name (`o.id, u.id`) cannot bind to a field: the checker says which column to alias
 - `-strict` also reports advisory findings: fields of P the template never reads, such columns carried by unnamed Go types (which cannot be checked), `timestamp` / `date` received as `time.Time`, non-pointer enum parameters (the zero value is no label), parameters that always override a column DEFAULT, `LIMIT` without `ORDER BY`, enum comparison / ORDER BY (declaration order), and enum columns themselves (a seeded lookup table is easier to change and checked the same way)
@@ -164,7 +165,7 @@ Meaning that lives in the catalog is checked against the Go side by use, without
 
 The analyzer agrees with the PostgreSQL oracle on 152 golden statements (contrib extensions,
 SQL/JSON, MERGE, GROUPING SETS and a schema full of DDL included), the checker and the runtime
-cover the surface the three examples exercise, and each example's test verifies every statement
+cover the surface the four examples exercise, and each example's test verifies every statement
 against a real PostgreSQL. The migration side (diff / apply / verify-schema, intents, seeded
 tables, consumer index) round-trips its test scenarios through an embedded PostgreSQL.
 

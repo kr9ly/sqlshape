@@ -1156,6 +1156,9 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 			// built on it) and redefines the query
 			rel = existing
 			rel.Frozen, rel.Unfiltered = nil, nil
+			// the redefinition is the definition (pg_dump writes a view a later object needs
+			// as a dummy first and CREATE OR REPLACEs it once the object exists)
+			rel.Definition = s.stmtText
 		case st.View.Relpersistence == "t":
 			// a temporary view hides the permanent relation of the same name (as createTable)
 		default:

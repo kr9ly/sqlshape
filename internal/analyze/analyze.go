@@ -68,6 +68,8 @@ type analyzer struct {
 	// INSERT ... SELECT types them by the target columns
 	keepUnknown bool
 	refs        []RelationRef
+	// inReturning: analyzing a RETURNING list (its rows are the ones just written)
+	inReturning bool
 	uses        []Use
 	useSeen     map[string]int
 	fixed       []Source

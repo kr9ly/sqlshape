@@ -125,4 +125,7 @@ type RelationRef struct {
 	Name     string
 	Kind     byte // 'r' table, 'v' view, 'm' materialized view
 	Position int32
+	// Target: the relation an INSERT / UPDATE / DELETE / MERGE writes (a read elsewhere in
+	// the same statement, in a subquery or a USING, does not count).
+	Target bool
 }

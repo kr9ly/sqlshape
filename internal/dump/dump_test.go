@@ -35,7 +35,7 @@ func TestCanonicalFixedPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer srv.Close()
-	for _, ex := range []string{"1-tables", "2-database-api", "3-everything"} {
+	for _, ex := range []string{"1-tables", "2-views", "3-database-api", "4-everything"} {
 		t.Run(ex, func(t *testing.T) {
 			sql, err := os.ReadFile(filepath.Join("../../examples", ex, "schema.sql"))
 			if err != nil {
@@ -76,7 +76,7 @@ func TestCanonicalChanges(t *testing.T) {
 ALTER TABLE customers ADD COLUMN nickname text DEFAULT 'anon';
 ALTER TABLE orders ALTER COLUMN total SET DEFAULT 1;
 CREATE INDEX orders_status_idx ON orders (status) WHERE status <> 'paid';
-ALTER TYPE order_status ADD VALUE 'refunded';
+INSERT INTO order_statuses (code, label, sort_order) VALUES ('refunded', 'Refunded', 50);
 COMMENT ON TABLE orders IS 'orders placed';
 `
 	from, _, err := Canonical(ctx, string(base), nil)
@@ -93,11 +93,11 @@ COMMENT ON TABLE orders IS 'orders placed';
 	}
 	got := strings.Join(lines, "\n")
 	want := strings.TrimSpace(`
-~ enum order_status
-    labels: pending, paid, shipped, cancelled -> pending, paid, shipped, cancelled, refunded
 ~ table customers
     column order: id, email, name, created_at -> id, email, name, created_at, nickname
 + column customers.nickname
+~ rows order_statuses
+    row 'refunded':  -> 'refunded', 'Refunded', '50'
 ~ column orders.total
     default: 0 -> 1
 + index orders.orders_status_idx

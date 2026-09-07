@@ -694,9 +694,14 @@ func (p *prover) describe(r *rte) string {
 }
 
 // recordFixed notes which table columns of this level are pinned to a known value by
-// the predicate (WHERE plus join conditions), for Result.Fixed. View bodies are skipped.
+// the predicate (WHERE plus join conditions), for Result.Fixed, checks the visibility
+// policies and the plan advisories, and refines nullability from the predicate. Inside a
+// view body only the nullability refinement applies (the view's own columns follow its
+// WHERE; the fixed columns and the policies are the reader's concern). A RETURNING list
+// sees the rows just written: the policies were checked on the statement's own WHERE, or
+// do not apply to an INSERT.
 func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
-	if a.inView > 0 || len(sc.items) == 0 {
+	if len(sc.items) == 0 {
 		return
 	}
 	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
@@ -713,13 +718,17 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 			}
 		}
 	}
-	for k := range p.known {
-		if k.r.rel != nil {
-			a.fixed = append(a.fixed, Source{Table: k.r.rel.FullName(), Column: k.r.cols[k.i].name, NotNull: k.r.cols[k.i].src != nil && k.r.cols[k.i].src.NotNull})
+	if a.inView == 0 {
+		for k := range p.known {
+			if k.r.rel != nil {
+				a.fixed = append(a.fixed, Source{Table: k.r.rel.FullName(), Column: k.r.cols[k.i].name, NotNull: k.r.cols[k.i].src != nil && k.r.cols[k.i].src.NotNull})
+			}
+		}
+		if !a.inReturning {
+			a.checkVisibility(p, loc(where))
+			a.advisePlans(p)
 		}
 	}
-	a.checkVisibility(p, loc(where))
-	a.advisePlans(p)
 	a.rejectNulls(p)
 }
 

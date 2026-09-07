@@ -135,17 +135,17 @@ COMMENT ON COLUMN tags.name IS 'unique label';`,
 			back: "-- @migrate drop tags\n-- @migrate drop order_tags"},
 		{name: "types and views", oneWay: true, edit: `
 ALTER TYPE order_status ADD VALUE 'refunded' AFTER 'paid';
-CREATE DOMAIN email AS text CHECK (VALUE LIKE '%@%');
+CREATE DOMAIN phone AS text CHECK (VALUE LIKE '+%');
 CREATE TYPE money_pair AS (amount numeric, currency text);
-CREATE VIEW paid_orders AS SELECT id, customer_id, total FROM orders WHERE status = 'paid';
-CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id, sum(total) AS total FROM orders GROUP BY customer_id;
-CREATE UNIQUE INDEX order_totals_pk ON order_totals (customer_id);`, base: "1-tables"},
+CREATE VIEW paid_orders AS SELECT id, customer_id, shipping FROM orders WHERE status = 'paid';
+CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id, sum(shipping) AS total FROM orders GROUP BY customer_id;
+CREATE UNIQUE INDEX order_totals_pk ON order_totals (customer_id);`, base: "3-database-api"},
 		{name: "functions and triggers", base: "1-tables", edit: `
 CREATE FUNCTION order_count(p bigint) RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) FROM orders WHERE customer_id = p);
 CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.created_at := now(); RETURN NEW; END $$;
 CREATE TRIGGER orders_touch BEFORE INSERT ON orders FOR EACH ROW EXECUTE FUNCTION touch();
 CREATE RULE orders_protect AS ON DELETE TO orders WHERE old.status = 'shipped' DO INSTEAD NOTHING;`},
-		{name: "everything grows", base: "3-everything", edit: `
+		{name: "everything grows", base: "4-everything", edit: `
 ALTER TABLE core.rooms ADD COLUMN floor integer NOT NULL DEFAULT 1;
 CREATE OR REPLACE VIEW app.rooms AS SELECT tenant_id, id, name, capacity, hourly, 1 AS one FROM core.rooms;
 COMMENT ON COLUMN core.rooms.capacity IS 'seats';`,
@@ -159,8 +159,11 @@ ALTER TABLE orders RENAME TO purchases;
 ALTER TABLE purchases RENAME COLUMN total TO amount;
 ALTER TABLE purchases ALTER COLUMN amount TYPE numeric(14,2);`,
 			back: "-- @migrate rename customers.full_name -> customers.name\n-- @migrate rename purchases -> orders\n-- @migrate rename purchases.amount -> orders.total"},
-		{name: "enum label removed", base: "1-tables", edit: `
+		{name: "enum label removed", base: "3-database-api", edit: `
 -- @migrate enum order_status: drop 'cancelled' using 'pending'
+DROP VIEW order_view;
+DROP MATERIALIZED VIEW sales_by_day;
+DROP FUNCTION pay_order(bigint);
 ALTER TYPE order_status RENAME TO order_status_prev;
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped');
 ALTER TABLE orders ALTER COLUMN status DROP DEFAULT;
@@ -202,13 +205,14 @@ func TestPlanProblems(t *testing.T) {
 		{"undeclared table drop", "DROP TABLE order_items;", "table order_items is dropped, which no @migrate declares"},
 		{"stale drop", "-- @migrate drop order_items.qty", "order_items.qty still exists in the target schema"},
 		{"stale rename", "-- @migrate rename customers.name -> customers.full_name", "customers.full_name is not in the target schema"},
-		{"undeclared enum label", `ALTER TYPE order_status RENAME TO o; CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped');
-ALTER TABLE orders ALTER COLUMN status DROP DEFAULT; ALTER TABLE orders ALTER COLUMN status TYPE order_status USING status::text::order_status; DROP TYPE o;`,
-			"enum order_status: labels cancelled are removed, which no @migrate declares"},
+		{"undeclared seed row", "DELETE FROM order_statuses WHERE code = 'cancelled';", ""},
 		{"backfill type error", "-- @migrate backfill orders.total = 'abc'\nALTER TABLE orders ALTER COLUMN total SET DEFAULT 2;", "invalid input syntax for type numeric"},
 		{"backfill unknown column", "-- @migrate backfill orders.nope = 1", "orders.nope is not in the target schema"},
 	}
 	for _, c := range cases {
+		if c.want == "" {
+			continue
+		}
 		t.Run(c.name, func(t *testing.T) {
 			to := mustCanonical(t, base+"\n"+c.edit)
 			_, err := Plan(from.s, to.s, to.intents)
@@ -217,6 +221,18 @@ ALTER TABLE orders ALTER COLUMN status DROP DEFAULT; ALTER TABLE orders ALTER CO
 			}
 		})
 	}
+	t.Run("undeclared enum label", func(t *testing.T) {
+		base := example(t, "3-database-api")
+		from := mustCanonical(t, base)
+		to := mustCanonical(t, base+`
+DROP VIEW order_view; DROP MATERIALIZED VIEW sales_by_day; DROP FUNCTION pay_order(bigint);
+ALTER TYPE order_status RENAME TO o; CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped');
+ALTER TABLE orders ALTER COLUMN status DROP DEFAULT; ALTER TABLE orders ALTER COLUMN status TYPE order_status USING status::text::order_status; DROP TYPE o;`)
+		_, err := Plan(from.s, to.s, to.intents)
+		if want := "enum order_status: labels cancelled are removed, which no @migrate declares"; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("got %v\nwant a problem containing %q", err, want)
+		}
+	})
 }
 
 func TestParseIntents(t *testing.T) {
@@ -252,7 +268,7 @@ CREATE TABLE t (id int); -- @migrate not a declaration (not at line start)
 
 func TestPlanEmptyForIdentical(t *testing.T) {
 	requirePgDump(t)
-	s := mustCanonical(t, example(t, "3-everything"))
+	s := mustCanonical(t, example(t, "4-everything"))
 	if p, err := Plan(s.s, s.s, nil); len(p) > 0 || err != nil {
 		t.Errorf("plan for identical schemas: %v, %v", p, err)
 	}

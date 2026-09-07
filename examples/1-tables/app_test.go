@@ -83,8 +83,8 @@ func TestOrderBook(t *testing.T) {
 		t.Fatalf("totals: %v %+v", err, totals)
 	}
 
-	// the database knows a label this build does not: the mapper refuses the row
-	if _, err := conn.Exec(ctx, `ALTER TYPE order_status ADD VALUE 'refunded'`); err != nil {
+	// the database knows a status this build does not: the mapper refuses the row
+	if _, err := conn.Exec(ctx, `INSERT INTO order_statuses VALUES ('refunded', 'Refunded', 50)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := conn.Exec(ctx, `UPDATE orders SET status = 'refunded' WHERE id = $1`, id); err != nil {

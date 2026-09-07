@@ -130,3 +130,15 @@ func TestRowSecurityPins(t *testing.T) {
 	defer Analyzer.Flags.Set("require-columns", "")
 	analysistest.Run(t, td, Analyzer, "rlspin")
 }
+
+func TestNoTableReads(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("no-table-reads", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("no-table-reads", "false")
+	analysistest.Run(t, td, Analyzer, "reads")
+}

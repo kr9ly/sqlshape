@@ -1210,6 +1210,11 @@ func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation
 	if err != nil {
 		return nil, nil, err
 	}
+	for i := range a.refs {
+		if a.refs[i].Schema == rel.Schema && a.refs[i].Name == rel.Name {
+			a.refs[i].Target = true
+		}
+	}
 	return rel, r, nil
 }
 
@@ -1272,6 +1277,8 @@ func (a *analyzer) returning(list []*pg_query.Node, sc *scope) ([]rteCol, *Error
 	}
 	sel := &pg_query.SelectStmt{TargetList: list}
 	a.srfBanNext = "RETURNING"
+	a.inReturning = true
+	defer func() { a.inReturning = false }()
 	return a.selectStmt(sel, sc)
 }
 

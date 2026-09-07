@@ -1,4 +1,4 @@
--- Stage 2: the database as an API. Tables are the database's private side; the
+-- Stage 3: the database as an API. Tables are the database's private side; the
 -- application reads views and calls functions. Meaning lives in the schema — domains
 -- for units, an enum and a CHECK value set for closed sets, a composite for a value
 -- object, a trigger for an invariant a CHECK cannot express — and sqlshape carries it

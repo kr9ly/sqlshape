@@ -35,6 +35,8 @@ func TestVisibilityPolicy(t *testing.T) {
 		{"DELETE FROM memos WHERE id = $1", "add that predicate"},
 		{"-- sqlshape: unfiltered memos\nSELECT id FROM memos WHERE deleted_at IS NOT NULL", ""},
 		{"INSERT INTO memos (user_id, body) VALUES ($1, $2)", ""},
+		{"INSERT INTO memos (user_id, body) VALUES ($1, $2) RETURNING id", ""},
+		{"UPDATE memos SET body = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING id", ""},
 	}
 	for _, c := range cases {
 		r, err := Analyze(s, c.sql)

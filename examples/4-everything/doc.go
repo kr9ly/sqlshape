@@ -1,5 +1,5 @@
-// Package everything is the third sqlshape example: a multi-tenant room booking service
-// that uses the whole surface. Read examples/1-tables and examples/2-database-api first.
+// Package everything is the fourth sqlshape example: a multi-tenant room booking service
+// that uses the whole surface. Read examples/1-tables, 2-views and 3-database-api first.
 //
 // Check it with every policy on:
 //

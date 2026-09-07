@@ -26,3 +26,24 @@ SELECT b.tenant_id, b.room_id, lower(b.slot)::date AS day, sum(b.minutes) AS boo
 		}
 	}
 }
+
+// A view's WHERE refines its columns' nullability like a statement's does.
+func TestViewNullRejection(t *testing.T) {
+	s, err := Load(`
+CREATE TABLE o (id bigint PRIMARY KEY, archived_at timestamptz, note text);
+CREATE VIEW archived AS SELECT id, archived_at, note FROM o WHERE archived_at IS NOT NULL;
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Analyze(s, "SELECT id, archived_at, note FROM archived")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"id": false, "archived_at": false, "note": true}
+	for _, c := range r.Columns {
+		if c.Nullable != want[c.Name] {
+			t.Errorf("%s: nullable=%v, want %v", c.Name, c.Nullable, want[c.Name])
+		}
+	}
+}

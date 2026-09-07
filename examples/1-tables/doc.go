@@ -9,9 +9,11 @@
 //     column needs a pointer), parameter types, and that One really returns one row.
 //   - Templates: {{.Field}} becomes a $n parameter, never text; {{if}} / {{range}}
 //     branches are expanded and every combination is checked.
-//   - Enums as Go types: OrderStatus is bound to order_status by use; its constants are
-//     diffed against the labels, and Known() lets the mapper reject labels this build
-//     does not know.
+//   - A value set as a seeded lookup table: order_statuses' rows are written in schema.sql
+//     with a plain INSERT, OrderStatus is bound to the table's key by use, its constants
+//     are diffed against the rows, and Known() lets the mapper reject a status this build
+//     does not know. (An enum binds the same way; a table can carry a label and retire a
+//     value, so it is the default here.)
 //   - Failure modes: an INSERT / UPDATE / DELETE declares in `-- sqlshape: expect` the
 //     constraints it may violate; the checker keeps the list exact, and at run time a
 //     violation arrives as a ConstraintError keyed by the same names.

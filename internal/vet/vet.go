@@ -44,6 +44,7 @@ var (
 	schemaPath   string
 	strictFlag   bool
 	noTables     bool
+	noTableReads bool
 	rawSQLFlag   string
 	rawSQLAllow  string
 	schemasFlag  string
@@ -55,6 +56,7 @@ var (
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql, or to a directory whose *.sql files apply in name order (default: the nearest schema.sql or schema/ above the package directory)")
 	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
+	Analyzer.Flags.BoolVar(&noTableReads, "no-table-reads", false, "forbid reading tables: SELECTs (and the reading parts of writes) go through views; a table may still be the target of INSERT / UPDATE / DELETE / MERGE")
 	Analyzer.Flags.StringVar(&rawSQLFlag, "raw-sql", "constant", "driver calls (pgx / database/sql Query, Exec, ...) outside sqlshape: constant requires their SQL to be a constant string, forbid rejects them, allow ignores them")
 	Analyzer.Flags.StringVar(&rawSQLAllow, "raw-sql-allow", "", "comma-separated package paths (or prefixes ending in /...) where -raw-sql=forbid does not apply")
 	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
@@ -917,6 +919,9 @@ func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit li
 		}
 		if noTables && ref.Kind == 'r' {
 			report(at, "table %s is referenced directly; with -no-tables application code reads views and calls functions only%s", name, where)
+		}
+		if noTableReads && !noTables && ref.Kind == 'r' && !ref.Target {
+			report(at, "table %s is read directly; with -no-table-reads application code reads views (tables are written, not read)%s", name, where)
 		}
 		if allowed != nil && !allowed[ref.Schema] {
 			report(at, "%s is outside the schemas this code may reference (%s)%s", name, schemasFlag, where)
