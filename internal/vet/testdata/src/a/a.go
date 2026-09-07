@@ -138,6 +138,11 @@ var nullableEmail = sqlshape.Query[int64, struct{ Email *string }]("-- sqlshape:
 
 var staleExpect = sqlshape.Query[struct{}, struct{ ID int64 }]("-- sqlshape: expect orders_user_note_key, P0401\nUPDATE orders SET status = 'paid' WHERE id = {{.ID}}") // want "expects orders_user_note_key but no expansion can violate it"
 
+// \x / \u / \U escapes ahead of the bad column: litPos (vet.go) walks and decodes them to
+// find the right source column; see TestLitPosEscapes for a precise, position-level check
+// (this interpreted string is one physical source line, so the diagnostic still lands here)
+var escapedTemplate = sqlshape.Query[int64, struct{}]("SELECT id FROM users -- \x41\u00e9\U0001F600\nWHERE nope = 1") // want `column "nope" does not exist \(SQLSTATE 42703\)`
+
 var branchViolation = sqlshape.Query[struct{}, struct {
 	ID   int64
 	Note *string
@@ -356,6 +361,19 @@ var badHosts = sqlshape.Query[BadHost, struct{}](`SELECT h.addr, h.net, h.uptime
 
 var lossyRange = sqlshape.Query[struct{ Span pgtype.Range[int32] }, struct{}](`SELECT int8range(1, 5) AS span`) // want `field Span: bigint into int32`
 
+// bytea: only a byte slice scans / encodes it
+type AvatarRow struct{ Avatar []byte }
+
+var avatarOK = sqlshape.Query[AvatarRow, struct{}](`SELECT avatar FROM users`)
+
+type BadAvatarRow struct{ Avatar int32 }
+
+var avatarBad = sqlshape.Query[BadAvatarRow, struct{}](`SELECT avatar FROM users`) // want `field Avatar is int32 but column "avatar" is bytea`
+
+var avatarParamOK = sqlshape.Query[int64, struct{ Avatar []byte }](`SELECT id FROM users WHERE avatar = {{.Avatar}}`)
+
+var avatarParamBad = sqlshape.Query[int64, struct{ Avatar int32 }](`SELECT id FROM users WHERE avatar = {{.Avatar}}`) // want `parameter .Avatar is int32 but SQL expects bytea`
+
 // parameters: strings encode as anything, typed values must fit
 var hostParams = sqlshape.Query[struct{ ID int32 }, struct {
 	Addr   string
@@ -499,6 +517,27 @@ type YenBox struct{ N int64 } // want YenBox:`carries yen`
 
 var yenNoScanner = sqlshape.Query[struct{ Balance YenBox }, struct{}](`SELECT balance FROM users`) // want `field Balance: a.YenBox carries yen but does not implement sql.Scanner: pgx cannot decode into it`
 
+// sqlshape: type yen
+type YenValuer struct{ N int64 } // want YenValuer:`carries yen`
+
+func (y YenValuer) Value() (driver.Value, error) { return y.N, nil }
+
+// a struct that implements driver.Valuer is accepted as a parameter for a domain (non-composite) declared type
+// (an UPDATE assignment keeps the domain type; a WHERE comparison would widen it to its base)
+var yenParamOK = sqlshape.Query[struct{}, struct {
+	ID      int64
+	Balance YenValuer
+}]("-- sqlshape: expect yen_check\nUPDATE users SET balance = {{.Balance}} WHERE id = {{.ID}}")
+
+// sqlshape: type yen
+type YenNoValuer struct{ N int64 } // want YenNoValuer:`carries yen`
+
+// a declared type used as a parameter must implement driver.Valuer, or pgx cannot encode it
+var yenParamBad = sqlshape.Query[struct{}, struct {
+	ID      int64
+	Balance YenNoValuer
+}]("-- sqlshape: expect yen_check\nUPDATE users SET balance = {{.Balance}} WHERE id = {{.ID}}") // want `parameter .Balance: a.YenNoValuer carries yen but does not implement driver.Valuer: pgx cannot encode it`
+
 // sqlshape: type nope
 type Nope string // want `type Nope: PostgreSQL type "nope" does not exist in the schema` Nope:`carries nope`
 
@@ -525,6 +564,17 @@ var planLabels = sqlshape.Query[struct {
 	Code  Plan
 	Label string
 }, struct{}](`SELECT code, label FROM plans`)
+
+// lookup tables whose key column is not text: the seed values still bind as a value set,
+// spelled by constText (a plain integer, a cast integer, and a numeric literal that falls
+// back to deparsing)
+type Level int16 // want Level:`bound l priorities.level`
+
+var byLevel = sqlshape.Query[int64, struct{ L Level }](`SELECT count(*) FROM priorities WHERE level = {{.L}}`)
+
+type Weight string // want Weight:`bound l weights.factor`
+
+var byWeight = sqlshape.Query[int64, struct{ W Weight }](`SELECT count(*) FROM weights WHERE factor = {{.W}}`)
 
 func planName(p Plan) string {
 	switch p { // want `switch on Plan does not handle value set of plans.code \(lookup table\) labels: pro`

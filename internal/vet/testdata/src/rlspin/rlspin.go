@@ -14,3 +14,11 @@ var docs = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM docs`) // want 
 var drafts = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM drafts`) // want `drafts.tenant_id is not pinned: every statement on drafts must fix tenant_id by equality`
 
 var pinnedAnyway = sqlshape.Query[int64, struct{ T TenantID }](`SELECT count(*) FROM docs WHERE tenant_id = {{.T}}`)
+
+// andConjuncts: the pin may sit anywhere among AND'ed conjuncts, not just first, and nested ANDs flatten too
+var andPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM andpin`)
+
+var nestedPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM nestedpin`)
+
+// an OR does not pin: neither disjunct alone fixes tenant_id for every row
+var orNotPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orpin`) // want `orpin.tenant_id is not pinned: every statement on orpin must fix tenant_id by equality \(or assign it\)`

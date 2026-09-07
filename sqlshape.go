@@ -76,7 +76,6 @@ func One[R, P any](template string) Single[R, P] {
 	return Single[R, P]{stmt: Stmt[R, P]{Template: template}}
 }
 
-
 // MatView is a handle on a materialized view; the checker verifies the name against
 // schema.sql (and, with -strict, that a unique index allows RefreshConcurrently).
 //

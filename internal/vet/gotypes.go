@@ -438,7 +438,12 @@ func snake(s string) string {
 // so the lossy cases are the ones where Go is wider than PG.
 func (c *checker) paramFit(pg schema.TypeRef, t types.Type) fit {
 	f := c.matchDir(pg, t, true)
-	f.lossy = ""
+	// the type table's notes describe the result direction (bigint into int32); for a
+	// parameter only the overflow notes below apply. A declared type's note (no
+	// driver.Valuer) is about encoding and stays
+	if _, declared := c.declaredOf(t); !declared {
+		f.lossy = ""
+	}
 	inner, _ := unwrapNullable(t)
 	if inner == nil || !f.ok {
 		return f

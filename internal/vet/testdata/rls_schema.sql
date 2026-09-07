@@ -23,3 +23,20 @@ CREATE TABLE sealed (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
 ALTER TABLE sealed ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sealed FORCE ROW LEVEL SECURITY;
 CREATE POLICY sealed_tenant ON sealed USING (tenant_id = current_setting('app.tenant')::uuid);
+
+-- conjunctions: the pin can sit anywhere among AND'ed conjuncts, nested or not
+CREATE TABLE andpin (id bigint PRIMARY KEY, region text NOT NULL, tenant_id uuid NOT NULL);
+ALTER TABLE andpin ENABLE ROW LEVEL SECURITY;
+ALTER TABLE andpin FORCE ROW LEVEL SECURITY;
+CREATE POLICY andpin_tenant ON andpin USING (region = 'us' AND tenant_id = current_setting('app.tenant')::uuid);
+
+CREATE TABLE nestedpin (id bigint PRIMARY KEY, region text NOT NULL, tenant_id uuid NOT NULL, flag boolean NOT NULL);
+ALTER TABLE nestedpin ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nestedpin FORCE ROW LEVEL SECURITY;
+CREATE POLICY nestedpin_tenant ON nestedpin USING ((region = 'us' AND tenant_id = current_setting('app.tenant')::uuid) AND flag = true);
+
+-- an OR does not pin: either side alone can pass, so tenant_id is not fixed for every row
+CREATE TABLE orpin (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
+ALTER TABLE orpin ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orpin FORCE ROW LEVEL SECURITY;
+CREATE POLICY orpin_tenant ON orpin USING (tenant_id = current_setting('app.tenant')::uuid OR true);

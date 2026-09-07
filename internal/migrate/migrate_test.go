@@ -333,3 +333,400 @@ INSERT INTO kind_groups VALUES ('retail', 'b2c'), ('sample', 'b2b');
 		}
 	})
 }
+
+// --- render.go: pure function coverage (no database needed) ------------------------
+
+// constraintText's PRIMARY KEY / UNIQUE / FOREIGN KEY branches only fire when a
+// constraint's Definition is empty. In practice a pg_dump canonical schema never leaves
+// Definition empty for these kinds (pg_dump always renders them as their own standalone
+// ALTER TABLE ADD CONSTRAINT statement, never inline in CREATE TABLE - verified against
+// pg_dump directly), so this path is unreachable through Plan with a real, canonicalized
+// schema. Only CHECK constraints (which pg_dump keeps inline) reach it. These are
+// therefore direct unit tests of the renderer itself.
+func TestConstraintText(t *testing.T) {
+	cases := []struct {
+		name string
+		c    *schema.Constraint
+		want string
+	}{
+		{"primary key", &schema.Constraint{Kind: schema.PrimaryKey, Columns: []string{"id"}},
+			`PRIMARY KEY ("id")`},
+		{"unique", &schema.Constraint{Kind: schema.Unique, Columns: []string{"email"}},
+			`UNIQUE ("email")`},
+		{"unique nulls not distinct", &schema.Constraint{Kind: schema.Unique, Columns: []string{"email"}, NullsNotDistinct: true},
+			`UNIQUE NULLS NOT DISTINCT ("email")`},
+		{"foreign key, no action", &schema.Constraint{Kind: schema.ForeignKey, Columns: []string{"customer_id"}, RefTable: "customers", RefColumns: []string{"id"}},
+			`FOREIGN KEY ("customer_id") REFERENCES "customers" ("id")`},
+		{"foreign key cascade/set null/deferrable", &schema.Constraint{Kind: schema.ForeignKey, Columns: []string{"customer_id"}, RefTable: "customers", RefColumns: []string{"id"}, OnDelete: 'c', OnUpdate: 'n', Deferrable: true},
+			`FOREIGN KEY ("customer_id") REFERENCES "customers" ("id") ON DELETE CASCADE ON UPDATE SET NULL DEFERRABLE`},
+		{"foreign key restrict/set default", &schema.Constraint{Kind: schema.ForeignKey, Columns: []string{"customer_id"}, RefTable: "customers", RefColumns: []string{"id"}, OnDelete: 'r', OnUpdate: 'd'},
+			`FOREIGN KEY ("customer_id") REFERENCES "customers" ("id") ON DELETE RESTRICT ON UPDATE SET DEFAULT`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := constraintText(nil, c.c); got != c.want {
+				t.Errorf("got  %q\nwant %q", got, c.want)
+			}
+		})
+	}
+	t.Run("check", func(t *testing.T) {
+		s, err := schema.Load("CREATE TABLE t (n integer, CONSTRAINT t_n_check CHECK (n > 0));")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := s.Relation("", "t")
+		if len(r.Constraints) != 1 {
+			t.Fatalf("constraints: %+v", r.Constraints)
+		}
+		if got, want := constraintText(nil, r.Constraints[0]), "CHECK (n > 0)"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	// A schema-qualified referenced table renders wrong: constraintText joins the split
+	// name with qlist (", "-joined) instead of qdot (the "." form render.go already has
+	// for this exact purpose), producing invalid SQL ("core", "tenants" instead of
+	// "core"."tenants"). Harmless today since this whole branch is unreachable via Plan,
+	// but worth fixing if it is ever wired up.
+	t.Run("schema-qualified ref table renders wrong (known issue)", func(t *testing.T) {
+		c := &schema.Constraint{Kind: schema.ForeignKey, Columns: []string{"tenant_id"}, RefTable: "core.tenants", RefColumns: []string{"id"}}
+		if got, bad := constraintText(nil, c), `FOREIGN KEY ("tenant_id") REFERENCES "core", "tenants" ("id")`; got != bad {
+			t.Errorf("got %q, want the (buggy) %q - has the rendering been fixed?", got, bad)
+		}
+	})
+}
+
+func TestActionWord(t *testing.T) {
+	cases := []struct {
+		b    byte
+		want string
+	}{
+		{'r', "RESTRICT"}, {'c', "CASCADE"}, {'n', "SET NULL"}, {'d', "SET DEFAULT"}, {'a', ""}, {0, ""},
+	}
+	for _, c := range cases {
+		if got := actionWord(c.b); got != c.want {
+			t.Errorf("actionWord(%q) = %q, want %q", c.b, got, c.want)
+		}
+	}
+}
+
+// commentRelation and commentObjectSurvives are not called anywhere in the migrate
+// package (grepped: only their own definitions in render.go). commentText / the comment
+// loops in migrate.go already do the "does the object still exist" check inline via
+// commentTarget, so these two look like leftover helpers from a refactor. Direct unit
+// tests here for coverage; if they are truly dead, they are candidates for removal.
+func TestCommentHelpers(t *testing.T) {
+	s, err := schema.Load("CREATE TABLE t (n integer);")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := commentRelation("t.n"), "t"; got != want {
+		t.Errorf("commentRelation(%q) = %q, want %q", "t.n", got, want)
+	}
+	if got, want := commentRelation("t"), "t"; got != want {
+		t.Errorf("commentRelation(%q) = %q, want %q", "t", got, want)
+	}
+	if !commentObjectSurvives(s, "t.n") {
+		t.Error("t.n should survive")
+	}
+	if commentObjectSurvives(s, "t.nope") {
+		t.Error("t.nope should not survive")
+	}
+	if commentObjectSurvives(s, "nope") {
+		t.Error("nope should not survive")
+	}
+}
+
+// TestPlanNotes covers the "-- " notes the plan leaves for changes it cannot express as
+// DDL: a domain's base type, a range's subtype, and a table's INHERITS / PARTITION OF /
+// OF type - none of which can be altered in place. These operate on statically parsed
+// schemas (schema.Load), no database needed.
+func TestPlanNotes(t *testing.T) {
+	load := func(sql string) *schema.Schema {
+		t.Helper()
+		s, err := schema.Load(sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	t.Run("domain base type", func(t *testing.T) {
+		from, to := load("CREATE DOMAIN d AS integer;"), load("CREATE DOMAIN d AS text;")
+		plan, err := Plan(from, to, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, "-- domain d: base type integer -> text cannot be altered") {
+			t.Errorf("want a note about the domain's base type, got:\n%s", ddl)
+		}
+		if strings.Contains(ddl, "ALTER DOMAIN") {
+			t.Errorf("want no ALTER for an unalterable base type change:\n%s", ddl)
+		}
+	})
+	t.Run("range subtype", func(t *testing.T) {
+		from := load("CREATE TYPE r1 AS RANGE (subtype = integer);")
+		to := load("CREATE TYPE r1 AS RANGE (subtype = numeric);")
+		plan, err := Plan(from, to, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, "-- range r1:") || !strings.Contains(ddl, "cannot be altered") {
+			t.Errorf("want a note about the range's subtype, got:\n%s", ddl)
+		}
+	})
+	t.Run("table property the plan cannot alter", func(t *testing.T) {
+		composite := "CREATE TYPE point2 AS (x integer, y integer);\n"
+		from := load(composite + "CREATE TABLE p1 OF point2;")
+		to := load(composite + "CREATE TABLE p1 (x integer, y integer);")
+		plan, err := Plan(from, to, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, `-- table p1: of type "point2" -> "" cannot be altered by the plan`) {
+			t.Errorf("want a note about the unalterable \"of type\" property, got:\n%s", ddl)
+		}
+		if strings.Contains(ddl, "ALTER TABLE") {
+			t.Errorf("want no ALTER TABLE for a property the plan cannot change:\n%s", ddl)
+		}
+	})
+}
+
+// --- migrate.go / render.go: scenarios that need the database -----------------------
+
+// TestPlanFunctions covers fnProps and the function-alter path in migrate.go (~line
+// 373): a body-only change goes through CREATE OR REPLACE FUNCTION; a RETURNS-type or
+// argument-count change cannot use CREATE OR REPLACE and instead DROPs and recreates the
+// function.
+func TestPlanFunctions(t *testing.T) {
+	requirePgDump(t)
+	t.Run("body change: CREATE OR REPLACE", func(t *testing.T) {
+		base := example(t, "1-tables") + `
+CREATE FUNCTION order_total(p bigint) RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) FROM orders WHERE customer_id = p);
+`
+		edited := example(t, "1-tables") + `
+CREATE FUNCTION order_total(p bigint) RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) + 1 FROM orders WHERE customer_id = p);
+`
+		from, to := mustCanonical(t, base), mustCanonical(t, edited)
+		plan, err := Plan(from.s, to.s, to.intents)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, "CREATE OR REPLACE FUNCTION") {
+			t.Errorf("want CREATE OR REPLACE FUNCTION for a body-only change, got:\n%s", ddl)
+		}
+		if strings.Contains(ddl, "DROP FUNCTION") {
+			t.Errorf("did not want a DROP FUNCTION for a body-only change:\n%s", ddl)
+		}
+		changes, _, err := Verify(context.Background(), server, from.text, ddl, to.s)
+		if err != nil || len(changes) > 0 {
+			t.Errorf("verify: %v %v\n%s", err, changes, ddl)
+		}
+	})
+	t.Run("return type change: DROP and CREATE", func(t *testing.T) {
+		base := example(t, "1-tables") + `
+CREATE FUNCTION order_total(p bigint) RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) FROM orders WHERE customer_id = p);
+`
+		edited := example(t, "1-tables") + `
+CREATE FUNCTION order_total(p bigint) RETURNS numeric LANGUAGE sql STABLE RETURN (SELECT sum(total) FROM orders WHERE customer_id = p);
+`
+		roundTrip(t, mustCanonical(t, base), mustCanonical(t, edited), "", false)
+	})
+	// Known bug: when a view depends on the function (here, selecting its result
+	// directly, so the view's own column type also changes and the view is dropped and
+	// recreated too), the function's DROP is emitted without first dropping the
+	// dependent view. drops() only re-drops a view when the view's own definition
+	// differs; it does not know the alters() phase is about to drop a function the view
+	// (still standing at that point) depends on. PostgreSQL refuses the DROP FUNCTION.
+	t.Run("return type change with a dependent view fails (known bug)", func(t *testing.T) {
+		base := example(t, "1-tables") + `
+CREATE FUNCTION order_total(p bigint) RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) FROM orders WHERE customer_id = p);
+CREATE VIEW customer_totals AS SELECT id, order_total(id) AS cnt FROM customers;
+`
+		edited := example(t, "1-tables") + `
+CREATE FUNCTION order_total(p bigint) RETURNS numeric LANGUAGE sql STABLE RETURN (SELECT sum(total) FROM orders WHERE customer_id = p);
+CREATE VIEW customer_totals AS SELECT id, order_total(id) AS cnt FROM customers;
+`
+		from, to := mustCanonical(t, base), mustCanonical(t, edited)
+		plan, err := Plan(from.s, to.s, to.intents)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, "DROP FUNCTION") {
+			t.Errorf("want a DROP FUNCTION for the return-type change, got:\n%s", ddl)
+		}
+		_, _, err = Verify(context.Background(), server, from.text, ddl, to.s)
+		if err == nil || !strings.Contains(err.Error(), "depend on it") {
+			t.Errorf("expected the known dependent-view drop-ordering bug to still reproduce, got: %v", err)
+		}
+	})
+}
+
+// TestPlanIdentity covers identityWord and the identity-alter branches in migrate.go
+// (~494-496): switching GENERATED ALWAYS <-> BY DEFAULT on an existing identity column
+// works both ways; dropping identity while the column survives works too.
+func TestPlanIdentity(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "1-tables") + "ALTER TABLE order_items ADD COLUMN seq bigint NOT NULL;\nALTER TABLE order_items ALTER COLUMN seq ADD GENERATED ALWAYS AS IDENTITY;\n"
+	always := mustCanonical(t, base)
+	t.Run("ALWAYS <-> BY DEFAULT", func(t *testing.T) {
+		byDefault := mustCanonical(t, base+"ALTER TABLE order_items ALTER COLUMN seq SET GENERATED BY DEFAULT;")
+		roundTrip(t, always, byDefault, "", false)
+	})
+	t.Run("drop identity, column survives", func(t *testing.T) {
+		noIdentity := mustCanonical(t, example(t, "1-tables")+"ALTER TABLE order_items ADD COLUMN seq bigint NOT NULL;\n")
+		// one-way: the way back (adding identity to an already-existing column) hits the
+		// known bug covered below, not this direction's concern
+		roundTrip(t, always, noIdentity, "", true)
+	})
+	// Known bug: ADD GENERATED ... AS IDENTITY on a column that already exists (as
+	// opposed to a brand-new column, which gets its identity inline in ADD COLUMN)
+	// implicitly creates a backing sequence, exactly like a brand-new serial/identity
+	// column does. But migrate.go's "was this column just added" check (~574,
+	// ownerColumn/ownerRelation) only recognizes the brand-new-column case; here the
+	// column already existed in `from`, so the check decides the sequence must be
+	// created explicitly too - and PostgreSQL then refuses the second, redundant create.
+	t.Run("add identity to an existing column fails (known bug)", func(t *testing.T) {
+		noIdentity := mustCanonical(t, example(t, "1-tables")+"ALTER TABLE order_items ADD COLUMN seq bigint NOT NULL;\n")
+		plan, err := Plan(noIdentity.s, always.s, always.intents)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, "ADD GENERATED ALWAYS AS IDENTITY") {
+			t.Errorf("want ADD GENERATED ALWAYS AS IDENTITY, got:\n%s", ddl)
+		}
+		_, _, err = Verify(context.Background(), server, noIdentity.text, ddl, always.s)
+		if err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Errorf("expected the known duplicate-sequence bug to still reproduce, got: %v", err)
+		}
+	})
+}
+
+// TestPlanTypeDrop covers typeWord and the type-drop path in migrate.go (~307): an enum,
+// composite and domain disappearing from the target schema are each dropped with the
+// right keyword (DROP TYPE vs DROP DOMAIN), no @migrate declaration required.
+func TestPlanTypeDrop(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "1-tables")
+	withTypes := base + `
+CREATE TYPE color AS ENUM ('red', 'green', 'blue');
+CREATE TYPE money_pair2 AS (amount numeric, currency text);
+CREATE DOMAIN posint AS integer CHECK (VALUE > 0);
+`
+	roundTrip(t, mustCanonical(t, withTypes), mustCanonical(t, base), "", false)
+
+	// Known bug: a range type's implicit multirange constructor functions
+	// (floatmultirange(), floatrange(double precision, double precision), ...) are
+	// loaded as ordinary user functions. The plan drops them ahead of / separately from
+	// the range type itself, but PostgreSQL requires the type dropped first (or the
+	// functions dropped via the type's own CASCADE) since the type depends on them.
+	t.Run("range type drop fails (known bug)", func(t *testing.T) {
+		withRange := base + "CREATE TYPE floatrange AS RANGE (subtype = float8);\n"
+		from, to := mustCanonical(t, withRange), mustCanonical(t, base)
+		plan, err := Plan(from.s, to.s, to.intents)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if !strings.Contains(ddl, "DROP TYPE floatrange") {
+			t.Errorf("want DROP TYPE floatrange, got:\n%s", ddl)
+		}
+		_, _, err = Verify(context.Background(), server, from.text, ddl, to.s)
+		if err == nil || !strings.Contains(err.Error(), "requires it") {
+			t.Errorf("expected the known range-support-function drop-ordering bug to still reproduce, got: %v", err)
+		}
+	})
+}
+
+// Known bug: ownerColumn (migrate.go ~574) is meant to detect "this sequence was just
+// created as a side effect of adding its owning serial/identity column, so don't also
+// emit CREATE SEQUENCE for it" - but it only recognizes a column that is entirely new.
+// A bigserial column added to a table that already existed also creates its sequence as
+// a side effect (the ADD COLUMN's own DEFAULT nextval(...) needs it), and the check does
+// not special-case that: it treats the table as "not new" and skips the CREATE SEQUENCE
+// it should have kept, leaving the ADD COLUMN's nextval() default pointing at a
+// sequence that was never created.
+func TestPlanSequenceOwnerAddedColumn(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "1-tables")
+	from := mustCanonical(t, base)
+	to := mustCanonical(t, base+"ALTER TABLE customers ADD COLUMN ref bigserial;")
+	plan, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if strings.Contains(ddl, "CREATE SEQUENCE") {
+		t.Errorf("expected the known missing-CREATE-SEQUENCE bug to still reproduce (no CREATE SEQUENCE emitted), got:\n%s", ddl)
+	}
+	_, _, err = Verify(context.Background(), server, from.text, ddl, to.s)
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected the known bug to still reproduce (nextval() against a sequence that was never created), got: %v", err)
+	}
+}
+
+// TestPlanComments covers commentText / commentTarget for the four object kinds it
+// resolves (TABLE, COLUMN, a non-public-schema TYPE/DOMAIN, FUNCTION): added, changed,
+// removed, and suppressed when the commented object is itself dropped in the same plan.
+func TestPlanComments(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "1-tables")
+
+	t.Run("added: table, column, type, function", func(t *testing.T) {
+		withComments := base + `
+CREATE SCHEMA extra;
+CREATE DOMAIN extra.phone AS text CHECK (VALUE LIKE '+%');
+COMMENT ON TABLE customers IS 'people';
+COMMENT ON COLUMN customers.name IS 'full name';
+COMMENT ON DOMAIN extra.phone IS 'e.164-ish';
+CREATE FUNCTION order_count(p bigint) RETURNS bigint LANGUAGE sql STABLE RETURN (SELECT count(*) FROM orders WHERE customer_id = p);
+COMMENT ON FUNCTION order_count(bigint) IS 'count orders';
+`
+		roundTrip(t, mustCanonical(t, base), mustCanonical(t, withComments), "", false)
+	})
+
+	t.Run("changed and removed", func(t *testing.T) {
+		commented := base + "COMMENT ON TABLE customers IS 'people';\n"
+		changed := base + "COMMENT ON TABLE customers IS 'clients';\n"
+		roundTrip(t, mustCanonical(t, commented), mustCanonical(t, changed), "", false)
+		roundTrip(t, mustCanonical(t, commented), mustCanonical(t, base), "", false)
+	})
+
+	t.Run("dropped object suppresses its comment", func(t *testing.T) {
+		withColComment := base + "COMMENT ON COLUMN order_items.qty IS 'quantity';\n"
+		from := mustCanonical(t, withColComment)
+		to := mustCanonical(t, base+"-- @migrate drop order_items.qty\nALTER TABLE order_items DROP COLUMN qty;")
+		plan, err := Plan(from.s, to.s, to.intents)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if strings.Contains(ddl, "COMMENT") && strings.Contains(ddl, "qty") {
+			t.Errorf("did not want a COMMENT on a column dropped in the same plan:\n%s", ddl)
+		}
+		roundTrip(t, from, to, "", false)
+	})
+
+	// Known bug (in internal/schema, not internal/migrate): COMMENT ON TYPE / DOMAIN
+	// keys are built as "type:" + dotted name, then "public." is trimmed from the whole
+	// key - which never matches, since the key starts with "type:" not "public.". So a
+	// public-schema type/domain comment is stored as "type:public.foo", while
+	// diff.UserTypes keys public-schema types as plain "foo". commentTarget can then
+	// never resolve it, and the comment silently never gets emitted.
+	t.Run("public-schema type comment never resolves (known bug)", func(t *testing.T) {
+		withComment := base + "CREATE DOMAIN phone AS text CHECK (VALUE LIKE '+%');\nCOMMENT ON DOMAIN phone IS 'e.164-ish';\n"
+		from, to := mustCanonical(t, base), mustCanonical(t, withComment)
+		plan, err := Plan(from.s, to.s, to.intents)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		ddl := strings.Join(plan, "\n")
+		if strings.Contains(ddl, "COMMENT ON DOMAIN") {
+			t.Errorf("expected the known key-mismatch bug to still suppress the COMMENT, got:\n%s", ddl)
+		}
+	})
+}

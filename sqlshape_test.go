@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -217,6 +218,31 @@ var itemCount = sqlshape.Query[int64, struct{ OrderID int64 }](`SELECT count(*) 
 
 var markPaidOne = sqlshape.One[struct{}, struct{ ID int64 }](`UPDATE orders SET status = 'paid' WHERE id = {{.ID}}`)
 
+// a NOT NULL violation (ConstraintError.Column, as opposed to a named constraint)
+var insertItemNoDiscount = sqlshape.Query[struct{}, struct{ OrderID int64 }](`
+INSERT INTO order_items (order_id, line_no, sku, qty) VALUES ({{.OrderID}}, 199, 'ND', 1)`)
+
+// a result struct with an optional field the query does not select (optionalKind: true)
+type PartialOrder struct {
+	ID   int64
+	Note *string
+}
+
+var partialOrder = sqlshape.One[PartialOrder, struct{ ID int64 }](`SELECT id FROM orders WHERE id = {{.ID}}`)
+
+// a result struct with a required field the query does not select (optionalKind: false, an error)
+type BadPartialOrder struct {
+	ID    int64
+	Extra string
+}
+
+var badPartialOrder = sqlshape.Query[BadPartialOrder, struct{ ID int64 }](`SELECT id FROM orders WHERE id = {{.ID}}`)
+
+// array_agg(o) with a LEFT JOIN: a user with no orders makes one array element a NULL
+// composite row (rowDest.ScanNull), not a row of NULL fields.
+var userAnyOrders = sqlshape.Query[UserFullOrders, struct{}](`
+SELECT u.id, array_agg(o ORDER BY o.id) AS orders FROM users u LEFT JOIN orders o ON o.user_id = u.id GROUP BY u.id ORDER BY u.id`)
+
 // a declared binding: the type owns the wire format through Scan / Value
 //
 // sqlshape: type money_amount
@@ -287,6 +313,10 @@ func TestAgainstPostgres(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO users (email, name) VALUES ('a@x', 'A'), ('b@x', NULL)`); err != nil {
 		t.Fatal(err)
 	}
+	// a third user with no orders: a LEFT JOIN array_agg(o) for it holds one NULL row
+	if _, err := db.Exec(ctx, `INSERT INTO users (email, name) VALUES ('c@x', 'C')`); err != nil {
+		t.Fatal(err)
+	}
 
 	note := "first"
 	id1, err := insertOrder.First(ctx, db, NewOrder{UserID: 1, Total: "10.50", Note: &note})
@@ -338,6 +368,24 @@ func TestAgainstPostgres(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != "23505" || ce.Constraint != "orders_user_note_key" || ce.Table != "orders" {
 		t.Errorf("unique violation not mapped: %v", err)
 	}
+	if msg := ce.Error(); !strings.Contains(msg, "orders_user_note_key") {
+		t.Errorf("ConstraintError.Error() (named constraint): %s", msg)
+	}
+	if ce.Unwrap() != ce.Err {
+		t.Errorf("ConstraintError.Unwrap() = %v, want %v", ce.Unwrap(), ce.Err)
+	}
+	// a NOT NULL violation: ConstraintError.Column set, Constraint empty (the other Error() form)
+	_, err = insertItemNoDiscount.Exec(ctx, db, struct{ OrderID int64 }{id1})
+	var ceNN *sqlshape.ConstraintError
+	if !errors.As(err, &ceNN) || ceNN.Column != "discount" || ceNN.Table != "order_items" || ceNN.Constraint != "" {
+		t.Errorf("not null violation not mapped: %v", err)
+	}
+	if msg := ceNN.Error(); !strings.Contains(msg, "order_items") || !strings.Contains(msg, "discount") {
+		t.Errorf("ConstraintError.Error() (NOT NULL): %s", msg)
+	}
+	if ceNN.Unwrap() != ceNN.Err {
+		t.Errorf("ConstraintError.Unwrap() = %v, want %v", ceNN.Unwrap(), ceNN.Err)
+	}
 	_, err = insertOrder.First(ctx, db, NewOrder{UserID: 1, Total: "-1"})
 	if !sqlshape.Violates(err, "orders_total_check") {
 		t.Errorf("check violation not mapped: %v", err)
@@ -356,6 +404,23 @@ func TestAgainstPostgres(t *testing.T) {
 	}
 	if _, ok, err := orderByID.Find(ctx, db, struct{ ID int64 }{id2 + 100}); err != nil || ok {
 		t.Errorf("One.Find missing: %v %v", ok, err)
+	}
+	if r, err := orderByID.Render(struct{ ID int64 }{id2}); err != nil || !strings.Contains(r.SQL, "$1") {
+		t.Errorf("Single.Render: %v %+v", err, r)
+	}
+	if row, err := orderByID.Unprepared().Get(ctx, db, struct{ ID int64 }{id2}); err != nil || row.ID != id2 {
+		t.Errorf("Single.Unprepared: %v %+v", err, row)
+	}
+	if listOrders.SQLTemplate() == "" || orderByID.SQLTemplate() == "" {
+		t.Error("SQLTemplate: empty")
+	}
+	// optionalKind: a field with no matching column is fine when it is optional (a pointer)...
+	if po, err := partialOrder.Get(ctx, db, struct{ ID int64 }{id2}); err != nil || po.Note != nil {
+		t.Errorf("partial result (optional field unset): %v %+v", err, po)
+	}
+	// ...and an error when it is not.
+	if _, err := badPartialOrder.Collect(ctx, db, struct{ ID int64 }{id2}); err == nil || !strings.Contains(err.Error(), "no result column") {
+		t.Errorf("partial result (required field unset): %v", err)
 	}
 
 	// composite parameters, before any type is loaded (lazy registration on encode failure)
@@ -431,6 +496,21 @@ func TestAgainstPostgres(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'pending' WHERE id = $1`, id1); err != nil {
 		t.Fatal(err)
 	}
+	// Batch.Len: the pgx-batch statements plus the ones that must run as a plain query
+	// after it (a sql.Scanner result needs text format, which a pgx batch never asks for)
+	bLen := sqlshape.NewBatch()
+	if bLen.Len() != 0 {
+		t.Errorf("empty batch len: %d", bLen.Len())
+	}
+	sqlshape.Queue(bLen, listOrders, ListParams{})
+	if bLen.Len() != 1 {
+		t.Errorf("batch len after Queue: %d", bLen.Len())
+	}
+	sqlshape.QueueOne(bLen, priceTagOf, struct{ ID int64 }{id1})
+	if bLen.Len() != 2 {
+		t.Errorf("batch len after scanner Queue: %d", bLen.Len())
+	}
+
 	// a failing statement surfaces as the same ConstraintError as Run
 	b = sqlshape.NewBatch()
 	sqlshape.Queue(b, insertOrder, NewOrder{UserID: 999, Total: "1"})
@@ -446,6 +526,9 @@ func TestAgainstPostgres(t *testing.T) {
 	if _, err := listOrders.Collect(ctx, db, ListParams{}); !errors.As(err, &ule) || ule.Value != "cancelled" {
 		t.Errorf("unknown label: %v", err)
 	}
+	if msg := ule.Error(); !strings.Contains(msg, "cancelled") || !strings.Contains(msg, "OrderStatus") {
+		t.Errorf("UnknownLabelError.Error(): %s", msg)
+	}
 	if _, err := db.Exec(ctx, `UPDATE orders SET status = 'pending' WHERE id = $1`, id1); err != nil {
 		t.Fatal(err)
 	}
@@ -458,6 +541,12 @@ func TestAgainstPostgres(t *testing.T) {
 	// materialized view refresh
 	if err := sqlshape.MatView("order_stats").Refresh(ctx, db); err != nil {
 		t.Errorf("refresh: %v", err)
+	}
+	if _, err := db.Exec(ctx, `CREATE UNIQUE INDEX order_stats_user_idx ON order_stats (user_id)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlshape.MatView("order_stats").RefreshConcurrently(ctx, db); err != nil {
+		t.Errorf("refresh concurrently: %v", err)
 	}
 
 	// procedures
@@ -479,6 +568,26 @@ func TestAgainstPostgres(t *testing.T) {
 	ufo, err := userFullOrders.Collect(ctx, db, struct{}{})
 	if err != nil || len(ufo) != 2 || ufo[1].Orders[0].ID != id2 || ufo[1].Orders[0].Status != "paid" || ufo[1].Orders[0].Price != nil || ufo[1].Orders[0].CreatedAt.IsZero() {
 		t.Fatalf("array_agg(o): %v %+v", err, ufo)
+	}
+	// LEFT JOIN: the user with no orders gets one NULL composite element (rowDest.ScanNull),
+	// not a row of NULL fields
+	uao, err := userAnyOrders.Collect(ctx, db, struct{}{})
+	if err != nil || len(uao) != 3 {
+		t.Fatalf("array_agg(o) with LEFT JOIN: %v %+v", err, uao)
+	}
+	var sawNullRow bool
+	for _, u := range uao {
+		if len(u.Orders) != 1 {
+			continue
+		}
+		o := u.Orders[0]
+		if o.ID == 0 && o.UserID == 0 && o.Status == "" && o.Total == "" && o.Price == nil &&
+			o.Note == nil && o.Meta == nil && o.UID == nil && o.Matrix == nil && o.CreatedAt.IsZero() {
+			sawNullRow = true
+		}
+	}
+	if !sawNullRow {
+		t.Errorf("expected a NULL nested row: %+v", uao)
 	}
 	eo, err := embeddedRows.First(ctx, db, ByUser{1})
 	if err != nil || eo.ID != 1 || len(eo.Orders) != 1 || eo.Orders[0].ID != id1 || eo.Orders[0].Total != "10.50" || eo.Orders[0].Note == nil || *eo.Orders[0].Note != "first" {

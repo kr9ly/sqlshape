@@ -18,6 +18,7 @@ CREATE TABLE users (
     ratio      double precision,
     flags      bit(4),
     vflags     bit varying(8),
+    avatar     bytea,
     born       date,
     wake       time(3),
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -135,3 +136,17 @@ CREATE TABLE subscriptions (
     user_id bigint NOT NULL REFERENCES users(id),
     plan    text NOT NULL REFERENCES plans
 );
+
+-- lookup tables whose key column is not text: constText must spell an integer (plain, and
+-- cast) and fall back to deparsing anything else (a numeric literal)
+CREATE TABLE priorities (
+    level smallint PRIMARY KEY,
+    label text NOT NULL
+);
+INSERT INTO priorities (level, label) VALUES (1::smallint, 'Low'), (2, 'Medium'), (3, 'High');
+
+CREATE TABLE weights (
+    factor numeric PRIMARY KEY,
+    label  text NOT NULL
+);
+INSERT INTO weights (factor, label) VALUES (1.5, 'Half'), (2.0, 'Double');

@@ -34,14 +34,14 @@ func TestConsumers(t *testing.T) {
 		t.Errorf("orders.note consumers: %s", got)
 	}
 	// a view is consumed as itself; its base table's readers are not the statement's
-	if got := sites("live_memos", "id"); got != "a.viaLiveView@231:68" {
+	if got := sites("live_memos", "id"); got != "a.viaLiveView@236:68" {
 		t.Errorf("live_memos.id consumers: %s", got)
 	}
 	if got := sites("memos", "deleted_at"); strings.Contains(got, "viaLiveView") {
 		t.Errorf("memos.deleted_at reached through the view: %s", got)
 	}
 	// COPY names its columns
-	if got := sites("hosts", "mac"); got != "a.hosts@338:52" {
+	if got := sites("hosts", "mac"); got != "a.hosts@343:52" {
 		t.Errorf("hosts.mac consumers: %s", got)
 	}
 	// relation-level: every statement touching the table
