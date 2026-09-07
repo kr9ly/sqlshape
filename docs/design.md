@@ -86,11 +86,11 @@ RDBMSを使うアプリケーションに要るのは4つ。SQLの構文と型�
 
 理由。RLSはデータベースが絞る仕組みで、文に同じ条件を繰り返させるのは誤り。
 
-未対応。ポリシーのUSINGをnullabilityや`One`の証明に使うこと。PL/pgSQL関数のSECURITY DEFINER到達（本体が読めない）。
+未対応。ポリシーのUSINGをnullabilityや`One`の証明に使うこと。PL/pgSQL関数のSECURITY DEFINER到達（本体の解析待ち）。
 
 ### スコープ外
 
-PL/pgSQLの本体（シグネチャだけ信用する。plpgsql_checkの領分）。FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（embedded PGの統計は本番と違う。性能の助言は構造的に判定できるもの、インデックスの先頭列とビューへの述語押し込みに限る）。PostgreSQL以外のRDBMS（共通化しようとした瞬間にDSLに戻る）。
+FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（embedded PGの統計は本番と違う。性能の助言は構造的に判定できるもの、インデックスの先頭列とビューへの述語押し込みに限る）。PostgreSQL以外のRDBMS（共通化しようとした瞬間にDSLに戻る）。
 
 ## コード配置
 
@@ -108,6 +108,7 @@ PL/pgSQLの本体（シグネチャだけ信用する。plpgsql_checkの領分�
 
 ## 検討中
 
+- PL/pgSQLの本体を解析する。DB側にロジックを置く方針なのに、トリガー関数と書き込み関数の大半を占めるPL/pgSQLが読めないと、関数経由の失敗モード・消費者索引・SECURITY DEFINERの到達がすべて本体の手前で止まる。現在の`-- sqlshape: error`注釈は本体が読めないことの代替。パーサはlibpg_queryの`pg_query_parse_plpgsql`。本体内のSQL文は既存のアナライザーで検査し、足すのはPL側の層: `DECLARE`（`%TYPE` / `%ROWTYPE` / `RECORD`）、代入と`INTO`、`FOR`の変数、制御フロー、`RETURN`の型、トリガーの`NEW` / `OLD` / `TG_OP`、`RAISE ... USING ERRCODE`からの失敗モード。`EXECUTE`は定数文字列のみ検査し、それ以外は未検査として報告する。先行例はplpgsql_check
 - 2-way SQL構文（`/*{{.X}}*/'lit'`）。psqlでそのまま流せるテンプレート。expandとRenderの前段で同じ変換を入れる
 - ORMからの移行支援。ORMが発行したSQLを観測して`Query[R, P]`に起こす
 - PGの新バージョンへの追従を機械化する。回帰コーパスの取り込み → 差分 → 修正のループ
