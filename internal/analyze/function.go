@@ -14,7 +14,7 @@ import (
 // analyzer can check it the way PG does at CREATE time (check_function_bodies): every
 // statement must analyze with the parameters in scope (by name and as $n; a column of
 // the same name wins, as in PG), and the last statement must produce what RETURNS
-// declares. PL/pgSQL bodies stay opaque.
+// declares. PL/pgSQL bodies are analyzed statement by statement (plpgsql.go).
 
 // FunctionResult is the analysis of a function body.
 type FunctionResult struct {
@@ -22,6 +22,9 @@ type FunctionResult struct {
 	Relations []RelationRef
 	// Notes from the body's statements (domain mixing etc.).
 	Notes []Note
+	// Violations the body's writes may cause (PL/pgSQL bodies; SQL bodies are walked
+	// per call in functionViolations).
+	Violations []Violation
 }
 
 const codeInvalidFunctionDefinition = "42P13"
@@ -29,6 +32,18 @@ const codeInvalidFunctionDefinition = "42P13"
 // AnalyzeFunction checks a LANGUAGE sql function's body against its signature. Functions
 // without an analyzable body return an empty result.
 func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, error) {
+	if isPLpgSQL(fn) {
+		c := analyzePLpgSQL(s, fn)
+		if c.err != nil {
+			return nil, c.err
+		}
+		out := &FunctionResult{Violations: c.violations}
+		for _, r := range c.results {
+			out.Relations = append(out.Relations, r.Relations...)
+			out.Notes = append(out.Notes, r.Notes...)
+		}
+		return out, nil
+	}
 	stmts, err := functionBody(fn)
 	if err != nil {
 		return nil, err
@@ -62,7 +77,15 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 	if last == nil || len(last.Columns) == 0 {
 		return nil, &Error{Code: codeInvalidFunctionDefinition, Message: fmt.Sprintf("return type mismatch in function declared to return %s: function's final statement must be SELECT or INSERT/UPDATE/DELETE RETURNING", s.Types.Format(fn.RetType))}
 	}
-	// declared shape: RETURNS TABLE / OUT columns, a composite type, or one scalar
+	if err := checkReturnShape(s, fn, last.Columns); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// checkReturnShape verifies that a body's result columns fit what RETURNS declares:
+// RETURNS TABLE / OUT columns, a composite type, or one scalar.
+func checkReturnShape(s *schema.Schema, fn *schema.Function, cols []Column) *Error {
 	var want []schema.TypeRef
 	for _, arg := range fn.Args {
 		if arg.Mode == 't' || arg.Mode == 'o' || arg.Mode == 'b' {
@@ -70,7 +93,7 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 		}
 	}
 	if len(want) == 0 {
-		if rel := relByRowType(s, fn.RetType.OID); rel != nil && len(last.Columns) > 1 {
+		if rel := relByRowType(s, fn.RetType.OID); rel != nil && len(cols) > 1 {
 			for _, c := range rel.Columns {
 				want = append(want, c.Type)
 			}
@@ -79,15 +102,15 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 		}
 	}
 	a := &analyzer{s: s}
-	if len(last.Columns) != len(want) {
-		return nil, &Error{Code: codeInvalidFunctionDefinition, Message: fmt.Sprintf("return type mismatch in function declared to return %s: final statement returns %d columns, %d expected", s.Types.Format(fn.RetType), len(last.Columns), len(want))}
+	if len(cols) != len(want) {
+		return &Error{Code: codeInvalidFunctionDefinition, Message: fmt.Sprintf("return type mismatch in function declared to return %s: final statement returns %d columns, %d expected", s.Types.Format(fn.RetType), len(cols), len(want))}
 	}
-	for i, c := range last.Columns {
+	for i, c := range cols {
 		if !a.canCoerce(c.Type.OID, want[i].OID, assignmentCoercion) {
-			return nil, &Error{Code: codeInvalidFunctionDefinition, Message: fmt.Sprintf("return type mismatch in function declared to return %s: final statement returns %s instead of %s at column %d", s.Types.Format(fn.RetType), s.Types.Format(c.Type), s.Types.Format(want[i]), i+1)}
+			return &Error{Code: codeInvalidFunctionDefinition, Message: fmt.Sprintf("return type mismatch in function declared to return %s: final statement returns %s instead of %s at column %d", s.Types.Format(fn.RetType), s.Types.Format(c.Type), s.Types.Format(want[i]), i+1)}
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // functionBody parses a SQL function's statements (nil for other languages).
@@ -138,12 +161,28 @@ func functionViolations(s *schema.Schema, cf calledFunc, visited map[*schema.Fun
 	}
 	visited[fn] = true
 	var out []Violation
-	for _, r := range fn.Raises {
+	for _, r := range raisedErrors(s, fn) {
 		out = append(out, Violation{Code: r.Code, Constraint: r.Code, Name: r.Name, Function: fn.Name})
 	}
-	stmts, err := functionBody(fn)
-	if err != nil {
-		return out
+	var bodyViolations []Violation
+	if isPLpgSQL(fn) {
+		bodyViolations = analyzePLpgSQL(s, fn).violations
+	} else {
+		stmts, err := functionBody(fn)
+		if err != nil {
+			return out
+		}
+		fp := functionParams(fn)
+		for _, st := range stmts {
+			if st.GetReturnStmt() != nil {
+				continue
+			}
+			r, err := analyzeStmtIn(s, st, fp, nil, visited)
+			if err != nil {
+				continue
+			}
+			bodyViolations = append(bodyViolations, r.Violations...)
+		}
 	}
 	positional := true
 	for _, a := range cf.args {
@@ -151,38 +190,28 @@ func functionViolations(s *schema.Schema, cf calledFunc, visited map[*schema.Fun
 			positional = false
 		}
 	}
-	fp := functionParams(fn)
-	for _, st := range stmts {
-		if st.GetReturnStmt() != nil {
-			continue
+	for _, v := range bodyViolations {
+		if v.Function == "" {
+			v.Function = fn.Name
 		}
-		r, err := analyzeStmtIn(s, st, fp, nil, visited)
-		if err != nil {
-			continue
-		}
-		for _, v := range r.Violations {
-			if v.Function == "" {
-				v.Function = fn.Name
+		if v.Param > 0 {
+			if fn.Strict {
+				continue
 			}
-			if v.Param > 0 {
-				if fn.Strict {
-					continue
-				}
-				pos := int(v.Param)
-				v.Param = 0
-				if positional && pos <= len(cf.args) {
-					switch arg := cf.args[pos-1].Node.(type) {
-					case *pg_query.Node_ParamRef:
-						v.Param = arg.ParamRef.Number
-					case *pg_query.Node_AConst:
-						if !arg.AConst.Isnull {
-							continue
-						}
+			pos := int(v.Param)
+			v.Param = 0
+			if positional && pos <= len(cf.args) {
+				switch arg := cf.args[pos-1].Node.(type) {
+				case *pg_query.Node_ParamRef:
+					v.Param = arg.ParamRef.Number
+				case *pg_query.Node_AConst:
+					if !arg.AConst.Isnull {
+						continue
 					}
 				}
 			}
-			out = append(out, v)
 		}
+		out = append(out, v)
 	}
 	return dedupe(out)
 }

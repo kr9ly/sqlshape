@@ -142,3 +142,17 @@ func TestNoTableReads(t *testing.T) {
 	defer Analyzer.Flags.Set("no-table-reads", "false")
 	analysistest.Run(t, td, Analyzer, "reads")
 }
+
+// PL/pgSQL bodies: type errors are schema problems, RAISE codes and inner writes are the
+// caller's failure modes, and a dynamic EXECUTE is a -strict advisory.
+func TestPLpgSQL(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "plpgsql_schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("strict", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("strict", "false")
+	analysistest.Run(t, td, Analyzer, "plpgsql")
+}

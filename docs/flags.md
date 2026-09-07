@@ -53,6 +53,7 @@ In the schema:
 - a policy reading `current_setting(name, true)`: a session that never set the setting gets
   NULL and sees no rows, silently
 - a `SECURITY DEFINER` function that reaches a table with policies the owner is not bound by
+- a PL/pgSQL `EXECUTE` of a string built at run time, which cannot be checked
 
 ## In the editor
 

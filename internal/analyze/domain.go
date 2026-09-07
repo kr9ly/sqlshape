@@ -42,7 +42,7 @@ const (
 // Advisory reports whether a note is advice rather than a likely bug.
 func (n Note) Advisory() bool {
 	switch n.Code {
-	case noteUnorderedLimit, noteEnumOrder, noteNoIndex, noteViewPushdown:
+	case noteUnorderedLimit, noteEnumOrder, noteNoIndex, noteViewPushdown, notePLDynamicSQL:
 		return true
 	}
 	return false

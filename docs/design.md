@@ -88,6 +88,14 @@ RDBMSを使うアプリケーションに要るのは4つ。SQLの構文と型�
 
 未対応。ポリシーのUSINGをnullabilityや`One`の証明に使うこと。PL/pgSQL関数のSECURITY DEFINER到達（本体の解析待ち）。
 
+### PL/pgSQLの本体も解析する
+
+決めたこと。`LANGUAGE plpgsql`の関数本体をlibpg_queryのPL/pgSQLパーサで構造に分け、埋め込まれた各SQL断片を既存のアナライザーで検査する（`internal/analyze/plpgsql.go`）。PL変数は関数パラメータと同じ経路（`funcParam`）でスコープに入れ、`plVar`印で`$n`から外し、変数と列の衝突はPostgreSQLの既定（`variable_conflict = error`）どおりエラーにする。record変数の形はそれを埋めたクエリから取り、トリガー関数は`CREATE TRIGGER`の結びつきごとに`NEW` / `OLD`をそのテーブルの行型として解析する（結びつきの無いトリガー関数は解析しない）。`RAISE`のSQLSTATEは本体から拾い、`-- sqlshape: error`注釈は名前を付ける役に退く。`EXECUTE`は定数文字列だけ検査し、それ以外は`-strict`の助言。
+
+理由。DB側にロジックを置く方針なのに、トリガー関数と書き込み関数の大半を占めるPL/pgSQLが読めないと、関数経由の失敗モード・消費者索引・SECURITY DEFINERの到達がすべて本体の手前で止まり、READMEの主張が成り立たない。パーサが本体を構造化してくれるので、足したのはPL側の層だけで済んだ。
+
+対象外。動的SQL（`EXECUTE`の非定数）、カーソル経由で取り出した行の型（`FETCH INTO`の先は形が不明なrecordとして扱い、フィールド参照は型不明で通す）。
+
 ### スコープ外
 
 FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（embedded PGの統計は本番と違う。性能の助言は構造的に判定できるもの、インデックスの先頭列とビューへの述語押し込みに限る）。初期リリースではPostgreSQL以外のRDBMS（下記「検討中」のMySQL参照）。
@@ -108,7 +116,6 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 
 ## 検討中
 
-- PL/pgSQLの本体を解析する。DB側にロジックを置く方針なのに、トリガー関数と書き込み関数の大半を占めるPL/pgSQLが読めないと、関数経由の失敗モード・消費者索引・SECURITY DEFINERの到達がすべて本体の手前で止まる。現在の`-- sqlshape: error`注釈は本体が読めないことの代替。パーサはlibpg_queryの`pg_query_parse_plpgsql`。本体内のSQL文は既存のアナライザーで検査し、足すのはPL側の層: `DECLARE`（`%TYPE` / `%ROWTYPE` / `RECORD`）、代入と`INTO`、`FOR`の変数、制御フロー、`RETURN`の型、トリガーの`NEW` / `OLD` / `TG_OP`、`RAISE ... USING ERRCODE`からの失敗モード。`EXECUTE`は定数文字列のみ検査し、それ以外は未検査として報告する。先行例はplpgsql_check
 - MySQLを、PostgreSQLとは別の実装としてサポートする。初期リリースの範囲外。方言をまたぐ共通DSLは作らない（作った瞬間にSQLをDSLに翻訳させる形に戻る）。代わりにプラットフォームごとに、そのDBの構文と型規則を実装したアナライザーと、そのDBのdumpを使うマイグレーション支援を持つ。共有するのはテンプレートの展開、`go/analysis`のフロントエンド、Go側の型照合の枠組み
 - 2-way SQL構文（`/*{{.X}}*/'lit'`）。psqlでそのまま流せるテンプレート。expandとRenderの前段で同じ変換を入れる
 - ORMからの移行支援。ORMが発行したSQLを観測して`Query[R, P]`に起こす

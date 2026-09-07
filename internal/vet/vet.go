@@ -78,6 +78,9 @@ type loadedSchema struct {
 	// fnRefs are the relations each analyzable function body references (adviseSchema:
 	// SECURITY DEFINER functions past row-level security)
 	fnRefs map[*schema.Function][]analyze.RelationRef
+	// fnAdvice are the advisory notes of function bodies (a PL/pgSQL EXECUTE of a string
+	// built at run time), reported with -strict
+	fnAdvice map[*schema.Function][]analyze.Note
 }
 
 func loadSchema(path string) (*loadedSchema, error) {
@@ -94,11 +97,11 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	ls := &loadedSchema{s: s, fnRefs: map[*schema.Function][]analyze.RelationRef{}}
+	ls := &loadedSchema{s: s, fnRefs: map[*schema.Function][]analyze.RelationRef{}, fnAdvice: map[*schema.Function][]analyze.Note{}}
 	for _, p := range s.Problems {
 		ls.problems = append(ls.problems, p.String())
 	}
-	// SQL function bodies are checked like PG does at CREATE time
+	// function bodies (LANGUAGE sql and plpgsql) are checked like PG does at CREATE time
 	for _, fn := range s.Functions {
 		fr, err := analyze.AnalyzeFunction(s, fn)
 		if err != nil {
@@ -106,6 +109,13 @@ func loadSchema(path string) (*loadedSchema, error) {
 			continue
 		}
 		ls.fnRefs[fn] = fr.Relations
+		for _, n := range fr.Notes {
+			if n.Advisory() {
+				ls.fnAdvice[fn] = append(ls.fnAdvice[fn], n)
+			} else {
+				ls.problems = append(ls.problems, fmt.Sprintf("function %s: %s", fn.Name, n.Message))
+			}
+		}
 	}
 	// row-level security policies: predicates type-checked like CREATE POLICY does, and
 	// policies on a table whose row security is off do not apply at all
@@ -967,6 +977,11 @@ func (c *checker) checkRequiredColumns(ref analyze.RelationRef, r *analyze.Resul
 // adviseSchema reports advisory findings about the schema itself (-strict).
 func (c *checker) adviseSchema(at token.Pos) {
 	c.adviseRowSecurity(at)
+	for _, fn := range c.s.Functions {
+		for _, n := range c.ls.fnAdvice[fn] {
+			c.pass.Reportf(at, "sqlshape: schema: function %s: %s", fn.Name, n.Message)
+		}
+	}
 	for _, rel := range c.s.Relations {
 		if rel.Kind == schema.Table {
 			// a value set kept as an enum cannot lose or reorder a label without the type

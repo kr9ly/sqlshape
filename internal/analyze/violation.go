@@ -126,7 +126,7 @@ func (a *analyzer) triggerViolations(rel *schema.Relation, event byte, assigned 
 		if fn == nil {
 			continue
 		}
-		for _, r := range fn.Raises {
+		for _, r := range raisedErrors(a.s, fn) {
 			out = append(out, Violation{Code: r.Code, Constraint: r.Code, Table: rel.Name, Trigger: tg.Name, Name: r.Name})
 		}
 	}

@@ -183,6 +183,13 @@ func sqlDirectives(sql, verb string) map[string]bool {
 type funcParam struct {
 	name string
 	typ  schema.TypeRef
+	// plVar marks a PL/pgSQL variable: not addressable as $n, and an unqualified name
+	// that is both a variable and a column is ambiguous (plpgsql.variable_conflict =
+	// error, the default), where a SQL function's parameter loses to the column.
+	plVar bool
+	// fields is a record variable's shape when its type is not a named composite: the
+	// columns of the query that fills it. Nil for scalars and %ROWTYPE variables.
+	fields []rteCol
 }
 
 // newAnalyzer is a fresh analyzer over s; fp are the enclosing function's parameters.
@@ -203,7 +210,9 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, unfiltered map[string]bool) *
 		unfiltered:     unfiltered,
 	}
 	for i, p := range fp {
-		a.params[int32(i+1)] = p.typ.OID
+		if !p.plVar {
+			a.params[int32(i+1)] = p.typ.OID
+		}
 	}
 	return a
 }

@@ -71,7 +71,7 @@ In `schema.sql`:
 |---|---|---|
 | `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE` | every statement reading the table must carry this predicate |
 | `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
-| `-- sqlshape: error P0401 = OrderTooLarge` | a trigger function's `CREATE FUNCTION` | the trigger raises this SQLSTATE; statements on its tables expect it under this name |
+| `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |
 | `-- sqlshape: seed` | `INSERT ... VALUES` | the seed is additive: rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables)) |
 | `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 

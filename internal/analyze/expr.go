@@ -624,6 +624,12 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	}
 	rc, err := a.resolveColumn(sc, tbl, col, c.Location)
 	if err != nil {
+		// a PL/pgSQL record variable's field: rec.field, NEW.col, row.col
+		if tbl != "" {
+			if fe, ferr := a.plField(tbl, col, c.Location); fe != nil || ferr != nil {
+				return fe, ferr
+			}
+		}
 		if tbl == "" {
 			r, rerr := sc.wholeRow(col, c.Location)
 			if rerr != nil {
@@ -642,14 +648,27 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 					return &expr{typ: ref(catalog.Record), node: nodeOf(c), fields: r.cols}, nil
 				}
 			}
-			// a SQL function's parameter (a column of the same name takes precedence)
+			// a SQL function's parameter (a column of the same name takes precedence), or
+			// a PL/pgSQL variable
 			for i, p := range a.funcParams {
 				if p.name == col {
+					if p.plVar {
+						if p.fields != nil || a.isComposite(p.typ.OID) {
+							return &expr{typ: p.typ, nullable: true, node: nodeOf(c), fields: p.fields}, nil
+						}
+						return &expr{typ: p.typ, nullable: true, node: nodeOf(c)}, nil
+					}
 					return &expr{typ: p.typ, nullable: true, node: nodeOf(c), fparam: int32(i + 1)}, nil
 				}
 			}
 		}
 		return nil, err
+	}
+	// a name that is both a column and a PL/pgSQL variable is ambiguous
+	for _, p := range a.funcParams {
+		if p.plVar && (tbl == "" && p.name == col || tbl != "" && p.name == tbl) {
+			return nil, errAt(codeAmbiguousColumn, c.Location, "column reference %q is ambiguous: it could refer to either a PL/pgSQL variable or a table column", strings.Join(names, "."))
+		}
 	}
 	a.noteVarScope(a.lastResolvedScope)
 	e := &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields, coll: rc.coll.asVar()}

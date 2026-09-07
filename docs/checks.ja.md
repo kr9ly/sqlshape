@@ -561,10 +561,16 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 
 ### トリガーが送出するエラーには名前を付ける
 
+検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。注釈はそのコードに名前を付けるためのもので、expect行と`Violates`でその名前を使えるようになる:
+
 ```sql
 -- schema.sql
 -- sqlshape: error P0401 = OrderTooLarge
-CREATE FUNCTION check_order_size() RETURNS trigger ...;
+CREATE FUNCTION check_order_size() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.total > 1000000 THEN RAISE EXCEPTION 'order too large' USING ERRCODE = 'P0401'; END IF;
+  RETURN NEW;
+END $$;
 CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
 
@@ -577,7 +583,7 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 
 ### 関数を呼ぶ文は、関数の中の失敗モードも宣言する
 
-ユーザー定義関数の呼び出しは、その本体（`LANGUAGE sql`）と、本体が呼ぶ関数と、本体が宣言したエラーの失敗モードを引き継ぐ。
+ユーザー定義関数の呼び出しは、その本体（`LANGUAGE sql`でも`plpgsql`でも）の失敗モードを引き継ぐ。本体の書き込みが違反しうる制約、その書き込みが発火させるトリガー、本体が呼ぶ関数、本体が送出するSQLSTATEである。
 
 ```sql
 SELECT place_order({{.CustomerID}}, {{.Note}})
@@ -735,7 +741,17 @@ var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
 
 ## スキーマ自体の問題
 
-`schema.sql`は読み込み時に、それ自体も一度解析される。`LANGUAGE sql`の関数の本体（パラメータがスコープに入り、`RETURNS`の形が検査される）、ビュー、ポリシーはPostgreSQLがCREATE時に行うのと同じ型検査を受け、seedのINSERTは冪等性と型を検査される。問題はパッケージ内の最初の`Query`の位置に`sqlshape: schema ...`として報告される。
+`schema.sql`は読み込み時に、それ自体も一度解析される。`LANGUAGE sql`と`LANGUAGE plpgsql`の関数の本体、ビュー、ポリシーはPostgreSQLがCREATE時に行うのと同じ型検査を受け、seedのINSERTは冪等性と型を検査される。問題はパッケージ内の最初の`Query`の位置に`sqlshape: schema ...`として報告される。
+
+PL/pgSQLの本体は、変数をスコープに入れた上で文ごとに検査される。`DECLARE`した変数はその型で（`%TYPE`と`%ROWTYPE`はスキーマから解決する）、record変数はそれを埋めたクエリの形で（`FOR r IN SELECT ...`、`SELECT ... INTO r`）、トリガー関数の`NEW`と`OLD`は`CREATE TRIGGER`で結びつけられた各テーブルの行の型で、それに関数のパラメータ、`FOUND`、`TG_OP`などのトリガー変数、例外ハンドラ内の`SQLSTATE`と`SQLERRM`。代入と`RETURN`は宣言された型と、`RETURN QUERY`は`RETURNS TABLE`と照合される。変数と列の両方に当たる名前はPostgreSQLと同じく曖昧としてエラーになる。`EXECUTE`は定数文字列ならその文として検査されるが、実行時に組み立てた文字列は検査できないので、`-strict`で知らせる:
+
+```sql
+CREATE FUNCTION purge(tbl text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE 'DELETE FROM ' || quote_ident(tbl);
+  -- sqlshape: schema: function purge: line 3: EXECUTE runs SQL built at run time, which is not checked (a constant string would be)
+END $$;
+```
 
 ```sql
 -- schema.sql

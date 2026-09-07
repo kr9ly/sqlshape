@@ -141,7 +141,7 @@ The full list is in [docs/checks.md](docs/checks.md). Broadly:
 - Boundaries: team rules that show up in the shape of the SQL, such as always filtering soft-deleted
   rows, always pinning the tenant column, or reading tables only through views, are enforced by the
   checker.
-- The schema itself: the functions, views and policies in `schema.sql` are type-checked too, and
+- The schema itself: the functions (SQL and PL/pgSQL bodies), views and policies in `schema.sql` are type-checked too, and
   `-strict` adds advice such as a predicate no index serves or an enum a lookup table would serve
   better.
 
@@ -178,7 +178,7 @@ rename or the removal of an enum label, are declared in `schema.sql` with `-- @m
 
 All of PostgreSQL 17's syntax is understood: SELECT and DML, MERGE, CTEs, window functions,
 GROUPING SETS, SQL/JSON, ranges, extensions such as citext and hstore, and DDL including views,
-functions, triggers and policies. The analyzer is a pure-Go implementation built from PostgreSQL's
+functions (SQL and PL/pgSQL bodies), triggers and policies. The analyzer is a pure-Go implementation built from PostgreSQL's
 own catalog; checking never connects to a PostgreSQL.
 
 "All" is backed by PostgreSQL's own regression suite: the 22,000 statements of `src/test/regress`

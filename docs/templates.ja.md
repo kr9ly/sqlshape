@@ -55,7 +55,7 @@ SELECT id FROM products
 |---|---|---|
 | `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE`の直上 | このテーブルを読む文はすべてこの条件を持たなければならない |
 | `-- sqlshape: not null` | `CREATE FUNCTION`の直上 | この関数の戻り値はNULLにならない |
-| `-- sqlshape: error P0401 = OrderTooLarge` | トリガー関数の`CREATE FUNCTION`の直上 | このトリガーはこのSQLSTATEを送出する。対象テーブルへの文はこの名前でexpectする |
+| `-- sqlshape: error P0401 = OrderTooLarge` | 関数の`CREATE FUNCTION`の直上 | この関数が送出するSQLSTATEに名前を付け、expect行と`Violates`でその名前を使えるようにする。PL/pgSQL本体の`RAISE`は注釈なしでもコードで検出される |
 | `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | このseedは追加のみ。宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブル)） |
 | `-- @migrate ...` | どこでも | マイグレーションの意図の宣言（[migrations.ja.md](migrations.ja.md#diffだけでは決められないことを宣言する)） |
 

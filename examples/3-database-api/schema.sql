@@ -40,9 +40,9 @@ CREATE TABLE order_items (
 );
 
 -- an invariant a CHECK cannot express: a customer on the free tier may not have more
--- than three open orders. The annotation names the SQLSTATE so the checker adds it to
--- the failure modes of every write that fires the trigger, and Go reads it back as
--- sqlshape.Violates(err, "OS001").
+-- than three open orders. The checker reads the body: the RAISE adds OS001 to the failure
+-- modes of every write that fires the trigger. The annotation gives the code a name, so
+-- Go can read it back as sqlshape.Violates(err, "TooManyOpenOrders") as well as "OS001".
 -- sqlshape: error OS001 = TooManyOpenOrders
 CREATE FUNCTION check_open_orders() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

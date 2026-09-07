@@ -617,10 +617,18 @@ A second constraint that would get the same name is numbered, as PostgreSQL does
 
 ### Name the errors a trigger raises
 
+The checker reads a PL/pgSQL trigger body, so a `RAISE EXCEPTION ... USING ERRCODE = 'P0401'`
+inside it already adds `P0401` to the failure modes (a `RAISE` without `ERRCODE` is `P0001`).
+The annotation gives the code a name to use on expect lines and in `Violates`:
+
 ```sql
 -- schema.sql
 -- sqlshape: error P0401 = OrderTooLarge
-CREATE FUNCTION check_order_size() RETURNS trigger ...;
+CREATE FUNCTION check_order_size() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.total > 1000000 THEN RAISE EXCEPTION 'order too large' USING ERRCODE = 'P0401'; END IF;
+  RETURN NEW;
+END $$;
 CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
 
@@ -634,8 +642,9 @@ fires on (here INSERT and UPDATE).
 
 ### A statement that calls a function declares the function's failure modes too
 
-A call to a user-defined function inherits the failure modes of its body (`LANGUAGE sql`), of the
-functions the body calls, and of the errors it declares.
+A call to a user-defined function inherits the failure modes of its body (`LANGUAGE sql` or
+`plpgsql`): the constraints its writes can violate, the triggers those writes fire, the functions
+it calls, and the SQLSTATEs it raises.
 
 ```sql
 SELECT place_order({{.CustomerID}}, {{.Note}})
@@ -817,10 +826,28 @@ var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
 
 ## Problems in the schema itself
 
-`schema.sql` is analyzed once when loaded. The bodies of `LANGUAGE sql` functions (parameters in
-scope, `RETURNS` shape checked), views and policies get the same type check PostgreSQL performs at
-CREATE time, and seed INSERTs are checked for idempotency and types. Problems are reported at the
-first `Query` of the package as `sqlshape: schema ...`.
+`schema.sql` is analyzed once when loaded. The bodies of `LANGUAGE sql` and `LANGUAGE plpgsql`
+functions, views and policies get the same type check PostgreSQL performs at CREATE time, and seed
+INSERTs are checked for idempotency and types. Problems are reported at the first `Query` of the
+package as `sqlshape: schema ...`.
+
+A PL/pgSQL body is checked statement by statement with its variables in scope: `DECLARE`d
+variables by their type (`%TYPE` and `%ROWTYPE` resolved against the schema), record variables by
+the shape of the query that filled them (`FOR r IN SELECT ...`, `SELECT ... INTO r`), `NEW` and
+`OLD` in a trigger function by the row type of each table a `CREATE TRIGGER` attaches it to,
+function parameters, `FOUND`, `TG_OP` and the other trigger variables, `SQLSTATE` and `SQLERRM`
+in an exception handler. Assignments and `RETURN` are checked against the declared types,
+`RETURN QUERY` against `RETURNS TABLE`, and a name that is both a variable and a column is
+ambiguous, as in PostgreSQL. `EXECUTE` of a constant string is checked like the statement it runs;
+a string built at run time cannot be, and `-strict` says so:
+
+```sql
+CREATE FUNCTION purge(tbl text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE 'DELETE FROM ' || quote_ident(tbl);
+  -- sqlshape: schema: function purge: line 3: EXECUTE runs SQL built at run time, which is not checked (a constant string would be)
+END $$;
+```
 
 ```sql
 -- schema.sql
