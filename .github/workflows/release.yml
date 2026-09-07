@@ -73,7 +73,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac  # v1.0.0-rc.1
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            --generate-notes $pre
