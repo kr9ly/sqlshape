@@ -43,7 +43,9 @@ jobs:
           go build -trimpath \
             -ldflags "-s -w -X github.com/kr9ly/sqlshape/internal/cli.version=${GITHUB_REF_NAME}" \
             -o sqlshape ./cmd/sqlshape
-          ./sqlshape version
+
+      - name: Smoke test
+        run: .github/scripts/smoke.sh ./sqlshape "$GITHUB_REF_NAME"
 
       - name: Pack
         run: |

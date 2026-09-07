@@ -162,7 +162,8 @@ $$;
 
 CREATE FUNCTION app.remove_member(p_tenant uuid, p_member uuid) RETURNS void
 LANGUAGE sql AS $$
-    UPDATE core.members SET deleted_at = now() WHERE tenant_id = p_tenant AND id = p_member
+    UPDATE core.members SET deleted_at = now()
+    WHERE tenant_id = p_tenant AND id = p_member AND deleted_at IS NULL
 $$;
 
 -- a composite array parameter: the application passes []RoomIn

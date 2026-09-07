@@ -44,6 +44,10 @@ jobs:
       - name: Fetch regress corpus
         run: internal/analyze/testdata/tools/fetch-regress.sh
 
+      # the binary as users run it: as a vettool over the examples
+      - name: Smoke test
+        run: go build -o sqlshape ./cmd/sqlshape && .github/scripts/smoke.sh ./sqlshape
+
       # coverage counts every package except the catalog generator (a manual tool run
       # against a PostgreSQL) and the 5-statement main
       - name: Test
