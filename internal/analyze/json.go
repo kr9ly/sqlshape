@@ -93,15 +93,15 @@ func (a *analyzer) jsonContext(v *pg_query.JsonValueExpr, sc *scope, at int32) (
 	if err != nil {
 		return nil, err
 	}
-	// an untyped literal context item is jsonb (transformJsonValueExpr), and is validated as such
-	if err := a.bind(e, catalog.JSONB, loc(v.RawExpr)); err != nil {
+	// an untyped literal context item is jsonb (transformJsonValueExpr); its text is parsed
+	// at run time through a JsonValueExpr, not folded as a cast, so it is not validated here
+	if e.oid() == catalog.Unknown && e.param == 0 {
+		e.typ = ref(catalog.JSONB)
+	} else if err := a.bind(e, catalog.JSONB, loc(v.RawExpr)); err != nil {
 		return nil, err
 	}
 	if v.Format != nil && v.Format.Encoding != pg_query.JsonEncoding_JS_ENC_DEFAULT && a.baseType(e.oid()) != catalog.Bytea {
 		return nil, errAt(codeDatatypeMismatch, v.Format.Location, "JSON ENCODING clause is only allowed for bytea input type")
-	}
-	if v.Format != nil && (v.Format.Encoding == pg_query.JsonEncoding_JS_ENC_UTF16 || v.Format.Encoding == pg_query.JsonEncoding_JS_ENC_UTF32) {
-		return nil, errAt(codeFeatureNotSupported, v.Format.Location, "unsupported JSON encoding")
 	}
 	switch a.baseType(e.oid()) {
 	case catalog.JSON, catalog.JSONB:
