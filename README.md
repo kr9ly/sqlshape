@@ -94,9 +94,6 @@ Four stages of the same order book, one per level of trust in the database:
 | [`examples/3-database-api`](examples/3-database-api) | functions for writes, domains, an enum and a CHECK value set, a composite, a trigger SQLSTATE, `-no-tables` | you want the schema to carry the meaning and the application to see an API |
 | [`examples/4-everything`](examples/4-everything) | schemas as a boundary, extensions, ranges, nested rows, declared type bindings, composite array parameters, Batch, Copy, soft-delete policy, row-level security, tenant pinning, every flag | you want to see the whole surface at once |
 
-Each has its own `schema.sql`, a `doc.go` saying what it shows, and a test that runs every
-statement against a real PostgreSQL. `go run ./cmd/sqlshape ./examples/...` checks them all.
-
 ## What it checks
 
 The full list is in [docs/checks.md](docs/checks.md). In one line each:

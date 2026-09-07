@@ -80,8 +80,6 @@ VS Codeでは`"go.vetOnSave": "workspace"`と`"go.vetFlags": ["-vettool=/path/to
 | [`examples/3-database-api`](examples/3-database-api) | 書き込みは関数、ドメイン、enumとCHECKによる値集合、複合型、トリガーのSQLSTATE、`-no-tables` | 意味はスキーマに持たせ、アプリケーションにはAPIだけを見せたい |
 | [`examples/4-everything`](examples/4-everything) | 境界としてのスキーマ、拡張、範囲型、ネストした行、宣言型バインディング、複合型配列のパラメータ、Batch、Copy、論理削除ポリシー、行レベルセキュリティ、テナント固定、全フラグ | 全機能を一度に見たい |
 
-それぞれに`schema.sql`と、何を示す例かを書いた`doc.go`と、全文を本物のPostgreSQLで検証するテストがある。`go run ./cmd/sqlshape ./examples/...`で全部を検査できる。
-
 ## 何を検査するか
 
 全リストは[docs/checks.ja.md](docs/checks.ja.md)にある。要点だけ挙げる:
