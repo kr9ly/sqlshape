@@ -62,7 +62,7 @@ if sqlshape.Violates(err, "customers_email_key") {
 }
 ```
 
-この名前は検査器が列挙したものと同じなので、コードが処理していない違反があれば、それはexpect行に書いてあるのに扱っていない違反である（[checks.ja.md](checks.ja.md#失敗モード-この書き込みは何で失敗しうるか)）。`ErrNoRows`は`pgx.ErrNoRows`と同じもので、`IsNoRows(err)`で判定できる。
+この名前は検査器が列挙したものと同じなので、コードが処理していない違反があれば、それはexpect行に書いてあるのに扱っていない違反である（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)）。`ErrNoRows`は`pgx.ErrNoRows`と同じもので、`IsNoRows(err)`で判定できる。
 
 ## バッチ
 

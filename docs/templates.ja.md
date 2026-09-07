@@ -16,7 +16,7 @@
 
 ## パラメータと`P`
 
-`{{.Filter.Name}}`は`P`のフィールド`Filter`のフィールド`Name`を指す。`{{range .Items}} … {{.Sku}} … {{end}}`の中の`{{.Sku}}`はスライス`Items`の要素型のフィールドを指す。スカラーのスライスに対するrangeの中の`{{.}}`は要素そのものである。埋め込み構造体のフィールドは昇格して見える。検査器はSQLの中の位置から各`$n`に必要なPostgreSQL型を推論し、そのパスのGo型が合っているかを確かめる（[checks.ja.md](checks.ja.md#形-goの構造体はsqlと合っているか)）。同じフィールドを2箇所で使うなら両方に合わなければならない。`{{if}}`で調べるだけで値としては使わないフィールドは、`P`に存在すればよく、型は問わない。
+`{{.Filter.Name}}`は`P`のフィールド`Filter`のフィールド`Name`を指す。`{{range .Items}} … {{.Sku}} … {{end}}`の中の`{{.Sku}}`はスライス`Items`の要素型のフィールドを指す。スカラーのスライスに対するrangeの中の`{{.}}`は要素そのものである。埋め込み構造体のフィールドは昇格して見える。検査器はSQLの中の位置から各`$n`に必要なPostgreSQL型を推論し、そのパスのGo型が合っているかを確かめる（[checks.ja.md](checks.ja.md#パラメータを渡す)）。同じフィールドを2箇所で使うなら両方に合わなければならない。`{{if}}`で調べるだけで値としては使わないフィールドは、`P`に存在すればよく、型は問わない。
 
 ## ディレクティブ
 
@@ -24,7 +24,7 @@
 
 | ディレクティブ | 意味 |
 |---|---|
-| `-- sqlshape: expect users_email_key, orders.total, P0401` | この書き込みが違反しうる制約、NOT NULL列、SQLSTATEの一覧。検査器はこの一覧が正確であることを保つ（[checks.ja.md](checks.ja.md#失敗モード-この書き込みは何で失敗しうるか)） |
+| `-- sqlshape: expect users_email_key, orders.total, P0401` | この書き込みが違反しうる制約、NOT NULL列、SQLSTATEの一覧。検査器はこの一覧が正確であることを保つ（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)） |
 | `-- sqlshape: not null total, note` | これらの結果列はNULLにならない、とアナライザーの判定を上書きする（`col:",notnull"`タグのSQL側版） |
 | `-- sqlshape: unfiltered memos` | この文は意図的に`memos`を`visible where`の条件なしで読む |
 
@@ -38,7 +38,7 @@
 | `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | このseedは追加のみ。宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブル)） |
 | `-- @migrate ...` | どこでも | マイグレーションの意図の宣言（[migrations.ja.md](migrations.ja.md#diffだけでは決められないことを宣言する)） |
 
-Goのコードの中では、型宣言のdocコメントに`// sqlshape: type money_amount`と書くと、その型をPostgreSQLの型に結びつけられる（[checks.ja.md](checks.ja.md#形-goの構造体はsqlと合っているか)）。
+Goのコードの中では、型宣言のdocコメントに`// sqlshape: type money_amount`と書くと、その型をPostgreSQLの型に結びつけられる（[checks.ja.md](checks.ja.md#go型の表)）。
 
 ## 共有フラグメント
 

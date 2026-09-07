@@ -2,7 +2,7 @@
 
 [English](checks.md)
 
-検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページでは、何と何を突き合わせるのかを、読者が持つ問いごとにまとめる。
+検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
 
 ## SELECTの結果を受ける
 
@@ -246,7 +246,7 @@ pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQL
 | `bit` / `point` / `tsvector` | `pgtype`の対応する型 |
 | `xml` / `money` / `tsquery` / `jsonpath` / `timetz` | `string` |
 | `oid` | `uint32` |
-| enum、seed済みlookupテーブルのキー、CHECKによる値集合 | Goのnamed string type（[下記](#意味-その値は何を表しているか)） |
+| enum、seed済みlookupテーブルのキー、CHECKによる値集合 | Goのnamed string type（[下記](#型に意味を持たせる)） |
 | ドメイン | 基底型に対応するGo型、またはドメインに結びつけたnamed type |
 | 複合型、レコード | 構造体 |
 
@@ -259,34 +259,293 @@ type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
 
 検査器は、SQL側が`money_amount`（その配列と、それを基底型とするドメインを含む）である位置でだけ`Money`を受け入れ、それ以外の位置では報告する。値の変換は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerにはテキスト形式が渡る）。
 
-## 意味: その値は何を表しているか
+## パラメータを渡す
 
-値が何を表すかが決まっている列（enum、ID、ドメイン）に使われたGoのnamed typeは、登録なしに、その使用箇所からその意味に結びつけられる。以後、その型が現れるすべての場所で結びつきが検査される（パッケージを越える場合は`go/analysis`のfactで伝わる）。
+`{{.X}}`はSQLの中では`$n`パラメータになる。検査器は`$n`が使われている場所からPostgreSQL側で必要な型を推論し（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）、`P`の対応するフィールドの型がそれに合うことを確かめる。型の対応は上のGo型の表に従う。
 
-enum、lookupテーブル、CHECKによる値集合。enumの列、seed済みlookupテーブルのキー、`CHECK (col IN (...))`の付いた列に使われたGoのnamed string typeは、その値集合に結びつけられる。型付き定数はラベルと両方向に比較される。定数の無いラベルも、ラベルの無い定数も報告され、`T("typo")`のような変換も、全ラベルを網羅していない`switch`も報告される。型に`Known() bool`を実装しておくと、行マッパーはこのビルドが知らないラベルを`*UnknownLabelError`として拒否する。
+### パラメータの型は使われる場所の型に合わせる
 
-seed済みlookupテーブルとは、行を`schema.sql`に普通の`INSERT ... VALUES`で書いておくテーブルのことである。その行はスキーマの一部として扱われる。検査器はキー列の値を、キー列やそれを参照する列が使われるすべての場所で値集合として使い、マイグレーションはテーブルの内容を宣言どおりに揃え続ける（[migrations.ja.md](migrations.ja.md#seed済みテーブル)）。値集合の置き場としてはこれを推奨する。行にラベルや並び順を持たせられ、使用中の行は外部キーが守り、行を消せば値を廃止でき、JOINすれば分析側にも名前が届くからである。`-strict`はenumの列すべてにこのことを注記する。
+NG
 
-IDの取り違え。キー列（主キー、または外部キーで主キーから派生した列）に使われたGoのnamed typeは、そのテーブルのIDとして扱われる。`orders.id`を期待する位置に`UserID`を渡すと、どちらも`bigint`であっても報告される。複合キーは位置で結びつく。
-
-ドメイン。ドメインの列に使われたGoのnamed typeはそのドメインに結びつけられる。別のドメインの型を渡したり、ドメインを期待する位置に基底型を渡したりすると報告される。SQLの中でも、ドメインは基底型とは別の単位として扱われる。`price_yen + weight_g`や`balance > total`は、PostgreSQLは受け付けるが検査器は報告する。リテラルとパラメータは相手の単位を引き継ぎ、`yen + yen`、`yen * n`、`abs(yen)`、`coalesce(yen, 0)`はyenのままで、基底型への明示的なキャストで単位が外れる。
-
-情報が落ちる受け方（`-strict`）。enum・ドメイン・キー列を無名のGo型で受けていると、上記の検査ができないので報告される。`timestamp` / `date`を`time.Time`で受けている場合、enumのパラメータがポインタでない場合（ゼロ値`""`はラベルではないので実行時に失敗する）も報告される。
-
-既定値をどちらが持つか（`-strict`）。`DEFAULT`のある列に、NULLを表せない型のパラメータで常に値を書き込んでいると、データベース側の既定値は決して使われない。どちらが既定値を持つのかを決めるべきである（列を`{{if}}`で囲めばデータベース側の既定値が使われる）。
-
-## 失敗モード: この書き込みは何で失敗しうるか
-
-INSERT / UPDATE / DELETE / MERGEの各展開について、検査器は違反しうる制約を列挙する。一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULLである。テンプレートはこれらを宣言しなければならない:
-
-```sql
--- sqlshape: expect order_items_pkey, order_items_order_id_fkey, order_items_qty_check
-INSERT INTO order_items (order_id, line_no, sku, qty, price) VALUES (...)
+```go
+type Params struct {
+	ID int64 // parameter .ID is int64 but SQL expects uuid
+}
 ```
 
-起こりうるのに宣言していない違反も、宣言しているのにどの展開でも起こりえない違反も報告されるので、expect行は常に正確な一覧として保たれる。実行時には、SQLSTATEクラス23のエラーが同じキーを持つ`ConstraintError`に包まれて返り、`sqlshape.Violates(err, "order_items_qty_check")`で判定できる（[runtime.ja.md](runtime.ja.md#エラー)）。
+```sql
+SELECT id, email FROM users WHERE id = {{.ID}}   -- id は uuid
+```
 
-キーの名前。名前付きの制約はその名前がキーになる。名前を付けなかった制約にはPostgreSQLが付ける名前がそのまま使われるので、診断に出る名前、expect行に書く名前、実行時エラーの名前は同じ文字列になる:
+OK
+
+```go
+type Params struct {
+	ID uuid.UUID
+}
+```
+
+補足。`string`はどの型のパラメータにも渡せる（テキスト形式で送られ、PostgreSQL側で解釈される）。狭い型を渡すと注記が出る。`bigint`の列に`int32`なら`parameter .ID: bigint into int32`。
+
+### NULLを渡しうるパラメータはポインタにする
+
+`{{if .Name}} AND name = {{.Name}} {{end}}`のように、値が無いことを分岐で表すフィールドはポインタかスライスにする。非ポインタの`string`はNULLを送れないので、常に値がある前提になる。
+
+NG。enumのパラメータがポインタでない（`-strict`）。
+
+```go
+type Params struct {
+	Status OrderStatus // parameter .Status is a non-pointer OrderStatus: its zero value "" is not a label of enum order_status and fails at runtime (SQLSTATE 22P02) when unset
+}
+```
+
+OK
+
+```go
+type Params struct {
+	Status *OrderStatus
+}
+```
+
+### ネストしたパスと`range`
+
+`{{.Filter.Name}}`は`P`のフィールド`Filter`のフィールド`Name`を指す。`{{range .Items}} … {{.Sku}} … {{end}}`の中の`{{.Sku}}`はスライス`Items`の要素型のフィールドを指す。
+
+OK
+
+```go
+type Params struct {
+	Filter struct{ Name *string }
+	Items  []struct{ Sku string; Qty int32 }
+}
+```
+
+```sql
+SELECT id FROM products
+ WHERE true {{if .Filter.Name}} AND name = {{.Filter.Name}} {{end}}
+   AND sku IN ({{range $i, $it := .Items}}{{if $i}}, {{end}}{{$it.Sku}}{{end}})
+```
+
+### 複合型のパラメータは構造体で渡す
+
+SQL側が複合型を期待する位置には構造体を、その配列を期待する位置には構造体のスライスを渡す。フィールドと複合型の列の対応づけはネストした行と同じ規則。
+
+OK
+
+```sql
+-- schema.sql
+CREATE TYPE order_item AS (sku text, qty integer);
+CREATE FUNCTION place_order(customer_id bigint, items order_item[]) RETURNS bigint ...
+```
+
+```go
+type Item struct {
+	Sku string
+	Qty int32
+}
+type Params struct {
+	CustomerID int64
+	Items      []Item
+}
+```
+
+```sql
+SELECT place_order({{.CustomerID}}, {{.Items}})
+```
+
+### 使っていないフィールドを`P`に残さない（`-strict`）
+
+```go
+type Params struct {
+	ID    int64
+	Limit int32 // sqlshape: parameter field Limit is never used by the template
+}
+```
+
+```sql
+SELECT id FROM orders WHERE id = {{.ID}}
+```
+
+### 既定値のある列に常に値を送らない（`-strict`）
+
+```go
+type NewOrder struct {
+	CustomerID int64
+	Status     OrderStatus // parameter .Status always sends a value into orders.status, so its DEFAULT never applies: decide which side owns the default (make the column conditional with {{if}} to use the database's)
+}
+```
+
+```sql
+INSERT INTO orders (customer_id, status) VALUES ({{.CustomerID}}, {{.Status}})
+```
+
+OK。データベースの既定値を使うなら列ごと分岐にする。アプリケーションが常に決めるなら、列の`DEFAULT`を外す。
+
+```sql
+INSERT INTO orders (customer_id {{if .Status}}, status{{end}})
+VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
+```
+
+## 型に意味を持たせる
+
+`bigint`や`text`のままでは区別できない値、たとえばenumのラベル、テーブルのID、金額の単位は、Goではnamed typeで表す。検査器はnamed typeが使われた箇所からそれをSQL側の意味（enum、lookupテーブルのキー、CHECKの値集合、主キー、ドメイン）に結びつけ、以後の使用箇所で食い違いを報告する。登録は要らない。結びつきはパッケージを越えて効く。
+
+### enumやlookupテーブルの値はnamed typeの定数と一致させる
+
+enumの列、seed済みlookupテーブルのキー、`CHECK (col IN (...))`の付いた列に使われたnamed string typeについて、型付き定数とラベルを両方向に比較する。
+
+```sql
+-- schema.sql
+CREATE TABLE order_statuses (code text PRIMARY KEY, label text NOT NULL);
+INSERT INTO order_statuses VALUES ('pending', '保留'), ('paid', '支払済'), ('shipped', '発送済');
+CREATE TABLE orders (..., status text NOT NULL REFERENCES order_statuses(code));
+```
+
+NG
+
+```go
+type OrderStatus string
+
+const (
+	Pending  OrderStatus = "pending"
+	Paid     OrderStatus = "paid"
+	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses (lookup table)
+)
+// sqlshape: value set of order_statuses (lookup table) has label "shipped" but OrderStatus has no constant for it
+```
+
+OK
+
+```go
+const (
+	Pending OrderStatus = "pending"
+	Paid    OrderStatus = "paid"
+	Shipped OrderStatus = "shipped"
+)
+```
+
+補足。`OrderStatus("typo")`のような変換は`sqlshape: OrderStatus("typo") is not a label of ...`、すべてのラベルを扱っていない`switch`は`sqlshape: switch on OrderStatus does not handle ... labels: shipped`として報告される。型に`Known() bool`を実装しておくと、実行時にこのビルドが知らないラベルを受け取ったとき、行マッパーが`*UnknownLabelError`を返す。値集合の置き場としてはenumよりseed済みlookupテーブルを推奨する（[migrations.ja.md](migrations.ja.md#seed済みテーブル)）。
+
+### 別のテーブルのIDを渡さない
+
+主キーの列、または外部キーで主キーから派生した列に使われたnamed typeは、そのテーブルのIDとして扱われる。
+
+NG
+
+```go
+type UserID int64
+type OrderID int64
+
+type Params struct {
+	ID UserID // sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id
+}
+```
+
+```sql
+SELECT total FROM orders WHERE id = {{.ID}}
+```
+
+OK
+
+```go
+type Params struct {
+	ID OrderID
+}
+```
+
+### 単位の違うドメインを混ぜない
+
+ドメインの列に使われたnamed typeはそのドメインに結びつけられる。SQLの中でも、ドメインは基底型とは別の単位として扱う。PostgreSQL自身は基底型に戻して演算を許すが、検査器は報告する。
+
+```sql
+-- schema.sql
+CREATE DOMAIN yen AS bigint;
+CREATE DOMAIN gram AS integer;
+CREATE TABLE products (id bigint PRIMARY KEY, price yen NOT NULL, weight gram NOT NULL);
+```
+
+NG
+
+```sql
+SELECT id FROM products WHERE price + weight > 1000
+--                            ^ domain mismatch: yen + gram: mixes yen with gram (cast to the base type to drop the domain)
+```
+
+```go
+type Params struct {
+	Max int64 // sqlshape: parameter .Max carries domain yen as a plain int64; declare a named type to have it checked   （-strict）
+}
+```
+
+OK
+
+```go
+type Yen int64
+
+type Params struct {
+	Max Yen
+}
+```
+
+```sql
+SELECT id FROM products WHERE price > {{.Max}}
+```
+
+補足。リテラルとパラメータは相手の単位を引き継ぐ。`price + 100`、`price * 2`、`abs(price)`、`coalesce(price, 0)`はyenのまま。単位を外したいときは基底型へ明示的にキャストする（`price::bigint + weight::bigint`）。
+
+### 情報が落ちる型で受けない（`-strict`）
+
+```go
+type Event struct {
+	At  time.Time // field At: timestamp without time zone into time.Time: which zone the value is in becomes the application's implicit choice (prefer timestamptz)
+	Day time.Time // field Day: date into time.Time: a zone conversion can move the day (keep it at UTC midnight or use a civil date type)
+}
+```
+
+`timestamptz`ならこの注記は出ない。`date`を`time.Time`で受けるなら、UTCの0時として扱うことをコードの側で決めておく。
+
+## 書き込みの失敗に備える
+
+INSERT / UPDATE / DELETE / MERGEは制約違反で失敗しうる。検査器は各展開について違反しうる制約を列挙し、テンプレートがそれを`-- sqlshape: expect`行で宣言していることを確かめる。実行時には、宣言した名前で`ConstraintError`が返る（[runtime.ja.md](runtime.ja.md#エラー)）。
+
+### 違反しうる制約はexpect行に宣言する
+
+NG
+
+```sql
+INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
+--                     ^ may violate customers_email_key (UNIQUE (email) on customers, SQLSTATE 23505); add `-- sqlshape: expect customers_email_key` to the template or make it impossible
+```
+
+OK
+
+```sql
+-- sqlshape: expect customers_email_key
+INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
+```
+
+```go
+_, err := CreateCustomer.First(ctx, db, p)
+if sqlshape.Violates(err, "customers_email_key") { ... }
+```
+
+補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。
+
+### 起こりえない違反を宣言しない
+
+NG
+
+```sql
+-- sqlshape: expect orders_total_check
+--                  ^ expects orders_total_check but no expansion can violate it
+UPDATE orders SET note = {{.Note}} WHERE id = {{.ID}}
+```
+
+expect行は「この文が失敗しうる理由の正確な一覧」として保たれる。不要になった宣言は消す。
+
+### 制約の名前
+
+名前を付けた制約はその名前で呼ぶ。名前を付けなかった制約にはPostgreSQLが付ける名前がそのまま使われるので、診断・expect行・実行時エラーで同じ文字列になる。
 
 | 制約 | キー | 例 |
 |---|---|---|
@@ -298,46 +557,193 @@ INSERT INTO order_items (order_id, line_no, sku, qty, price) VALUES (...)
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
 | トリガーが送出するエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
 
-同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。診断には由来も書かれる: `may violate customers_email_key (UNIQUE (email) on customers, SQLSTATE 23505)`。
+同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。
 
-パラメータ経由のNOT NULL。NULLになりうる値が`{{.X}}`であるとき、`X`のGo型がnilを表せない型（`string`はNULLを送れない）なら、その違反は候補から外れる。ポインタ、スライス、マップなら残る。
-
-トリガー。エラーを送出するトリガー関数には`schema.sql`で注釈を付ける:
+### トリガーが送出するエラーには名前を付ける
 
 ```sql
+-- schema.sql
 -- sqlshape: error P0401 = OrderTooLarge
-CREATE FUNCTION check_order_size() RETURNS trigger ...
+CREATE FUNCTION check_order_size() RETURNS trigger ...;
+CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
-
-このSQLSTATEは（付けた名前で）、トリガーが付いているテーブルへのINSERT / UPDATE / DELETEのうち、トリガーが発火するイベントの失敗モードに加わる。
-
-関数経由。ユーザー定義関数の呼び出しは、その本体の失敗モード（本体が呼ぶ関数のもの、宣言したエラーも含む）を引き継ぐ。`SELECT place_order({{.CustomerID}}, {{.Note}})`は、中で実行されるINSERTと同じように外部キー、ドメインのCHECK、トリガーのSQLSTATEを宣言しなければならない。診断には`through place_order()`と書かれる。本体でパラメータに由来するとわかったNOT NULLは、呼び出し側の引数まで辿られる。`STRICT`な関数はNULLでは呼ばれないので、その引数からの違反は候補から外れる。
-
-## カーディナリティ: `One`は本当に1行以下か
-
-`sqlshape.One[R, P]`は1行以下しか返さないと宣言するもので、検査器はそれを展開ごとに証明する。SELECTが1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）が、リテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているときである。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡される。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`{{if .ID}} AND id = {{.ID}} {{end}}`はelse側の展開で証明に失敗するが、それがこの検査の意図である。実行時には`Get`は無ければ`ErrNoRows`を返し、`Find`は有無を返し、データベースが証明に反して2行返したらどちらも`ErrManyRows`を返す。
-
-## 境界: このコードは何を見てよいか
-
-必ず付ける読み取り条件。`schema.sql`でテーブルに注釈を付ける:
 
 ```sql
--- sqlshape: visible where deleted_at IS NULL
-CREATE TABLE memos (...)
+-- sqlshape: expect OrderTooLarge, orders_customer_id_fkey
+INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
-こうすると、このテーブルを読むすべての文はこの条件を持たなければならない。ビューも含む。この条件を持つビューを通して読めば、そのビューの利用側は条件を満たしたことになる。意図的に条件なしで読む文には`-- sqlshape: unfiltered memos`と書いて除外する。`RETURNING`の列は直前に書いた行なので検査しない。
+トリガーが付いているテーブルへの、トリガーが発火するイベント（この例ではINSERTとUPDATE）の失敗モードに、そのSQLSTATEが加わる。
 
-行レベルセキュリティ。ポリシーはスキーマの一部として扱われる。`CREATE POLICY`の条件式はPostgreSQLと同じ規則でテーブルに対して型検査され（boolean、集約やウィンドウ関数は不可、ドメインの単位を尊重）、ポリシーと`ENABLE / FORCE ROW LEVEL SECURITY`の設定はテーブルと一緒にdiffとapplyを通る。行セキュリティを有効にしていないテーブルにポリシーがあればスキーマの問題として報告する。`-strict`ではさらに、行セキュリティが有効なのにポリシーが無いテーブル（所有者以外には行が見えない）、そのテーブルに到達する`SECURITY DEFINER`関数（テーブルが`FORCE`していない限り、所有者の権限ではポリシーが適用されない）、`current_setting(name, true)`を読むポリシー（設定していないセッションでは何も見えなくなるが、エラーにはならない）を報告する。ポリシーの条件を文の側で繰り返すことは要求しない。絞り込むのはデータベースの仕事である。
+### 関数を呼ぶ文は、関数の中の失敗モードも宣言する
 
-テナント列の強制。`-require-columns=tenant_id`を指定すると、すべての文は、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTはその列に値を入れなければならない。行レベルセキュリティのポリシーがその列を固定していれば、それでも要件を満たす（ただしテーブルが`FORCE ROW LEVEL SECURITY`でなければ所有者には効かないので、`-strict`で注記する）。
+ユーザー定義関数の呼び出しは、その本体（`LANGUAGE sql`）と、本体が呼ぶ関数と、本体が宣言したエラーの失敗モードを引き継ぐ。
 
-テーブルへのアクセス。`-no-table-reads`はテーブルの読み取りを禁じる。SELECTも、書き込みの中の読み取り部分もビューを通さなければならないが、INSERT / UPDATE / DELETE / MERGEの対象としてテーブルを使うことはできる。`-no-tables`はテーブルへの参照を一切禁じる。アプリケーションはビューを読み、関数を呼ぶだけで、テーブルはデータベースの内部になる。`-schemas=a_api,b_private`は、そのパッケージが参照してよいスキーマを限定する。1つのデータベースを複数のサービスで使うときの境界になる。
+```sql
+SELECT place_order({{.CustomerID}}, {{.Note}})
+--     ^ may violate orders_customer_id_fkey (FOREIGN KEY (customer_id) on orders REFERENCES customers, SQLSTATE 23503, through place_order()); add `-- sqlshape: expect orders_customer_id_fkey` to the template or make it impossible
+```
 
-sqlshapeを通さないドライバ呼び出し。実行時に組み立てた文字列でpgxや`database/sql`の`Query` / `Exec`を呼ぶことは、テンプレートの保証が届かない穴である。`-raw-sql=constant`（既定）はそのSQL引数が定数であることを要求し、`-raw-sql=forbid`はsqlshapeを通らない文をすべて拒否する（`-raw-sql-allow=pkg/...`で除外パッケージを指定できる）。`-raw-sql=allow`でこの検査は切れる。
+補足。本体でパラメータに由来するとわかったNOT NULLは、呼び出し側の引数まで辿られる。`STRICT`な関数はNULLでは呼ばれないので、その引数からの違反は候補から外れる。
+
+## 1行だけ返す（`One`）
+
+`sqlshape.One[R, P]`は1行以下しか返さないと宣言するもので、検査器はそれを展開ごとにスキーマから証明する。証明できなければエラー。実行時には`Get`は無ければ`ErrNoRows`、`Find`は有無を返し、データベースが証明に反して2行返したらどちらも`ErrManyRows`を返す。
+
+### 一意キーを等値で固定する
+
+NG
+
+```go
+var ByName = sqlshape.One[User, struct{ Name string }](`
+SELECT id, email FROM users WHERE name = {{.Name}}`)
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email))
+```
+
+OK
+
+```go
+var ByEmail = sqlshape.One[User, struct{ Email string }](`
+SELECT id, email FROM users WHERE email = {{.Email}}`)
+```
+
+補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。
+
+### すべての分岐で証明できなければならない
+
+NG
+
+```go
+var Find = sqlshape.One[User, struct{ ID *int64 }](`
+SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@39:else]
+```
+
+`.ID`がnilの分岐では条件が無くなり、全行が返る。それを見つけるのがこの検査の意図なので、この文は`Query`にするか、`.ID`を非ポインタにして分岐を外す。
+
+## 規約を守らせる
+
+チームの規約のうち、SQLの形として現れるものは検査器に強制させられる。論理削除の条件を必ず付ける、テナント列で必ず絞る、テーブルを直接読まずビューを通す、といったもの。
+
+### 必ず付ける読み取り条件
+
+```sql
+-- schema.sql
+-- sqlshape: visible where deleted_at IS NULL
+CREATE TABLE memos (...);
+```
+
+NG
+
+```sql
+SELECT id, body FROM memos WHERE user_id = {{.UserID}}
+-- rows of memos are visible where deleted_at IS NULL: add that predicate for memos, or opt out with `-- sqlshape: unfiltered memos`
+```
+
+OK
+
+```sql
+SELECT id, body FROM memos WHERE user_id = {{.UserID}} AND deleted_at IS NULL
+```
+
+```sql
+-- 意図的に全行を読む文
+-- sqlshape: unfiltered memos
+SELECT id, body FROM memos WHERE id = {{.ID}}
+```
+
+補足。ビューも同じ規則で検査される。条件を持つビューを通して読めば、そのビューの利用側は条件を満たしたことになる。`RETURNING`の列は直前に書いた行なので検査しない。
+
+### テナント列で必ず絞る（`-require-columns=tenant_id`）
+
+NG
+
+```sql
+SELECT id, total FROM orders WHERE id = {{.ID}}
+-- orders.tenant_id is not pinned: every statement on orders must fix tenant_id by equality (or assign it)
+```
+
+OK
+
+```sql
+SELECT id, total FROM orders WHERE id = {{.ID}} AND tenant_id = {{.TenantID}}
+```
+
+補足。INSERTは`tenant_id`に値を入れなければならない。行レベルセキュリティのポリシーが`tenant_id`を固定していれば、それでも要件を満たす。ただしテーブルが`FORCE ROW LEVEL SECURITY`でなければ所有者には効かないので、`-strict`で`orders.tenant_id is pinned by policy ... for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner`と注記される。
+
+### テーブルを直接読まない（`-no-table-reads` / `-no-tables`）
+
+NG（`-no-table-reads`）
+
+```sql
+SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
+-- table orders is read directly; with -no-table-reads application code reads views (tables are written, not read)
+```
+
+OK
+
+```sql
+SELECT id, customer_name FROM order_summary
+```
+
+補足。`-no-table-reads`はINSERT / UPDATE / DELETE / MERGEの対象としてテーブルを使うことは許す。`-no-tables`は書き込みも含めてテーブルへの参照を一切禁じる（`table orders is referenced directly; with -no-tables application code reads views and calls functions only`）。`-schemas=a_api,b_private`は、そのパッケージが参照してよいスキーマを限定する（`c_private.orders is outside the schemas this code may reference (a_api,b_private)`）。
+
+### sqlshapeを通さないSQLを書かない（`-raw-sql`）
+
+実行時に組み立てた文字列でpgxや`database/sql`の`Query` / `Exec`を呼ぶことは、テンプレートの保証が届かない穴になる。
+
+NG（既定の`-raw-sql=constant`）
+
+```go
+rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE "+where)
+// sqlshape: SQL passed to Query must be a constant: a string built at run time can carry injected SQL; write the dynamic parts as a sqlshape.Query template (or pass -raw-sql=allow)
+```
+
+OK
+
+```go
+rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
+```
+
+補足。`-raw-sql=forbid`は定数であってもsqlshapeを通らない文をすべて拒否する（`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`）。移行中のパッケージは`-raw-sql-allow=pkg/...`で除外する。
+
+## COPYで一括ロードする
+
+`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がその列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であること。
+
+NG
+
+```go
+type Item struct {
+	OrderID int64
+	Sku     string
+}
+var Load = sqlshape.Copy[Item]("order_items", "order_id", "sku")
+// Copy into order_items: column "line_no" is NOT NULL without a default and is not copied
+```
+
+OK
+
+```go
+type Item struct {
+	OrderID int64
+	LineNo  int16
+	Sku     string
+}
+var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
+```
 
 ## スキーマ自体の問題
 
-`schema.sql`は読み込み時に、それ自体も一度解析される。`LANGUAGE sql`の関数の本体（パラメータがスコープに入り、`RETURNS`の形が検査される）、ビュー、ポリシーはPostgreSQLがCREATE時に行うのと同じ型検査を受け、seedのINSERTは冪等性と型を検査される。結果はパッケージ内の最初の`Query`の位置に`sqlshape: schema ...`として報告される。アナライザーが出す助言でない注記（ドメインの不一致、常に偽になる条件、照合順序の衝突）もそのまま診断になる。
+`schema.sql`は読み込み時に、それ自体も一度解析される。`LANGUAGE sql`の関数の本体（パラメータがスコープに入り、`RETURNS`の形が検査される）、ビュー、ポリシーはPostgreSQLがCREATE時に行うのと同じ型検査を受け、seedのINSERTは冪等性と型を検査される。問題はパッケージ内の最初の`Query`の位置に`sqlshape: schema ...`として報告される。
+
+```sql
+-- schema.sql
+CREATE VIEW order_summary AS
+SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
+-- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
+```
+
+補足。行レベルセキュリティのポリシーもここで検査される。`CREATE POLICY`の条件式はboolean型で、集約やウィンドウ関数を含まず、ドメインの単位を守っていなければならない。行セキュリティを有効にしていないテーブルにポリシーがあれば報告する。ポリシーの条件を文の側で繰り返すことは要求しない。絞り込むのはデータベースの仕事である。
 
 `-strict`ではスキーマと文についての助言が加わる。一覧は[flags.ja.md](flags.ja.md#-strict)。
