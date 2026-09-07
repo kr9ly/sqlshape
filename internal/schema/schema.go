@@ -1599,7 +1599,8 @@ func (s *Schema) comment(st *pg_query.CommentStmt, loc int32) {
 	case pg_query.ObjectType_OBJECT_COLUMN:
 		key = strings.Join(strs(st.Object.GetList().GetItems()), ".")
 	case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
-		key = "type:" + strings.Join(strs(st.Object.GetTypeName().GetNames()), ".")
+		name := strings.TrimPrefix(strings.Join(strs(st.Object.GetTypeName().GetNames()), "."), "public.")
+		key = "type:" + name
 	default:
 		return
 	}

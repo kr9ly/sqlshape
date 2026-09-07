@@ -61,7 +61,7 @@ func constraintText(s *schema.Schema, c *schema.Constraint) string {
 		}
 		return t + " (" + qlist(c.Columns) + ")"
 	case schema.ForeignKey:
-		t := "FOREIGN KEY (" + qlist(c.Columns) + ") REFERENCES " + qlist(strings.Split(c.RefTable, ".")) + " (" + qlist(c.RefColumns) + ")"
+		t := "FOREIGN KEY (" + qlist(c.Columns) + ") REFERENCES " + qdot(c.RefTable) + " (" + qlist(c.RefColumns) + ")"
 		if w := actionWord(c.OnDelete); w != "" {
 			t += " ON DELETE " + w
 		}

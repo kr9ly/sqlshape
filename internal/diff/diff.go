@@ -241,6 +241,14 @@ func relProps(s *schema.Schema, r *schema.Relation) map[string]string {
 	}
 	if r.Query != nil {
 		p["query"] = schema.DeparseStmt(r.Query)
+		// a view's own query text can stay identical while its actual result changes
+		// (a column it selects widens, or - as with a function call - the thing it
+		// selects changes shape underneath it); frozen column types catch that.
+		var types []string
+		for _, c := range r.Frozen {
+			types = append(types, s.Types.Format(c.Type)+collation(c.Collation))
+		}
+		p["column types"] = strings.Join(types, ", ")
 	}
 	if r.Kind == schema.Sequence {
 		p["owned by"] = r.OwnedBy

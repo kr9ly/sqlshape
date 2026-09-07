@@ -68,7 +68,7 @@ COMMENT ON COLUMN t.name IS 'the name';
 		{"composite", "ALTER TYPE pair ADD ATTRIBUTE z int;",
 			"~ composite pair\n    attributes: x, y -> x, y, z\n    attribute z:  -> integer"},
 		{"view", "CREATE OR REPLACE VIEW v AS SELECT id, name, s FROM t;",
-			"~ view v\n    column order: id, name -> id, name, s\n    query: SELECT id, name FROM t -> SELECT id, name, s FROM t\n+ column v.s"},
+			"~ view v\n    column order: id, name -> id, name, s\n    column types: bigint, text -> bigint, text, status\n    query: SELECT id, name FROM t -> SELECT id, name, s FROM t\n+ column v.s"},
 		{"function body", "CREATE OR REPLACE FUNCTION f(p int) RETURNS int LANGUAGE sql STABLE RETURN p + 2;",
 			"~ function f(integer)\n    body: RETURN p + 1 -> RETURN p + 2\n    volatility: i -> s"},
 		{"function signature", "DROP FUNCTION f(int); CREATE FUNCTION f(p bigint) RETURNS int LANGUAGE sql RETURN 1;",

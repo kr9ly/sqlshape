@@ -139,10 +139,15 @@ func relations(s *schema.Schema) (map[string]*schema.Relation, []*schema.Relatio
 
 func functions(s *schema.Schema) (map[string]*schema.Function, []*schema.Function) {
 	m := map[string]*schema.Function{}
+	var order []*schema.Function
 	for _, f := range s.Functions {
+		if f.Language == "internal" {
+			continue // a range/multirange constructor: PostgreSQL creates and drops it with its type
+		}
 		m[diff.Signature(s, f)] = f
+		order = append(order, f)
 	}
-	return m, s.Functions
+	return m, order
 }
 
 func triggers(s *schema.Schema) map[string]*schema.Trigger {
@@ -563,6 +568,31 @@ func (p *planner) adds() {
 	}
 	fromRels := p.rels(p.from)
 	toRels, toOrder := relations(p.to)
+	// A sequence newly owned by a column that is itself new on a table that already
+	// exists (a bigserial-style column, no IDENTITY) needs its CREATE SEQUENCE emitted
+	// explicitly, and before the column's own ADD COLUMN (whose DEFAULT nextval(...)
+	// names it) rather than wherever the sequence happens to fall in toOrder.
+	// seqForNewColumn keys that sequence by "table.column"; inlineSeq lists it by its own
+	// name so the general per-relation pass below skips it.
+	seqForNewColumn := map[string]*schema.Relation{}
+	inlineSeq := map[string]bool{}
+	for _, seq := range toOrder {
+		if seq.Kind != schema.Sequence || seq.OwnedBy == "" {
+			continue
+		}
+		if f := p.fromOf(seq); f != nil && f.Kind == seq.Kind {
+			continue // the sequence already exists
+		}
+		owner := toRels[ownerRelation(seq.OwnedBy)]
+		if owner == nil || fromRels[owner.FullName()] == nil {
+			continue // no owner, or the owning table is itself new (handled with its creation)
+		}
+		if tc := owner.Column(ownerColumn(seq.OwnedBy)); tc == nil || tc.Identity != 0 {
+			continue // IDENTITY creates its own sequence
+		}
+		seqForNewColumn[owner.FullName()+"."+ownerColumn(seq.OwnedBy)] = seq
+		inlineSeq[seq.FullName()] = true
+	}
 	// relations in declaration order, with their columns
 	for _, r := range toOrder {
 		f := p.fromOf(r)
@@ -571,8 +601,16 @@ func (p *planner) adds() {
 		}
 		if f == nil || f.Kind != r.Kind {
 			if r.Kind == schema.Sequence && r.OwnedBy != "" {
-				if owner := toRels[ownerRelation(r.OwnedBy)]; owner != nil && (fromRels[owner.FullName()] == nil || fromRels[owner.FullName()].Column(ownerColumn(r.OwnedBy)) == nil) {
-					continue // created with its serial / identity column
+				if inlineSeq[r.FullName()] {
+					continue // emitted right before its new column, in the surviving table's own loop below
+				}
+				if owner := toRels[ownerRelation(r.OwnedBy)]; owner != nil {
+					switch tc := owner.Column(ownerColumn(r.OwnedBy)); {
+					case fromRels[owner.FullName()] == nil:
+						continue // the owning table is new; its own creation block (below) emits this sequence
+					case tc != nil && tc.Identity != 0:
+						continue // the owning column has (or is gaining) IDENTITY; that ALTER / ADD COLUMN creates the sequence itself
+					}
 				}
 			}
 			p.emit("%s", r.Definition)
@@ -599,14 +637,27 @@ func (p *planner) adds() {
 		fromCols := columnsOf(f)
 		for _, c := range r.Columns {
 			if fromCols[p.fromCol(r, c.Name)] == nil {
+				// a sequence owned by this new column must exist before ADD COLUMN (its
+				// DEFAULT nextval(...) names it), but OWNED BY needs the column to exist -
+				// so create it now and defer OWNED BY until right after the column lands.
+				seq := seqForNewColumn[r.FullName()+"."+c.Name]
+				if seq != nil {
+					p.emit("%s", seq.Definition)
+				}
 				if c.NotNull && len(p.in.backfills[r.FullName()]) > 0 && p.hasBackfill(r, c.Name) {
 					// the rows exist already: add nullable, fill, then constrain
 					p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, false))
+					if seq != nil {
+						p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(seq), qdot(seq.OwnedBy))
+					}
 					p.backfill(r, c.Name)
 					p.emit("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", qrel(r), q(c.Name))
 					continue
 				}
 				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, true))
+				if seq != nil {
+					p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(seq), qdot(seq.OwnedBy))
+				}
 			}
 		}
 		p.backfillsLeft(r, nil)
