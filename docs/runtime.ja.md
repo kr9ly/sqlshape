@@ -25,7 +25,7 @@ u, ok, err := UserByEmail.Find(ctx, db, p)   // ok が有無を表す
 tag, err   := MarkPaid.Exec(ctx, db, p)      // 1行も対象にならなければ ErrNoRows
 ```
 
-3つとも、2行目が返ってきたら`ErrManyRows`を返す。検査器が1行以下と証明した文なので、これが起きたのはデータベースが証明の前提から変わったときである。
+3つとも、2行目が返ってきたら`ErrManyRows`を返す。検査器は1行以下しか返らないことをスキーマから証明しているので、これが起きるのは、証明の根拠になった一意制約が実際のデータベースでは外れているときである。
 
 `Stmt.Unprepared()`は、サーバー側のprepared statementを使わずに実行するコピーを返す。プランナーが毎回、実際のパラメータ値でプランを作る。パラメータの値の分布が偏っていて、pgxのstatement cacheが汎用プランに固定されると遅くなる文に使う。それ以外の文では、prepared statementのキャッシュは展開ごとにpgxが管理する。
 
@@ -103,7 +103,15 @@ err := OrderStats.RefreshConcurrently(ctx, db)  // ビューに一意インデ�
 
 ## 検査済みのSQLのみが実行できる
 
-`Render(p)`はテンプレートを`p`で評価し、`$n`プレースホルダを含むSQLと、順序どおりの引数を返す。これはテンプレートの意味を実装した2つ目のコードなので、実行前に、同じ分岐シグネチャの静的展開とバイト単位で比較する。違っていればクエリを投げずにエラーを返す。比較せずに信用するのは2つの場合だけである。3回以上の`range`は静的展開に対応物が無いので、2回の反復の形で検査済みと見なす。検査器が疎に展開したテンプレートも比較できない（[templates.ja.md](templates.ja.md#分岐が多いとき)）。
+実行のたびに、テンプレートから組み立てたSQLが、検査器が同じ分岐の組み合わせについて検査したSQLと一字一句一致することを確認する。一致しなければクエリは投げずにエラーになる:
+
+```
+sqlshape: rendered SQL differs from the checked expansion [if@64:then]: the runtime evaluator and the checker disagree; please report this
+```
+
+これが出るのはsqlshapeの不具合なので、報告してほしい。通常の使い方で出ることはない。
+
+確認できない場合が2つある。`{{range}}`が3要素以上のとき（検査は2要素までで行う）と、分岐の組み合わせが256を超えて代表だけが検査されたとき（[templates.ja.md](templates.ja.md#分岐が多いとき)）。この2つでは、分岐の形が検査したものと同じであることだけを確認して実行する。
 
 ## 本物のPostgreSQLでのテスト
 
