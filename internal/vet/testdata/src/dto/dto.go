@@ -46,3 +46,12 @@ type Kept struct {
 }
 
 var kept = sqlshape.Query[Kept, struct{}](`SELECT id, total, meta, uid, matrix, note FROM orders`) // want `field Kept.Bogus has no result column` `field Total: numeric into float32 loses precision` `result column "uid" has no field` `result column "matrix" has no field`
+
+// Nested parameter paths make nested fields: a struct for `.Filter.Name`, a slice of structs
+// for a range over rows, a slice of the element type for a range over values. A top-level
+// field that already fits every path under it keeps its type.
+type NestedParams struct {
+	Tags []string
+}
+
+var nested = sqlshape.Query[int64, NestedParams](`SELECT id FROM orders WHERE user_id = {{.Filter.User}} {{if .Filter.Paid}} AND status = 'paid'{{end}} {{range .Items}} AND note <> {{.Sku}}{{end}} {{range .Tags}} AND note <> {{.}}{{end}}`) // want `dto.NestedParams has no field Filter` `dto.NestedParams has no field Items`

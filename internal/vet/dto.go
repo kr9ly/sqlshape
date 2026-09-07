@@ -297,55 +297,123 @@ func (c *checker) resultStruct(d *dto, cur *types.Struct, node *ast.StructType) 
 	return g
 }
 
-// paramStruct renders P from the parameter paths. Paths below the top level (`.A.B`,
-// ranges) are not generated: nil.
+// paramStruct renders P from the parameter and control paths, nested: `.Filter.Name`
+// makes a Filter struct field, `{{range .Items}}{{.Sku}}{{end}}` an Items slice of structs,
+// `{{range .Tags}}{{.}}{{end}}` a Tags slice of the element type. A top-level field the
+// current struct already has keeps its type when every path under it resolves and fits.
 func (c *checker) paramStruct(d *dto, res *expand.Result, cur *types.Struct, node *ast.StructType) *generated {
-	optional := map[string]bool{}
+	root := &pathNode{}
+	for _, key := range d.prmOrder {
+		p := d.params[key]
+		if n := root.at(p.path); n != nil {
+			n.leaf = p
+		}
+	}
 	for _, ctl := range res.Controls {
-		if len(ctl) == 1 {
-			optional[ctl[0]] = true
+		if n := root.at(ctl); n != nil {
+			n.control = true
 		}
 	}
 	g := &generated{}
-	seen := map[string]bool{}
-	for _, key := range d.prmOrder {
-		p := d.params[key]
-		if len(p.path) != 1 || p.path[0] == "#index" {
-			return nil
-		}
-		name := p.path[0]
-		seen[name] = true
-		col := analyze.Column{Name: name, Type: p.pg, Source: p.src}
-		if nested := c.paramColumn(p.pg); nested != nil {
-			col.Fields = nested.Fields
-		}
+	for _, name := range root.order {
+		child := root.fields[name]
 		typ := ""
-		if f := c.fieldNode(node, name); f != nil {
-			// a field whose type fits the parameter keeps it
-			if obj, _, _ := types.LookupFieldOrMethod(cur, true, c.pass.Pkg, name); obj != nil {
-				if fit := c.paramFit(p.pg, obj.Type()); fit.ok && fit.lossy == "" && !fit.unknown && (!optional[name] || fit.nullable) {
-					typ = types.ExprString(f.Type)
-				}
-			}
+		if f := c.fieldNode(node, name); f != nil && c.pathsFit(cur, child, expand.Path{name}) {
+			typ = types.ExprString(f.Type)
 		}
 		if typ == "" {
-			typ = c.goType(g, col, optional[name], true)
+			typ = c.pathType(g, child, false)
 		}
 		g.fields = append(g.fields, withDoc(c.fieldDoc(node, name), name+" "+typ))
 	}
-	// a control read alone (`{{if .Verbose}}`) is a field too
-	for _, ctl := range res.Controls {
-		if len(ctl) != 1 || seen[ctl[0]] {
-			continue
-		}
-		seen[ctl[0]] = true
-		typ := "bool"
-		if f := c.fieldNode(node, ctl[0]); f != nil {
-			typ = types.ExprString(f.Type)
-		}
-		g.fields = append(g.fields, withDoc(c.fieldDoc(node, ctl[0]), ctl[0]+" "+typ))
-	}
 	return g
+}
+
+// pathNode is one step of the parameter paths: a struct (fields), a slice (elem), a value
+// (leaf), a condition (control), or several of these at once.
+type pathNode struct {
+	fields  map[string]*pathNode
+	order   []string
+	elem    *pathNode
+	leaf    *dtoParam
+	control bool
+}
+
+// at walks (creating) the node a path names; nil for a path the tree cannot hold.
+func (n *pathNode) at(p expand.Path) *pathNode {
+	cur := n
+	for _, el := range p {
+		switch el {
+		case "#index":
+			return nil
+		case "[]":
+			if cur.elem == nil {
+				cur.elem = &pathNode{}
+			}
+			cur = cur.elem
+		default:
+			if cur.fields == nil {
+				cur.fields = map[string]*pathNode{}
+			}
+			if cur.fields[el] == nil {
+				cur.fields[el] = &pathNode{}
+				cur.order = append(cur.order, el)
+			}
+			cur = cur.fields[el]
+		}
+	}
+	return cur
+}
+
+// pathType renders the Go type of a node. A node read both as a value and as a condition
+// (`{{if .X}} ... {{.X}} ...`) is optional: a pointer unless the type is nil-able itself.
+func (c *checker) pathType(g *generated, n *pathNode, param bool) string {
+	switch {
+	case n.elem != nil:
+		return "[]" + c.pathType(g, n.elem, param)
+	case len(n.fields) > 0:
+		var b strings.Builder
+		b.WriteString("struct {\n")
+		for _, name := range n.order {
+			b.WriteString("\t" + name + " " + strings.ReplaceAll(c.pathType(g, n.fields[name], param), "\n", "\n\t") + "\n")
+		}
+		b.WriteString("}")
+		return b.String()
+	case n.leaf != nil:
+		col := analyze.Column{Name: "", Type: n.leaf.pg, Source: n.leaf.src}
+		if nested := c.paramColumn(n.leaf.pg); nested != nil {
+			col.Fields = nested.Fields
+		}
+		return c.goType(g, col, n.control, true)
+	default:
+		return "bool"
+	}
+}
+
+// pathsFit reports whether every leaf under n resolves on t along its path and fits its
+// parameter type (so the declared type can stay).
+func (c *checker) pathsFit(t types.Type, n *pathNode, prefix expand.Path) bool {
+	if n.leaf != nil || (n.control && n.elem == nil && len(n.fields) == 0) {
+		gt, err := c.resolvePath(t, prefix)
+		if err != nil {
+			return false
+		}
+		if n.leaf != nil {
+			fit := c.paramFit(n.leaf.pg, gt)
+			if !fit.ok || fit.lossy != "" || fit.unknown || (n.control && !fit.nullable) {
+				return false
+			}
+		}
+	}
+	if n.elem != nil && !c.pathsFit(t, n.elem, append(append(expand.Path{}, prefix...), "[]")) {
+		return false
+	}
+	for _, name := range n.order {
+		if !c.pathsFit(t, n.fields[name], append(append(expand.Path{}, prefix...), name)) {
+			return false
+		}
+	}
+	return true
 }
 
 func withDoc(doc, line string) string {

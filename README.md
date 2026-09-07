@@ -62,7 +62,7 @@ having no path, and each of those diagnostics carries a quick fix that rewrites 
 the query — the columns of every branch (a column only some branches select becomes a pointer),
 nullable columns as pointers, enums and lookup values as the Go type already bound to them,
 records as nested structs, doc comments from `COMMENT ON`; the parameter struct gets a field per
-path typed by what the SQL expects, and a `bool` per `{{if .Flag}}`. The same fix sits on every
+path typed by what the SQL expects (`.Filter.Name` a nested struct, a `range` a slice), and a `bool` per `{{if .Flag}}`. The same fix sits on every
 later mismatch (a column added to the SELECT, a type changed in the schema), with the names and
 doc comments, tags and types of fields that still fit kept (a type you chose from the table's alternatives stays). `-sync-comments` adds doc comments from `COMMENT ON`
 to types and fields that already exist.
