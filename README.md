@@ -14,7 +14,8 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 - Checked, not generated. Every statement is analyzed against `schema.sql` by a pure-Go
   PostgreSQL analyzer: the result columns must fit the row type, the `{{.X}}` parameters must
   fit the parameter type, nullability is enforced, `One` has to be provably single-row, and a
-  write must declare the constraints it can violate. Findings land in the editor's Problems pane.
+  write must declare the constraints it can violate. Every finding is a `go vet` diagnostic,
+  reported before the code ever runs.
 - Plain SQL, no injection. Templates are Go `text/template`: `{{.X}}` always becomes a
   `$n` parameter, never text, and every `{{if}}` / `{{range}}` combination is expanded and
   checked. The runtime refuses any rendering the checker never saw.
