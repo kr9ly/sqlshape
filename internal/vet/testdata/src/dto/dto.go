@@ -41,6 +41,8 @@ type Kept struct {
 	Identifier int64 `col:"id"`
 	Bogus      string
 	Total      float32
+	Note       *string `col:"note,notnull"`
+	Meta       []byte
 }
 
-var kept = sqlshape.Query[Kept, struct{}](`SELECT id, total, meta, uid, matrix FROM orders`) // want `field Kept.Bogus has no result column` `field Total: numeric into float32 loses precision` `result column "meta" has no field` `result column "uid" has no field` `result column "matrix" has no field`
+var kept = sqlshape.Query[Kept, struct{}](`SELECT id, total, meta, uid, matrix, note FROM orders`) // want `field Kept.Bogus has no result column` `field Total: numeric into float32 loses precision` `result column "uid" has no field` `result column "matrix" has no field`

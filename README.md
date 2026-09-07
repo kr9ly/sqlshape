@@ -64,7 +64,7 @@ nullable columns as pointers, enums and lookup values as the Go type already bou
 records as nested structs, doc comments from `COMMENT ON`; the parameter struct gets a field per
 path typed by what the SQL expects, and a `bool` per `{{if .Flag}}`. The same fix sits on every
 later mismatch (a column added to the SELECT, a type changed in the schema), with the names and
-doc comments of fields that still match kept. `-sync-comments` adds doc comments from `COMMENT ON`
+doc comments, tags and types of fields that still fit kept (a type you chose from the table's alternatives stays). `-sync-comments` adds doc comments from `COMMENT ON`
 to types and fields that already exist.
 
 ### Templates

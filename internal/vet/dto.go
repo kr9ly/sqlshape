@@ -251,36 +251,48 @@ func importEdits(file *ast.File, paths map[string]bool) []analysis.TextEdit {
 }
 
 // resultStruct renders R from the collected columns. A field the current struct already
-// has for a column keeps its name and doc comment.
+// has for a column keeps its name, its doc comment and its tag, and its type too when
+// that type fits the column (a type the user chose from the table's alternatives stays).
 func (c *checker) resultStruct(d *dto, cur *types.Struct, node *ast.StructType) *generated {
 	g := &generated{}
-	existing := map[string]*ast.Field{}
+	type existingField struct {
+		node *ast.Field
+		v    *types.Var
+	}
+	existing := map[string]existingField{}
 	flat, _ := structFields(cur)
 	for _, f := range flat {
-		existing[f.col] = c.fieldNode(node, f.name)
+		existing[f.col] = existingField{c.fieldNode(node, f.name), f.v}
 	}
 	for _, name := range d.colOrder {
 		dc := d.cols[name]
 		nullable := dc.col.Nullable || dc.count < d.analyzed
-		typ := c.goType(g, dc.col, nullable, false)
 		fname := exportedName(name)
-		var doc string
-		if f := existing[name]; f != nil {
-			if len(f.Names) == 1 {
-				fname = f.Names[0].Name
+		var doc, typ, tag string
+		if f := existing[name]; f.node != nil {
+			if len(f.node.Names) == 1 {
+				fname = f.node.Names[0].Name
 			}
-			if f.Doc != nil {
-				doc = strings.TrimSpace(f.Doc.Text())
+			if f.node.Doc != nil {
+				doc = strings.TrimSpace(f.node.Doc.Text())
+			}
+			if fit := c.match(dc.col.Type, f.v.Type()); fit.ok && fit.lossy == "" && !fit.unknown && (!nullable || fit.nullable) {
+				typ = types.ExprString(f.node.Type)
+				if f.node.Tag != nil {
+					tag = " " + f.node.Tag.Value
+				}
+			}
+		}
+		if typ == "" {
+			typ = c.goType(g, dc.col, nullable, false)
+			if snake(fname) != name {
+				tag = fmt.Sprintf(" `col:%q`", name)
 			}
 		}
 		if doc == "" && dc.col.Source != nil {
 			doc = c.s.Comments[dc.col.Source.Table+"."+dc.col.Source.Column]
 		}
-		line := fname + " " + typ
-		if snake(fname) != name {
-			line += fmt.Sprintf(" `col:%q`", name)
-		}
-		g.fields = append(g.fields, withDoc(doc, line))
+		g.fields = append(g.fields, withDoc(doc, fname+" "+typ+tag))
 	}
 	return g
 }
@@ -307,7 +319,18 @@ func (c *checker) paramStruct(d *dto, res *expand.Result, cur *types.Struct, nod
 		if nested := c.paramColumn(p.pg); nested != nil {
 			col.Fields = nested.Fields
 		}
-		typ := c.goType(g, col, optional[name], true)
+		typ := ""
+		if f := c.fieldNode(node, name); f != nil {
+			// a field whose type fits the parameter keeps it
+			if obj, _, _ := types.LookupFieldOrMethod(cur, true, c.pass.Pkg, name); obj != nil {
+				if fit := c.paramFit(p.pg, obj.Type()); fit.ok && fit.lossy == "" && !fit.unknown && (!optional[name] || fit.nullable) {
+					typ = types.ExprString(f.Type)
+				}
+			}
+		}
+		if typ == "" {
+			typ = c.goType(g, col, optional[name], true)
+		}
 		g.fields = append(g.fields, withDoc(c.fieldDoc(node, name), name+" "+typ))
 	}
 	// a control read alone (`{{if .Verbose}}`) is a field too
