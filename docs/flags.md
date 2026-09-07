@@ -89,5 +89,5 @@ chose from the alternatives (`decimal.Decimal` for `numeric`) stays. `numeric` b
 `shopspring/decimal.Decimal` when the module already imports it, `pgtype.Numeric` otherwise;
 `uuid` likewise picks the uuid package in use.
 
-From the command line the fixes are applied with `sqlshape -fix ./...`; from the editor, through
-the Problems pane's quick fix.
+From the command line the fixes are applied with `sqlshape -fix ./...`; in the editor, through the
+quick fix attached to each diagnostic.

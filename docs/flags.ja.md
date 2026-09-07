@@ -68,4 +68,4 @@ Go統合のあるエディタは保存時に`go vet`を走らせて診断をイ�
 
 同じquick fixは、以後に不一致が出たとき（SELECTに列を足した、スキーマで型を変えた）にも付く。まだ合っているフィールドの名前・docコメント・タグ・型は保たれるので、選択肢の中から選んだ型（`numeric`に対する`decimal.Decimal`など）は残る。`numeric`はモジュールが`shopspring/decimal`を既にimportしていれば`decimal.Decimal`、していなければ`pgtype.Numeric`になる。`uuid`も同様に、使用中のuuidパッケージの型になる。
 
-コマンドラインからは`sqlshape -fix ./...`で適用する。エディタからはProblemsペインのquick fixで適用する。
+コマンドラインからは`sqlshape -fix ./...`で適用する。エディタからは診断に付いたquick fixで適用する。
