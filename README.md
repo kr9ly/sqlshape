@@ -97,33 +97,31 @@ Four stages of the same order book, one per level of trust in the database:
 
 ## What it checks
 
-The full list is in [docs/checks.md](docs/checks.md). In one line each:
+The full list is in [docs/checks.md](docs/checks.md). Broadly:
 
-- Shapes — result columns ↔ `R` fields, `{{.X}}` paths ↔ `P` fields, nullability, nested
-  rows (`array_agg(row(...))`, composites) into structs, a verified table of pgx Go types, and
-  `// sqlshape: type money_amount` to bind your own type to a PostgreSQL type
-- Meaning — a Go named type that meets an enum, a seeded lookup table's key, a CHECK value
-  set, a key column or a domain is bound to it by use and its constants are diffed with the
-  labels; mixing identities or domains is reported, and domains are opaque units inside SQL
-- Failure modes — a write must declare the constraints it can violate in
-  `-- sqlshape: expect users_email_key, orders.total`; both a missing and an impossible one are
-  reported, and the runtime hands them back as `ConstraintError` under the same names
-- Cardinality — `One[R, P]` is proved to return at most one row in every expansion, through
-  joins, views, subqueries and CTEs
-- Boundaries — `-- sqlshape: visible where deleted_at IS NULL`, row-level security policies,
-  `-require-columns=tenant_id`, `-no-table-reads` / `-no-tables` / `-schemas`, and raw driver
-  calls that bypass the checker
-- Hazards — `{{.X}}` inside a string literal or comment, a parameter as an `ORDER BY` item,
-  shared fragments that are not constants
-- Schema problems — the bodies of SQL functions, views and policies in `schema.sql` are
-  type-checked once at load, and with `-strict` the checker gives advisory findings
-  (`LIMIT` without `ORDER BY`, a predicate no index leads with, an enum where a lookup table
-  would do, ...)
+- Shapes: the columns a statement returns and the Go struct that receives them, and the
+  `{{.X}}` parameters and the struct that supplies them, agree in name, type and NULL handling.
+  Nested rows and composite types included.
+- Meaning: a Go type used for an enum or lookup-table value, a primary key or a domain is bound
+  to that meaning from where it is used. Passing another table's ID, adding domains of different
+  units, or constants that drift from the labels are reported even though the underlying types
+  agree.
+- Failure modes: a write must declare the constraints it can violate on its expect line. A missing
+  declaration and an impossible one are both reported, so the code always states which violations
+  it has to handle.
+- Cardinality: a statement declared with `One` is proved from the schema to return at most one
+  row.
+- Boundaries: team rules that show up in the shape of the SQL, such as always filtering soft-deleted
+  rows, always pinning the tenant column, or reading tables only through views, are enforced by the
+  checker.
+- The schema itself: the functions, views and policies in `schema.sql` are type-checked too, and
+  `-strict` adds advice such as a predicate no index serves or an enum a lookup table would serve
+  better.
 
 ## Migrations
 
-There are no migration files. `sqlshape` compares the database with `schema.sql` and works from
-the difference:
+There are no migration files. Edit `schema.sql`, and `sqlshape` derives the DDL from the
+difference between it and the database:
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to schema.sql
@@ -132,10 +130,11 @@ $ sqlshape apply -db "$DSN" -packages ./... up.sql
 $ sqlshape verify-schema -db "$DSN"         # drift: where a database differs from schema.sql
 ```
 
-`apply` refuses unless the database plus the DDL reads back as `schema.sql`, and with `-packages`
-unless no Go statement still depends on a column the DDL drops. Renames, enum label removals and
-backfills are declared in `schema.sql` with `-- @migrate` lines; seeded lookup tables are diffed
-row by row and kept in step with one `MERGE`. See [docs/migrations.md](docs/migrations.md).
+The generated DDL may be edited by hand. `apply` checks, before running anything, that applying the
+DDL really leads to `schema.sql`, and refuses otherwise. With `-packages` it also refuses while Go
+code still uses a column the DDL drops or retypes. Changes whose intent a diff cannot infer, such as a
+rename or the removal of an enum label, are declared in `schema.sql` with `-- @migrate` lines. See
+[docs/migrations.md](docs/migrations.md).
 
 ## Documentation
 
