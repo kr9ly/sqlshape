@@ -39,6 +39,10 @@ type plVar struct {
 	// open: a record whose shape is unknown (a FETCH target, a record never filled by a
 	// statement the analyzer saw); its fields type as unknown instead of failing
 	open bool
+	// cursor: a bound cursor's query (DECLARE c CURSOR FOR ...), and the columns it
+	// produced once OPEN / FOR analyzed it
+	cursor     string
+	cursorCols []Column
 }
 
 // plBody is one function body under analysis.
@@ -255,7 +259,7 @@ func (b *plBody) declareDatums(fnNode map[string]any) error {
 					tn, _ = t["typname"].(string)
 				}
 			}
-			pv := &plVar{name: name}
+			pv := &plVar{name: name, cursor: plQuery(v["cursor_explicit_expr"])}
 			if tn != "" {
 				typ, fields, err := b.resolveTypeName(tn, plLine(v))
 				if err != nil {
@@ -497,9 +501,15 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 		}
 		return b.walkList(m["body"])
 	case "PLpgSQL_stmt_forc":
-		// FOR r IN cursor: the cursor's query was seen at its declaration or OPEN; the
-		// row stays open-shaped
-		b.fillRecord(m["var"], nil)
+		// FOR r IN cursor: the row takes the shape of the cursor's bound query
+		var cols []Column
+		if cv := b.cursorVar(m); cv != nil {
+			if err := b.openBound(cv, line); err != nil {
+				return err
+			}
+			cols = cv.cursorCols
+		}
+		b.fillRecord(m["var"], cols)
 		return b.walkList(m["body"])
 	case "PLpgSQL_stmt_dynfors":
 		if err := b.dynexecute(m, line); err != nil {
@@ -582,15 +592,29 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 	case "PLpgSQL_stmt_assign":
 		return b.assign(plQuery(m["expr"]), line)
 	case "PLpgSQL_stmt_return":
+		if v := b.retVar(m); v != nil {
+			// RETURN var: the PL parser records the variable instead of an expression
+			return b.retType(v.typ, line)
+		}
 		return b.ret(plQuery(m["expr"]), line)
 	case "PLpgSQL_stmt_return_next":
+		want := b.fn.RetType
+		if rel := relByRowType(b.s, want.OID); rel != nil || b.fn.RetType.OID == catalog.Record {
+			want = schema.TypeRef{}
+		}
+		if v := b.retVar(m); v != nil {
+			return b.assignable(v.typ, want, line, "RETURN NEXT "+v.name)
+		}
 		if q := plQuery(m["expr"]); q != "" {
-			want := b.fn.RetType
-			if rel := relByRowType(b.s, want.OID); rel != nil || b.fn.RetType.OID == catalog.Record {
-				want = schema.TypeRef{}
-			}
 			_, err := b.expr(q, line, want)
 			return err
+		}
+		// RETURN NEXT var: the PL parser keeps only the variable's number, which the JSON
+		// does not carry; the source line names it
+		if name := b.returnNextVar(line); name != "" {
+			if v := b.vars[strings.ToLower(name)]; v != nil {
+				return b.assignable(v.typ, want, line, "RETURN NEXT "+name)
+			}
 		}
 		return nil
 	case "PLpgSQL_stmt_return_query":
@@ -606,7 +630,7 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 			}
 			return nil
 		}
-		return b.dynexecute(m, line)
+		return b.dynexecuteText(plQuery(m["dynquery"]), m["params"], line)
 	case "PLpgSQL_stmt_raise":
 		return b.raise(m, line)
 	case "PLpgSQL_stmt_assert":
@@ -618,16 +642,29 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 		return nil
 	case "PLpgSQL_stmt_open":
 		if q := plQuery(m["query"]); q != "" {
-			_, err := b.sql(q, line)
-			return err
+			r, err := b.sql(q, line)
+			if err != nil {
+				return err
+			}
+			if cv := b.cursorVar(m); cv != nil && r != nil {
+				cv.cursorCols = r.Columns
+			}
+			return nil
 		}
 		if q := plQuery(m["dynquery"]); q != "" {
 			return b.dynexecuteText(q, m["params"], line)
 		}
-		return nil
+		return b.openBound(b.cursorVar(m), line)
 	case "PLpgSQL_stmt_fetch":
 		if into, ok := m["target"]; ok {
-			b.fillRecord(into, nil)
+			var cols []Column
+			if cv := b.cursorVar(m); cv != nil {
+				if err := b.openBound(cv, line); err != nil {
+					return err
+				}
+				cols = cv.cursorCols
+			}
+			b.fillRecord(into, cols)
 		}
 		return nil
 	case "PLpgSQL_stmt_call":
@@ -646,6 +683,79 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// cursorVar is the cursor variable a statement's curvar names.
+func (b *plBody) cursorVar(m map[string]any) *plVar {
+	if n, ok := m["curvar"].(float64); ok && int(n) < len(b.datums) && b.datums[int(n)] != nil {
+		return b.datums[int(n)]
+	}
+	return nil
+}
+
+// openBound analyzes a bound cursor's query once and keeps its columns.
+func (b *plBody) openBound(cv *plVar, line int) error {
+	if cv == nil || cv.cursor == "" || cv.cursorCols != nil {
+		return nil
+	}
+	r, err := b.sql(cv.cursor, line)
+	if err != nil {
+		return err
+	}
+	if r != nil {
+		cv.cursorCols = r.Columns
+	}
+	return nil
+}
+
+var returnNextRe = regexp.MustCompile(`(?i)\bRETURN\s+NEXT\s+("[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\s*;`)
+
+// returnNextVar is the bare variable a `RETURN NEXT var;` on the given body line names.
+func (b *plBody) returnNextVar(line int) string {
+	lines := strings.Split(b.fn.Body, "\n")
+	if line < 1 || line > len(lines) {
+		return ""
+	}
+	m := returnNextRe.FindStringSubmatch(lines[line-1])
+	if m == nil {
+		return ""
+	}
+	return strings.Trim(m[1], `"`)
+}
+
+// retVar is the variable a RETURN / RETURN NEXT of a bare variable names (retvarno).
+func (b *plBody) retVar(m map[string]any) *plVar {
+	if n, ok := m["retvarno"].(float64); ok && int(n) < len(b.datums) {
+		return b.datums[int(n)]
+	}
+	return nil
+}
+
+// retType checks a RETURN of a value of type t against RETURNS.
+func (b *plBody) retType(t schema.TypeRef, line int) error {
+	switch {
+	case b.fn.RetType.OID == catalog.Trigger:
+		if t.OID == catalog.Record || (b.rel != nil && t.OID == b.rel.RowType) {
+			return nil
+		}
+		return b.errf(line, codeDatatypeMismatch, "a trigger function returns NEW, OLD or NULL")
+	case b.fn.IsProc || b.fn.RetType.OID == catalog.Void:
+		return b.errf(line, codeDatatypeMismatch, "RETURN cannot have a parameter in function returning void")
+	case b.fn.RetSet:
+		return b.errf(line, codeDatatypeMismatch, "RETURN cannot have a parameter in function returning set; use RETURN NEXT or RETURN QUERY")
+	}
+	want := b.fn.RetType
+	if want.OID == catalog.Record || relByRowType(b.s, want.OID) != nil {
+		return nil
+	}
+	return b.assignable(t, want, line, "RETURN")
+}
+
+// isUntypedLiteral reports whether an expression is NULL or a string literal: PostgreSQL
+// types those from the assignment target, so they assign to anything.
+func isUntypedLiteral(q string) bool {
+	q = strings.TrimSpace(q)
+	return strings.EqualFold(q, "null") || plStringLiteral(q) != ""
 }
 
 // plQuery is the SQL text of a PLpgSQL_expr node.
@@ -700,7 +810,7 @@ func (b *plBody) expr(query string, line int, want schema.TypeRef) (*Result, err
 	if err != nil || r == nil {
 		return r, err
 	}
-	if want.OID != 0 && len(r.Columns) == 1 {
+	if want.OID != 0 && len(r.Columns) == 1 && !isUntypedLiteral(query) {
 		if err := b.assignable(r.Columns[0].Type, want, line, query); err != nil {
 			return nil, err
 		}
@@ -719,7 +829,7 @@ func (b *plBody) assignable(from, to schema.TypeRef, line int, what string) erro
 	return nil
 }
 
-var assignSplit = regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_$]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_$]*)*)\s*(?:\[[^\]]*\]\s*)*:?=\s*`)
+var assignSplit = regexp.MustCompile(`^\s*((?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)(?:\s*\.\s*(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*))*)\s*(?:\[[^\]]*\]\s*)*:?=\s*`)
 
 // assign handles `target := expr` (parseMode RAW_PLPGSQL_ASSIGN: the text has both).
 func (b *plBody) assign(query string, line int) error {
@@ -728,7 +838,7 @@ func (b *plBody) assign(query string, line int) error {
 		_, err := b.expr(query, line, schema.TypeRef{})
 		return err
 	}
-	target := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(m[1], " ", ""), "\t", ""))
+	target := strings.ToLower(strings.NewReplacer(" ", "", "\t", "", `"`, "").Replace(m[1]))
 	rhs := query[len(m[0]):]
 	var want schema.TypeRef
 	parts := strings.Split(target, ".")

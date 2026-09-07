@@ -911,12 +911,6 @@ func catInputNames(fn *catalog.Func) []string {
 	return out
 }
 
-// catIs is whether a type falls in the given pg_type category.
-func (a *analyzer) catIs(oid catalog.OID, cat byte) bool {
-	c, _ := a.category(oid)
-	return c == cat
-}
-
 // polyUnknownInput is enforce_generic_type_consistency's "could not determine polymorphic
 // type because input has type unknown": the function has anyelement-family parameters
 // (or an anycompatible range / multirange one) and every actual argument at them is an

@@ -68,7 +68,20 @@ func (ts *Types) Lookup(schema, name string) *catalog.Type {
 		if len(path) == 0 {
 			path = []string{"public"}
 		}
+		// pg_catalog is searched first unless the path names it somewhere else, so a
+		// user type called like a built-in does not shadow the built-in
+		if !slices.Contains(path, "pg_catalog") {
+			if t := ts.cat.TypeByName(name); t != nil && t.Schema == "" {
+				return t
+			}
+		}
 		for _, p := range path {
+			if p == "pg_catalog" {
+				if t := ts.cat.TypeByName(name); t != nil && t.Schema == "" {
+					return t
+				}
+				continue
+			}
 			if t := ts.byName[p+"."+name]; t != nil {
 				return t
 			}

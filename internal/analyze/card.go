@@ -577,13 +577,21 @@ func (p *prover) keyFixed(r *rte, con *schema.Constraint) bool {
 	if con.Predicate == nil {
 		return true
 	}
-	// a partial unique index applies only where the query repeats its predicate
-	for _, c := range p.conjuncts {
-		if (c.allow == nil || c.allow[r]) && sameExpr(con.Predicate, c.n, r) {
-			return true
+	// a partial unique index applies only where the query repeats its predicate: every
+	// conjunct of the predicate must appear among the query's conjuncts
+	for _, part := range conjuncts(con.Predicate) {
+		found := false
+		for _, c := range p.conjuncts {
+			if (c.allow == nil || c.allow[r]) && sameExpr(part, c.n, r) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // sameExpr compares an index predicate (unqualified column names) with a query

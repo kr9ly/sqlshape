@@ -302,6 +302,12 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 			return nil, err
 		}
 		x.res.Controls = append(x.res.Controls, p)
+		if len(v.Pipe.Decl) > 0 {
+			// {{with $y := .X}}: $y is .X inside
+			for _, s := range states {
+				s.vars[v.Pipe.Decl[0].Ident[0]] = p
+			}
+		}
 		return x.branches(&v.BranchNode, states, "with", &p)
 	case *parse.RangeNode:
 		return x.rangeNode(v, states)
