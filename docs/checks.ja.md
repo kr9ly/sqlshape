@@ -4,23 +4,132 @@
 
 検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページでは、何と何を突き合わせるのかを、読者が持つ問いごとにまとめる。
 
-## 形: Goの構造体はSQLと合っているか
+## SELECTの結果を受ける
 
-結果列と`R`の対応。展開したすべてのSQLについて、すべての結果列が`R`のフィールドのどれか1つに名前で対応しなければならない。対応の順序は`col:"..."`タグ、`db:"..."`タグ、フィールド名をsnake_caseにしたもの。受けるフィールドの無い列も、対応する列の無いフィールドも報告される。名前の無い列（`SELECT 1 + 1`）や同名の列が2つある場合（`o.id, u.id`）は対応づけられないので、別名を付けるべき列を示す。`R`がスカラー（`int64`、`string`など）なら、SQLは1列だけを返さなければならない。
+結果を受ける構造体`R`について、検査器はすべての結果列に受けるフィールドがあり、すべてのフィールドに対応する列があり、型とNULLの扱いが合っていることを確かめる。分岐のあるテンプレートでは、展開したすべてのSQLについて確かめる。
 
-nullability。NULLになりうる列は、NULLを受けられるフィールドで受けなければならない。ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、または`sql.Scanner`を実装した型である。列がNULLになりうるかは、カタログ（`NOT NULL`、主キー、`GENERATED`）、WHERE句（`col IS NOT NULL`、`col = ...`）、関数（引数がNULLでないstrict関数、既定値がNULLでない`coalesce`）から判定し、JOIN（外部結合の内側はNULLになりうる）とビュー（ビュー自身のWHERE句で絞られる）を通して伝える。判定はどちらの側からでも上書きできる。Go側ならフィールドタグ`col:",notnull"`、SQL側ならテンプレートの`-- sqlshape: not null col, col`行、関数の戻り値なら`schema.sql`の`CREATE FUNCTION`の上の`-- sqlshape: not null`。
+### 結果列とフィールドは名前で対応する
 
-一部の分岐だけが選ぶ列。ある分岐でだけSELECTされる列は、NULLを受けられるフィールドで受ける。その列を選ばない分岐ではnilのままになる。どの分岐も選ばない列に対応するフィールドはエラーである。
+対応は`col:"..."`タグ、`db:"..."`タグ、フィールド名をsnake_caseにしたもの、の順で探す。
 
-パラメータと`P`の対応。`{{.X}}`はそれぞれ`$n`パラメータになり、検査器はその`$n`が使われている場所からPostgreSQL側で必要な型を推論する（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）。`{{.Filter.Name}}`は`P`のフィールドを順に辿り、`range`の中では要素の型を見て、その位置のGo型を下の型表と照らす。型が合わない、精度が落ちる変換になる（`int64`を`integer`に渡す）、SQL側でNULLが必要になりうるのにGo型がNULLを表せない、のいずれも報告される。どの展開でも読まれない`P`のフィールドは`-strict`で報告される。
+```go
+// NG
+type Order struct{ ID int64; CustomerName string }
+SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
+// → result column "name" has no field in Order
+// → field Order.CustomerName has no result column
 
-埋め込み構造体。`type Row struct { Base; Note *string }`のように埋め込むと、Baseのフィールドは自分のフィールドとして列を受ける（2つのフィールドが同じ列を受けようとするとエラー）。埋め込んだ構造体のフィールドも`{{.ID}}`で参照できる。名前付きの構造体フィールド、または`col:"..."`タグを付けた埋め込みフィールドは、平坦化されずにネストした行として扱われる。
+// OK: 列に別名を付ける
+SELECT o.id, c.name AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id
+// OK: タグで対応を指定する
+type Order struct{ ID int64; CustomerName string `col:"name"` }
+```
 
-ネストした行。`array_agg(row(o.id, o.total))`、`array_agg(o)`、`row(...)`、複合型の列は、構造体または構造体のスライスで受ける。無名のレコードなら構造体のフィールドと位置で、名前付きの複合型なら名前と順序で対応づける。ランタイムはフィールドごとに読み込む（[runtime.ja.md](runtime.ja.md#ネストした行とユーザー定義型)）。
+### 名前の無い列と同名の列には別名を付ける
 
-複合型のパラメータ。SQL側が`money_amount`を期待する位置の`{{.Price}}`には構造体を、`order_items[]`を期待する位置の`{{.Items}}`には構造体のスライスを渡す。フィールドと型の列の対応づけはネストした行と同じ規則である。
+```go
+// NG
+SELECT id, count(*) FROM orders GROUP BY id
+// → result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
 
-Go型の表。pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQLで確認したもの:
+// NG
+SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
+// → result columns 1 and 2 are both named "id": alias one of them (... AS other_name)
+
+// OK
+SELECT id, count(*) AS n FROM orders GROUP BY id
+SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.customer_id
+```
+
+### NULLになりうる列はNULLを受けられる型で受ける
+
+NULLを受けられる型は、ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、`sql.Scanner`を実装した型。
+
+```go
+// NG
+type User struct{ ID int64; DeletedAt time.Time }
+SELECT id, deleted_at FROM users
+// → field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
+
+// OK
+type User struct{ ID int64; DeletedAt *time.Time }
+```
+
+補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない）、ビュー自身のWHERE句から判定する。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。
+
+### 一部の分岐だけが選ぶ列はNULLを受けられる型で受ける
+
+```go
+// NG
+type Order struct{ ID int64; Total string }
+SELECT id {{if .WithTotal}}, total{{end}} FROM orders
+// → field Order.Total is not selected in every branch [if@11:else]: make it a pointer so those branches leave it nil
+
+// OK
+type Order struct{ ID int64; Total *string }
+```
+
+補足。選ばない分岐ではフィールドはnilのまま。どの分岐も選ばない列に対応するフィールドは`has no result column`になる。
+
+### 列の型とフィールドの型は下の表に従う
+
+```go
+// NG
+type Order struct{ ID int64; Total float64 }
+SELECT id, total FROM orders            -- total numeric(12,2)
+// → field Total is float64 but column "total" is numeric(12,2)
+
+// OK
+type Order struct{ ID int64; Total string }           // 全桁を保つ
+type Order struct{ ID int64; Total decimal.Decimal }  // shopspring/decimal
+```
+
+### ネストした行は構造体で受ける
+
+`array_agg(row(...))`、`array_agg(t)`、`row(...)`、複合型の列は構造体、または構造体のスライスで受ける。無名の`row(...)`はフィールドの位置で、名前付きの複合型は名前と順序で対応づける。
+
+```go
+// schema.sql: CREATE TYPE order_item AS (sku text, qty integer)
+
+// NG: 構造体のフィールドの順序が複合型の列の順序と違う
+type Item struct{ Qty int32; Sku string }
+type Order struct{ ID int64; Items []Item }
+SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items FROM orders o JOIN order_items i ON ... GROUP BY o.id
+// → field Items.Qty is at position 1 but the row type's column 1 is "sku" (fields are scanned in order)
+
+// OK
+type Item struct{ Sku string; Qty int32 }
+```
+
+### 1列だけ返すSQLはスカラーで受けられる
+
+```go
+// OK
+var Count = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orders`)
+
+// NG
+var Count = sqlshape.Query[int64, struct{}](`SELECT id, total FROM orders`)
+// → R is int64 but the query returns 2 columns
+```
+
+### 埋め込み構造体は平坦化される
+
+```go
+// OK
+type Base struct{ ID int64; CreatedAt time.Time }
+type Order struct{ Base; Total string }
+SELECT id, created_at, total FROM orders
+
+// NG: 2つのフィールドが同じ列を受けようとしている
+type Order struct{ Base; ID int64; Total string }
+// → Order: fields Base.ID and ID both bind to column "id"
+```
+
+補足。名前付きの構造体フィールド、または`col:"..."`タグを付けた埋め込みフィールドは、平坦化されずにネストした行として扱われる。
+
+### Go型の表
+
+pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQLで確認したもの。列を受けるときも、パラメータを渡すときも同じ表に従う。
 
 | PostgreSQL | Go |
 |---|---|
@@ -49,16 +158,14 @@ Go型の表。pgxが実際にscan / encodeできる組み合わせを、稼働�
 | ドメイン | 基底型に対応するGo型、またはドメインに結びつけたnamed type |
 | 複合型、レコード | 構造体 |
 
-PostgreSQL型の明示的な宣言。Goの型がどのPostgreSQL型に対応するのかを、docコメントで宣言できる:
+表に無い型、あるいは自前の型で受けたい型は、Go側の型にdocコメントで対応するPostgreSQL型を宣言する:
 
 ```go
 // sqlshape: type money_amount
-type Money struct{ ... }
+type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
 ```
 
-こうすると検査器は、SQL側が`money_amount`（その配列と、それを基底型とするドメインを含む）である位置でだけ`Money`を受け入れ、それ以外の位置では報告する。値の変換は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerにはテキスト形式が渡る）。複合型をdecimalのラッパーで受けたいときや、拡張の型を自前の型で受けたいときに使う。宣言は型と一緒にパッケージを越えて効く。
-
-COPY。`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型が、その列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であることを確かめる。
+検査器は、SQL側が`money_amount`（その配列と、それを基底型とするドメインを含む）である位置でだけ`Money`を受け入れ、それ以外の位置では報告する。値の変換は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerにはテキスト形式が渡る）。
 
 ## 意味: その値は何を表しているか
 
