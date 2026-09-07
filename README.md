@@ -1,5 +1,10 @@
 # sqlshape
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/kr9ly/sqlshape.svg)](https://pkg.go.dev/github.com/kr9ly/sqlshape)
+[![release](https://img.shields.io/github/v/release/kr9ly/sqlshape)](https://github.com/kr9ly/sqlshape/releases)
+[![test](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml/badge.svg)](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml)
+![coverage](.github/badges/coverage.svg)
+
 Write SQL as SQL, and let a `go vet` checker prove the Go code around it fits.
 
 [日本語](README.ja.md)
@@ -43,8 +48,9 @@ The runtime is an ordinary Go module:
 $ go get github.com/kr9ly/sqlshape
 ```
 
-Versions follow semantic versioning and are tagged `vX.Y.Z`; while the major version is 0, the API
-may still change between minor versions.
+Versions follow semantic versioning and are tagged `vX.Y.Z`. Within a major version, the exported
+API of `sqlshape` and `pgtest`, the template syntax, the directives and the checker's flags stay
+compatible; what the checker reports may grow with minor versions.
 
 ## Quickstart
 

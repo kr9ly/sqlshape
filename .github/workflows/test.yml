@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write   # the coverage badge is committed back to main
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -24,7 +27,9 @@ jobs:
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -q
           sudo apt-get install -y -q postgresql-client-17
-          pg_dump --version
+          # /usr/bin/pg_dump is Ubuntu's wrapper and picks the default (older) cluster version
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       # the embedded PostgreSQL archive, its extracted binaries + initialized template data
       # directory (internal/oracle), and PostgreSQL's regression corpus (TestRegress)
@@ -40,4 +45,20 @@ jobs:
         run: internal/analyze/testdata/tools/fetch-regress.sh
 
       - name: Test
-        run: go test ./... -timeout 20m
+        run: go test ./... -coverpkg=./... -coverprofile=cover.out -timeout 20m
+
+      # coverage badge: statement coverage of the whole module, committed as an SVG so the
+      # README can show it without a third-party service; --min makes it a regression gate
+      - name: Coverage badge
+        run: python3 .github/scripts/coverage_badge.py --min 75 cover.out .github/badges/coverage.svg
+
+      - name: Commit coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/badges
+          if ! git diff --cached --quiet; then
+            git commit -m "CI: coverage badge [skip ci]"
+            git push
+          fi

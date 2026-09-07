@@ -1,5 +1,10 @@
 # sqlshape
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/kr9ly/sqlshape.svg)](https://pkg.go.dev/github.com/kr9ly/sqlshape)
+[![release](https://img.shields.io/github/v/release/kr9ly/sqlshape)](https://github.com/kr9ly/sqlshape/releases)
+[![test](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml/badge.svg)](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml)
+![coverage](.github/badges/coverage.svg)
+
 sqlshapeは、Goのコードにそのまま書いたSQLを`go vet`で検査するツールである。ORMやクエリビルダを挟まず、SQLと、その結果やパラメータを受け渡すGoの構造体とが食い違っていないかを、コンパイル時に確かめる。
 
 [English](README.md)
@@ -32,7 +37,7 @@ PostgreSQLのパーサ（libpg_query）をcgoでリンクするので、`go inst
 $ go get github.com/kr9ly/sqlshape
 ```
 
-バージョンはsemantic versioningに従い、`vX.Y.Z`のタグを打つ。メジャーバージョンが0の間は、マイナーバージョンの間でもAPIが変わりうる。
+バージョンはsemantic versioningに従い、`vX.Y.Z`のタグを打つ。同じメジャーバージョンの中では、`sqlshape`と`pgtest`の公開API、テンプレート構文、ディレクティブ、検査器のフラグは互換を保つ。検査器が報告する内容はマイナーバージョンで増えることがある。
 
 ## Quickstart
 
