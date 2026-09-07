@@ -17,17 +17,13 @@ NG
 ```go
 type Order struct {
 	ID           int64
-	CustomerName string
+	CustomerName string // field Order.CustomerName has no result column
 }
 ```
 
 ```sql
 SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
-```
-
-```
-result column "name" has no field in Order
-field Order.CustomerName has no result column
+--           ^ result column "name" has no field in Order
 ```
 
 OK。列に別名を付けるか、タグで対応を指定する。
@@ -49,18 +45,10 @@ NG
 
 ```sql
 SELECT id, count(*) FROM orders GROUP BY id
-```
+--         ^ result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
 
-```
-result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
-```
-
-```sql
 SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
-```
-
-```
-result columns 1 and 2 are both named "id": alias one of them (... AS other_name)
+--           ^ result columns 1 and 2 are both named "id": alias one of them (... AS other_name)
 ```
 
 OK
@@ -79,16 +67,12 @@ NG
 ```go
 type User struct {
 	ID        int64
-	DeletedAt time.Time
+	DeletedAt time.Time // field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
 }
 ```
 
 ```sql
 SELECT id, deleted_at FROM users
-```
-
-```
-field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
 ```
 
 OK
@@ -109,16 +93,12 @@ NG
 ```go
 type Order struct {
 	ID    int64
-	Total string
+	Total string // field Order.Total is not selected in every branch [if@11:else]: make it a pointer so those branches leave it nil
 }
 ```
 
 ```sql
 SELECT id {{if .WithTotal}}, total{{end}} FROM orders
-```
-
-```
-field Order.Total is not selected in every branch [if@11:else]: make it a pointer so those branches leave it nil
 ```
 
 OK
@@ -139,16 +119,12 @@ NG
 ```go
 type Order struct {
 	ID    int64
-	Total float64
+	Total float64 // field Total is float64 but column "total" is numeric(12,2)
 }
 ```
 
 ```sql
-SELECT id, total FROM orders   -- total は numeric(12,2)
-```
-
-```
-field Total is float64 but column "total" is numeric(12,2)
+SELECT id, total FROM orders
 ```
 
 OK
@@ -156,7 +132,7 @@ OK
 ```go
 type Order struct {
 	ID    int64
-	Total string          // 全桁を保つ。decimal.Decimal（shopspring/decimal）でもよい
+	Total string // 全桁を保つ。decimal.Decimal（shopspring/decimal）でもよい
 }
 ```
 
@@ -173,7 +149,7 @@ CREATE TYPE order_item AS (sku text, qty integer);
 
 ```go
 type Item struct {
-	Qty int32
+	Qty int32 // field Items.Qty is at position 1 but the row type's column 1 is "sku" (fields are scanned in order)
 	Sku string
 }
 type Order struct {
@@ -186,10 +162,6 @@ type Order struct {
 SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items
   FROM orders o JOIN order_items i ON i.order_id = o.id
  GROUP BY o.id
-```
-
-```
-field Items.Qty is at position 1 but the row type's column 1 is "sku" (fields are scanned in order)
 ```
 
 OK
@@ -213,10 +185,7 @@ NG
 
 ```go
 var Count = sqlshape.Query[int64, struct{}](`SELECT id, total FROM orders`)
-```
-
-```
-R is int64 but the query returns 2 columns
+// R is int64 but the query returns 2 columns
 ```
 
 ### 埋め込み構造体は平坦化される
@@ -243,13 +212,9 @@ NG。2つのフィールドが同じ列を受けようとしている。
 ```go
 type Order struct {
 	Base
-	ID    int64
+	ID    int64 // Order: fields Base.ID and ID both bind to column "id"
 	Total string
 }
-```
-
-```
-Order: fields Base.ID and ID both bind to column "id"
 ```
 
 補足。名前付きの構造体フィールド、または`col:"..."`タグを付けた埋め込みフィールドは、平坦化されずにネストした行として扱われる。
