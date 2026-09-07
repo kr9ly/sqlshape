@@ -742,19 +742,22 @@ func (a *analyzer) validateAssignLength(s string, target schema.TypeRef, loc int
 			}
 		}
 	case catalog.Numeric:
-		precision, scale := (n-4)>>16&0xFFFF, (n-4)&0xFFFF
+		// numeric_typmod_precision / numeric_typmod_scale: the scale is 11 bits, offset so
+		// that negative scales (numeric(2,-1)) fit
+		precision, scale := (n-4)>>16&0xFFFF, (n-4)&0x7FF
 		if scale >= 0x400 {
-			scale -= 0x800 // negative scale
+			scale -= 0x800
 		}
 		v := strings.TrimSpace(stripDigitSeparators(s))
+		// infinity never fits a precision (NaN does)
+		if w := strings.ToLower(strings.TrimLeft(v, "+-")); w == "infinity" || w == "inf" {
+			return errAt("22003", loc, "numeric field overflow")
+		}
 		if !isNumberish(v) {
 			return nil
 		}
-		f, _, ok := strtod(v)
-		if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
-			return nil
-		}
-		// count integer digits of the value rounded to scale
+		// count integer digits of the value rounded to scale; numeric has no range limit
+		// of its own, so a value float64 cannot hold (1e400) is counted exactly
 		r := new(big.Float).SetPrec(200)
 		if _, ok := r.SetString(v); !ok {
 			return nil
@@ -769,6 +772,9 @@ func (a *analyzer) validateAssignLength(s string, target schema.TypeRef, loc int
 		// round half away from zero
 		r.Add(r, big.NewFloat(0.5))
 		i, _ := r.Int(nil)
+		if i == nil {
+			return errAt("22003", loc, "numeric field overflow")
+		}
 		limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)
 		if i.Cmp(limit) >= 0 {
 			return errAt("22003", loc, "numeric field overflow")
