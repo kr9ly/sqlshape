@@ -54,7 +54,7 @@ jobs:
       # coverage badge: statement coverage of the whole module, committed as an SVG so the
       # README can show it without a third-party service; --min makes it a regression gate
       - name: Coverage badge
-        run: python3 .github/scripts/coverage_badge.py --min 75 cover.out .github/badges/coverage.svg
+        run: python3 .github/scripts/coverage_badge.py --min 90 cover.out .github/badges/coverage.svg
 
       - name: Commit coverage badge
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
