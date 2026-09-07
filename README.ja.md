@@ -117,11 +117,11 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 | [docs/flags.ja.md](docs/flags.ja.md) | 全フラグ、`-strict`の助言一覧、エディタ設定 |
 | [design.md](design.md) | 動機とアーキテクチャ |
 
-## 現状
+## 互換性
 
-アナライザーはPostgreSQL自身のカタログから組み上げたpure GoのPostgreSQL 17アナライザーで、本物のPostgreSQLはテストで答え合わせの相手（オラクル）としてだけ使う。152本のgolden文と、PostgreSQL自身の回帰テストコーパス（`src/test/regress`の22,000文、リリース17.5）でオラクルと一致している。`go test ./...`はこのコーパスをアナライザーと本物のPostgreSQLの両方に流して突き合わせ、新しい不一致が出たら失敗する。既知の不一致19件（行レベルセキュリティの再帰、権限、サーバー内部のエラー、意図的な相違3件）は`internal/analyze/testdata/regress_baseline.txt`に列挙してある。検査器とランタイムは4つのexampleが使う範囲をカバーし、マイグレーション側はテストシナリオを埋め込みPostgreSQLで往復させて確認している。
+PostgreSQL 17の構文はすべて扱える。SELECTとDML、MERGE、CTE、ウィンドウ関数、GROUPING SETS、SQL/JSON、範囲型、citextやhstoreなどの拡張、ビュー・関数・トリガー・ポリシーを含むDDL。アナライザーはPostgreSQL自身のカタログから組み上げたpure Goの実装で、検査時にPostgreSQLへ接続することはない。
 
-テストスイート全体は約30秒。コーパスは`internal/analyze/testdata/tools/fetch-regress.sh`で一度取得する（無ければそのテストはSkip）。埋め込みPostgreSQLは`~/.cache/sqlshape`にキャッシュされる。マイグレーションのテストには`pg_dump` 17以上が`PATH`に必要で、無ければSkipする。`.github/workflows/test.yml`がこれらをキャッシュ込みで走らせている。
+「すべて」の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の22,000文を本物のPostgreSQL 17と並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは19件で、行レベルセキュリティの再帰、権限、サーバー内部のエラーなど、静的解析では判定できないもの。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
 
 ## ライセンス
 

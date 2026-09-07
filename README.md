@@ -148,21 +148,18 @@ row by row and kept in step with one `MERGE`. See [docs/migrations.md](docs/migr
 | [docs/flags.md](docs/flags.md) | every flag, the `-strict` advisories, editor setup |
 | [design.md](design.md) | rationale and architecture (Japanese) |
 
-## Status
+## Compatibility
 
-The analyzer is a pure-Go PostgreSQL 17 analyzer built from PostgreSQL's own catalog; a real
-PostgreSQL is used only as the oracle in tests. It agrees with that oracle on 152 golden
-statements and on PostgreSQL's own regression corpus (22,000 statements of `src/test/regress`,
-release 17.5), which `go test ./...` replays side by side and gates: the 19 known disagreements
-(row-level security recursion, permissions, server internals, three deliberate differences) are
-listed in `internal/analyze/testdata/regress_baseline.txt`. The checker and the runtime cover the
-surface the four examples exercise; the migration side round-trips its scenarios through an
-embedded PostgreSQL.
+All of PostgreSQL 17's syntax is understood: SELECT and DML, MERGE, CTEs, window functions,
+GROUPING SETS, SQL/JSON, ranges, extensions such as citext and hstore, and DDL including views,
+functions, triggers and policies. The analyzer is a pure-Go implementation built from PostgreSQL's
+own catalog; checking never connects to a PostgreSQL.
 
-The suite takes about half a minute. The corpus is fetched once by
-`internal/analyze/testdata/tools/fetch-regress.sh` (the test skips without it), the embedded
-PostgreSQL is cached under `~/.cache/sqlshape`, and `pg_dump` 17 or later must be on `PATH` for
-the migration tests (they skip without it). `.github/workflows/test.yml` runs it with those caches.
+"All" is backed by PostgreSQL's own regression suite: the 22,000 statements of `src/test/regress`
+are run through the analyzer and a real PostgreSQL 17 side by side, and parameter types, result
+columns and errors must agree. They disagree on 19, all of them things static analysis cannot
+decide (row-level security recursion, permissions, server internals). The comparison is part of
+`go test ./...`, so a new disagreement fails the build.
 
 ## License
 
