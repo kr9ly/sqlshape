@@ -68,6 +68,16 @@ CREATE TABLE core.bookings (
 COMMENT ON COLUMN core.bookings.slot IS 'Reserved window, half-open: [start, end).';
 CREATE INDEX bookings_room_slot ON core.bookings (room_id, slot);
 
+-- row-level security as the second fence around tenant data: a session sets app.tenant_id
+-- (SET LOCAL app.tenant_id = '...') and the database shows it that tenant's bookings only,
+-- whatever the statement says. The checker type-checks the predicate, migrates the policy
+-- with the table, and points out when policies would not apply (row security off, a
+-- SECURITY DEFINER function). current_setting without missing_ok: a session that forgot to
+-- set the tenant fails loudly instead of seeing nothing.
+ALTER TABLE core.bookings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY bookings_tenant ON core.bookings
+    USING (tenant_id = current_setting('app.tenant_id')::uuid);
+
 -- two invariants a CHECK cannot express, each with its own SQLSTATE
 -- sqlshape: error BK001 = SlotTaken
 CREATE FUNCTION core.check_slot_free() RETURNS trigger LANGUAGE plpgsql AS $$

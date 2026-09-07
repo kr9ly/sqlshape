@@ -776,6 +776,7 @@ Supabase との関係: LLM に見せる表面が「PG のスキーマと SQL」�
 | ✅ | 意図宣言 `@migrate`（rename / drop / enum 値の削除 / backfill）と diff の整合検査、手順生成 | |
 | ✅ | 固定値テーブル: schema.sql の INSERT → `Relation.Seed` → MERGE 生成 + ドリフト検出、値集合としての読み取り | 本命。`@data` コメント構文は不採用。FK で結ばれた seed 同士は親→子 MERGE + 子→親 DELETE に分割 |
 | ✅ | CLI サブコマンド化（vet / diff / apply / verify-schema） | `internal/cli`。apply = 終点比較 + `-packages` の消費者ゼロ検査 + 1 トランザクション実行。消費者索引は**現スキーマ**で vet を回す（目標では消えた列が解決できない） |
+| ✅ | RLS: CREATE POLICY / ENABLE / FORCE を loader が持ち、述語を analyzer が型検査、diff / migrate が運び、vet が「適用されない形」（ENABLE 無し = 問題、-strict: policy 無し / SECURITY DEFINER 経由 / current_setting missing_ok）を出す | 2026-09-07。USING → `visible where` の自動導出は不採用: RLS は DB が絞るので文に述語を要求するのは筋が違う。runtime のテナント設定忘れガードは static 側（missing_ok の advisory）で代替 |
 | 🔶 | 再生の外（CREATE EXTENSION、ロール、search_path、PG 版）を schema.sql に書かせて検査 | CREATE EXTENSION と SET search_path は schema 層が読む。ロール・PG 版は未 |
 
 ### 周辺・同梱物

@@ -78,6 +78,8 @@ COMMENT ON COLUMN t.name IS 'the name';
 		{"comment", "COMMENT ON TABLE t IS 'stuff'; COMMENT ON COLUMN t.name IS NULL; COMMENT ON COLUMN t.id IS 'pk';",
 			"- comment t.name\n~ comment t\n    text: things -> stuff\n+ comment t.id"},
 		{"extension", "CREATE EXTENSION citext;", "+ extension citext"},
+		{"row security", "ALTER TABLE t ENABLE ROW LEVEL SECURITY; CREATE POLICY mine ON t USING (id > 0);",
+			"~ table t\n    row security:  -> enabled\n+ policy t.mine"},
 		{"drop schema", "DROP SCHEMA app;", "- schema app"},
 	}
 	for _, c := range cases {

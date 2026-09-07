@@ -31,7 +31,7 @@ const (
 // Change is one object added, dropped or altered.
 type Change struct {
 	Op   Op
-	Kind string // schema, extension, enum, domain, composite, range, table, view, matview, sequence, column, constraint, index, rule, function, trigger, comment
+	Kind string // schema, extension, enum, domain, composite, range, table, view, matview, sequence, column, constraint, index, rule, policy, rows, function, trigger, comment
 	Name string // qualified as the loader prints it: public omitted; column / constraint / index / rule as <relation>.<name>; trigger as <relation>.<name>
 	// Fields are the properties that differ, for Alter.
 	Fields []Field
@@ -248,7 +248,39 @@ func relProps(s *schema.Schema, r *schema.Relation) map[string]string {
 	if r.Kind != schema.Sequence {
 		p["column order"] = strings.Join(columnNames(r), ", ")
 	}
+	if r.RowSecurity {
+		p["row security"] = "enabled"
+		if r.ForceRowSecurity {
+			p["row security"] = "forced"
+		}
+	}
 	return p
+}
+
+// polProps are a policy's comparable properties.
+func polProps(p *schema.Policy) map[string]string {
+	out := map[string]string{"command": p.Command}
+	if !p.Permissive {
+		out["restrictive"] = "true"
+	}
+	if len(p.Roles) > 0 {
+		out["roles"] = strings.Join(p.Roles, ", ")
+	}
+	if p.Using != nil {
+		out["using"] = schema.Deparse(p.Using)
+	}
+	if p.WithCheck != nil {
+		out["with check"] = schema.Deparse(p.WithCheck)
+	}
+	return out
+}
+
+func policies(r *schema.Relation) map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for _, p := range r.Policies {
+		out[p.Name] = polProps(p)
+	}
+	return out
 }
 
 // columnNames lists a relation's columns in order. A view's are its frozen output
@@ -377,6 +409,7 @@ func (d *differ) relations(a, b *schema.Schema) {
 			trule[rn] = ruleProps(rd)
 		}
 		d.parts("rule", n, frule, trule)
+		d.parts("policy", n, policies(f), policies(r))
 		d.rows(n, f, r)
 	}
 }
@@ -643,6 +676,8 @@ func Props(s *schema.Schema, obj any) map[string]string {
 		return fnProps(s, x)
 	case *schema.Trigger:
 		return trgProps(x)
+	case *schema.Policy:
+		return polProps(x)
 	}
 	return nil
 }

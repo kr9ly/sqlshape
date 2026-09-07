@@ -106,3 +106,15 @@ func TestDTOFixes(t *testing.T) {
 	}
 	analysistest.RunWithSuggestedFixes(t, td, Analyzer, "dto")
 }
+
+func TestRowSecurity(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "rls_schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("strict", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("strict", "false")
+	analysistest.Run(t, td, Analyzer, "rls")
+}

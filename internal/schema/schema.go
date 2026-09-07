@@ -159,6 +159,12 @@ type Relation struct {
 	// Seed (tables): the rows the schema text's INSERT statements give the table, nil
 	// for a table that holds runtime data.
 	Seed *Seed
+	// Policies are the table's row-level security policies (rls.go); RowSecurity is ALTER
+	// TABLE ... ENABLE ROW LEVEL SECURITY (without it the policies do not apply), and
+	// ForceRowSecurity makes them apply to the table's owner as well.
+	Policies         []*Policy
+	RowSecurity      bool
+	ForceRowSecurity bool
 	// PartKey (partitioned tables): the columns the partition key names or its expressions
 	// reference (they cannot be dropped; a type they depend on takes the table with it);
 	// PartKeyFuncs: the functions the key expressions call (DROP FUNCTION CASCADE takes
@@ -271,6 +277,9 @@ type Function struct {
 	Language string
 	Volatile byte // i / s / v (default v)
 	Strict   bool
+	// SecurityDefiner: the function runs with its owner's privileges, so the owner's
+	// tables' row-level security policies do not apply inside it unless forced.
+	SecurityDefiner bool
 	// NotNull is the `-- sqlshape: not null` annotation: the result is never NULL (PG
 	// cannot tell; the schema author asserts it).
 	NotNull bool
@@ -595,6 +604,10 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		s.createView(st.ViewStmt, loc)
 	case *pg_query.Node_InsertStmt:
 		s.insert(st.InsertStmt, n, loc)
+	case *pg_query.Node_CreatePolicyStmt:
+		s.createPolicy(st.CreatePolicyStmt, loc)
+	case *pg_query.Node_AlterPolicyStmt:
+		s.alterPolicy(st.AlterPolicyStmt, loc)
 	case *pg_query.Node_SelectStmt:
 		if st.SelectStmt.IntoClause != nil {
 			s.createTableAs(st.SelectStmt.IntoClause, n, loc)
@@ -680,9 +693,9 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 	case *pg_query.Node_AlterSeqStmt:
 		s.alterSequence(st.AlterSeqStmt, loc)
 	case *pg_query.Node_CreateExtensionStmt,
-		*pg_query.Node_GrantStmt, *pg_query.Node_CreatePolicyStmt, *pg_query.Node_AlterOwnerStmt,
+		*pg_query.Node_GrantStmt, *pg_query.Node_AlterOwnerStmt,
 		*pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
-		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterPolicyStmt, *pg_query.Node_AlterExtensionStmt,
+		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterExtensionStmt,
 		*pg_query.Node_CreateEventTrigStmt, *pg_query.Node_AlterEventTrigStmt, *pg_query.Node_CreatePublicationStmt, *pg_query.Node_AlterPublicationStmt,
 		*pg_query.Node_CreateSubscriptionStmt, *pg_query.Node_CreateRoleStmt, *pg_query.Node_AlterRoleStmt, *pg_query.Node_GrantRoleStmt,
 		*pg_query.Node_CreateTableSpaceStmt, *pg_query.Node_SecLabelStmt, *pg_query.Node_ClusterStmt, *pg_query.Node_VacuumStmt,
@@ -1397,8 +1410,15 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			if col := rel.Column(cmd.Name); col != nil {
 				col.Generated = nil
 			}
-		case pg_query.AlterTableType_AT_ChangeOwner, pg_query.AlterTableType_AT_EnableRowSecurity,
-			pg_query.AlterTableType_AT_ForceRowSecurity, pg_query.AlterTableType_AT_SetRelOptions,
+		case pg_query.AlterTableType_AT_EnableRowSecurity:
+			rel.RowSecurity = true
+		case pg_query.AlterTableType_AT_DisableRowSecurity:
+			rel.RowSecurity = false
+		case pg_query.AlterTableType_AT_ForceRowSecurity:
+			rel.ForceRowSecurity = true
+		case pg_query.AlterTableType_AT_NoForceRowSecurity:
+			rel.ForceRowSecurity = false
+		case pg_query.AlterTableType_AT_ChangeOwner, pg_query.AlterTableType_AT_SetRelOptions,
 			pg_query.AlterTableType_AT_ClusterOn, pg_query.AlterTableType_AT_SetStatistics,
 			pg_query.AlterTableType_AT_EnableTrig, pg_query.AlterTableType_AT_DisableTrig, pg_query.AlterTableType_AT_EnableAlwaysTrig,
 			pg_query.AlterTableType_AT_EnableReplicaTrig, pg_query.AlterTableType_AT_EnableTrigAll, pg_query.AlterTableType_AT_DisableTrigAll,
@@ -1408,7 +1428,6 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 			pg_query.AlterTableType_AT_SetUnLogged, pg_query.AlterTableType_AT_SetTableSpace, pg_query.AlterTableType_AT_SetStorage,
 			pg_query.AlterTableType_AT_SetCompression, pg_query.AlterTableType_AT_AlterConstraint, pg_query.AlterTableType_AT_ResetRelOptions,
 			pg_query.AlterTableType_AT_SetAccessMethod,
-			pg_query.AlterTableType_AT_NoForceRowSecurity, pg_query.AlterTableType_AT_DisableRowSecurity,
 			pg_query.AlterTableType_AT_DropOids,
 			pg_query.AlterTableType_AT_SetOptions, pg_query.AlterTableType_AT_ResetOptions, pg_query.AlterTableType_AT_GenericOptions,
 			pg_query.AlterTableType_AT_AlterColumnGenericOptions, pg_query.AlterTableType_AT_SetExpression:
@@ -1548,6 +1567,8 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 			fn.Volatile = d.GetArg().GetString_().GetSval()[0]
 		case "strict":
 			fn.Strict = d.GetArg().GetBoolean().GetBoolval()
+		case "security":
+			fn.SecurityDefiner = d.GetArg().GetBoolean().GetBoolval()
 		case "window":
 			fn.IsWindow = d.GetArg().GetBoolean().GetBoolval()
 		}

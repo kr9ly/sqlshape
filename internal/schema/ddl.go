@@ -388,7 +388,9 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 				tg.Name = st.Newname
 			}
 		}
-	case pg_query.ObjectType_OBJECT_SCHEMA, pg_query.ObjectType_OBJECT_POLICY, pg_query.ObjectType_OBJECT_RULE, pg_query.ObjectType_OBJECT_COLLATION:
+	case pg_query.ObjectType_OBJECT_POLICY:
+		s.renamePolicy(st, loc)
+	case pg_query.ObjectType_OBJECT_SCHEMA, pg_query.ObjectType_OBJECT_RULE, pg_query.ObjectType_OBJECT_COLLATION:
 		// no typing consequence
 	default:
 		s.problem(loc, "unsupported RENAME of %v", st.RenameType)
@@ -524,6 +526,8 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			if !removed && !st.MissingOk {
 				s.problem(loc, "DROP FUNCTION: function %q does not exist", name)
 			}
+		case pg_query.ObjectType_OBJECT_POLICY:
+			s.dropPolicy(strs(on.GetList().GetItems()), st.MissingOk, loc)
 		case pg_query.ObjectType_OBJECT_TRIGGER:
 			items := strs(on.GetList().GetItems())
 			name := items[len(items)-1]
@@ -588,8 +592,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 					rel.rebuildRules()
 				}
 			}
-		case pg_query.ObjectType_OBJECT_EXTENSION,
-			pg_query.ObjectType_OBJECT_POLICY, pg_query.ObjectType_OBJECT_COLLATION:
+		case pg_query.ObjectType_OBJECT_EXTENSION, pg_query.ObjectType_OBJECT_COLLATION:
 			// no typing consequence
 		default:
 			s.problem(loc, "unsupported DROP of %v", st.RemoveType)

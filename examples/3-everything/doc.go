@@ -5,7 +5,9 @@
 //
 //	go run ../../cmd/sqlshape -strict -schemas=app -require-columns=tenant_id -sync-comments .
 //
-// which prints exactly one line: the advisory that SearchBookings is checked sparsely.
+// which prints exactly two lines: the advisory that SearchBookings is checked sparsely, and
+// the nudge that core.tenants.plan, an enum, could be a seeded lookup table (it stays an enum
+// here to show enum binding; the nudge is what -strict says about any enum column).
 //
 // What it adds:
 //
@@ -21,6 +23,8 @@
 //   - Embedded structs: Tenanted is flattened into every row type that has tenant_id.
 //   - A soft-delete policy: core.members rows are visible where deleted_at IS NULL; the app.members
 //     view carries the predicate, and the one statement that lists deleted members opts out.
+//   - Row-level security on core.bookings (a policy over current_setting('app.tenant_id')):
+//     type-checked, migrated with the table, and the checker says when it would not apply.
 //   - Two trigger SQLSTATEs (BK001 SlotTaken, BK002 OverCapacity) on the write function.
 //   - Batch: the dashboard loads rooms, schedule and members in one round trip. Copy: analytics
 //     events are appended in bulk. Unprepared: a search with a skewed parameter.

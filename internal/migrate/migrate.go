@@ -219,6 +219,11 @@ func (p *planner) drops() {
 				p.emit("DROP RULE %s ON %s", q(n), qrel(r))
 			}
 		}
+		for _, pol := range r.Policies {
+			if tp := tr.Policy(pol.Name); tp == nil || !same(p.from, p.to, pol, tp) {
+				p.emit("DROP POLICY %s ON %s", q(pol.Name), qrel(r))
+			}
+		}
 		toIdx := indexes(tr)
 		for _, n := range sortedKeys(indexes(r)) {
 			if ti, ok := toIdx[n]; !ok || !same(p.from, p.to, indexes(r)[n], ti) {
@@ -455,6 +460,7 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 }
 
 func (p *planner) alterTable(f, r *schema.Relation) {
+	p.rowSecurity(f, r)
 	fromCols := columnsOf(f)
 	for _, c := range r.Columns {
 		fc := fromCols[p.fromCol(r, c.Name)]
@@ -671,6 +677,22 @@ func (p *planner) adds() {
 			}
 		}
 	}
+	// row-level security policies (on tables created above, their ENABLE / FORCE came with
+	// the table's own ALTERs)
+	for _, r := range toOrder {
+		f := p.fromOf(r)
+		if f != nil && f.Kind != r.Kind {
+			f = nil
+		}
+		for _, pol := range r.Policies {
+			if f != nil && !p.recreated[r.FullName()] {
+				if fp := f.Policy(pol.Name); fp != nil && same(p.from, p.to, fp, pol) {
+					continue
+				}
+			}
+			p.emit("%s", pol.Definition)
+		}
+	}
 	// comments
 	for _, k := range sortedKeys(p.to.Comments) {
 		v := p.to.Comments[k]
@@ -687,6 +709,25 @@ func (p *planner) adds() {
 		}
 		if t := commentText(p.to, k, ""); t != "" {
 			p.emit("%s", t)
+		}
+	}
+}
+
+// rowSecurity emits the ENABLE / DISABLE / FORCE / NO FORCE ROW LEVEL SECURITY a
+// surviving table needs.
+func (p *planner) rowSecurity(f, r *schema.Relation) {
+	if f.RowSecurity != r.RowSecurity {
+		if r.RowSecurity {
+			p.emit("ALTER TABLE %s ENABLE ROW LEVEL SECURITY", qrel(r))
+		} else {
+			p.emit("ALTER TABLE %s DISABLE ROW LEVEL SECURITY", qrel(r))
+		}
+	}
+	if f.ForceRowSecurity != r.ForceRowSecurity {
+		if r.ForceRowSecurity {
+			p.emit("ALTER TABLE %s FORCE ROW LEVEL SECURITY", qrel(r))
+		} else {
+			p.emit("ALTER TABLE %s NO FORCE ROW LEVEL SECURITY", qrel(r))
 		}
 	}
 }

@@ -168,6 +168,11 @@ ALTER TABLE orders ALTER COLUMN status TYPE order_status USING status::text::ord
 ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'pending';
 DROP TYPE order_status_prev;
 CREATE VIEW open_orders AS SELECT id, status FROM orders WHERE status <> 'shipped';`},
+		{name: "row level security", base: "1-tables", edit: `
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders FORCE ROW LEVEL SECURITY;
+CREATE POLICY orders_owner ON orders USING (customer_id = current_setting('app.customer')::bigint);
+CREATE POLICY orders_paid ON orders AS RESTRICTIVE FOR DELETE USING (status <> 'paid');`},
 		{name: "backfill", base: "1-tables", edit: `
 -- @migrate backfill customers.tier = 'basic'
 -- @migrate backfill orders.memo = upper(status::text) where memo IS NULL

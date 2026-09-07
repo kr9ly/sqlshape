@@ -73,6 +73,9 @@ var (
 type loadedSchema struct {
 	s        *schema.Schema
 	problems []string
+	// fnRefs are the relations each analyzable function body references (adviseSchema:
+	// SECURITY DEFINER functions past row-level security)
+	fnRefs map[*schema.Function][]analyze.RelationRef
 }
 
 func loadSchema(path string) (*loadedSchema, error) {
@@ -89,14 +92,35 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	ls := &loadedSchema{s: s}
+	ls := &loadedSchema{s: s, fnRefs: map[*schema.Function][]analyze.RelationRef{}}
 	for _, p := range s.Problems {
 		ls.problems = append(ls.problems, p.String())
 	}
 	// SQL function bodies are checked like PG does at CREATE time
 	for _, fn := range s.Functions {
-		if _, err := analyze.AnalyzeFunction(s, fn); err != nil {
+		fr, err := analyze.AnalyzeFunction(s, fn)
+		if err != nil {
 			ls.problems = append(ls.problems, fmt.Sprintf("function %s: %v", fn.Name, err))
+			continue
+		}
+		ls.fnRefs[fn] = fr.Relations
+	}
+	// row-level security policies: predicates type-checked like CREATE POLICY does, and
+	// policies on a table whose row security is off do not apply at all
+	for _, rel := range s.Relations {
+		for _, pol := range rel.Policies {
+			notes, err := analyze.AnalyzePolicy(s, rel, pol)
+			if err != nil {
+				ls.problems = append(ls.problems, fmt.Sprintf("policy %s on %s: %v", pol.Name, rel.FullName(), err))
+			}
+			for _, n := range notes {
+				if !n.Advisory() {
+					ls.problems = append(ls.problems, fmt.Sprintf("policy %s on %s: %s", pol.Name, rel.FullName(), n.Message))
+				}
+			}
+		}
+		if len(rel.Policies) > 0 && !rel.RowSecurity {
+			ls.problems = append(ls.problems, fmt.Sprintf("%s has policies but row level security is not enabled, so they do not apply: ALTER TABLE %s ENABLE ROW LEVEL SECURITY", rel.FullName(), rel.FullName()))
 		}
 	}
 	// view bodies: sqlshape's own findings (policies, domains) are the view's
@@ -146,6 +170,7 @@ func findSchema(pass *analysis.Pass) (string, error) {
 type checker struct {
 	pass     *analysis.Pass
 	s        *schema.Schema
+	ls       *loadedSchema
 	strict   bool
 	bindings map[*types.TypeName]*binding
 	// constDecls: this package's constant declarations, for mapping concatenated templates back to source
@@ -205,7 +230,7 @@ func run(pass *analysis.Pass) (any, error) {
 		return index, nil
 	}
 	s := ls.s
-	c := &checker{pass: pass, s: s, strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
+	c := &checker{pass: pass, s: s, ls: ls, strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
 	c.collectDeclaredTypes()
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
@@ -927,6 +952,7 @@ func (c *checker) checkRequiredColumns(ref analyze.RelationRef, r *analyze.Resul
 
 // adviseSchema reports advisory findings about the schema itself (-strict).
 func (c *checker) adviseSchema(at token.Pos) {
+	c.adviseRowSecurity(at)
 	for _, rel := range c.s.Relations {
 		if rel.Kind == schema.Table {
 			// a value set kept as an enum cannot lose or reorder a label without the type
@@ -950,6 +976,39 @@ func (c *checker) adviseSchema(at token.Pos) {
 		}
 		if !unique {
 			c.pass.Reportf(at, "sqlshape: schema: materialized view %s has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible", rel.FullName())
+		}
+	}
+}
+
+// adviseRowSecurity: the ways a row-level security setup does less than it looks like.
+func (c *checker) adviseRowSecurity(at token.Pos) {
+	for _, rel := range c.s.Relations {
+		if rel.Kind != schema.Table || !rel.RowSecurity {
+			continue
+		}
+		if len(rel.Policies) == 0 {
+			c.pass.Reportf(at, "sqlshape: schema: %s has row level security enabled and no policy: every role but the owner sees no rows", rel.FullName())
+		}
+		for _, pol := range rel.Policies {
+			for _, name := range analyze.SettingReads(pol) {
+				c.pass.Reportf(at, "sqlshape: schema: policy %s on %s reads current_setting(%q, true): a session that never set it gets NULL, so the predicate hides every row silently; without missing_ok the session fails loudly instead", pol.Name, rel.FullName(), name)
+			}
+		}
+		if rel.ForceRowSecurity {
+			continue
+		}
+		// a SECURITY DEFINER function runs as its owner, whom the policies do not bind
+		// unless the table forces them
+		for fn, refs := range c.ls.fnRefs {
+			if !fn.SecurityDefiner {
+				continue
+			}
+			for _, ref := range refs {
+				if ref.Schema == rel.Schema && ref.Name == rel.Name {
+					c.pass.Reportf(at, "sqlshape: schema: function %s is SECURITY DEFINER and reaches %s, whose policies do not bind the owner: rows are unrestricted inside it (ALTER TABLE %s FORCE ROW LEVEL SECURITY applies them)", fn.Name, rel.FullName(), rel.FullName())
+					break
+				}
+			}
 		}
 	}
 }
