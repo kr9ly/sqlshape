@@ -39,8 +39,9 @@ $ sqlshape version
 ```
 
 It links PostgreSQL's parser (libpg_query) through cgo, so `go install` needs a C compiler (gcc or
-clang) on the machine. Prebuilt binaries for Linux and macOS, amd64 and arm64, are on the
-[releases page](https://github.com/kr9ly/sqlshape/releases).
+clang) on the machine. Prebuilt binaries for Linux (amd64, arm64) and macOS (Apple Silicon) are on
+the [releases page](https://github.com/kr9ly/sqlshape/releases); an Intel Mac builds it with
+`go install`.
 
 The runtime is an ordinary Go module:
 

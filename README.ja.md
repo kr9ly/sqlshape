@@ -29,7 +29,7 @@ $ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
 $ sqlshape version
 ```
 
-PostgreSQLのパーサ（libpg_query）をcgoでリンクするので、`go install`にはCコンパイラ（gccかclang）が必要。ビルド済みのバイナリ（LinuxとmacOS、amd64とarm64）は[releasesページ](https://github.com/kr9ly/sqlshape/releases)にある。
+PostgreSQLのパーサ（libpg_query）をcgoでリンクするので、`go install`にはCコンパイラ（gccかclang）が必要。ビルド済みのバイナリ（Linuxはamd64とarm64、macOSはApple Silicon）は[releasesページ](https://github.com/kr9ly/sqlshape/releases)にある。Intel Macは`go install`でビルドする。
 
 ランタイムは通常のGoモジュール:
 
