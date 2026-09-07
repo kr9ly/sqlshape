@@ -70,18 +70,19 @@ if sqlshape.Violates(err, "users_email_key") { /* the declared failure mode */ }
 
 `db` is anything pgx gives you: a `*pgxpool.Pool`, `*pgx.Conn` or `pgx.Tx`.
 
-To run the checker on save, build it once and point `go vet` at it — gopls cannot load
-third-party analyzers, but the Go extension's vet-on-save can:
+You do not have to write the structs. Declare `type Row struct{}` and `type Params struct{}`
+empty, write the SQL, and every column and parameter without a field is reported with a quick fix
+that writes the struct from the SQL; `sqlshape -fix ./...` applies them all.
+
+To check on every save, build the binary once and pass it to `go vet` as the `-vettool`. Any
+editor whose Go integration runs `go vet` on save then shows the diagnostics:
 
 ```
 $ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
 $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...
 ```
 
-VS Code: `"go.vetOnSave": "workspace"`, `"go.vetFlags": ["-vettool=/path/to/sqlshape"]`.
-Declare `type Row struct{}` and `type Params struct{}` empty, write the query, save: every
-diagnostic carries a quick fix that writes the struct from the SQL (`sqlshape -fix ./...` applies
-them from the command line). Details in [docs/flags.md](docs/flags.md#in-the-editor).
+Details in [docs/flags.md](docs/flags.md#in-the-editor).
 
 ## Examples
 

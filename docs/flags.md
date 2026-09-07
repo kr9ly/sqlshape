@@ -56,23 +56,18 @@ In the schema:
 
 ## In the editor
 
-gopls cannot load third-party analyzers, so the checker runs as `go vet`, which the Go editor
-integrations run on save:
+The checker is a `go vet` tool, so it runs wherever `go vet` runs. Build it once and pass it as
+the `-vettool`:
 
 ```
 $ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
 $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" -strict ./...
 ```
 
-VS Code (Go extension):
-
-```json
-"go.vetOnSave": "workspace",
-"go.vetFlags": ["-vettool=/path/to/sqlshape", "-strict"]
-```
-
-Findings appear in the Problems pane. Other editors: run the same `go vet` command as the
-on-save linter, or add `sqlshape` to golangci-lint as a module plugin.
+Editors with a Go integration can run `go vet` on save and show its diagnostics inline; give that
+integration the same `-vettool` and `-strict` flags. gopls itself does not load third-party
+analyzers, which is why the checker goes through `go vet` rather than gopls. In CI, run the same
+command. golangci-lint can load `sqlshape` as a module plugin.
 
 ### Writing a statement's types from the SQL
 

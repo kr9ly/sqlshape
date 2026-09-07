@@ -46,21 +46,14 @@
 
 ## エディタで使う
 
-goplsはサードパーティのアナライザーを読み込めないので、検査器は`go vet`として実行する。Goのエディタ統合は保存時に`go vet`を走らせられる:
+検査器は`go vet`のツールなので、`go vet`が走る場所ならどこでも走る。一度ビルドして`-vettool`に指定する:
 
 ```
 $ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
 $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" -strict ./...
 ```
 
-VS Code（Go拡張）:
-
-```json
-"go.vetOnSave": "workspace",
-"go.vetFlags": ["-vettool=/path/to/sqlshape", "-strict"]
-```
-
-指摘はProblemsペインに出る。他のエディタでは、同じ`go vet`コマンドを保存時のlinterとして登録するか、golangci-lintに`sqlshape`をモジュールプラグインとして追加する。
+Go統合のあるエディタは保存時に`go vet`を走らせて診断をインラインに表示できるので、その設定に同じ`-vettool`と`-strict`を渡す。gopls自体はサードパーティのアナライザーを読み込まないため、goplsではなく`go vet`を経由する。CIでも同じコマンドを走らせればよい。golangci-lintにはモジュールプラグインとして読み込める。
 
 ### SQLから構造体を書き起こす
 

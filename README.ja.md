@@ -60,14 +60,16 @@ if sqlshape.Violates(err, "users_email_key") { /* expect行で宣言した失敗
 
 `db`にはpgxの`*pgxpool.Pool`、`*pgx.Conn`、`pgx.Tx`のどれでも渡せる。
 
-保存時に検査を走らせるには、バイナリを一度ビルドして`go vet`に渡す。goplsはサードパーティのアナライザーを読み込めないが、Go拡張のvet-on-saveなら走らせられる:
+構造体は自分で書かなくてもよい。`type Row struct{}`と`type Params struct{}`を空のまま宣言してSQLだけ書くと、列やパラメータに対応するフィールドが無いという診断が出て、それぞれにSQLから構造体を書き起こすquick fixが付く。`sqlshape -fix ./...`で一括適用できる。
+
+保存のたびに検査するには、ビルドしたバイナリを`go vet`の`-vettool`に指定する。エディタのGo統合が保存時に`go vet`を走らせる設定になっていれば、診断はそこに出る:
 
 ```
 $ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
 $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...
 ```
 
-VS Codeでは`"go.vetOnSave": "workspace"`と`"go.vetFlags": ["-vettool=/path/to/sqlshape"]`を設定する。構造体を書くのは検査器に任せられる。`type Row struct{}`と`type Params struct{}`を空で宣言してクエリを書き、保存すると、出てきた診断のそれぞれにSQLから構造体を書き起こすquick fixが付く（コマンドラインなら`sqlshape -fix ./...`）。詳細は[docs/flags.ja.md](docs/flags.ja.md#エディタで使う)。
+詳細は[docs/flags.ja.md](docs/flags.ja.md#エディタで使う)。
 
 ## Examples
 
