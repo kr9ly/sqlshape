@@ -115,12 +115,10 @@ Details in [docs/flags.md](docs/flags.md#in-the-editor).
 
 Four stages of the same order book, one per level of trust in the database:
 
-| | what to take from it |
-|---|---|
-| [`examples/1-tables`](examples/1-tables) | The basic form: `Query` / `One` against tables, structs matched to the SQL, the constraints a write can violate declared on its expect line |
-| [`examples/2-views`](examples/2-views) | Reading through views: joins and column names decided once in the schema, so the application's SQL gets thinner |
-| [`examples/3-database-api`](examples/3-database-api) | Writes as functions, meaning as domains and composite types: how the checks work once logic lives in the database |
-| [`examples/4-everything`](examples/4-everything) | Every feature in one place; the index to look up how a particular feature is used |
+- [`examples/1-tables`](examples/1-tables) — The basic form: `Query` / `One` against tables, structs matched to the SQL, the constraints a write can violate declared on its expect line
+- [`examples/2-views`](examples/2-views) — Reading through views: joins and column names decided once in the schema, so the application's SQL gets thinner
+- [`examples/3-database-api`](examples/3-database-api) — Writes as functions, meaning as domains and composite types: how the checks work once logic lives in the database
+- [`examples/4-everything`](examples/4-everything) — Every feature in one place; the index to look up how a particular feature is used
 
 ## What it checks
 
@@ -165,14 +163,12 @@ rename or the removal of an enum label, are declared in `schema.sql` with `-- @m
 
 ## Documentation
 
-| | |
-|---|---|
-| [docs/checks.md](docs/checks.md) | everything the checker verifies: shapes, meaning, failure modes (with PostgreSQL's constraint naming rules), cardinality, boundaries |
-| [docs/templates.md](docs/templates.md) | the template subset, directives, shared fragments, hazards, sparse checking |
-| [docs/runtime.md](docs/runtime.md) | `Run` / `Collect` / `First` / `Exec`, `One`, `Batch`, `Copy`, `MatView`, the Go type table, type registration, errors, tests on a real PostgreSQL |
-| [docs/migrations.md](docs/migrations.md) | `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements |
-| [docs/flags.md](docs/flags.md) | every flag, the `-strict` advisories, editor setup |
-| [docs/design.md](docs/design.md) | design decisions: what was decided, why, and what was rejected (Japanese) |
+- [docs/checks.md](docs/checks.md) — everything the checker verifies: shapes, meaning, failure modes (with PostgreSQL's constraint naming rules), cardinality, boundaries
+- [docs/templates.md](docs/templates.md) — the template subset, directives, shared fragments, hazards, sparse checking
+- [docs/runtime.md](docs/runtime.md) — `Run` / `Collect` / `First` / `Exec`, `One`, `Batch`, `Copy`, `MatView`, the Go type table, type registration, errors, tests on a real PostgreSQL
+- [docs/migrations.md](docs/migrations.md) — `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements
+- [docs/flags.md](docs/flags.md) — every flag, the `-strict` advisories, editor setup
+- [docs/design.md](docs/design.md) — design decisions: what was decided, why, and what was rejected (Japanese)
 
 ## Compatibility
 

@@ -98,12 +98,10 @@ $ go vet -vettool="$(which sqlshape)" ./...
 
 同じ受注台帳を、データベースにどこまで任せるかの段階ごとに4つ用意してある:
 
-| | 参考になるポイント |
-|---|---|
-| [`examples/1-tables`](examples/1-tables) | 基本形。テーブルに対して`Query` / `One`を書き、構造体と突き合わせ、失敗しうる制約をexpect行で宣言する、標準的な使い方 |
-| [`examples/2-views`](examples/2-views) | 読み取りをビューにまとめる。JOINや列名の決定をビューに閉じ込めて、アプリケーション側のSQLを薄くする段階 |
-| [`examples/3-database-api`](examples/3-database-api) | 書き込みを関数に、値の意味をドメインや複合型に移す。ロジックをデータベース側に置いたとき、検査がどう働くか |
-| [`examples/4-everything`](examples/4-everything) | 全機能を使った例。特定の機能の使い方を探すときの索引 |
+- [`examples/1-tables`](examples/1-tables) — 基本形。テーブルに対して`Query` / `One`を書き、構造体と突き合わせ、失敗しうる制約をexpect行で宣言する、標準的な使い方
+- [`examples/2-views`](examples/2-views) — 読み取りをビューにまとめる。JOINや列名の決定をビューに閉じ込めて、アプリケーション側のSQLを薄くする段階
+- [`examples/3-database-api`](examples/3-database-api) — 書き込みを関数に、値の意味をドメインや複合型に移す。ロジックをデータベース側に置いたとき、検査がどう働くか
+- [`examples/4-everything`](examples/4-everything) — 全機能を使った例。特定の機能の使い方を探すときの索引
 
 ## 何を検査するか
 
@@ -131,14 +129,12 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 ## ドキュメント
 
-| | |
-|---|---|
-| [docs/checks.ja.md](docs/checks.ja.md) | 検査器が確かめること全部: 形、意味、失敗モード（PostgreSQLの制約命名規則の表つき）、カーディナリティ、境界 |
-| [docs/templates.ja.md](docs/templates.ja.md) | テンプレートで使える構文、ディレクティブ、共有フラグメント、危険な書き方、疎検査 |
-| [docs/runtime.ja.md](docs/runtime.ja.md) | `Run` / `Collect` / `First` / `Exec`、`One`、`Batch`、`Copy`、`MatView`、Go型の表、型の登録、エラー、本物のPostgreSQLでのテスト |
-| [docs/migrations.ja.md](docs/migrations.ja.md) | `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境 |
-| [docs/flags.ja.md](docs/flags.ja.md) | 全フラグ、`-strict`の助言一覧、エディタ設定 |
-| [docs/design.md](docs/design.md) | 設計上の裁定。何を決めたか、なぜか、何を棄てたか |
+- [docs/checks.ja.md](docs/checks.ja.md) — 検査器が確かめること全部: 形、意味、失敗モード（PostgreSQLの制約命名規則の表つき）、カーディナリティ、境界
+- [docs/templates.ja.md](docs/templates.ja.md) — テンプレートで使える構文、ディレクティブ、共有フラグメント、危険な書き方、疎検査
+- [docs/runtime.ja.md](docs/runtime.ja.md) — `Run` / `Collect` / `First` / `Exec`、`One`、`Batch`、`Copy`、`MatView`、Go型の表、型の登録、エラー、本物のPostgreSQLでのテスト
+- [docs/migrations.ja.md](docs/migrations.ja.md) — `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境
+- [docs/flags.ja.md](docs/flags.ja.md) — 全フラグ、`-strict`の助言一覧、エディタ設定
+- [docs/design.md](docs/design.md) — 設計上の裁定。何を決めたか、なぜか、何を棄てたか
 
 ## 互換性
 
