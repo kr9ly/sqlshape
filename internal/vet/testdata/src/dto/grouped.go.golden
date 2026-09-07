@@ -1,0 +1,15 @@
+package dto
+
+import (
+	"errors"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+var _ = errors.New
+
+// Grouped already has a parenthesized import: a fix that needs a new one (pgtype, for
+// numeric) adds it inside the existing block.
+type Grouped struct {
+	ID    int64
+	Total pgtype.Numeric
+}

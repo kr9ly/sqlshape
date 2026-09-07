@@ -22,3 +22,9 @@ var nestedPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM nestedp
 
 // an OR does not pin: neither disjunct alone fixes tenant_id for every row
 var orNotPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orpin`) // want `orpin.tenant_id is not pinned: every statement on orpin must fix tenant_id by equality \(or assign it\)`
+
+// pinsColumn reads the equality either way round: expr = col pins just as col = expr does
+var revPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM revpin`)
+
+// a policy scoped to UPDATE does not pin a SELECT, even though its predicate matches
+var updateOnlyNotPinned = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM updateonly`) // want `updateonly.tenant_id is not pinned: every statement on updateonly must fix tenant_id by equality \(or assign it\)`

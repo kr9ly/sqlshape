@@ -491,6 +491,61 @@ func TestPlanNotes(t *testing.T) {
 	})
 }
 
+// TestAlterTypeEnumAddValueBefore covers alterType's enum branch positioning a new label
+// with BEFORE (as opposed to AFTER, or no position at all for a label appended at the
+// end) - reached only when the new label isn't last and nothing already-known precedes
+// it.
+func TestAlterTypeEnumAddValueBefore(t *testing.T) {
+	from := mustLoad(t, "CREATE TYPE e AS ENUM ('a', 'c');")
+	to := mustLoad(t, "CREATE TYPE e AS ENUM ('b', 'a', 'c');")
+	plan, err := Plan(from, to, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if !strings.Contains(ddl, "ADD VALUE 'b' BEFORE 'a'") {
+		t.Errorf("want a BEFORE-positioned ADD VALUE, got:\n%s", ddl)
+	}
+}
+
+// TestAlterTypeDomainChecks covers alterType's domain-check add and drop branches.
+func TestAlterTypeDomainChecks(t *testing.T) {
+	from := mustLoad(t, "CREATE DOMAIN d AS integer CONSTRAINT c_old CHECK (VALUE > 0);")
+	to := mustLoad(t, "CREATE DOMAIN d AS integer CONSTRAINT c_new CHECK (VALUE < 100);")
+	plan, err := Plan(from, to, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if !strings.Contains(ddl, `ALTER DOMAIN d DROP CONSTRAINT "c_old"`) {
+		t.Errorf("want a DROP CONSTRAINT, got:\n%s", ddl)
+	}
+	if !strings.Contains(ddl, `ALTER DOMAIN d ADD CONSTRAINT "c_new" CHECK (value < 100)`) {
+		t.Errorf("want an ADD CONSTRAINT, got:\n%s", ddl)
+	}
+}
+
+// TestAlterTypeComposite covers alterType's composite branches: dropping an attribute,
+// adding one, and changing an existing one's type.
+func TestAlterTypeComposite(t *testing.T) {
+	from := mustLoad(t, "CREATE TYPE pt AS (x integer, y integer);")
+	to := mustLoad(t, "CREATE TYPE pt AS (x bigint, z text);")
+	plan, err := Plan(from, to, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if !strings.Contains(ddl, `DROP ATTRIBUTE "y"`) {
+		t.Errorf("want a DROP ATTRIBUTE, got:\n%s", ddl)
+	}
+	if !strings.Contains(ddl, `ADD ATTRIBUTE "z" text`) {
+		t.Errorf("want an ADD ATTRIBUTE, got:\n%s", ddl)
+	}
+	if !strings.Contains(ddl, `ALTER ATTRIBUTE "x" TYPE bigint`) {
+		t.Errorf("want an ALTER ATTRIBUTE TYPE, got:\n%s", ddl)
+	}
+}
+
 // --- migrate.go / render.go: scenarios that need the database -----------------------
 
 // TestPlanFunctions covers fnProps and the function-alter path in migrate.go (~line
@@ -704,5 +759,129 @@ COMMENT ON FUNCTION order_count(bigint) IS 'count orders';
 			t.Errorf("want a COMMENT ON DOMAIN for a public-schema domain, got:\n%s", ddl)
 		}
 		roundTrip(t, from, to, "", false)
+	})
+}
+
+// TestBackfillTwoNewColumnsOnlyOneDeclared covers backfill()'s per-column filter
+// (b.Column != col: continue) and hasBackfill()'s false branch: two new NOT NULL
+// columns are added in one plan, but only one of them has a @migrate backfill declared,
+// so the other must take the plain "ADD COLUMN ... NOT NULL" path instead of the
+// add-nullable/fill/constrain sequence.
+func TestBackfillTwoNewColumnsOnlyOneDeclared(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "1-tables")
+	edit := `
+-- @migrate backfill customers.tier = 'basic'
+ALTER TABLE customers ADD COLUMN tier text NOT NULL;
+ALTER TABLE customers ADD COLUMN flag boolean NOT NULL DEFAULT false;
+`
+	from, to := mustCanonical(t, base), mustCanonical(t, base+edit)
+	plan, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if !strings.Contains(ddl, `ADD COLUMN "tier" text`) || strings.Contains(ddl, `"tier" text NOT NULL`) {
+		t.Errorf("want tier added nullable first (backfilled), got:\n%s", ddl)
+	}
+	if !strings.Contains(ddl, `ADD COLUMN "flag" boolean DEFAULT false NOT NULL`) {
+		t.Errorf("want flag added directly NOT NULL (no backfill declared for it), got:\n%s", ddl)
+	}
+	roundTrip(t, from, to, "-- @migrate drop customers.tier\n-- @migrate drop customers.flag", false)
+}
+
+// TestEnumColumnSkipsPlainTypeAlter covers alterTable's use of enumColumn: when a table
+// whose enum-typed column is being recreated (its ALTER COLUMN TYPE is emitted by
+// recreateEnum, not the generic column-alteration loop) also gets another, unrelated
+// structural change, alterTable must still walk its columns (to emit that other change)
+// without also emitting a second, plain ALTER COLUMN TYPE for the enum column itself.
+func TestEnumColumnSkipsPlainTypeAlter(t *testing.T) {
+	requirePgDump(t)
+	base := example(t, "3-database-api")
+	edit := `
+-- @migrate enum order_status: drop 'cancelled' using 'pending'
+DROP VIEW order_view;
+DROP MATERIALIZED VIEW sales_by_day;
+DROP FUNCTION pay_order(bigint);
+ALTER TYPE order_status RENAME TO order_status_prev;
+CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped');
+ALTER TABLE orders ALTER COLUMN status DROP DEFAULT;
+ALTER TABLE orders ALTER COLUMN status TYPE order_status USING status::text::order_status;
+ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'pending';
+DROP TYPE order_status_prev;
+CREATE VIEW open_orders AS SELECT id, status FROM orders WHERE status <> 'shipped';
+ALTER TABLE orders ADD COLUMN priority integer NOT NULL DEFAULT 0;
+`
+	from, to := mustCanonical(t, base), mustCanonical(t, base+edit)
+	plan, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if n := strings.Count(ddl, `ALTER TABLE "public"."orders" ALTER COLUMN "status" TYPE`); n != 1 {
+		t.Errorf("want exactly one ALTER COLUMN status TYPE (from recreateEnum, not a second one from the generic column loop), got %d:\n%s", n, ddl)
+	}
+	if !strings.Contains(ddl, `ADD COLUMN "priority"`) {
+		t.Errorf("want the unrelated new column too, got:\n%s", ddl)
+	}
+	roundTrip(t, from, to, "-- @migrate drop orders.priority", false)
+}
+
+// TestRenameAcrossSchemas covers renames()' SET SCHEMA branch: a table moving to a
+// different schema (as well as being renamed) needs both an ALTER ... SET SCHEMA and,
+// when the name also changes, a separate ALTER ... RENAME TO afterward.
+func TestRenameAcrossSchemas(t *testing.T) {
+	requirePgDump(t)
+	base := "CREATE SCHEMA app;\nCREATE TABLE widgets (id int PRIMARY KEY);\n"
+	edit := "-- @migrate rename widgets -> app.gadgets\nDROP TABLE widgets;\nCREATE TABLE app.gadgets (id int PRIMARY KEY);\n"
+	from, to := mustCanonical(t, base), mustCanonical(t, base+edit)
+	plan, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	ddl := strings.Join(plan, "\n")
+	if !strings.Contains(ddl, `SET SCHEMA "app"`) {
+		t.Errorf("want a SET SCHEMA, got:\n%s", ddl)
+	}
+	if !strings.Contains(ddl, `RENAME TO "gadgets"`) {
+		t.Errorf("want a RENAME TO, got:\n%s", ddl)
+	}
+	roundTrip(t, from, to, "-- @migrate rename app.gadgets -> widgets", false)
+}
+
+// TestResolveNameTwoPartSchemaTable covers resolveName's 2-part "schema.table" branch
+// (as opposed to "table.column"), for a relation in a non-public schema.
+func TestResolveNameTwoPartSchemaTable(t *testing.T) {
+	s := mustLoad(t, "CREATE SCHEMA app; CREATE TABLE app.t (id int);")
+	r, col := resolveName(s, "app.t")
+	if r == nil || col != "" {
+		t.Errorf("resolveName(app.t) = %v, %q, want the relation and no column", r, col)
+	}
+}
+
+// TestVerifyDirect covers Verify's own two branches that roundTrip's use of it never
+// reaches: a ddl PostgreSQL itself refuses (Canonical's error, passed straight back), and
+// a difference that is nothing but column order (filed as a note, not a change).
+func TestVerifyDirect(t *testing.T) {
+	requirePgDump(t)
+	t.Run("ddl error", func(t *testing.T) {
+		target := mustCanonical(t, "CREATE TABLE t (a int);")
+		_, _, err := Verify(context.Background(), server, "CREATE TABLE t (a int);", "THIS IS NOT SQL;", target.s)
+		if err == nil {
+			t.Error("expected an error from invalid DDL")
+		}
+	})
+	t.Run("order-only difference is a note, not a change", func(t *testing.T) {
+		target := mustCanonical(t, "CREATE TABLE t (b int, a int);")
+		changes, notes, err := Verify(context.Background(), server, "CREATE TABLE t (a int, b int);", "", target.s)
+		if err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+		if len(changes) != 0 {
+			t.Errorf("changes = %v, want none (column order should be a note)", changes)
+		}
+		if len(notes) != 1 || !notes[0].OrderOnly() {
+			t.Errorf("notes = %v, want exactly one order-only note", notes)
+		}
 	})
 }

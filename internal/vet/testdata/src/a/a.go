@@ -1,6 +1,7 @@
 package a
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"net"
 	"net/netip"
@@ -8,6 +9,7 @@ import (
 
 	"b"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kr9ly/sqlshape"
 )
@@ -214,6 +216,12 @@ var orderStats = sqlshape.MatView("order_stats")
 var noSuchView = sqlshape.MatView("order_statz") // want `materialized view "order_statz" does not exist`
 
 var notAMatView = sqlshape.MatView("order_summary") // want `"order_summary" is not a materialized view`
+
+var qualifiedMatView = sqlshape.MatView("public.plan_counts")
+
+var dynamicMatViewName = "order_stats"
+
+var nonConstMatView = sqlshape.MatView(dynamicMatViewName) // want `MatView name must be a string constant`
 
 // CHECK (role IN (...)) is a value set like an enum: constants are diffed both ways
 type Role string // want Role:`consts admin,guest,member` Role:`bound v users.role`
@@ -468,10 +476,72 @@ var loadBadItems = sqlshape.Copy[BadItem]("order_items") // want `Copy: field Sk
 
 var loadNames = sqlshape.Copy[string]("users", "name", "alias") // want `Copy\[string\] into users: a scalar R feeds exactly one column, 2 given`
 
+// scalar R that fits exactly one column: no error, and the columns left to their
+// defaults that have none (NOT NULL, no default) are still reported
+var loadScalarOK = sqlshape.Copy[bool]("flags_test", "active") // want `Copy into flags_test: column "id" is NOT NULL without a default and is not copied` `Copy into flags_test: column "tiny" is NOT NULL without a default and is not copied`
+
+var loadScalarMissing = sqlshape.Copy[bool]("flags_test", "bogus") // want `Copy into flags_test: column "bogus" does not exist`
+
+// two fields binding to the same column
+type DupCols struct {
+	OrderID  int64  `col:"order_id"`
+	LineNo   int16  `col:"line_no"`
+	SkuA     string `col:"sku"`
+	SkuB     string `col:"sku"`
+	Qty      int32  `col:"qty"`
+	Discount string `col:"discount"`
+}
+
+var loadDup = sqlshape.Copy[DupCols]("order_items") // want `a.DupCols: fields SkuA and SkuB both bind to column "sku"`
+
+// a column named in the call that exists but has no field in R
+type MissingFieldItem struct {
+	OrderID int64
+	LineNo  int16
+	Sku     string
+}
+
+var loadMissingField = sqlshape.Copy[MissingFieldItem]("order_items", "order_id", "line_no", "sku", "qty") // want `Copy into order_items: column "qty" has no field in a.MissingFieldItem` `Copy into order_items: column "discount" is NOT NULL without a default and is not copied`
+
+// a generated column named in the call cannot be copied into
+type FlagsCopy struct {
+	ID     int64
+	Active bool
+	Tiny   int16
+}
+
+var loadGenerated = sqlshape.Copy[FlagsCopy]("flags_test", "id", "active", "tiny", "computed") // want `Copy into flags_test: column "computed" is generated and cannot be copied into`
+
+// a lossy struct-field conversion (parameter direction): a wider Go integer into a
+// narrower PG column may overflow
+type LossyCopy struct {
+	OrderID  int64
+	LineNo   int32
+	Sku      string
+	Qty      int32
+	Discount string
+}
+
+var loadLossy = sqlshape.Copy[LossyCopy]("order_items") // want `Copy: field LineNo: int32 into smallint may overflow`
+
+// a non-constant table name
+var dynamicTable = "order_items"
+
+var loadDynamicTable = sqlshape.Copy[ItemIn](dynamicTable) // want `Copy table and column names must be string constants`
+
 // shared fragments: a const concatenated into the template; diagnostics land in the fragment
 const userFrag = " AND o.user_id = {{.UserID}}" // want `parameter .UserID is bool but SQL expects bigint` `parameter .UserID is bool but SQL expects bigint`
 
 const withMissing = " AND o.status = {{.Statuz}}" // want `struct{UserID bool} has no field Statuz`
+
+// constDecl: a const spec that inherits its predecessor's value list (no Values of its
+// own) is skipped when building the name -> value-expression map
+const (
+	inheritedA, inheritedB = "x", "y"
+	inheritedC, inheritedD
+)
+
+var _, _ = inheritedC, inheritedD
 
 var sharedFragment = sqlshape.Query[OrderRow, struct{ UserID bool }](`SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE true` + userFrag)
 
@@ -483,6 +553,14 @@ var quotedAction = sqlshape.Query[OrderRow, struct{ Q string }]("SELECT o.id, o.
 var dollarQuoted = sqlshape.Query[OrderRow, struct{ Q string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.note = $q$ {{.Q}} $q$ /* {{.Q}} */") // want `{{.Q}} is inside a string literal` `{{.Q}} is inside a comment and has no effect`
 
 var bareSort = sqlshape.Query[OrderRow, struct{ Sort string }]("SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o ORDER BY {{.Sort}}") // want `ORDER BY {{.Sort}} sorts by a constant, not by the column the value names: branch on it instead`
+
+// hazards: the string-literal scanner's own escape handling (E'...' backslash escapes, a
+// doubled ” inside a plain string, a nested /* */ comment) must not lose track of state
+var equoteEscaped = sqlshape.Query[OrderRow, struct{ Q string }](`SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.note = E'\\n{{.Q}}'`) // want `{{.Q}} is inside a string literal`
+
+var doubledQuote = sqlshape.Query[OrderRow, struct{ Q string }](`SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o WHERE o.note = 'it''s {{.Q}}'`) // want `{{.Q}} is inside a string literal`
+
+var nestedComment = sqlshape.Query[OrderRow, struct{ Q string }](`SELECT o.id, o.status, o.total, o.note, o.created_at FROM orders o /* outer /* inner {{.Q}} */ still a comment */ WHERE o.id = 1`) // want `{{.Q}} is inside a comment and has no effect`
 
 // declared bindings: a Go type names the PG type it carries and does its own encoding
 
@@ -511,6 +589,14 @@ var declaredNested = sqlshape.Query[struct {
 	ID    int64
 	Price Price
 }, struct{}](`SELECT id, price FROM orders`)
+
+// a declared type imported from another package: the binding travels as a fact, so it is
+// checked here exactly as Price is checked locally
+var declaredImported = sqlshape.Query[struct{ Price b.Money }, struct{}](`SELECT price FROM orders`)
+
+// R itself is an imported type (a qualified selector, not a local identifier or struct
+// literal): the "no field" diagnostic still fires, but with no rewrite to suggest
+var qualifiedR = sqlshape.Query[b.Widget, struct{}](`SELECT id, note FROM orders`) // want `result column "note" has no field in b\.Widget`
 
 // sqlshape: type yen
 type YenBox struct{ N int64 } // want YenBox:`carries yen`
@@ -585,3 +671,212 @@ func planName(p Plan) string {
 	}
 	return ""
 }
+
+// matchValue: result-direction branches the rest of the package never exercises (a fixed
+// Go array against a PG array, integer/float/numeric narrowing, UUID variants, a plain
+// string reading a time column, and mismatches).
+
+var fixedArrayOK = sqlshape.Query[struct{ Tags [4]string }, struct{}](`SELECT tags FROM users`)
+
+var fixedArrayMismatch = sqlshape.Query[struct{ Tags bool }, struct{}](`SELECT tags FROM users`) // want `field Tags is bool but column "tags" is text\[\]`
+
+var int4IntoInt16 = sqlshape.Query[struct{ Qty int16 }, struct{}](`SELECT qty FROM order_items`) // want `field Qty: integer into int16`
+
+var int8IntoInt32 = sqlshape.Query[struct{ ID int32 }, struct{}](`SELECT id FROM orders`) // want `field ID: bigint into int32`
+
+var float4Result = sqlshape.Query[struct{ Score float64 }, struct{}](`SELECT score FROM users`) // want `field Score is float64 but column "score" may be NULL`
+
+var float8IntoFloat32 = sqlshape.Query[struct{ Ratio float32 }, struct{}](`SELECT ratio FROM users`) // want `field Ratio: double precision into float32` `field Ratio is float32 but column "ratio" may be NULL`
+
+var numericIntoInt = sqlshape.Query[struct{ Total int64 }, struct{}](`SELECT total FROM orders`) // want `field Total: numeric into int64 drops the fraction`
+
+var numericMismatch = sqlshape.Query[struct{ Total bool }, struct{}](`SELECT total FROM orders`) // want `field Total is bool but column "total" is numeric\(12,2\)`
+
+var uuidFixedArray = sqlshape.Query[struct{ UID [16]byte }, struct{}](`SELECT uid FROM orders`) // want `field UID is \[16\]byte but column "uid" may be NULL`
+
+var uuidMismatch = sqlshape.Query[struct{ UID bool }, struct{}](`SELECT uid FROM orders`) // want `field UID is bool but column "uid" is uuid`
+
+var timeAsString = sqlshape.Query[struct{ Wake string }, struct{}](`SELECT wake FROM users`) // want `field Wake is string but column "wake" may be NULL`
+
+var jsonMismatch = sqlshape.Query[struct{ Meta bool }, struct{}](`SELECT meta FROM orders`) // want `field Meta is bool but column "meta" is jsonb`
+
+var multirangeArgMismatch = sqlshape.Query[struct{ Spans pgtype.Multirange[int32] }, struct{}](`SELECT spans FROM hosts`) // want `field Spans is github.com/jackc/pgx/v5/pgtype\.Multirange\[int32\] but column "spans" is int4multirange`
+
+// matchValue: the named uuid.UUID type, the hstore branches, and the citext string fallback
+var uuidNamedType = sqlshape.Query[struct{ UID uuid.UUID }, struct{}](`SELECT uid FROM orders`) // want `field UID is github.com/google/uuid\.UUID but column "uid" may be NULL`
+
+var hstoreBadKey = sqlshape.Query[struct{ Attrs map[int]string }, struct{}](`SELECT attrs FROM hosts`) // want `field Attrs is map\[int\]string but column "attrs" is hstore`
+
+var hstoreNotMap = sqlshape.Query[struct{ Attrs string }, struct{}](`SELECT attrs FROM hosts`) // want `field Attrs is string but column "attrs" is hstore`
+
+// handle is citext; a plain (undeclared) string field takes the text-codec fallback
+var citextPlainString = sqlshape.Query[struct{ Handle string }, struct{}](`SELECT handle FROM users WHERE handle IS NOT NULL`)
+
+// paramFit: a wider Go integer / float into a narrower PG parameter type may overflow
+var int4ParamOverflow = sqlshape.Query[int64, struct{ ID int64 }](`SELECT id FROM hosts WHERE id = {{.ID}}`) // want `parameter .ID: int64 into integer may overflow`
+
+var float4ParamOverflow = sqlshape.Query[int64, struct{ Score float64 }](`SELECT id FROM users WHERE score = {{.Score}}`) // want `parameter .Score: float64 into real loses precision`
+
+// structFields / embeddedStruct / columnName / lookupTag: skipped members, tag parsing edges
+type ScannedTime struct{ N int64 }
+
+func (s *ScannedTime) Scan(src any) error { return nil }
+
+type WithOddFields struct {
+	unexported int64
+	Skipped    int64  `col:"-"`
+	Blank      int64  `col:",notnull"`
+	Escaped    string `col:"escaped\"name"`
+	Spaced     int64  `  col:"spaced"`
+	DB         int64  `db:"dbname"`
+	Timestamp  time.Time
+	Scanned    ScannedTime
+	Malformed  int64 `col`
+}
+
+var oddFields = sqlshape.Query[WithOddFields, struct{}](`SELECT id AS blank, id AS spaced, id AS dbname FROM orders`) // want `field WithOddFields.Escaped has no result column` `field WithOddFields.Timestamp has no result column` `field WithOddFields.Scanned has no result column` `field WithOddFields.Malformed has no result column`
+
+// unwrapNullable: database/sql.Null* is checked loosely (nullable, not type-checked further)
+var sqlNullField = sqlshape.Query[struct{ Note sql.NullString }, struct{}](`SELECT note FROM orders`)
+
+// Float8 exact match (no lossy note)
+var float8ExactMatch = sqlshape.Query[struct{ Ratio float64 }, struct{}](`SELECT ratio FROM users`) // want `field Ratio is float64 but column "ratio" may be NULL`
+
+// structFields / embeddedStruct: a pointer to an embedded struct still flattens, a scalar
+// embed (time.Time, a Scanner) and a non-struct embed do not, and a db-tagged embed is a
+// leaf named by the tag
+type NestedID struct{ ID int64 }
+
+type MyInt int64
+
+type TaggedBase struct{ X int64 }
+
+type BigResult struct {
+	*NestedID
+	time.Time
+	ScannedTime
+	MyInt
+	TaggedBase `db:"tagged"`
+}
+
+var bigResult = sqlshape.Query[BigResult, struct{}](`SELECT id FROM orders`) // want `field BigResult.Time has no result column` `field BigResult.ScannedTime has no result column` `field BigResult.MyInt has no result column` `field BigResult.TaggedBase has no result column`
+
+// lookupTag: a tag that is only whitespace once trimmed, and one with an unterminated quote
+type OddTags struct {
+	A int64 `col:"id"`
+	B int64 ` `
+	C int64 `col:"unterminated`
+}
+
+var oddTags = sqlshape.Query[OddTags, struct{}](`SELECT id FROM orders`) // want `field OddTags.B has no result column` `field OddTags.C has no result column`
+
+// owner: a call inside a plain function (no receiver) and inside a method
+func plainFuncOwner() {
+	_ = sqlshape.Query[int64, struct{}](`SELECT id FROM orders`)
+}
+
+type Repo struct{}
+
+func (r *Repo) methodOwner() {
+	_ = sqlshape.Query[int64, struct{}](`SELECT id FROM orders`)
+}
+
+// expand.Expand template parse error: an unclosed {{if}} action
+var unclosedIf = sqlshape.Query[int64, struct{ X string }]("SELECT id FROM orders {{if .X}}") // want `sqlshape: template: `
+
+// resolvePath: {{range $i, $v := .Items}} binds $i to the loop index, a range over a map
+// resolves its element type, and selecting a field on a non-struct fails
+type IndexParams struct {
+	Items []struct{ Sku string }
+}
+
+var indexParam = sqlshape.Query[int64, IndexParams](`SELECT order_id FROM order_items WHERE true {{range $i, $v := .Items}} OR (line_no = {{$i}} AND sku = {{$v.Sku}}) {{end}}`) // want `parameter .#index: int into smallint may overflow`
+
+type MapParams struct {
+	M map[string]string
+}
+
+var mapRangeParam = sqlshape.Query[int64, MapParams](`SELECT id FROM orders WHERE true {{range .M}} AND note <> {{.}} {{end}}`)
+
+type ScalarDotParams struct {
+	Scalar int64
+}
+
+var scalarDotParam = sqlshape.Query[int64, ScalarDotParams](`SELECT id FROM orders WHERE id = {{.Scalar.Foo}}`) // want `\.Scalar is int64, not a struct; cannot select \.Foo`
+
+// a result column whose case differs from the field it binds to (case-insensitive fallback)
+var caseInsensitiveCol = sqlshape.Query[struct{ ID int64 }, struct{}](`SELECT id AS "ID" FROM orders`)
+
+// resolvePath: a pointer struct mid-path is dereferenced, ranging over a fixed array
+// resolves its element type, and ranging over a non-rangeable field is an error
+type SubStruct struct{ X int64 }
+
+type PtrParams struct{ Sub *SubStruct }
+
+var ptrMidPath = sqlshape.Query[int64, PtrParams](`SELECT id FROM orders WHERE id = {{.Sub.X}}`)
+
+type ArrParams struct{ Arr [3]string }
+
+var arrRangeParam = sqlshape.Query[int64, ArrParams](`SELECT id FROM orders WHERE true {{range .Arr}} AND note <> {{.}} {{end}}`)
+
+type BadRangeParams struct{ N int64 }
+
+var badRangeParam = sqlshape.Query[int64, BadRangeParams](`SELECT id FROM orders WHERE true {{range .N}} AND note <> {{.}} {{end}}`) // want `\.N is int64, cannot range over it`
+
+// checkNested: a plain (non-declared) struct receiving a composite column is matched
+// field by field, in the row type's column order
+type MoneyFields struct {
+	Amount   string
+	Currency string
+}
+
+var nestedOK = sqlshape.Query[struct{ Price MoneyFields }, struct{}](`SELECT price FROM orders WHERE price IS NOT NULL`) // want `field Price.Amount is string but column "amount" may be NULL` `field Price.Currency is string but column "currency" may be NULL`
+
+type MoneyWrongCount struct {
+	Amount string
+}
+
+var nestedWrongCount = sqlshape.Query[struct{ Price MoneyWrongCount }, struct{}](`SELECT price FROM orders WHERE price IS NOT NULL`) // want `field Price: a.MoneyWrongCount has 1 fields but the row type has 2 \("amount numeric\(12,2\), currency character\(3\)"\)`
+
+type MoneyWrongName struct {
+	Amount string
+	Curenc string
+}
+
+var nestedWrongName = sqlshape.Query[struct{ Price MoneyWrongName }, struct{}](`SELECT price FROM orders WHERE price IS NOT NULL`) // want `field Price.Curenc is at position 2 but the row type's column 2 is "currency" \(fields are scanned in order\)` `field Price.Amount is string but column "amount" may be NULL`
+
+type MoneyDup struct {
+	A        string `col:"amount"`
+	B        string `col:"amount"`
+	Currency string
+}
+
+var nestedDup = sqlshape.Query[struct{ Price MoneyDup }, struct{}](`SELECT price FROM orders WHERE price IS NOT NULL`) // want `field Price: a.MoneyDup: fields A and B both bind to column "amount"` `field Price.A is string but column "amount" may be NULL` `field Price.Currency is string but column "currency" may be NULL`
+
+// checkNested: further branches — a nested field tagged notnull, a receiving type that
+// itself unwraps to nil (pgtype.*), a fixed-size array of composites, and a slice whose
+// element unwraps to nil
+type MoneyNotNull struct {
+	Amount   string `col:",notnull"`
+	Currency string
+}
+
+var nestedNotNull = sqlshape.Query[struct{ Price MoneyNotNull }, struct{}](`SELECT price FROM orders WHERE price IS NOT NULL`) // want `field Price.Currency is string but column "currency" may be NULL`
+
+type MoneyPgtypeField struct {
+	Price pgtype.Numeric
+}
+
+var nestedPgtypeDirect = sqlshape.Query[MoneyPgtypeField, struct{}](`SELECT price FROM orders WHERE price IS NOT NULL`)
+
+type PricesArrField struct {
+	Prices [1]MoneyFields
+}
+
+var nestedFixedArray = sqlshape.Query[PricesArrField, struct{}](`SELECT array_agg(price) AS prices FROM orders`) // want `field Prices is \[1\]a.MoneyFields but column "prices" may be NULL` `field Prices.Amount is string but column "amount" may be NULL` `field Prices.Currency is string but column "currency" may be NULL`
+
+type PricesPgtypeField struct {
+	Prices []pgtype.Numeric
+}
+
+var nestedPgtypeElem = sqlshape.Query[PricesPgtypeField, struct{}](`SELECT array_agg(price) AS prices FROM orders`)

@@ -3,6 +3,7 @@ package strict
 import (
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kr9ly/sqlshape"
 )
 
@@ -47,3 +48,45 @@ type SearchParams struct {
 }
 
 var search = sqlshape.Query[struct{ ID OrderID }, SearchParams](`SELECT id FROM orders WHERE id = {{.ID}} ORDER BY id LIMIT {{.Limit}}`) // want `parameter field Unused is never used by the template`
+
+// a plain (undeclared) Go type that receives a domain: advisory, since the domain's
+// constraint is not carried by an unnamed type
+var plainDomain = sqlshape.Query[struct{ Balance int64 }, struct{}](`SELECT balance FROM users`) // want `field Balance carries domain yen as a plain int64; declare a named type to have it checked`
+
+// adviseParam: a parameter fed into a timestamp/date column as time.Time carries the same
+// implicit zone question as a result field, and a parameter assigned into an identity
+// column is one the database generates itself
+var paramFidelity = sqlshape.Query[struct{}, struct {
+	T time.Time
+}]("UPDATE users SET updated_at = {{.T}} WHERE id = 1") // want `parameter .T: timestamp without time zone into time.Time`
+
+var identityAssign = sqlshape.Query[struct{}, struct {
+	Seq int64
+}]("UPDATE flags_test SET seq = {{.Seq}} WHERE id = 1") // want `parameter .Seq sends a value into flags_test.seq, which the database generates`
+
+// reportUnusedParams: an embedded struct's fields are promoted, so an unused one inside it
+// is still reported by name
+type EmbeddedFilter struct {
+	Extra string
+}
+
+type EmbedSearchParams struct {
+	ID OrderID
+	EmbeddedFilter
+}
+
+var embedSearch = sqlshape.Query[struct{ ID OrderID }, EmbedSearchParams](`SELECT id FROM orders WHERE id = {{.ID}}`) // want `parameter field Extra is never used by the template`
+
+// reportUnusedParams: a P that unwraps to nil (a pgtype.* value carries Valid, no fields
+// to check) or that is a scalar (not a struct at all) returns without walking any fields
+var pgtypeParam = sqlshape.Query[int64, pgtype.Numeric]("SELECT id FROM orders WHERE total = {{.}}") // want `no index on orders leads with any of \(total\)` `R carries key orders.id as a plain int64; declare a named type to have it checked`
+
+var scalarParam = sqlshape.Query[int64, int64]("SELECT id FROM orders WHERE id = {{.}}") // want `R carries key orders.id as a plain int64; declare a named type to have it checked` `parameter . carries key orders.id as a plain int64; declare a named type to have it checked`
+
+// reportUnusedParams: res.Controls ({{if}}) also marks a field used
+type ControlParams struct {
+	Flag    bool
+	Unused2 string
+}
+
+var controlParam = sqlshape.Query[int64, ControlParams](`SELECT id FROM orders WHERE true {{if .Flag}} AND true {{end}}`) // want `parameter field Unused2 is never used by the template` `R carries key orders.id as a plain int64; declare a named type to have it checked` `R carries key orders.id as a plain int64; declare a named type to have it checked`

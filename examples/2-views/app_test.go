@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/pgtest"
 )
@@ -48,6 +50,30 @@ func TestOrderBookThroughViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 0, Price: "1"}}); err == nil || err.Error() != "line 1: quantity must be positive" {
+		t.Fatalf("qty check: %v", err)
+	}
+	if _, err := PlaceOrder(ctx, conn, 999, nil, nil); err == nil || err.Error() != "customer 999 does not exist" {
+		t.Fatalf("fk: %v", err)
+	}
+	// a negative price is rejected by the database too, but PlaceOrder only special-cases
+	// the quantity check: the generic path returns the raw error
+	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 1, Price: "-1.00"}}); !sqlshape.Violates(err, "order_items_price_check") {
+		t.Fatalf("price check: %v", err)
+	}
+	// a context already done fails at Begin, before any statement runs; use a
+	// throwaway connection since a cancelled context poisons the one it was used on
+	deadConn, err := pgx.Connect(ctx, db.ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doneCtx, doneCancel := context.WithCancel(ctx)
+	doneCancel()
+	if _, err := PlaceOrder(doneCtx, deadConn, alice, nil, nil); err == nil {
+		t.Fatal("placing an order on a cancelled context should fail")
+	}
+	deadConn.Close(ctx)
+
 	o, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id})
 	if err != nil || o.Total != "28.00" || o.Status != Pending || o.StatusLabel != "Awaiting payment" || o.CustomerEmail != "alice@example.com" {
 		t.Fatalf("order: %v %+v", err, o)

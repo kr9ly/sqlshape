@@ -18,6 +18,11 @@ import (
 // its own); Close is deferred to TestMain
 var shared *dump.Server
 
+// defaultNewServer is the package's real newServer implementation, captured before
+// TestMain overrides the var with the shared embedded server below, so one test
+// (TestNewServerDefault) can exercise the actual dump.NewServer call path.
+var defaultNewServer = newServer
+
 func TestMain(m *testing.M) {
 	if _, err := exec.LookPath(dump.Binary()); err == nil {
 		srv, err := dump.NewServer(context.Background())

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/pgtest"
 )
@@ -62,6 +64,41 @@ func TestDatabaseAPI(t *testing.T) {
 		t.Fatalf("lines: %v %+v", err, lines)
 	}
 
+	if _, err := Checkout(ctx, conn, 999, 0, nil); err == nil || err.Error() != "customer 999 does not exist" {
+		t.Fatalf("fk: %v", err)
+	}
+	// shipping is a yen: the domain's CHECK (>= 0) is not one of Checkout's named
+	// outcomes, so the generic path returns the raw error
+	if _, err := Checkout(ctx, conn, *alice, -1, nil); !sqlshape.Violates(err, "yen_check") {
+		t.Fatalf("negative shipping: %v", err)
+	}
+	// a context already done fails at Begin, before any statement runs; use a
+	// throwaway connection since a cancelled context poisons the one it was used on
+	deadConn, err := pgx.Connect(ctx, db.ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doneCtx, doneCancel := context.WithCancel(ctx)
+	doneCancel()
+	if _, err := Checkout(doneCtx, deadConn, *alice, 0, nil); err == nil {
+		t.Fatal("checkout on a cancelled context should fail")
+	}
+	deadConn.Close(ctx)
+
+	// a failing line rolls the whole Checkout back: neither of these leaves a
+	// pending order behind for the trigger test below to trip over
+	if _, err := AddLine.Get(ctx, conn, NewLine{OrderID: id, Sku: "BOOK", Qty: 0, UnitPrice: 100}); !sqlshape.Violates(err, "order_items_qty_check") {
+		t.Fatalf("add line qty check: %v", err)
+	}
+	if _, err := Checkout(ctx, conn, *alice, 0, []NewLine{{Sku: "BOOK", Qty: 0, UnitPrice: 100}}); err == nil || err.Error() != "BOOK: quantity must be positive" {
+		t.Fatalf("checkout qty check: %v", err)
+	}
+	// a negative unit price is a yen too: not a quantity problem, so the generic
+	// path returns the raw error
+	if _, err := Checkout(ctx, conn, *alice, 0, []NewLine{{Sku: "BOOK", Qty: 1, UnitPrice: -1}}); !sqlshape.Violates(err, "yen_check") {
+		t.Fatalf("checkout negative unit price: %v", err)
+	}
+
 	// the trigger: a free customer may hold three open orders, not four
 	for i := 0; i < 2; i++ {
 		if _, err := Checkout(ctx, conn, *alice, 0, nil); err != nil {
@@ -95,5 +132,20 @@ func TestDatabaseAPI(t *testing.T) {
 	if err != nil || len(sales) != 1 || sales[0].Revenue != 2700 {
 		t.Fatalf("sales: %v %+v", err, sales)
 	}
-	_ = Label(Pro)
+	if got := Label(Free); got != "Free" {
+		t.Errorf("label free: %q", got)
+	}
+	if got := Label(Pro); got != "Pro" {
+		t.Errorf("label pro: %q", got)
+	}
+	if got := Label(Enterprise); got != "Enterprise" {
+		t.Errorf("label enterprise: %q", got)
+	}
+	// a tier the switch does not name falls back to the raw value
+	if got := Label(Tier("gold")); got != "gold" {
+		t.Errorf("label unknown: %q", got)
+	}
+	if OrderStatus("refunded").Known() {
+		t.Error("refunded should not be a known status")
+	}
 }

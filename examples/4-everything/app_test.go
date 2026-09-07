@@ -28,6 +28,9 @@ func TestEverything(t *testing.T) {
 		UtilizationOf, BookedMinutes, CreateTenant, AddMember, RemoveMember, ImportRooms, Book, TagBooking, CancelBooking, EventCounts); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := Open(ctx, "not a valid connection string"); err == nil {
+		t.Fatal("opening an invalid connection string should fail")
+	}
 	pool, err := Open(ctx, pg.ConnString())
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +105,11 @@ func TestEverything(t *testing.T) {
 	if _, err := Reserve(ctx, pool, tenant, large, *bob, at(9), at(12), nil); err != nil {
 		t.Fatal(err)
 	}
+	// a member that does not exist is neither BK001 nor BK002: the generic path
+	// returns the raw foreign key error
+	if _, err := Reserve(ctx, pool, tenant, large, MemberID("00000000-0000-0000-0000-000000000000"), at(13), at(14), nil); !sqlshape.Violates(err, "bookings_member_id_fkey") {
+		t.Fatalf("reserve unknown member: %v", err)
+	}
 	if _, err := TagBooking.Exec(ctx, pool, struct {
 		Tenanted
 		BookingID BookingID
@@ -121,6 +129,12 @@ func TestEverything(t *testing.T) {
 	d, err := LoadDashboard(ctx, pool, tenant)
 	if err != nil || len(d.Rooms) != 2 || len(d.Members) != 2 || len(d.Schedule) != 2 {
 		t.Fatalf("dashboard: %v %+v", err, d)
+	}
+	// a context already done fails at Send, before any query in the batch runs
+	doneCtx, doneCancel := context.WithCancel(ctx)
+	doneCancel()
+	if _, err := LoadDashboard(doneCtx, pool, tenant); err == nil {
+		t.Fatal("loading the dashboard on a cancelled context should fail")
 	}
 	for _, s := range d.Schedule {
 		if len(s.Bookings) != 1 || !s.Bookings[0].Slot.Lower.Equal(at(9)) {
@@ -191,5 +205,27 @@ func TestEverything(t *testing.T) {
 	}
 	if gone, err := DeletedMembers.Collect(ctx, pool, tenant); err != nil || len(gone) != 1 || gone[0].Email != "bob@acme.example" {
 		t.Fatalf("deleted members: %v %+v", err, gone)
+	}
+}
+
+// TestMoneyScan exercises every source type Money.Scan handles: the composite arrives as
+// text from pgx (string in the common case, []byte for some paths, nil for a NULL money),
+// and anything else is not a value Money can represent.
+func TestMoneyScan(t *testing.T) {
+	var m Money
+	if err := m.Scan(nil); err != nil || m != (Money{}) {
+		t.Fatalf("nil: %v %+v", err, m)
+	}
+	if err := m.Scan([]byte("(20.00,EUR)")); err != nil || m.Amount != "20.00" || m.Currency != "EUR" {
+		t.Fatalf("[]byte: %v %+v", err, m)
+	}
+	if err := m.Scan("(55.00,EUR)"); err != nil || m.Amount != "55.00" || m.Currency != "EUR" {
+		t.Fatalf("string: %v %+v", err, m)
+	}
+	if err := m.Scan(42); err == nil {
+		t.Fatal("scanning an int should fail")
+	}
+	if err := m.Scan("no comma here"); err == nil {
+		t.Fatal("scanning a malformed composite should fail")
 	}
 }

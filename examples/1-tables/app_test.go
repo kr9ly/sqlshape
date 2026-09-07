@@ -3,9 +3,12 @@ package tables
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/pgtest"
@@ -50,6 +53,23 @@ func TestOrderBook(t *testing.T) {
 	if _, err := PlaceOrder(ctx, conn, 999, nil, nil); err == nil || err.Error() != "customer 999 does not exist" {
 		t.Fatalf("fk: %v", err)
 	}
+	// a negative price is rejected by the database too, but it is not the quantity
+	// check PlaceOrder names specially: the generic path returns the raw error
+	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 1, Price: "-1.00"}}); !sqlshape.Violates(err, "order_items_price_check") {
+		t.Fatalf("price check: %v", err)
+	}
+	// a context already done fails at Begin, before any statement runs; use a
+	// throwaway connection since a cancelled context poisons the one it was used on
+	deadConn, err := pgx.Connect(ctx, db.ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doneCtx, doneCancel := context.WithCancel(ctx)
+	doneCancel()
+	if _, err := PlaceOrder(doneCtx, deadConn, alice, nil, nil); err == nil {
+		t.Fatal("placing an order on a cancelled context should fail")
+	}
+	deadConn.Close(ctx)
 
 	o, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id})
 	if err != nil || o.Total != "28.00" || o.Status != Pending || o.Note == nil || *o.Note != "gift wrap" {
@@ -93,6 +113,48 @@ func TestOrderBook(t *testing.T) {
 	var unknown *sqlshape.UnknownLabelError
 	if _, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id}); !errors.As(err, &unknown) || unknown.Value != "refunded" {
 		t.Fatalf("unknown label: %v", err)
+	}
+
+	// Describe covers every status label, not just the paid order above
+	pending, err := PlaceOrder(ctx, conn, alice, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	po, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{pending})
+	if err != nil || po.Status != Pending {
+		t.Fatalf("pending order: %v %+v", err, po)
+	}
+	if want, got := fmt.Sprintf("order #%d: 0 (awaiting payment)", pending), Describe(po); got != want {
+		t.Errorf("describe pending: got %q want %q", got, want)
+	}
+
+	if _, err := SetStatus.Exec(ctx, conn, struct {
+		ID     int64
+		Status OrderStatus
+	}{pending, Shipped}); err != nil {
+		t.Fatal(err)
+	}
+	so, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{pending})
+	if err != nil || so.Status != Shipped {
+		t.Fatalf("shipped order: %v %+v", err, so)
+	}
+	if want, got := fmt.Sprintf("order #%d: 0 (on its way)", pending), Describe(so); got != want {
+		t.Errorf("describe shipped: got %q want %q", got, want)
+	}
+
+	cancelled, err := PlaceOrder(ctx, conn, alice, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Cancel.Exec(ctx, conn, struct{ ID int64 }{cancelled}); err != nil {
+		t.Fatal(err)
+	}
+	co, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{cancelled})
+	if err != nil || co.Status != Cancelled {
+		t.Fatalf("cancelled order: %v %+v", err, co)
+	}
+	if want, got := fmt.Sprintf("order #%d: 0 (cancelled)", cancelled), Describe(co); got != want {
+		t.Errorf("describe cancelled: got %q want %q", got, want)
 	}
 
 	if _, err := DeleteCustomer.Exec(ctx, conn, struct{ ID int64 }{alice}); !sqlshape.Violates(err, "orders_customer_id_fkey") {

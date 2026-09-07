@@ -51,3 +51,34 @@ func TestVerify(t *testing.T) {
 		t.Errorf("bad template: %v", err)
 	}
 }
+
+// TestStartAppliesSchema confirms that a schema PostgreSQL itself rejects fails Start
+// before any test gets a broken database to run against.
+func TestStartAppliesSchema(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := pgtest.Start(ctx, `CREATE TABLE t (id bigint PRIMARY KEY,,,);`); err == nil {
+		t.Fatal("starting with a schema PostgreSQL rejects should fail")
+	}
+}
+
+// TestVerifySchemaProblem confirms that a schema problem the loader finds (not PostgreSQL:
+// a directive comment is invisible to it) is reported by Verify, by name, before any
+// statement is checked.
+func TestVerifySchemaProblem(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// PostgreSQL applies this schema fine: the directive comment is just a comment to it.
+	// The loader reads it as a table directive and does not recognize this one.
+	db, err := pgtest.Start(ctx, `
+-- sqlshape: not a real directive
+CREATE TABLE widgets (id bigint PRIMARY KEY);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	err = db.Verify(ctx)
+	if err == nil || !strings.Contains(err.Error(), "unknown directive") {
+		t.Errorf("schema problem: %v", err)
+	}
+}

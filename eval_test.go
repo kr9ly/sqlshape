@@ -27,6 +27,7 @@ type EvalP struct {
 	M          map[string]int
 	Arr, Arr2  [3]int
 	Sub        evalSub
+	C          complex128
 }
 
 var someEvalInt = 7
@@ -89,6 +90,11 @@ func TestRenderConditions(t *testing.T) {
 		{"index_array_true", "index .Arr 0", EvalP{Arr: [3]int{7, 0, 0}}, true},
 		{"index_string_true", "index .S 0", EvalP{S: "a"}, true},
 		{"struct_always_true", ".Sub", EvalP{}, true},
+		{"float_truthy", ".F64", EvalP{F64: 1.5}, true},
+		{"float_falsy", ".F64", EvalP{F64: 0}, false},
+		{"complex_truthy", ".C", EvalP{C: complex(1, 0)}, true},
+		{"complex_falsy", ".C", EvalP{C: 0}, false},
+		{"pipe_multi_stage", ".Bf | not", EvalP{Bf: false}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,6 +135,10 @@ func TestRenderErrors(t *testing.T) {
 		{"value_action_not_field", "{{eq .I 1}}", EvalP{I: 1}, "plain field reference"},
 		{"undefined_variable", "{{$x}}", EvalP{}, "undefined variable"},
 		{"range_non_collection", "{{range .I}}x{{end}}", EvalP{I: 5}, "range over"},
+		{"field_chain_non_struct", "{{if .I.Foo}}T{{else}}E{{end}}", EvalP{I: 1}, "non-struct"},
+		{"field_chain_no_field", "{{if .Sub.NoSuchField}}T{{else}}E{{end}}", EvalP{}, "has no field"},
+		{"bad_pipeline", "{{if .B .Bf}}T{{else}}E{{end}}", EvalP{B: true, Bf: false}, "bad pipeline"},
+		{"chain_node_unsupported", "{{if eq (.Sub).X 1}}T{{else}}E{{end}}", EvalP{Sub: evalSub{X: 1}}, "unsupported expression"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,5 +192,18 @@ func TestRenderValueActionsAndRange(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRenderConditionVariable covers a declared template variable used as a
+// condition argument (arg's *parse.VariableNode branch, resolved successfully).
+func TestRenderConditionVariable(t *testing.T) {
+	stmt := sqlshape.Query[struct{}, EvalP]("{{$v := .I}}{{if eq $v 5}}THEN{{else}}ELSE{{end}}")
+	r, err := stmt.Render(EvalP{I: 5})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if r.SQL != "THEN" {
+		t.Errorf("sql = %q, want THEN", r.SQL)
 	}
 }

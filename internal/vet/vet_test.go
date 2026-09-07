@@ -107,6 +107,14 @@ func TestDTOFixes(t *testing.T) {
 	analysistest.RunWithSuggestedFixes(t, td, Analyzer, "dto")
 }
 
+func TestDTOUUIDFixes(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	analysistest.RunWithSuggestedFixes(t, td, Analyzer, "dtouuid")
+}
+
 func TestRowSecurity(t *testing.T) {
 	td := analysistest.TestData()
 	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "rls_schema.sql")); err != nil {
@@ -129,6 +137,38 @@ func TestRowSecurityPins(t *testing.T) {
 	defer Analyzer.Flags.Set("strict", "false")
 	defer Analyzer.Flags.Set("require-columns", "")
 	analysistest.Run(t, td, Analyzer, "rlspin")
+}
+
+func TestSchemas(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("schemas", "other"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("schemas", "")
+	analysistest.Run(t, td, Analyzer, "schemas")
+}
+
+func TestSchemasOK(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("schemas", "public"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("schemas", "")
+	analysistest.Run(t, td, Analyzer, "schemasok")
+}
+
+func TestOtherSchema(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "otherschema_schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, td, Analyzer, "otherschema")
 }
 
 func TestNoTableReads(t *testing.T) {

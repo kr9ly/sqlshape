@@ -40,3 +40,15 @@ CREATE TABLE orpin (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
 ALTER TABLE orpin ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orpin FORCE ROW LEVEL SECURITY;
 CREATE POLICY orpin_tenant ON orpin USING (tenant_id = current_setting('app.tenant')::uuid OR true);
+
+-- the equality can read either way round: expr = col pins just as col = expr does
+CREATE TABLE revpin (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
+ALTER TABLE revpin ENABLE ROW LEVEL SECURITY;
+ALTER TABLE revpin FORCE ROW LEVEL SECURITY;
+CREATE POLICY revpin_tenant ON revpin USING (current_setting('app.tenant')::uuid = tenant_id);
+
+-- a policy that does not apply to SELECT does not pin reads, even with a matching predicate
+CREATE TABLE updateonly (id bigint PRIMARY KEY, tenant_id uuid NOT NULL);
+ALTER TABLE updateonly ENABLE ROW LEVEL SECURITY;
+ALTER TABLE updateonly FORCE ROW LEVEL SECURITY;
+CREATE POLICY updateonly_tenant ON updateonly FOR UPDATE USING (tenant_id = current_setting('app.tenant')::uuid);

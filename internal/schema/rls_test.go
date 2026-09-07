@@ -50,6 +50,10 @@ ALTER TABLE docs NO FORCE ROW LEVEL SECURITY;
 		{"CREATE POLICY p ON docs USING (true); CREATE POLICY p ON docs USING (true);", "already exists"},
 		{"DROP POLICY p ON docs;", "no such policy"},
 		{"DROP POLICY IF EXISTS p ON docs;", ""},
+		{"ALTER POLICY nope ON docs USING (true);", "no such policy"},
+		{"ALTER POLICY nope ON nosuchtable USING (true);", "no such policy"},
+		{"ALTER POLICY nope ON docs RENAME TO other;", "no such policy"},
+		{"ALTER POLICY nope ON nosuchtable RENAME TO other;", "no such policy"},
 	} {
 		s := mustLoad(t, base+c.sql)
 		var msgs []string
@@ -60,5 +64,31 @@ ALTER TABLE docs NO FORCE ROW LEVEL SECURITY;
 		if (c.problem == "" && got != "") || (c.problem != "" && !strings.Contains(got, c.problem)) {
 			t.Errorf("%s: want %q, got %q", c.sql, c.problem, got)
 		}
+	}
+}
+
+// TestAlterPolicyRoles covers ALTER POLICY ... TO role list (with no USING / WITH CHECK
+// change) — the branch createPolicy's own test never exercises.
+func TestAlterPolicyRoles(t *testing.T) {
+	base := `CREATE TABLE docs (id int PRIMARY KEY, tenant uuid NOT NULL, body text);`
+	s := mustLoad(t, base+`
+CREATE POLICY tenant_rows ON docs USING (tenant IS NOT NULL);
+ALTER POLICY tenant_rows ON docs TO editor, admin;
+`)
+	for _, p := range s.Problems {
+		t.Errorf("problem: %s", p)
+	}
+	p := s.Relation("", "docs").Policy("tenant_rows")
+	if p == nil || strings.Join(p.Roles, ",") != "editor,admin" {
+		t.Errorf("roles: %+v", p)
+	}
+	// PUBLIC clears the role list back to nil.
+	s2 := mustLoad(t, base+`
+CREATE POLICY tenant_rows ON docs TO editor USING (tenant IS NOT NULL);
+ALTER POLICY tenant_rows ON docs TO PUBLIC;
+`)
+	p2 := s2.Relation("", "docs").Policy("tenant_rows")
+	if p2 == nil || p2.Roles != nil {
+		t.Errorf("PUBLIC should clear roles: %+v", p2)
 	}
 }

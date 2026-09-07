@@ -43,6 +43,9 @@ CREATE FUNCTION imm() RETURNS int LANGUAGE sql IMMUTABLE RETURN 1;
 		{"select", "INSERT INTO tags (name) SELECT 'a';", "must be a VALUES list"},
 		{"duplicate key", "INSERT INTO tags (name) VALUES ('a'), ('a');", "given twice"},
 		{"columns differ", "INSERT INTO order_statuses (code, label) VALUES ('a', 'A'); INSERT INTO order_statuses (code, label, sort_order) VALUES ('b', 'B', 1);", "same columns"},
+		{"indirection", "INSERT INTO tags (name[1]) VALUES ('a');", "must name whole columns"},
+		{"unknown column", "INSERT INTO tags (nope) VALUES ('a');", "does not exist"},
+		{"session value", "INSERT INTO tags (name) VALUES (current_date::text);", "reads the session"},
 		{"type error", "INSERT INTO order_statuses (code, label, sort_order) VALUES ('a', 'A', 'x');", "22P02"},
 		{"not null", "INSERT INTO order_statuses (code) VALUES ('a');", "NOT NULL without a default"},
 		{"view", "CREATE VIEW v AS SELECT * FROM tags; INSERT INTO v (name) VALUES ('a');", "only tables"},
@@ -70,5 +73,35 @@ CREATE FUNCTION imm() RETURNS int LANGUAGE sql IMMUTABLE RETURN 1;
 	}
 	if s.Relation("", "tags").Seed != nil {
 		t.Fatal("tags is not seeded")
+	}
+}
+
+// TestSeedColumnsDifferSameCount covers sameSet's false-with-equal-length branch: two
+// INSERTs into the same table name the same number of columns, but not the same ones.
+func TestSeedColumnsDifferSameCount(t *testing.T) {
+	s := mustLoad(t, `
+CREATE TABLE t2 (k text UNIQUE NOT NULL, x text, y text);
+INSERT INTO t2 (k, x) VALUES ('a', '1');
+INSERT INTO t2 (k, y) VALUES ('b', '2');
+`)
+	got := problems(s)
+	if !strings.Contains(got, "same columns") {
+		t.Errorf("want \"same columns\" problem, got:\n%s", got)
+	}
+}
+
+// TestSeedSchemaQualifiedVolatility covers volatility's schema-qualified branch: a
+// function named with its schema is looked up only there, not among every same-named
+// function on the search path.
+func TestSeedSchemaQualifiedVolatility(t *testing.T) {
+	s := mustLoad(t, `
+CREATE SCHEMA s;
+CREATE TABLE tags (id serial PRIMARY KEY, name text NOT NULL UNIQUE);
+CREATE FUNCTION s.vol() RETURNS int LANGUAGE sql VOLATILE RETURN 1;
+INSERT INTO tags (name) VALUES (s.vol()::text);
+`)
+	got := problems(s)
+	if !strings.Contains(got, "vol() is not IMMUTABLE") {
+		t.Errorf("want IMMUTABLE problem for schema-qualified call, got:\n%s", got)
 	}
 }
