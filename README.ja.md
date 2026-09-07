@@ -115,7 +115,7 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 | [docs/runtime.ja.md](docs/runtime.ja.md) | `Run` / `Collect` / `First` / `Exec`、`One`、`Batch`、`Copy`、`MatView`、Go型の表、型の登録、エラー、本物のPostgreSQLでのテスト |
 | [docs/migrations.ja.md](docs/migrations.ja.md) | `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境 |
 | [docs/flags.ja.md](docs/flags.ja.md) | 全フラグ、`-strict`の助言一覧、エディタ設定 |
-| [design.md](design.md) | 動機とアーキテクチャ |
+| [docs/design.md](docs/design.md) | 設計上の裁定。何を決めたか、なぜか、何を棄てたか |
 
 ## 互換性
 

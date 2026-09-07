@@ -146,7 +146,7 @@ row by row and kept in step with one `MERGE`. See [docs/migrations.md](docs/migr
 | [docs/runtime.md](docs/runtime.md) | `Run` / `Collect` / `First` / `Exec`, `One`, `Batch`, `Copy`, `MatView`, the Go type table, type registration, errors, tests on a real PostgreSQL |
 | [docs/migrations.md](docs/migrations.md) | `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements |
 | [docs/flags.md](docs/flags.md) | every flag, the `-strict` advisories, editor setup |
-| [design.md](design.md) | rationale and architecture (Japanese) |
+| [docs/design.md](docs/design.md) | design decisions: what was decided, why, and what was rejected (Japanese) |
 
 ## Compatibility
 
