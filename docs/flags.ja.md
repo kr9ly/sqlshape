@@ -2,55 +2,51 @@
 
 [English](flags.md)
 
-`cmd/sqlshape`は`go vet -vettool`互換の検査器。`sqlshape ./...`、`sqlshape vet ./...`、
-`go vet -vettool=$(which sqlshape) ./...`のどれでも走り、下のフラグはどの場合も同じように渡す。
-マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）には固有のフラグがあり、
-[migrations.ja.md](migrations.ja.md) に載せてある。
+`cmd/sqlshape`は`go vet -vettool`互換の検査器である。`sqlshape ./...`、`sqlshape vet ./...`、`go vet -vettool=$(which sqlshape) ./...`のどれでも実行でき、以下のフラグはどの形でも同じように渡せる。マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。
 
 ## 検査器のフラグ
 
 | フラグ | 既定 | 意味 |
 |---|---|---|
-| `-schema PATH` | パッケージから上に辿って最も近い`schema.sql`か`schema/` | 検査対象のスキーマ。ディレクトリなら`*.sql`を名前順に適用 |
-| `-strict` | off | 助言的な指摘も報告する（[下記](#-strict)） |
-| `-no-table-reads` | off | SELECTと書き込みの読み部分はビューを通す。テーブルはINSERT / UPDATE / DELETE / MERGEの対象にはなれる |
-| `-no-tables` | off | テーブルへの直接参照を一切禁じる: アプリケーションコードはビューを読み関数を呼ぶ |
-| `-schemas=a_api,b_private` | 全部 | このコードが参照してよいPostgreSQLスキーマ（1つのデータベース上のサービス境界） |
-| `-require-columns=tenant_id` | なし | すべての文がその列を持つ各テーブルで等値による固定をしなければならない。INSERTは代入する（列を固定する行レベルセキュリティのポリシーでも満たせる） |
-| `-raw-sql=constant` | `constant` | sqlshape外のドライバ呼び出し（pgx / `database/sql`の`Query`、`Exec`、…）: `constant`はSQLが定数文字列であることを求め、`forbid`は拒否し、`allow`は無視する |
+| `-schema PATH` | パッケージから上に辿って最初に見つかる`schema.sql`か`schema/` | 検査に使うスキーマ。ディレクトリなら`*.sql`を名前順に適用する |
+| `-strict` | off | 助言も報告する（[下記](#-strict)） |
+| `-no-table-reads` | off | テーブルの読み取りを禁じる。SELECTも書き込み中の読み取り部分もビューを通す。INSERT / UPDATE / DELETE / MERGEの対象にはテーブルを使える |
+| `-no-tables` | off | テーブルへの参照を一切禁じる。アプリケーションはビューを読み、関数を呼ぶ |
+| `-schemas=a_api,b_private` | 全部 | このコードが参照してよいPostgreSQLのスキーマ。1つのデータベースを複数サービスで使うときの境界 |
+| `-require-columns=tenant_id` | なし | すべての文が、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTは値を入れなければならない。その列を固定する行レベルセキュリティのポリシーがあれば満たしたことになる |
+| `-raw-sql=constant` | `constant` | sqlshapeを通さないドライバ呼び出し（pgx / `database/sql`の`Query`、`Exec`など）の扱い。`constant`はSQL引数が定数であることを要求し、`forbid`は拒否し、`allow`は無視する |
 | `-raw-sql-allow=pkg/...` | なし | `-raw-sql=forbid`を適用しないパッケージ（`/...`で終わる接頭辞も可） |
-| `-coverage` | off | パッケージごとに検査した`Query` / `One`宣言の数と、検査できなかった数（定数でないテンプレート）を報告 |
-| `-sync-comments` | off | スキーマの`COMMENT ON`から結果structのフィールドと型にdocコメントを提案する（`-fix`で適用） |
-| `-fix` | off | 提案された修正（structの書き換え、docコメント）をソースに適用する |
+| `-coverage` | off | パッケージごとに、検査した`Query` / `One`の数と、検査できなかった数（テンプレートが定数でないもの）を報告する |
+| `-sync-comments` | off | スキーマの`COMMENT ON`から、結果の構造体のフィールドと型にdocコメントを提案する（`-fix`で適用） |
+| `-fix` | off | 提案された修正（構造体の書き換え、docコメント）をソースに適用する |
 
 ## `-strict`
 
-`-strict`は助言的な指摘を加える: 合法で意図的かもしれないが、一目見る価値のあるもの。文について:
+`-strict`を付けると助言が加わる。ルール違反ではなく、意図してそう書いた可能性もあるが、一度見直す価値のあるもの、である。文についての助言:
 
-- どの展開も読まない`P`のフィールド
-- 無名のGo型（`string`、`int64`）で運ばれるenum・ドメイン・キー列。バインディングの検査が追えない
-- `time.Time`で受けた`timestamp`や`date`（ゾーン、または時刻が捏造される）
-- 非ポインタのenumパラメータ: 零値`""`はラベルでなく実行時に失敗する
-- `DEFAULT`やidentityを持つ列に常に書き込む非nullableなパラメータ。データベースの既定値が適用されない
-- `ORDER BY`の無い`LIMIT`: どの行が返るか未定義
-- enumの比較や`ORDER BY`。アルファベット順でなく宣言順で並ぶ
-- 先頭列にインデックスの無いテーブル述語（全表走査）、プランナーがビューに押し込めないビュー述語
-  （ビューに`LIMIT` / `OFFSET`、集合演算、ウィンドウ関数がある）
+- どの展開でも使われていない`P`のフィールド
+- enum・ドメイン・キー列を無名のGo型（`string`、`int64`）で受けている。結びつきの検査ができない
+- `timestamp`や`date`を`time.Time`で受けている。タイムゾーンや時刻の情報が無いのに補われる
+- enumのパラメータがポインタでない。ゼロ値の`""`はラベルではないので、未設定のまま渡すと実行時に失敗する
+- `DEFAULT`やidentityを持つ列に、NULLを表せない型のパラメータで常に値を書き込んでいる。データベース側の既定値が使われることがない
+- `ORDER BY`の無い`LIMIT`。どの行が返るか決まらない
+- enumの比較や`ORDER BY`。アルファベット順ではなく宣言順で並ぶ
+- 先頭列にインデックスの無い条件で絞っているテーブル（全表走査になる）、プランナーがビューの中に押し込めない条件（ビューに`LIMIT` / `OFFSET`、集合演算、ウィンドウ関数がある）
 - 分岐の組み合わせが256を超えて疎に検査されたテンプレート
-- 一意インデックスの無いビューへの`MatView.RefreshConcurrently`
-- `FORCE ROW LEVEL SECURITY`の無いテーブルでポリシーにより満たされた`-require-columns`（所有者には固定が効かない）
+- 一意インデックスの無いビューに対する`MatView.RefreshConcurrently`
+- `-require-columns`を、`FORCE ROW LEVEL SECURITY`でないテーブルのポリシーで満たしている。所有者には効かない
 
-スキーマについて:
+スキーマについての助言:
 
-- enum列: seed済みlookupテーブルの方が変えやすく、同じように検査される
+- enumの列。seed済みlookupテーブルのほうが変更しやすく、検査は同じようにできる
 - 一意インデックスの無いマテリアライズドビュー。concurrentlyにrefreshできない
-- 行レベルセキュリティが有効でポリシーの無いテーブル: 所有者以外は行が見えない
-- `current_setting(name, true)`を読むポリシー: 設定しなかったセッションはNULLを得て、黙って行が見えなくなる
-- 所有者を縛らないポリシーを持つテーブルに到達する`SECURITY DEFINER`関数
+- 行レベルセキュリティが有効なのにポリシーが無いテーブル。所有者以外には行が見えない
+- `current_setting(name, true)`を読むポリシー。設定していないセッションではNULLになり、エラーにならずに何も見えなくなる
+- 所有者にはポリシーが効かないテーブルに到達する`SECURITY DEFINER`関数
 
 ## エディタで使う
 
-goplsはサードパーティのアナライザーを読めないので、検査器は`go vet`として走る。Goのエディタ統合は保存時に走らせる:
+goplsはサードパーティのアナライザーを読み込めないので、検査器は`go vet`として実行する。Goのエディタ統合は保存時に`go vet`を走らせられる:
 
 ```
 $ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
@@ -64,25 +60,19 @@ VS Code（Go拡張）:
 "go.vetFlags": ["-vettool=/path/to/sqlshape", "-strict"]
 ```
 
-指摘はProblemsペインに出る。他のエディタ: 同じ`go vet`コマンドを保存時のlinterとして走らせるか、
-golangci-lintに`sqlshape`をモジュールプラグインとして加える。
+指摘はProblemsペインに出る。他のエディタでは、同じ`go vet`コマンドを保存時のlinterとして登録するか、golangci-lintに`sqlshape`をモジュールプラグインとして追加する。
 
-### SQLから文の型を書き起こす
+### SQLから構造体を書き起こす
 
-`type OrderRow struct{}`と`type OrderParams struct{}`を空で宣言し、クエリを書いて保存する。すべての結果列が
-フィールド無しとして、すべての`{{.X}}`がパス無しとして報告され、それぞれの診断にクエリからstructを書き換える
-quick fixが付く:
+`type OrderRow struct{}`と`type OrderParams struct{}`を空で宣言し、クエリを書いて保存する。すべての結果列について対応するフィールドが無い、すべての`{{.X}}`について対応するパスが無い、という診断が出て、それぞれにクエリから構造体を書き換えるquick fixが付く。書き起こされる内容:
 
-- すべての分岐の列。一部の分岐だけが選ぶ列はポインタ
-- nullableな列はポインタ
-- enumとlookupの値は、モジュール内で既に束縛されているGo型
-- レコードと複合型はネストしたstruct、その配列はスライス
-- `COMMENT ON`からのdocコメント
-- `P`について: パスごとにSQLが期待する型のフィールド（`.Filter.Name`はネストしたstruct、`range`はスライス）、
-  フィールドを調べるだけの`{{if .Flag}}`ごとに`bool`
+- すべての分岐の列。一部の分岐だけが選ぶ列はポインタになる
+- NULLになりうる列はポインタになる
+- enumやlookupの値は、モジュール内で既に結びつけられているGo型になる
+- レコードと複合型はネストした構造体、その配列はスライスになる
+- `COMMENT ON`があればdocコメントになる
+- `P`については、パスごとにSQL側が期待する型のフィールド（`.Filter.Name`ならネストした構造体、`range`ならスライス）と、`{{if .Flag}}`で調べるだけのフィールドには`bool`
 
-同じ修正は以後のすべての不一致（SELECTに足した列、スキーマで変えた型）に付く。まだ合っているフィールドは名前・
-docコメント・タグ・型を保つので、選択肢から選んだ型（`numeric`の`decimal.Decimal`）は残る。`numeric`はモジュールが
-既にimportしていれば`shopspring/decimal.Decimal`、なければ`pgtype.Numeric`。`uuid`も同様に使用中のuuidパッケージを選ぶ。
+同じquick fixは、以後に不一致が出たとき（SELECTに列を足した、スキーマで型を変えた）にも付く。まだ合っているフィールドの名前・docコメント・タグ・型は保たれるので、選択肢の中から選んだ型（`numeric`に対する`decimal.Decimal`など）は残る。`numeric`はモジュールが`shopspring/decimal`を既にimportしていれば`decimal.Decimal`、していなければ`pgtype.Numeric`になる。`uuid`も同様に、使用中のuuidパッケージの型になる。
 
-コマンドラインからは`sqlshape -fix ./...`で修正を適用し、エディタからはProblemsペインのquick fixで。
+コマンドラインからは`sqlshape -fix ./...`で適用する。エディタからはProblemsペインのquick fixで適用する。

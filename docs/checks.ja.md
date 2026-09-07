@@ -1,217 +1,144 @@
-# 検査器が検証するもの
+# 検査器が確かめること
 
 [English](checks.md)
 
-パッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、
-`sqlshape.MatView(...)`はすべて`go/analysis`アナライザーが見つけ、テンプレートを分岐の全組み合わせに展開し
-（[templates.ja.md](templates.ja.md)）、各展開を`schema.sql`に対して解析し、その結論をGoの型と比較する。
-このページは何を比較するかを、答える問いごとにまとめたもの。
+検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページでは、何と何を突き合わせるのかを、読者が持つ問いごとにまとめる。
 
-## 形: Goコードは文に合っているか
+## 形: Goの構造体はSQLと合っているか
 
-結果列 ↔ `R`。すべての展開のすべての結果列は`R`のちょうど1つのフィールドに名前で束縛されなければならない。
-順に`col:"..."`タグ、`db:"..."`タグ、フィールド名のsnake_case。受け手の無い列も、列の無いフィールドも報告される。
-名前の無い列（`SELECT 1 + 1`）や同名の2列（`o.id, u.id`）は束縛できず、検査器はどれに別名を付けるべきかを言う。
-`R`がスカラー（`int64`、`string`、…）なら文は1列を返さなければならない。
+結果列と`R`の対応。展開したすべてのSQLについて、すべての結果列が`R`のフィールドのどれか1つに名前で対応しなければならない。対応の順序は`col:"..."`タグ、`db:"..."`タグ、フィールド名をsnake_caseにしたもの。受け手の無い列も、対応する列の無いフィールドも報告される。名前の無い列（`SELECT 1 + 1`）や同名の列が2つある場合（`o.id, u.id`）は対応づけられないので、検査器はどの列に別名を付けるべきかを言う。`R`がスカラー（`int64`、`string`など）なら、SQLは1列だけを返さなければならない。
 
-nullability。NULLになりうる列にはnullableなフィールドが要る: ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、
-または`sql.Scanner`を実装する型。アナライザーはカタログ（`NOT NULL`、主キー、`GENERATED`）、述語
-（`WHERE col IS NOT NULL`、`col = ...`）、関数（非NULL入力に対するstrict関数、非NULL既定値の`coalesce`）から
-nullabilityを導き、JOIN（外部結合の内側はnullableになる）とビュー（ビュー自身のWHEREが列を絞る）を通して伝える。
-主張はどちら側からでも上書きできる: フィールドタグ`col:",notnull"`、テンプレート行`-- sqlshape: not null col, col`
-（SQL側の双子）、schema.sqlの`CREATE FUNCTION`の上の`-- sqlshape: not null`（その結果について）。
+nullability。NULLになりうる列は、NULLを受けられるフィールドで受けなければならない。ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、または`sql.Scanner`を実装した型である。列がNULLになりうるかは、カタログ（`NOT NULL`、主キー、`GENERATED`）、WHERE句（`col IS NOT NULL`、`col = ...`）、関数（引数がNULLでないstrict関数、既定値がNULLでない`coalesce`）から判定し、JOIN（外部結合の内側はNULLになりうる）とビュー（ビュー自身のWHERE句で絞られる）を通して伝える。判定はどちらの側からでも上書きできる。Go側ならフィールドタグ`col:",notnull"`、SQL側ならテンプレートの`-- sqlshape: not null col, col`行、関数の戻り値なら`schema.sql`の`CREATE FUNCTION`の上の`-- sqlshape: not null`。
 
-省略可能な投影。一部の分岐だけが選ぶ列はnullableなフィールドで受けてよく、選ばない分岐ではnilのまま。
-どの分岐も選ばないフィールドはやはりエラー。
+一部の分岐だけが選ぶ列。ある分岐でだけSELECTされる列は、NULLを受けられるフィールドで受ける。その列を選ばない分岐ではnilのままになる。どの分岐も選ばない列に対応するフィールドはエラーである。
 
-パラメータ ↔ `P`。`{{.X}}`はそれぞれ`$n`パラメータになり、アナライザーは使われた場所から各`$n`に要る
-PostgreSQLの型を推論する（`WHERE id = $1` → `bigint`、`= ANY($1)` → 配列）。パスは`P`上で解決され
-（`.Filter.Name`はネストしたstructへ、`range`の変数はスライスの要素へ）、Goの型は下の型表と照らされる。
-不一致、桁落ちする変換（`int64`を`integer`へ）、SQL側がNULLを要するかもしれない場所の非nullableなGo型は報告される。
-どの展開も読まない`P`のフィールドは`-strict`で報告される。
+パラメータと`P`の対応。`{{.X}}`はそれぞれ`$n`パラメータになり、検査器はその`$n`が使われている場所からPostgreSQL側で必要な型を推論する（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）。パスは`P`の上で解決され（`.Filter.Name`はネストした構造体を辿り、`range`の変数はスライスの要素を指す）、その位置のGo型を下の型表と照らす。型が合わない、精度が落ちる変換になる（`int64`を`integer`に渡す）、SQL側でNULLが必要になりうるのにGo型がNULLを表せない、のいずれも報告される。どの展開でも読まれない`P`のフィールドは`-strict`で報告される。
 
-埋め込みstructは平坦化される: `type Row struct { Base; Note *string }`はBaseの列を自分の列として受ける
-（2つのフィールドが1列を束縛するのはエラー）。`{{.ID}}`は`P`の昇格フィールドに届く。名前付きのstructフィールド、
-または`col:"..."`タグを持つ埋め込みフィールドは、代わりにネストした行になる。
+埋め込み構造体。`type Row struct { Base; Note *string }`のように埋め込むと、Baseのフィールドは自分のフィールドとして列を受ける（2つのフィールドが同じ列を受けようとするとエラー）。`{{.ID}}`も`P`の昇格フィールドに届く。名前付きの構造体フィールド、または`col:"..."`タグを付けた埋め込みフィールドは、平坦化されずにネストした行として扱われる。
 
-ネストした行。`array_agg(row(o.id, o.total))`、`array_agg(o)`、`row(...)`、複合型の列はstructまたはstructの
-スライスで受ける。無名レコードならstructのフィールドは位置で、名前付き複合型なら名前と順序で照合される。
-ランタイムはフィールドごとに読む（[runtime.ja.md](runtime.ja.md#ネストした行とユーザー型)）。
+ネストした行。`array_agg(row(o.id, o.total))`、`array_agg(o)`、`row(...)`、複合型の列は、構造体または構造体のスライスで受ける。無名のレコードなら構造体のフィールドと位置で、名前付きの複合型なら名前と順序で対応づける。ランタイムはフィールドごとに読み込む（[runtime.ja.md](runtime.ja.md#ネストした行とユーザー定義型)）。
 
-複合型パラメータ。SQLが`money_amount`を期待する場所の`{{.Price}}`はstructを、`order_items[]`を期待する場所の
-`{{.Items}}`はstructのスライスを取る。フィールドは型の列とネストした行と同じ規則で並べられる。
+複合型のパラメータ。SQL側が`money_amount`を期待する位置の`{{.Price}}`には構造体を、`order_items[]`を期待する位置の`{{.Items}}`には構造体のスライスを渡す。フィールドと型の列の対応づけはネストした行と同じ規則である。
 
-Go型表はpgxが実際にscan / encodeするものを、稼働中のPostgreSQLで検証したもの:
+Go型の表。pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQLで確認したもの:
 
 | PostgreSQL | Go |
 |---|---|
 | `bool` | `bool` |
-| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int`（狭いGo型は注記付きで受理: `bigint into int32`） |
-| `real` / `double precision` | `float32` / `float64`（`double precision into float32`は注記） |
-| `numeric` | `string`（全桁保持）、`pgtype.Numeric`、`big.Rat`、`shopspring/decimal.Decimal`、`apd.Decimal`。floatや整数は精度の注記付きで受理 |
-| `text` / `varchar` / `char` / `name` / `citext`などテキスト系の拡張型 | `string`（`string`はどんなパラメータ型としてもencodeできる） |
+| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int`（狭いGo型で受けると`bigint into int32`のような注記が付く） |
+| `real` / `double precision` | `float32` / `float64`（`double precision into float32`は注記付き） |
+| `numeric` | `string`（全桁が保たれる）、`pgtype.Numeric`、`big.Rat`、`shopspring/decimal.Decimal`、`apd.Decimal`。floatや整数でも受けられるが精度の注記が付く |
+| `text` / `varchar` / `char` / `name` / `citext`などテキスト系の拡張型 | `string`（`string`はパラメータとしてはどの型にも渡せる） |
 | `bytea` | `[]byte` |
-| `uuid` | `uuid.UUID`（どのパッケージでも）、`[16]byte`、`string` |
-| `timestamptz` / `timestamp` / `date` | `time.Time`（`-strict`は`timestamp`と`date`がゾーン / 時刻を失うことを注記） |
+| `uuid` | `uuid.UUID`（パッケージは問わない）、`[16]byte`、`string` |
+| `timestamptz` / `timestamp` / `date` | `time.Time`（`timestamp`と`date`はタイムゾーンや時刻が失われるので`-strict`で注記） |
 | `time` | `time.Time`、`string` |
 | `interval` | `time.Duration`、`pgtype.Interval` |
-| `json` / `jsonb` | `[]byte`、`json.RawMessage`、`string`、またはpgxがunmarshalできるstruct / スライス / マップ |
+| `json` / `jsonb` | `[]byte`、`json.RawMessage`、`string`、またはpgxがunmarshalできる構造体・スライス・マップ |
 | `inet` | `netip.Addr` / `netip.Prefix` |
 | `cidr` | `netip.Prefix` |
 | `macaddr` | `net.HardwareAddr` / `string` |
 | `hstore` | `map[string]*string` |
 | `T[]` | `[]Go(T)` |
-| 範囲型 | `pgtype.Range[T]`、`T`はサブタイプと照合される（ユーザー定義の範囲型も） |
+| 範囲型 | `pgtype.Range[T]`。`T`はサブタイプと照合される（ユーザー定義の範囲型も同様） |
 | 多重範囲型 | `pgtype.Multirange[pgtype.Range[T]]` |
-| `bit` / `point` / `tsvector` | `pgtype`の値 |
+| `bit` / `point` / `tsvector` | `pgtype`の対応する型 |
 | `xml` / `money` / `tsquery` / `jsonpath` / `timetz` | `string` |
 | `oid` | `uint32` |
-| enum、seed済みlookupのキー、CHECKの値集合 | Goのnamed string type（[下記](#意味-その値は何を表すか)） |
-| ドメイン | 基底型のGo型、またはドメインに束縛したnamed type |
-| 複合型、レコード | struct |
+| enum、seed済みlookupテーブルのキー、CHECKによる値集合 | Goのnamed string type（[下記](#意味-その値は何を表しているか)） |
+| ドメイン | 基底型に対応するGo型、またはドメインに結びつけたnamed type |
+| 複合型、レコード | 構造体 |
 
-宣言型バインディング。Goの型はdocコメントで自分が運ぶPostgreSQLの型を名指しできる:
+宣言型バインディング。Goの型に、それがどのPostgreSQL型を運ぶのかをdocコメントで宣言できる:
 
 ```go
 // sqlshape: type money_amount
 type Money struct{ ... }
 ```
 
-検査器はSQLが`money_amount`（その配列と、その上のドメインを含む）を持つ場所でだけ`Money`を受理し、それ以外では
-報告する。ワイヤ形式は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerはテキスト形式を受ける）。
-複合型をdecimalのラッパーに、拡張型をnamed typeにするのはこの方法で。バインディングは型と一緒にパッケージを跨ぐ。
+こうすると検査器は、SQL側が`money_amount`（その配列と、それを基底型とするドメインを含む）である位置でだけ`Money`を受け入れ、それ以外の位置では報告する。値の変換は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerにはテキスト形式が渡る）。複合型をdecimalのラッパーで受けたいときや、拡張の型を自前の型で受けたいときに使う。宣言は型と一緒にパッケージを越えて効く。
 
-COPY。`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される:
-テーブルと列は存在しなければならず、各列の型はそれを供給するフィールドに合っていなければならず、
-省いた列はすべて既定値を持つか生成列でなければならない。
+COPY。`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がそれを供給するフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であることを確かめる。
 
-## 意味: その値は何を表すか
+## 意味: その値は何を表しているか
 
-意味を持つ列に出会ったGoのnamed typeは、登録なしに使用箇所からそれに束縛され、以後その型が現れる
-すべての場所で束縛が検査される（パッケージ跨ぎは`go/analysis`のfactで）。
+意味を持つ列に使われたGoのnamed typeは、登録なしに、その使用箇所からその意味に結びつけられる。以後、その型が現れるすべての場所で結びつきが検査される（パッケージを越える場合は`go/analysis`のfactで伝わる）。
 
-enum、lookupテーブル、CHECKの値集合。enum列、seed済みlookupテーブルのキー、`CHECK (col IN (...))`を持つ列に
-出会ったGoのnamed string typeはその値集合に束縛される。型付き定数はラベルと両方向にdiffされる: 定数の無いラベルも
-ラベルの無い定数も報告され、`T("typo")`変換も、全ラベルを網羅しない`switch`も報告される。型は`Known() bool`を
-実装してよく、行マッパーはこのビルドが知らないラベルを`*UnknownLabelError`で拒否する。
+enum、lookupテーブル、CHECKによる値集合。enumの列、seed済みlookupテーブルのキー、`CHECK (col IN (...))`の付いた列に使われたGoのnamed string typeは、その値集合に結びつけられる。型付き定数はラベルと両方向に比較される。定数の無いラベルも、ラベルの無い定数も報告され、`T("typo")`のような変換も、全ラベルを網羅していない`switch`も報告される。型に`Known() bool`を実装しておくと、行マッパーはこのビルドが知らないラベルを`*UnknownLabelError`として拒否する。
 
-seed済みlookupテーブルは、行がschema.sqlに普通の`INSERT ... VALUES`で書かれているテーブル。行はスキーマの一部で、
-検査器はキー列の値を、キーやそれを参照する列が使われるあらゆる場所で値集合として使い、マイグレーションはテーブルの内容を
-宣言に揃え続ける（[migrations.ja.md](migrations.ja.md#seed済みテーブル)）。値集合の置き場として推奨する。
-行はラベルと並び順を持てる、使用中の行は外部キーが守る、行を消せば値を退役させられる、JOINで分析側にも名前が届く。
-`-strict`はすべてのenum列でそう言う。
+seed済みlookupテーブルとは、行を`schema.sql`に普通の`INSERT ... VALUES`で書いておくテーブルのことである。その行はスキーマの一部として扱われる。検査器はキー列の値を、キー列やそれを参照する列が使われるすべての場所で値集合として使い、マイグレーションはテーブルの内容を宣言どおりに揃え続ける（[migrations.ja.md](migrations.ja.md#seed済みテーブル)）。値集合の置き場としてはこれを推奨する。行にラベルや並び順を持たせられ、使用中の行は外部キーが守り、行を消せば値を廃止でき、JOINすれば分析側にも名前が届くからである。`-strict`はenumの列すべてにこのことを注記する。
 
-キーの同一性。キー列（主キー、または外部キーで主キーから派生した列）に出会ったGoのnamed typeはその同一性に束縛される。
-`orders.id`を期待する場所に渡された`UserID`は、両方`bigint`でも報告される。複合キーは位置で束縛される。
+キーの同一性。キー列（主キー、または外部キーで主キーから派生した列）に使われたGoのnamed typeは、そのキーの同一性に結びつけられる。`orders.id`を期待する位置に`UserID`を渡すと、どちらも`bigint`であっても報告される。複合キーは位置で結びつく。
 
-ドメイン。ドメインに出会ったGoのnamed typeはそれに束縛される。ドメインの混用や、ドメインを期待する場所への基底型は
-報告される。SQL内ではドメインは不透明な単位: `price_yen + weight_g`や`balance > total`はPostgreSQLが受理しても
-報告される。リテラルとパラメータは単位を引き継ぎ、`yen + yen`、`yen * n`、`abs(yen)`、`coalesce(yen, 0)`はyenのまま、
-基底型への明示キャストで単位が落ちる。
+ドメイン。ドメインの列に使われたGoのnamed typeはそのドメインに結びつけられる。別のドメインの型を渡したり、ドメインを期待する位置に基底型を渡したりすると報告される。SQLの中でも、ドメインは基底型とは別の単位として扱われる。`price_yen + weight_g`や`balance > total`は、PostgreSQLは受け付けるが検査器は報告する。リテラルとパラメータは相手の単位を引き継ぎ、`yen + yen`、`yen * n`、`abs(yen)`、`coalesce(yen, 0)`はyenのままで、基底型への明示的なキャストで単位が外れる。
 
-忠実さ（`-strict`）。無名のGo型で運ばれるenum・ドメイン・キー列は検査できないので報告される。`time.Time`で受けた
-`timestamp` / `date`、非ポインタのenumパラメータ（零値`""`はラベルでなく実行時に失敗する）も報告される。
+表現の忠実さ（`-strict`）。enum・ドメイン・キー列を無名のGo型で受けていると、上記の検査ができないので報告される。`timestamp` / `date`を`time.Time`で受けている場合、enumのパラメータがポインタでない場合（ゼロ値`""`はラベルではないので実行時に失敗する）も報告される。
 
-既定値の所有者（`-strict`）。`DEFAULT`を持つ列に常に書き込む非nullableなパラメータは、データベースの既定値が
-決して適用されないということ。どちらが所有するか決める（列を`{{if}}`で囲めばデータベース側の既定値が使われる）。
+既定値の所有者（`-strict`）。`DEFAULT`のある列に、NULLを表せない型のパラメータで常に値を書き込んでいると、データベース側の既定値は決して使われない。どちらが既定値を持つのかを決めるべきである（列を`{{if}}`で囲めばデータベース側の既定値が使われる）。
 
 ## 失敗モード: この書き込みは何で失敗しうるか
 
-INSERT / UPDATE / DELETE / MERGEの各展開について、アナライザーは違反しうる制約を列挙する。一意キーと主キー、
-外部キーの両方向（挿入した行が存在しない親を参照する、削除した行がまだ参照されている）、CHECK、ドメインのCHECK、
-書き込む値がNULLになりうるときのNOT NULL。テンプレートはそれらを宣言しなければならない:
+INSERT / UPDATE / DELETE / MERGEの各展開について、検査器は違反しうる制約を列挙する。一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULLである。テンプレートはこれらを宣言しなければならない:
 
 ```sql
 -- sqlshape: expect order_items_pkey, order_items_order_id_fkey, order_items_qty_check
 INSERT INTO order_items (order_id, line_no, sku, qty, price) VALUES (...)
 ```
 
-行に無い起こりうる違反も、どの展開でも起こりえない宣言も報告されるので、行は正確な契約のまま保たれる。
-実行時にクラス23のエラーは同じキーの`ConstraintError`にラップされ、
-`sqlshape.Violates(err, "order_items_qty_check")`で読み戻せる（[runtime.ja.md](runtime.ja.md#エラー)）。
+起こりうるのに宣言していない違反も、宣言しているのにどの展開でも起こりえない違反も報告されるので、expect行は常に正確な一覧として保たれる。実行時には、SQLSTATEクラス23のエラーが同じキーを持つ`ConstraintError`に包まれて返り、`sqlshape.Violates(err, "order_items_qty_check")`で判定できる（[runtime.ja.md](runtime.ja.md#エラー)）。
 
-キー。名前付き制約はその名前。無名の制約にはPostgreSQLが付ける名前が付くので、診断のキー、expect行のキー、
-実行時エラーのキーは同じ文字列になる:
+キーの名前。名前付きの制約はその名前がキーになる。名前を付けなかった制約にはPostgreSQLが付ける名前がそのまま使われるので、診断に出る名前、expect行に書く名前、実行時エラーの名前は同じ文字列になる:
 
 | 制約 | キー | 例 |
 |---|---|---|
 | `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
 | `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
-| `(a)`上の`REFERENCES` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| `(a)`を参照するテーブル`CHECK` | `<table>_<a>_check`（複数列、または列を参照しないCHECKは`<table>_check`） | `orders_total_check` |
+| 列`(a)`の`REFERENCES` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
+| 列`(a)`を参照するテーブルの`CHECK` | `<table>_<a>_check`（複数列を参照するか、列を参照しないCHECKは`<table>_check`） | `orders_total_check` |
 | ドメインの`CHECK` | `<domain>_check` | `yen_check` |
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
-| トリガーのエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
+| トリガーが送出するエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
 
-同じ名前になる2つ目の制約にはPostgreSQLと同様に番号が付く（`orders_total_check1`）。診断は由来を書き出す:
-`may violate customers_email_key (UNIQUE (email) on customers, SQLSTATE 23505)`。
+同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。診断には由来も書かれる: `may violate customers_email_key (UNIQUE (email) on customers, SQLSTATE 23505)`。
 
-パラメータからのNOT NULL。NULLになりうる値が`{{.X}}`のとき、`X`のGo型がnilになりえなければ（`string`は
-NULLを送らない）その違反は落とされる。ポインタ、スライス、マップは残す。
+パラメータ経由のNOT NULL。NULLになりうる値が`{{.X}}`であるとき、`X`のGo型がnilを表せない型（`string`はNULLを送れない）なら、その違反は候補から外れる。ポインタ、スライス、マップなら残る。
 
-トリガー。raiseするトリガー関数はschema.sqlで注釈する:
+トリガー。エラーを送出するトリガー関数には`schema.sql`で注釈を付ける:
 
 ```sql
 -- sqlshape: error P0401 = OrderTooLarge
 CREATE FUNCTION check_order_size() RETURNS trigger ...
 ```
 
-そのSQLSTATE（付けた名前で）は、トリガーが付いたテーブルへのINSERT / UPDATE / DELETEの失敗モードに、
-発火するイベントについて加わる。
+このSQLSTATEは（付けた名前で）、トリガーが付いているテーブルへのINSERT / UPDATE / DELETEのうち、トリガーが発火するイベントの失敗モードに加わる。
 
-関数経由。ユーザー関数の呼び出しはその本体の失敗モード（呼び出す関数のもの、宣言したエラーも含めて）を運ぶので、
-`SELECT place_order({{.CustomerID}}, {{.Note}})`は中のINSERTがするのと同じように外部キー、ドメインのCHECK、
-トリガーのコードを宣言する。診断は`through place_order()`と言う。本体がパラメータに帰すNOT NULLは呼び出しの
-引数に辿られ、`STRICT`関数はNULLでは呼ばれもしないので、その引数は違反を落とす。
+関数経由。ユーザー定義関数の呼び出しは、その本体の失敗モード（本体が呼ぶ関数のもの、宣言したエラーも含む）を引き継ぐ。`SELECT place_order({{.CustomerID}}, {{.Note}})`は、中で実行されるINSERTと同じように外部キー、ドメインのCHECK、トリガーのSQLSTATEを宣言しなければならない。診断には`through place_order()`と書かれる。本体でパラメータに由来するとわかったNOT NULLは、呼び出し側の引数まで辿られる。`STRICT`な関数はNULLでは呼ばれないので、その引数からの違反は候補から外れる。
 
-## カーディナリティ: `One`は2行返しうるか
+## カーディナリティ: `One`は本当に1行以下か
 
-`sqlshape.One[R, P]`は1行以下を主張し、検査器はすべての展開について別々に証明する。SELECTが単一なのは、
-すべてのFROM項目が一意キー（主キー、`UNIQUE`、一意インデックス、または文が述語を繰り返す部分一意インデックス）を
-リテラル・パラメータ・外側参照・非相関スカラーサブクエリとの等値で固定されているとき。等値はJOIN
-（外部結合のONはnullable側だけ固定する）、ビュー、サブクエリ、CTEを通して追う。`GROUP BY`の無い集約、
-定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、単一行の`INSERT ... RETURNING`も単一。
-`FULL JOIN`は決して単一でない。`{{if .ID}} AND id = {{.ID}} {{end}}`はelse分岐で落ちる。それが狙い。
-実行時は`Get`が`ErrNoRows`を返し、`Find`は有無を報告し、データベースが証明に反したらどちらも`ErrManyRows`を返す。
+`sqlshape.One[R, P]`は結果が1行以下であることを主張し、検査器はそれを展開ごとに証明する。SELECTが1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）が、リテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているときである。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡される。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`{{if .ID}} AND id = {{.ID}} {{end}}`はelse側の展開で証明に失敗するが、それがこの検査の意図である。実行時には`Get`は無ければ`ErrNoRows`を返し、`Find`は有無を返し、データベースが証明に反して2行返したらどちらも`ErrManyRows`を返す。
 
 ## 境界: このコードは何を見てよいか
 
-可視性ポリシー。schema.sqlで注釈したテーブル
+可視性ポリシー。`schema.sql`でテーブルに注釈を付ける:
 
 ```sql
 -- sqlshape: visible where deleted_at IS NULL
 CREATE TABLE memos (...)
 ```
 
-はあらゆる場所でその述語を通して読まれなければならない。ビューも含む。述語を繰り返すビューは、その読み手について
-満たしたことになる。テンプレートは`-- sqlshape: unfiltered memos`で明示的に外れる。`RETURNING`リストは
-検査しない（今書いた行だから）。
+こうすると、このテーブルを読むすべての文はこの条件を持たなければならない。ビューも含む。この条件を持つビューを通して読めば、そのビューの利用側は条件を満たしたことになる。意図的に条件なしで読む文には`-- sqlshape: unfiltered memos`と書いて除外する。`RETURNING`の列は直前に書いた行なので検査しない。
 
-行レベルセキュリティはスキーマの一部。`CREATE POLICY`の述語はPostgreSQLと同じようにテーブルに対して型検査され
-（boolean、集約やウィンドウ関数なし、ドメインを尊重）、ポリシーと`ENABLE / FORCE ROW LEVEL SECURITY`は
-テーブルと一緒にdiffとapplyを通る。行セキュリティが無効なテーブル上のポリシーはスキーマの問題。`-strict`では:
-ポリシーの無い行セキュリティ有効（所有者以外は行が見えない）、テーブルに到達する`SECURITY DEFINER`関数
-（所有者の権限はテーブルがFORCEしない限りポリシーを飛ばす）、`current_setting(name, true)`を読むポリシー
-（設定しなかったセッションは黙って行が見えなくなる）。検査器は文にポリシーの述語を繰り返させない。絞るのはデータベース。
+行レベルセキュリティ。ポリシーはスキーマの一部として扱われる。`CREATE POLICY`の条件式はPostgreSQLと同じ規則でテーブルに対して型検査され（boolean、集約やウィンドウ関数は不可、ドメインの単位を尊重）、ポリシーと`ENABLE / FORCE ROW LEVEL SECURITY`の設定はテーブルと一緒にdiffとapplyを通る。行セキュリティを有効にしていないテーブルにポリシーがあればスキーマの問題として報告する。`-strict`ではさらに、行セキュリティが有効なのにポリシーが無いテーブル（所有者以外には行が見えない）、そのテーブルに到達する`SECURITY DEFINER`関数（テーブルが`FORCE`していない限り、所有者の権限ではポリシーが適用されない）、`current_setting(name, true)`を読むポリシー（設定していないセッションでは何も見えなくなるが、エラーにはならない）を報告する。ポリシーの条件を文の側で繰り返すことは要求しない。絞り込むのはデータベースの仕事である。
 
-行の所属。`-require-columns=tenant_id`はすべての文に、その列を持つ各テーブルで等値による固定を求める。INSERTは
-代入しなければならない。列を固定する行レベルセキュリティのポリシーは要件を満たす（`-strict`では、テーブルが行セキュリティを
-`FORCE`していないときに注記。所有者には固定が効かないから）。
+行の所属。`-require-columns=tenant_id`を指定すると、すべての文は、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTはその列に値を入れなければならない。行レベルセキュリティのポリシーがその列を固定していれば、それでも要件を満たす（ただしテーブルが`FORCE ROW LEVEL SECURITY`でなければ所有者には効かないので、`-strict`で注記する）。
 
-テーブルアクセス。`-no-table-reads`はテーブルの読みを禁じる: SELECTと、書き込みの読み部分はビューを通す。テーブルは
-INSERT / UPDATE / DELETE / MERGEの対象にはなれる。`-no-tables`はテーブルへの直接参照をすべて禁じる: アプリケーション
-コードはビューを読み、関数を呼び、テーブルはデータベースの私的な側。`-schemas=a_api,b_private`はパッケージが参照して
-よいスキーマを限る（1つのデータベース上のサービス境界）。
+テーブルへのアクセス。`-no-table-reads`はテーブルの読み取りを禁じる。SELECTも、書き込みの中の読み取り部分もビューを通さなければならないが、INSERT / UPDATE / DELETE / MERGEの対象としてテーブルを使うことはできる。`-no-tables`はテーブルへの参照を一切禁じる。アプリケーションはビューを読み、関数を呼ぶだけで、テーブルはデータベースの内部になる。`-schemas=a_api,b_private`は、そのパッケージが参照してよいスキーマを限定する。1つのデータベースを複数のサービスで使うときの境界になる。
 
-生のドライバ呼び出し。実行時に組んだ文字列でのpgxや`database/sql`の`Query` / `Exec`は、テンプレートの保証が
-覆わない穴。`-raw-sql=constant`（既定）はそのSQL引数が定数であることを求め、`-raw-sql=forbid`はsqlshapeを
-通らない文をすべて拒否し（`-raw-sql-allow=pkg/...`でパッケージを除外）、`-raw-sql=allow`は切る。
+生のドライバ呼び出し。実行時に組み立てた文字列でpgxや`database/sql`の`Query` / `Exec`を呼ぶことは、テンプレートの保証が届かない穴である。`-raw-sql=constant`（既定）はそのSQL引数が定数であることを要求し、`-raw-sql=forbid`はsqlshapeを通らない文をすべて拒否する（`-raw-sql-allow=pkg/...`で除外パッケージを指定できる）。`-raw-sql=allow`でこの検査は切れる。
 
-## スキーマの問題
+## スキーマ自体の問題
 
-`schema.sql`自身も読み込み時に一度解析される。すべての`LANGUAGE sql`関数の本体（パラメータがスコープに入り、
-`RETURNS`の形を検査）、すべてのビュー、すべてのポリシーがPostgreSQLのCREATE時と同じように型検査され、
-seedのINSERTは冪等性と型を検査される。結果はパッケージ最初の`Query`の位置に`sqlshape: schema ...`として
-報告される。アナライザーの非助言的な注記（ドメインの不一致、常に偽の述語、照合順序の衝突）も診断になる。
+`schema.sql`は読み込み時に、それ自体も一度解析される。`LANGUAGE sql`の関数の本体（パラメータがスコープに入り、`RETURNS`の形が検査される）、ビュー、ポリシーはPostgreSQLがCREATE時に行うのと同じ型検査を受け、seedのINSERTは冪等性と型を検査される。結果はパッケージ内の最初の`Query`の位置に`sqlshape: schema ...`として報告される。アナライザーが出す助言でない注記（ドメインの不一致、常に偽になる条件、照合順序の衝突）もそのまま診断になる。
 
-`-strict`ではスキーマと文についての助言的な指摘が加わる。一覧は [flags.ja.md](flags.ja.md#-strict)。
+`-strict`ではスキーマと文についての助言が加わる。一覧は[flags.ja.md](flags.ja.md#-strict)。

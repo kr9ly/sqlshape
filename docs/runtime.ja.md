@@ -2,55 +2,44 @@
 
 [English](runtime.md)
 
-`sqlshape`パッケージは検査済みの文をpgx上で実行する。`DB`は文の実行先で、`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`
-のどれも満たすので、文はそのままトランザクション上で走る。
+`sqlshape`パッケージは、検査済みの文をpgxの上で実行する。実行先の`DB`は`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`のどれでもよいので、同じ文をトランザクションの中でもそのまま実行できる。
 
-## 文
+## 文の実行
 
 ```go
 var ListOrders = sqlshape.Query[Order, ListParams](`...`)
 
-for o, err := range ListOrders.Run(ctx, db, p) { ... }   // iter.Seq2[Order, error]、ストリーム
+for o, err := range ListOrders.Run(ctx, db, p) { ... }   // iter.Seq2[Order, error]、逐次読み出し
 orders, err := ListOrders.Collect(ctx, db, p)            // []Order
-first, err  := ListOrders.First(ctx, db, p)              // 最初の行、無ければ ErrNoRows
-tag, err    := ListOrders.Exec(ctx, db, p)               // pgconn.CommandTag、行は捨てる
+first, err  := ListOrders.First(ctx, db, p)              // 最初の行。無ければ ErrNoRows
+tag, err    := ListOrders.Exec(ctx, db, p)               // pgconn.CommandTag。行は捨てる
 ```
 
-`One[R, P]`は`Single`を返す。`Render`と`Unprepared`は同じで、実行方法は3つ:
+`One[R, P]`は`Single`を返す。`Render`と`Unprepared`は`Stmt`と同じで、実行方法は3つある:
 
 ```go
 var UserByEmail = sqlshape.One[User, struct{ Email string }](`...`)
 
 u, err     := UserByEmail.Get(ctx, db, p)    // 無ければ ErrNoRows
-u, ok, err := UserByEmail.Find(ctx, db, p)   // ok が有無
-tag, err   := MarkPaid.Exec(ctx, db, p)      // 1 行も触らなければ ErrNoRows
+u, ok, err := UserByEmail.Find(ctx, db, p)   // ok が有無を表す
+tag, err   := MarkPaid.Exec(ctx, db, p)      // 1行も対象にならなければ ErrNoRows
 ```
 
-3つとも2行目が来たら`ErrManyRows`を返す。検査器が来ないと証明したので、データベースが証明の下で変わったということ。
+3つとも、2行目が返ってきたら`ErrManyRows`を返す。検査器が1行以下と証明した文なので、これが起きたのはデータベースが証明の前提から変わったときである。
 
-`Stmt.Unprepared()`はサーバー側prepared statementなしで走るコピーを返す。プランナーが毎回実際の値でカスタムプランを
-作る。パラメータの値分布が偏っていて、pgxのstatement cacheが汎用プランに落ち着いてしまう文に使う。それ以外では
-prepared statementのキャッシュはpgxのもので、展開ごと。
+`Stmt.Unprepared()`は、サーバー側のprepared statementを使わずに実行するコピーを返す。プランナーが毎回、実際のパラメータ値でプランを作る。パラメータの値の分布が偏っていて、pgxのstatement cacheが汎用プランに固定されると遅くなる文に使う。それ以外の文では、prepared statementのキャッシュは展開ごとにpgxが管理する。
 
-## 行マッピング
+## 行のマッピング
 
-結果列は名前でフィールドに対応づけられる: `col:"..."`タグ、次に`db:"..."`、次にフィールド名のsnake_case。
-埋め込みstructは平坦化される。nullableなフィールド（ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`）はNULLを
-零値として受け、この展開の結果に列が無いnullableなフィールドは零値のまま（一部の分岐だけが選ぶ列）。スカラーの`R`
-は単一の列を受ける。`numeric`を`string`で受けると全桁が残る。
+結果列は名前でフィールドに対応づけられる。`col:"..."`タグ、次に`db:"..."`タグ、次にフィールド名をsnake_caseにしたものの順で探す。埋め込み構造体のフィールドは平坦化される。NULLを受けられるフィールド（ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`）はNULLをゼロ値として受ける。この展開の結果に列が無いフィールド（一部の分岐だけが選ぶ列）もゼロ値のままになる。`R`がスカラーなら1列を直接受ける。`numeric`は`string`で受けると全桁が保たれる。
 
-Goのenum型は`Known() bool`（`Labelled`インターフェース）を実装できる。マッパーはこのビルドが知らないラベルを、
-switchできない値をアプリケーションに渡す代わりに`*UnknownLabelError`で拒否する。
+Goのenum型に`Known() bool`を実装しておくと（`Labelled`インターフェース）、マッパーはこのビルドが知らないラベルを受け取ったとき、switchで扱えない値をアプリケーションに渡す代わりに`*UnknownLabelError`を返す。
 
-## ネストした行とユーザー型
+## ネストした行とユーザー定義型
 
-`array_agg(row(o.id, o.total))`、`array_agg(o)`、`row(...)`、複合型の列はstructまたはstructのスライスにフィールド
-ごとに読まれる。無名レコードは位置で、名前付き複合型は列順で。複合型パラメータ（SQLが`money_amount`を期待する
-`{{.Price}}`、`order_items[]`を期待する`{{.Items}}`）は同じ規則でstructやstructのスライスからencodeされる。
+`array_agg(row(o.id, o.total))`、`array_agg(o)`、`row(...)`、複合型の列は、構造体または構造体のスライスにフィールドごとに読み込まれる。無名のレコードは位置で、名前付きの複合型は列の順序で対応づける。複合型のパラメータ（SQL側が`money_amount`を期待する位置の`{{.Price}}`、`order_items[]`を期待する位置の`{{.Items}}`）も、同じ規則で構造体や構造体のスライスからencodeされる。
 
-pgxはユーザー定義型（enum、複合型、ドメイン、範囲型、多重範囲型、それらの配列）をdecodeする前に知っていなければ
-ならない。`Run`は結果が必要とする型を初めて出会った時点で接続に読み込む。無名レコードの内側にネストした型はscan前に
-見えないので、その場合とプールでは一度に全部登録する:
+pgxはユーザー定義型（enum、複合型、ドメイン、範囲型、多重範囲型、およびそれらの配列）をdecodeする前に、その型を知っていなければならない。`Run`は結果に必要な型を、初めて出会った時点でその接続に登録する。ただし無名レコードの内側にネストした型はscanする前には見えないので、その場合とプールを使う場合は、接続時にまとめて登録する:
 
 ```go
 cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
@@ -58,19 +47,13 @@ cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 }
 ```
 
-pgx自身のローダーが読まない拡張のスカラー型（`citext`、`hstore`、`ltree`、…）も登録される: `hstore`はpgxのhstore
-codec（`map[string]*string`）で、それ以外はテキストとして（`string`、配列は`[]string`）。`money`などpgxにcodecの
-無い型を持つテーブルも読み込める。
+pgx自身の型ローダーが読まない拡張のスカラー型（`citext`、`hstore`、`ltree`など）も登録される。`hstore`はpgxのhstore codec（`map[string]*string`）で、それ以外はテキストとして（`string`、配列なら`[]string`）扱う。`money`のようにpgxにcodecの無い型を持つテーブルも読み込める。
 
-宣言型バインディング（`// sqlshape: type money_amount`）を持つ型は自身の`sql.Scanner` / `driver.Valuer`に任される。
-ランタイムはその列についてPostgreSQLにテキスト形式を求めるので、Scannerは値のテキスト形を受ける。
+宣言型バインディング（`// sqlshape: type money_amount`）を持つ型は、その型自身の`sql.Scanner` / `driver.Valuer`で変換される。ランタイムはその列についてPostgreSQLにテキスト形式を要求するので、Scannerには値のテキスト表現が渡る。
 
 ## エラー
 
-制約違反（SQLSTATEクラス23）はPostgreSQLが報告した`Code`、`Constraint`、`Table`、`Column`、`Detail`を持つ
-`*ConstraintError`として返り、`*pgconn.PgError`をラップする。`Key()`はテンプレートのexpect行が書くとおりの違反:
-制約名、またはNOT NULLなら`table.column`。expect行が名指したSQLSTATE（トリガーの`P0401`、または
-`-- sqlshape: error`で付けた名前）も同じようにラップされる。
+制約違反（SQLSTATEクラス23）は`*ConstraintError`として返る。PostgreSQLが報告した`Code`、`Constraint`、`Table`、`Column`、`Detail`を持ち、元の`*pgconn.PgError`を包んでいる。`Key()`はexpect行に書くのと同じ表記の名前を返す。制約名、またはNOT NULLなら`table.column`である。expect行で名指したSQLSTATE（トリガーの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
 
 ```go
 _, err := CreateCustomer.First(ctx, db, p)
@@ -79,9 +62,7 @@ if sqlshape.Violates(err, "customers_email_key") {
 }
 ```
 
-名前は検査器が列挙したものなので、コードが扱わない違反はexpect行が予告していたもの
-（[checks.ja.md](checks.ja.md#失敗モード-この書き込みは何で失敗しうるか)）。`ErrNoRows`は`pgx.ErrNoRows`。
-`IsNoRows(err)`で判定できる。
+この名前は検査器が列挙したものと同じなので、コードが処理していない違反があれば、それはexpect行に書いてあるのに扱っていない違反である（[checks.ja.md](checks.ja.md#失敗モード-この書き込みは何で失敗しうるか)）。`ErrNoRows`は`pgx.ErrNoRows`と同じもので、`IsNoRows(err)`で判定できる。
 
 ## バッチ
 
@@ -92,13 +73,11 @@ b := sqlshape.NewBatch()
 orders := sqlshape.Queue(b, ListOrders, ListParams{Status: &paid})
 paid   := sqlshape.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
 if err := b.Send(ctx, db); err != nil { ... }
-rows, err := orders.Rows()    // []Order。First() で最初の行
+rows, err := orders.Rows()    // []Order。First() なら最初の行
 tag, err  := paid.Tag()
 ```
 
-`BatchDB`は`SendBatch`を持つもの: 接続、プール、トランザクション。バッチの途中では型を読み込めないので、ユーザーenumや
-複合型が絡むなら先に`LoadUserTypes`を呼ぶ（プールなら`AfterConnect`）。行に`sql.Scanner`型を持つ文はpgxのバッチに
-乗れない（バッチはテキスト形式を求めない）。`Send`はそれをバッチの直後にキュー順で普通のクエリとして走らせる。
+`BatchDB`は`SendBatch`を持つもので、接続・プール・トランザクションのどれでもよい。バッチの途中では型を登録できないので、ユーザー定義のenumや複合型を使う文があるなら、先に`LoadUserTypes`を呼んでおく（プールなら`AfterConnect`で）。結果に`sql.Scanner`型が含まれる文はpgxのバッチには乗せられない（バッチではテキスト形式を要求できない）ので、`Send`はそれをバッチの直後に、キューに入れた順で通常のクエリとして実行する。
 
 ## 一括ロード
 
@@ -109,9 +88,7 @@ n, err := loadItems.From(ctx, db, items)           // []Item
 n, err := loadItems.FromSeq(ctx, db, seq)          // iter.Seq[Item]
 ```
 
-`Copy`は`pgx.CopyFrom`による`COPY ... FROM`: 各列はそれに束縛される`R`のフィールドから供給される（タグまたは
-snake_case、埋め込みstructは平坦化）。列を与えなければ各フィールドが自分の名前の列を供給し、スカラーの`R`は1列を
-供給する。検査器はテーブル、列、各列の型とフィールドの対応、省いた列がすべて既定値を持つことを検証する。
+`Copy`は`pgx.CopyFrom`による`COPY ... FROM`である。各列には、それに対応する`R`のフィールド（タグまたはsnake_case、埋め込み構造体は平坦化）から値が入る。列を指定しなければ各フィールドが自分の名前の列に入り、`R`がスカラーなら1列に入る。検査器はテーブルと列の存在、各列の型とフィールドの対応、指定しなかった列に既定値があることを確かめる。
 
 ## マテリアライズドビュー
 
@@ -119,26 +96,21 @@ snake_case、埋め込みstructは平坦化）。列を与えなければ各フ�
 var OrderStats = sqlshape.MatView("order_stats")
 
 err := OrderStats.Refresh(ctx, db)              // 完了まで読み手はブロックされる
-err := OrderStats.RefreshConcurrently(ctx, db)  // ビューに一意インデックスが要る
+err := OrderStats.RefreshConcurrently(ctx, db)  // ビューに一意インデックスが必要
 ```
 
-検査器は名前をschema.sqlと照合し、`-strict`では`RefreshConcurrently`の呼び出しに対して一意インデックスの存在を
-確認する。
+検査器は名前が`schema.sql`にあることを確かめ、`-strict`では`RefreshConcurrently`を呼んでいるビューに一意インデックスがあることも確かめる。
 
-## ランタイムは検査器が見ていないSQLを拒否する
+## 検査器が見ていないSQLは実行しない
 
-`Render(p)`はテンプレートを`p`に対して評価し、`$n`プレースホルダ付きのSQLと順序どおりの引数を返す。これは
-テンプレート意味論の2つ目の実装なので、実行前に同じ分岐シグネチャの静的展開とバイト単位で比較し、違えばクエリでなく
-エラーになる。比較せずに信用するのは2つ: 3回以上の`range`は静的な双子が無いので2回反復の形で検査済みとし、
-検査器が疎に展開したテンプレート（[templates.ja.md](templates.ja.md#分岐が多いとき)）。
+`Render(p)`はテンプレートを`p`で評価し、`$n`プレースホルダを含むSQLと、順序どおりの引数を返す。これはテンプレートの意味を実装した2つ目のコードなので、実行前に、同じ分岐シグネチャの静的展開とバイト単位で比較する。違っていればクエリを投げずにエラーを返す。比較せずに信用するのは2つの場合だけである。3回以上の`range`は静的展開に対応物が無いので、2回の反復の形で検査済みと見なす。検査器が疎に展開したテンプレートも比較できない（[templates.ja.md](templates.ja.md#分岐が多いとき)）。
 
-## 実PostgreSQLでのテスト
+## 本物のPostgreSQLでのテスト
 
-`pgtest`はschema.sqlを適用した埋め込みPostgreSQL（初回にダウンロード、`~/.cache/sqlshape`にキャッシュ）を
-一時ディレクトリで起動し、`Close`で消える:
+`pgtest`は`schema.sql`を適用した埋め込みPostgreSQL（初回にダウンロードされ、`~/.cache/sqlshape`にキャッシュされる）を一時ディレクトリに起動する。`Close`で消える:
 
 ```go
-schemaSQL, _ := pgtest.ReadSchema("schema.sql")   // または schema/ ディレクトリ
+schemaSQL, _ := pgtest.ReadSchema("schema.sql")   // schema/ ディレクトリでもよい
 db, err := pgtest.Start(ctx, schemaSQL)
 defer db.Close()
 
@@ -148,7 +120,4 @@ if err := db.Verify(ctx, ListOrders, UserByEmail, CreateCustomer); err != nil {
 conn := db.Conn()   // *pgx.Conn。db.ConnString() もある
 ```
 
-`Verify`は各文のすべての展開をサーバーでprepareし、PostgreSQLのパラメータ型・結果列の名前と型・または拒否を、
-検査器の結論と比較する。不一致はその文についての検査器の判定が信用できないということで、エラーは各々をSQLと両者の
-記述付きで列挙する。アプリケーション自身のテストの隣に置けば、静的検査がそのコードの走るPostgreSQLで成り立つ証拠を
-テストスイートが持つ。`db.Conn()`はビュー・関数・トリガーを叩くための素の接続。
+`Verify`は各文のすべての展開をサーバーでprepareし、PostgreSQLが返すパラメータ型、結果列の名前と型、または構文エラーを、検査器の結論と比較する。不一致があれば、その文についての検査器の判定は信用できないということであり、エラーには不一致ごとにSQLと両者の判定が列挙される。アプリケーションのテストの隣に置いておけば、静的検査の結論が実際に使うPostgreSQLで成り立つことをテストスイートが保証する。`db.Conn()`はビュー・関数・トリガーを直接叩くための接続である。
