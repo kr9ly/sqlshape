@@ -75,12 +75,12 @@ $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...
 
 同じ受注台帳を、データベースにどこまで任せるかの段階ごとに4つ用意してある:
 
-| | 使うもの | 読むとき |
-|---|---|---|
-| [`examples/1-tables`](examples/1-tables) | 素のテーブル、`Query` / `One`、テンプレート、値集合としてのseed済みlookupテーブル、expect行、`pgtest.Start` + `Verify` | ORMから来て、手元のテーブルに対するSQLを検査したい |
-| [`examples/2-views`](examples/2-views) | 読みはビュー経由（JOIN・列名・集約・論理削除の条件をビューで一度だけ決める）、書きは引き続きテーブルへのINSERT / UPDATE、`-no-table-reads` | ロジックはまだ移さずに、名前の決定権だけデータベースに持たせたい |
-| [`examples/3-database-api`](examples/3-database-api) | 書き込みは関数、ドメイン、enumとCHECKによる値集合、複合型、トリガーのSQLSTATE、`-no-tables` | 意味はスキーマに持たせ、アプリケーションにはAPIだけを見せたい |
-| [`examples/4-everything`](examples/4-everything) | 境界としてのスキーマ、拡張、範囲型、ネストした行、宣言型バインディング、複合型配列のパラメータ、Batch、Copy、論理削除ポリシー、行レベルセキュリティ、テナント固定、全フラグ | 全機能を一度に見たい |
+| | 参考になるポイント |
+|---|---|
+| [`examples/1-tables`](examples/1-tables) | 基本形。テーブルに対して`Query` / `One`を書き、構造体と突き合わせ、失敗しうる制約をexpect行で宣言する、標準的な使い方 |
+| [`examples/2-views`](examples/2-views) | 読み取りをビューにまとめる。JOINや列名の決定をビューに閉じ込めて、アプリケーション側のSQLを薄くする段階 |
+| [`examples/3-database-api`](examples/3-database-api) | 書き込みを関数に、値の意味をドメインや複合型に移す。ロジックをデータベース側に置いたとき、検査がどう働くか |
+| [`examples/4-everything`](examples/4-everything) | 全機能を使った例。特定の機能の使い方を探すときの索引 |
 
 ## 何を検査するか
 

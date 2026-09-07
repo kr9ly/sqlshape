@@ -88,12 +88,12 @@ Details in [docs/flags.md](docs/flags.md#in-the-editor).
 
 Four stages of the same order book, one per level of trust in the database:
 
-| | what it uses | read it when |
-|---|---|---|
-| [`examples/1-tables`](examples/1-tables) | plain tables, `Query` / `One`, templates, a seeded lookup table as the value set, `expect` lines, `pgtest.Start` + `Verify` | you come from an ORM and want checked SQL on the tables you have |
-| [`examples/2-views`](examples/2-views) | views as the read model (joins, names, aggregates and the soft-delete predicate decided once), writes still plain INSERT / UPDATE on tables, `-no-table-reads` | you want the database to own what things are called without moving logic into it yet |
-| [`examples/3-database-api`](examples/3-database-api) | functions for writes, domains, an enum and a CHECK value set, a composite, a trigger SQLSTATE, `-no-tables` | you want the schema to carry the meaning and the application to see an API |
-| [`examples/4-everything`](examples/4-everything) | schemas as a boundary, extensions, ranges, nested rows, declared type bindings, composite array parameters, Batch, Copy, soft-delete policy, row-level security, tenant pinning, every flag | you want to see the whole surface at once |
+| | what to take from it |
+|---|---|
+| [`examples/1-tables`](examples/1-tables) | The basic form: `Query` / `One` against tables, structs matched to the SQL, the constraints a write can violate declared on its expect line |
+| [`examples/2-views`](examples/2-views) | Reading through views: joins and column names decided once in the schema, so the application's SQL gets thinner |
+| [`examples/3-database-api`](examples/3-database-api) | Writes as functions, meaning as domains and composite types: how the checks work once logic lives in the database |
+| [`examples/4-everything`](examples/4-everything) | Every feature in one place; the index to look up how a particular feature is used |
 
 ## What it checks
 
