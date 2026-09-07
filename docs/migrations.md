@@ -1,5 +1,7 @@
 # Migrations
 
+[日本語](migrations.ja.md)
+
 `schema.sql` is the only definition of the database. There are no migration files to write:
 the `sqlshape` binary compares the live database with `schema.sql` and derives the DDL, checks
 that the DDL really leads to `schema.sql`, and runs it.

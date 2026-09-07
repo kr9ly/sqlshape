@@ -1,5 +1,7 @@
 # Runtime
 
+[日本語](runtime.ja.md)
+
 The `sqlshape` package runs checked statements on pgx. `DB` is what a statement runs against;
 `*pgx.Conn`, `*pgxpool.Pool` and `pgx.Tx` all satisfy it, so a statement runs on a transaction
 unchanged.

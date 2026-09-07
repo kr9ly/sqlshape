@@ -1,5 +1,7 @@
 # Templates
 
+[日本語](templates.ja.md)
+
 A statement's SQL is a Go `text/template` over the parameter type `P`. The checker expands it
 into every SQL text it can produce and checks each one; the runtime renders it and refuses any
 text the checker did not see. The template must be a string constant (a literal, or constants

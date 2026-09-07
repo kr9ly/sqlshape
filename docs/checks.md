@@ -1,5 +1,7 @@
 # What the checker verifies
 
+[日本語](checks.ja.md)
+
 Every `sqlshape.Query[R, P](template)`, `sqlshape.One[R, P](template)`, `sqlshape.Copy[R](...)`
 and `sqlshape.MatView(...)` in a package is found by the `go/analysis` analyzer, its template is
 expanded into every branch combination ([templates.md](templates.md)), each expansion is analyzed

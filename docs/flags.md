@@ -1,5 +1,7 @@
 # Flags and editor setup
 
+[日本語](flags.ja.md)
+
 `cmd/sqlshape` is a `go vet -vettool`-compatible checker. Run it as `sqlshape ./...`,
 `sqlshape vet ./...` or `go vet -vettool=$(which sqlshape) ./...`; the flags below are passed the
 same way in each case.

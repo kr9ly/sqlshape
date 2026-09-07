@@ -2,6 +2,8 @@
 
 Write SQL as SQL, and let a `go vet` checker prove the Go code around it fits.
 
+[日本語](README.ja.md)
+
 ```go
 var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email, name, deleted_at FROM users WHERE email = {{.Email}}`)
