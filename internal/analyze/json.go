@@ -204,7 +204,15 @@ func (a *analyzer) jsonFuncExpr(f *pg_query.JsonFuncExpr, sc *scope, n *pg_query
 			return nil, err
 		}
 	}
-	return &expr{typ: t, nullable: f.Op != pg_query.JsonExprOp_JSON_EXISTS_OP, node: n}, nil
+	// JSON_EXISTS is boolean and non-nullable by default (FALSE/TRUE/ERROR ON ERROR always
+	// settle to a definite true/false, or raise). UNKNOWN ON ERROR is the one behavior that
+	// turns a structural error into SQL NULL (the standard's three-valued UNKNOWN), so it's
+	// the only case that needs nullable=true; JSON_VALUE / JSON_QUERY stay nullable in every
+	// combination already (ON EMPTY / ON ERROR NULL is their default, and even the non-NULL
+	// behaviors don't make them provably non-nullable).
+	nullable := f.Op != pg_query.JsonExprOp_JSON_EXISTS_OP ||
+		(f.OnError != nil && f.OnError.Btype == pg_query.JsonBehaviorType_JSON_BEHAVIOR_UNKNOWN)
+	return &expr{typ: t, nullable: nullable, node: n}, nil
 }
 
 // jsonConstructor is JSON_OBJECT / JSON_ARRAY (with a list, or a subquery).

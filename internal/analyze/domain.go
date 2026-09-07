@@ -32,6 +32,12 @@ const (
 	noteDomainMismatch = "domain-mismatch"
 	noteAlwaysFails    = "always-fails"
 	notePolicy         = "policy"
+	// noteSQLStateDynamic: a RAISE ... USING ERRCODE = <expr> whose expr the analyzer
+	// cannot resolve to a fixed SQLSTATE at analysis time (not a literal, not a variable
+	// initialized once to a literal and never reassigned, not a caught SQLSTATE re-raise
+	// in an EXCEPTION handler). Reported instead of silently defaulting to P0001, which
+	// would misreport what the RAISE actually throws.
+	noteSQLStateDynamic = "sqlstate-dynamic"
 	// advisory notes (the checker reports them with -strict)
 	noteUnorderedLimit = "unordered-limit"
 	noteEnumOrder      = "enum-order"

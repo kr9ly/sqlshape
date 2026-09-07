@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
@@ -56,6 +57,13 @@ type Schema struct {
 	// ViewHook runs after every CREATE (MATERIALIZED) VIEW with the schema as it stands
 	// at that point; the analyzer installs it to fill Relation.Frozen.
 	ViewHook func(s *Schema, rel *Relation)
+	// NotNullHook runs after a table's column NOT NULL changes (ALTER COLUMN SET/DROP NOT
+	// NULL, or ADD CONSTRAINT PRIMARY KEY, which implies it), passing the table relation.
+	// PG does not freeze a view's nullability the way it freezes its column list -- a view
+	// reads the referenced column's current attnotnull on every query -- so the analyzer
+	// installs this to re-derive Relation.Frozen's Nullable (and Type) for every view that
+	// depends on rel, transitively, in declaration order (DependentViews).
+	NotNullHook func(s *Schema, rel *Relation)
 
 	prepared      map[string]*pg_query.Node // PREPARE name AS query, for CREATE TABLE AS EXECUTE
 	xmlDocument   bool                      // SET xmloption = document
@@ -118,6 +126,10 @@ type Relation struct {
 	Alters     []string
 	// ColumnAliases are explicit column names given to a view (CREATE VIEW v (a, b) AS ...).
 	ColumnAliases []string
+	// CheckOption (views): WITH [LOCAL|CASCADED] CHECK OPTION, 0 when none. 'l' local: an
+	// INSERT/UPDATE through the view is checked only against this view's own WHERE.
+	// 'c' cascaded: also against the WHERE of every updatable view underneath it.
+	CheckOption byte
 	// Frozen (views / matviews) is the output column list as it was when the view was
 	// created, filled by the ViewHook: PG fixes a view's columns at CREATE time (a later
 	// RENAME / ADD COLUMN on a base table does not reach it), so readers use this rather
@@ -234,6 +246,7 @@ const (
 	Unique     ConstraintKind = 'u'
 	ForeignKey ConstraintKind = 'f'
 	Check      ConstraintKind = 'c'
+	Exclude    ConstraintKind = 'x'
 )
 
 // Constraint is a table constraint. Unique indexes are recorded as Unique constraints
@@ -251,6 +264,11 @@ type Constraint struct {
 	Predicate        Expr
 	NullsNotDistinct bool
 	Deferrable       bool
+	// Exclude: the access method (e.g. "gist") and, one per Columns entry, the WITH
+	// operator (EXCLUDE USING gist (room WITH =, during WITH &&)). Predicate above doubles
+	// as its optional WHERE clause.
+	AccessMethod string
+	Operators    []string
 	// ForeignKey actions (pg_constraint confdeltype / confupdtype):
 	// 'a' NO ACTION, 'r' RESTRICT, 'c' CASCADE, 'n' SET NULL, 'd' SET DEFAULT
 	OnDelete, OnUpdate byte
@@ -360,7 +378,9 @@ func (s *Schema) chooseIndexName(rel *Relation, parts []string) string {
 }
 
 // makeObjectName is PG's makeObjectName: name1[_name2]_label, the longer of name1 / name2
-// trimmed until the whole fits in NAMEDATALEN-1 bytes.
+// trimmed until the whole fits in NAMEDATALEN-1 bytes. Truncation never splits a multibyte
+// character (PG's pg_mbcliplen), matching the mb-safe truncation CREATE TABLE already does
+// for over-long identifiers.
 func makeObjectName(name1, name2, label string) string {
 	overhead := len(label) + 1
 	if name2 != "" {
@@ -374,11 +394,25 @@ func makeObjectName(name1, name2, label string) string {
 			n2--
 		}
 	}
+	n1 = mbClip(name1, n1)
+	n2 = mbClip(name2, n2)
 	name := name1[:n1]
 	if name2 != "" {
 		name += "_" + name2[:n2]
 	}
 	return name + "_" + label
+}
+
+// mbClip is pg_mbcliplen: the greatest byte length <= n that does not split a UTF-8
+// character in s.
+func mbClip(s string, n int) int {
+	if n >= len(s) {
+		return len(s)
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return n
 }
 
 // Trigger is a row / statement trigger on a table.
@@ -418,6 +452,12 @@ func LoadWith(cat *catalog.Catalog, schemaSQL string) (*Schema, error) {
 
 // LoadWithHook is LoadWith with a ViewHook installed before the first statement applies.
 func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Relation)) (*Schema, error) {
+	return LoadWithHooks(cat, schemaSQL, hook, nil)
+}
+
+// LoadWithHooks is LoadWithHook with a NotNullHook installed too, before the first
+// statement applies.
+func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook func(*Schema, *Relation)) (*Schema, error) {
 	tree, err := pg_query.Parse(schemaSQL)
 	if err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
@@ -444,13 +484,14 @@ func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Re
 		}
 	}
 	s := &Schema{
-		Catalog:   cat,
-		Types:     newTypes(cat),
-		Comments:  map[string]string{},
-		TypeDefs:  map[catalog.OID]string{},
-		relByName: map[string]*Relation{},
-		nextOID:   FirstUserOID + 100000, // relations / functions live in a separate range from types
-		ViewHook:  hook,
+		Catalog:     cat,
+		Types:       newTypes(cat),
+		Comments:    map[string]string{},
+		TypeDefs:    map[catalog.OID]string{},
+		relByName:   map[string]*Relation{},
+		nextOID:     FirstUserOID + 100000, // relations / functions live in a separate range from types
+		ViewHook:    viewHook,
+		NotNullHook: notNullHook,
 	}
 	s.Problems = append(s.Problems, extProblems...)
 	s.applyAll(tree, schemaSQL)
@@ -1085,9 +1126,9 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 			col.Generated = c.RawExpr
 		case pg_query.ConstrType_CONSTR_PRIMARY:
 			col.NotNull = true
-			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: []string{col.Name}})
+			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: []string{col.Name}, Deferrable: c.Deferrable})
 		case pg_query.ConstrType_CONSTR_UNIQUE:
-			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: []string{col.Name}, NullsNotDistinct: c.NullsNotDistinct})
+			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: []string{col.Name}, NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable})
 		case pg_query.ConstrType_CONSTR_CHECK:
 			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Columns: []string{col.Name}, Expr: c.RawExpr})
 		case pg_query.ConstrType_CONSTR_FOREIGN:
@@ -1119,6 +1160,13 @@ func (s *Schema) foreignKey(c *pg_query.Constraint) *Constraint {
 	return fk
 }
 
+// notifyNotNullChange runs NotNullHook for rel, when one is installed.
+func (s *Schema) notifyNotNullChange(rel *Relation) {
+	if s.NotNullHook != nil {
+		s.NotNullHook(s, rel)
+	}
+}
+
 func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 	switch c.GetContype() {
 	case pg_query.ConstrType_CONSTR_PRIMARY:
@@ -1130,9 +1178,14 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 				s.problem(c.GetLocation(), "%s: primary key column %q does not exist", rel.Name, n)
 			}
 		}
-		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: cols})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: cols, Deferrable: c.Deferrable})
+		// a PRIMARY KEY added after the table exists (ALTER TABLE ... ADD CONSTRAINT ...
+		// PRIMARY KEY) makes its columns NOT NULL too; a no-op when this runs for the
+		// table's own inline/table-level constraints at CREATE TABLE time, since no view
+		// can depend on it yet.
+		s.notifyNotNullChange(rel)
 	case pg_query.ConstrType_CONSTR_UNIQUE:
-		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable})
 	case pg_query.ConstrType_CONSTR_CHECK:
 		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Expr: c.RawExpr})
 	case pg_query.ConstrType_CONSTR_FOREIGN:
@@ -1140,7 +1193,21 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 		fk.Columns = strs(c.FkAttrs)
 		s.addConstraint(rel, fk)
 	case pg_query.ConstrType_CONSTR_EXCLUSION:
-		// no typing consequence
+		ex := &Constraint{Name: c.Conname, Kind: Exclude, AccessMethod: c.AccessMethod, Predicate: c.WhereClause, Deferrable: c.Deferrable}
+		for _, item := range c.Exclusions {
+			parts := item.GetList().GetItems()
+			if len(parts) != 2 {
+				continue
+			}
+			ex.Columns = append(ex.Columns, parts[0].GetIndexElem().GetName())
+			opNames := strs(parts[1].GetList().GetItems())
+			op := ""
+			if len(opNames) > 0 {
+				op = opNames[len(opNames)-1]
+			}
+			ex.Operators = append(ex.Operators, op)
+		}
+		s.addConstraint(rel, ex)
 	default:
 		s.problem(c.GetLocation(), "%s: unsupported table constraint %v", rel.Name, c.GetContype())
 	}
@@ -1170,12 +1237,39 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 		rel = s.newRelation(schema, name, View)
 		rel.Temp = st.View.Relpersistence == "t"
 	}
+	oldQuery := rel.Query
 	rel.Query = st.Query
+	if oldQuery != nil && s.viewDependsOnItself(rel) {
+		// CREATE OR REPLACE VIEW a AS ... FROM b, where b reads a: PG refuses (42P17)
+		rel.Query = oldQuery
+		s.problem(loc, "infinite recursion detected in rules for relation %q", name)
+		return
+	}
 	rel.ColumnAliases = strs(st.Aliases)
+	switch st.WithCheckOption {
+	case pg_query.ViewCheckOption_LOCAL_CHECK_OPTION:
+		rel.CheckOption = 'l'
+	case pg_query.ViewCheckOption_CASCADED_CHECK_OPTION:
+		rel.CheckOption = 'c'
+	default:
+		rel.CheckOption = 0
+	}
 	s.viewDirectives(rel, loc)
 	if s.ViewHook != nil {
 		s.ViewHook(s, rel)
 	}
+}
+
+// viewDependsOnItself reports whether rel's query reaches rel again through the views it
+// reads (a -> b -> a). PG rejects such a redefinition; every walk over view dependencies
+// here assumes it never happens.
+func (s *Schema) viewDependsOnItself(rel *Relation) bool {
+	for _, d := range s.DependentViews(rel) {
+		if d == rel {
+			return true
+		}
+	}
+	return false
 }
 
 // viewDirectives applies the directives written before a CREATE (MATERIALIZED) VIEW.
@@ -1247,10 +1341,12 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 		case pg_query.AlterTableType_AT_SetNotNull:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.NotNull = true
+				s.notifyNotNullChange(rel)
 			}
 		case pg_query.AlterTableType_AT_DropNotNull:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.NotNull = false
+				s.notifyNotNullChange(rel)
 			}
 		case pg_query.AlterTableType_AT_ColumnDefault:
 			if col := rel.Column(cmd.Name); col != nil {
@@ -1622,23 +1718,31 @@ func (s *Schema) ResolveType(tn *pg_query.TypeName) (TypeRef, error) { return s.
 // suffix on collision. Errors at runtime carry these names, so they must agree.
 func (s *Schema) addConstraint(rel *Relation, c *Constraint) {
 	if c.Name == "" {
+		// PG names these with makeObjectName(table, cols, label): the table name and the
+		// joined column names, the longer one truncated (at a character boundary) until
+		// the whole fits NAMEDATALEN-1 bytes. A CHECK's columns are the ones its expression
+		// references (in order) only when there is exactly one; a multi-column CHECK's
+		// automatic name carries no column part at all (PG only passes name2 to
+		// ChooseConstraintName for a single-column check).
 		var base string
 		switch c.Kind {
 		case PrimaryKey:
-			base = rel.Name + "_pkey"
+			base = makeObjectName(rel.Name, "", "pkey")
 		case Unique:
-			base = rel.Name + "_" + strings.Join(c.Columns, "_") + "_key"
+			base = makeObjectName(rel.Name, strings.Join(c.Columns, "_"), "key")
 		case ForeignKey:
-			base = rel.Name + "_" + strings.Join(c.Columns, "_") + "_fkey"
+			base = makeObjectName(rel.Name, strings.Join(c.Columns, "_"), "fkey")
+		case Exclude:
+			base = makeObjectName(rel.Name, strings.Join(c.Columns, "_"), "excl")
 		case Check:
 			cols := c.Columns
 			if len(cols) == 0 {
 				cols = ColumnRefs(c.Expr)
 			}
-			if len(cols) > 0 {
-				base = rel.Name + "_" + strings.Join(cols, "_") + "_check"
+			if len(cols) == 1 {
+				base = makeObjectName(rel.Name, cols[0], "check")
 			} else {
-				base = rel.Name + "_check"
+				base = makeObjectName(rel.Name, "", "check")
 			}
 		}
 		c.Name = uniqueName(base, func(n string) bool {
@@ -1995,7 +2099,7 @@ func (rel *Relation) setRuleEnabled(name string, enabled bool) {
 
 // createOwnedSequence is the implicit sequence of a serial / identity column.
 func (s *Schema) createOwnedSequence(rel *Relation, col string, loc int32) {
-	name := rel.Name + "_" + col + "_seq"
+	name := makeObjectName(rel.Name, col, "seq") // ChooseRelationName: truncated like every generated name
 	s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: name}, loc)
 	if seq := s.relByName[rel.Schema+"."+name]; seq != nil && seq.Kind == Sequence {
 		seq.OwnedBy = rel.Schema + "." + rel.Name + "." + col

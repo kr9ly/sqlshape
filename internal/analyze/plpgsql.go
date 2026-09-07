@@ -43,6 +43,12 @@ type plVar struct {
 	// produced once OPEN / FOR analyzed it
 	cursor     string
 	cursorCols []Column
+	// constVal: the variable's declared initial value, when it is a string literal and
+	// the variable is never reassigned anywhere in the function body (see
+	// declareDatums / scanAssignedVarnos). Used to resolve `RAISE ... USING ERRCODE =
+	// var` statically when var is really acting as a named constant. "" when the
+	// variable has no such value or might change.
+	constVal string
 }
 
 // plBody is one function body under analysis.
@@ -58,6 +64,15 @@ type plBody struct {
 	out      *FunctionResult
 	raises   []schema.RaisedError
 	inExcept int
+	// assignedVarnos: every datum number that is ever a write target somewhere in the
+	// function (RAISE ERRCODE constant-folding needs to know a variable is never
+	// reassigned after its DECLARE default). Filled once by run() before the body walk.
+	assignedVarnos map[float64]bool
+	// handlerCodes: the SQLSTATE(s) the exception handler currently being walked catches
+	// (its WHEN conditions' codes, or the protected body's own raised codes for OTHERS),
+	// used to resolve a bare `RAISE ... USING ERRCODE = SQLSTATE` (re-raise) statically.
+	// Stack-like: saved/restored around each handler by exceptionBlock.
+	handlerCodes []string
 }
 
 // plBodies caches the analysis of a body per function (schemas are immutable once loaded).
@@ -193,6 +208,8 @@ func (b *plBody) run() (*FunctionResult, error) {
 		return nil, &Error{Code: codeSyntaxError, Message: "cannot read the PL/pgSQL parse"}
 	}
 	fnNode, _ := doc[0]["PLpgSQL_function"].(map[string]any)
+	b.assignedVarnos = map[float64]bool{}
+	scanAssignedVarnos(fnNode["action"], b.assignedVarnos)
 	if err := b.declareDatums(fnNode); err != nil {
 		return nil, err
 	}
@@ -201,6 +218,32 @@ func (b *plBody) run() (*FunctionResult, error) {
 		return nil, err
 	}
 	return b.out, nil
+}
+
+// scanAssignedVarnos walks a PL/pgSQL parse fragment (as decoded from
+// ParsePlPgSqlToJSON) collecting every datum number that is ever a write target: a plain
+// `var := expr` (PLpgSQL_stmt_assign's own "varno"), or one of an INTO / FOR / FETCH
+// target's fields (a PLpgSQL_row / PLpgSQL_var, also keyed "varno" there). Expression
+// text itself is opaque to the PL parser at this level (kept as a string, parsed only
+// later by the SQL parser), so "varno" never appears in a read-only position -- this is
+// safe to key on unconditionally, wherever it turns up in the tree.
+func scanAssignedVarnos(node any, out map[float64]bool) {
+	switch x := node.(type) {
+	case []any:
+		for _, it := range x {
+			scanAssignedVarnos(it, out)
+		}
+	case map[string]any:
+		if vn, ok := x["varno"].(float64); ok {
+			out[vn] = true
+		}
+		for _, v := range x {
+			switch v.(type) {
+			case []any, map[string]any:
+				scanAssignedVarnos(v, out)
+			}
+		}
+	}
 }
 
 // plSignature re-renders the function's parameters for the PL/pgSQL parser, which needs
@@ -266,6 +309,12 @@ func (b *plBody) declareDatums(fnNode map[string]any) error {
 					return err
 				}
 				pv.typ, pv.fields = typ, fields
+			}
+			// a variable declared `x text := 'literal';` and never reassigned anywhere in
+			// the function acts as a named constant; RAISE ... USING ERRCODE = x can then
+			// be resolved statically the same as a literal (see A1 in adv_plpgsql_test.go).
+			if dv, ok := v["default_val"].(map[string]any); ok && !b.assignedVarnos[float64(i)] {
+				pv.constVal = plStringLiteral(plQuery(dv))
 			}
 			// function parameters arrive as datums too (named by the signature above,
 			// typed text there): input parameters are already in scope as $n / by name;
@@ -465,24 +514,16 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 	line := plLine(m)
 	switch kind {
 	case "PLpgSQL_stmt_block":
-		if err := b.walkList(m["body"]); err != nil {
-			return err
-		}
-		if ex, ok := m["exceptions"].(map[string]any); ok {
-			b.inExcept++
-			b.declare(&plVar{name: "sqlstate", typ: ref(catalog.Text)})
-			b.declare(&plVar{name: "sqlerrm", typ: ref(catalog.Text)})
-			err := b.walkList(ex)
-			b.inExcept--
-			return err
-		}
-		return nil
+		return b.block(m)
 	case "PLpgSQL_stmt_execsql":
 		r, err := b.sql(plQuery(m["sqlstmt"]), line)
 		if err != nil {
 			return err
 		}
 		if into, _ := m["into"].(bool); into && r != nil {
+			if strict, _ := m["strict"].(bool); strict {
+				b.checkIntoStrict(r)
+			}
 			return b.assignInto(m["target"], r, line)
 		}
 		return nil
@@ -575,6 +616,12 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 				}
 			}
 		}
+		if _, hasElse := m["else_stmts"]; !hasElse {
+			// PG's CASE (the PL/pgSQL statement, not the SQL expression) raises
+			// CASE_NOT_FOUND (20000) at run time when no WHEN matches and there is no
+			// ELSE to fall back to.
+			b.addRaise("20000")
+		}
 		return b.walkList(m["else_stmts"])
 	case "PLpgSQL_stmt_loop":
 		return b.walkList(m["body"])
@@ -639,6 +686,10 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 				return err
 			}
 		}
+		// ASSERT raises P0004 (assert_failure) when its condition is false, same as
+		// `RAISE assert_failure` (plpgsql.check_asserts defaults to on; that setting is
+		// not modeled, per the brief).
+		b.addRaise("P0004")
 		return nil
 	case "PLpgSQL_stmt_open":
 		if q := plQuery(m["query"]); q != "" {
@@ -683,6 +734,152 @@ func (b *plBody) stmt(kind string, m map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// block is PLpgSQL_stmt_block: a BEGIN ... END, optionally with an EXCEPTION clause. A
+// protected body's own violations and RAISEs are, by themselves, real ways the block can
+// fail -- unless a WHEN clause in the block's own EXCEPTION list catches that SQLSTATE,
+// in which case PostgreSQL's per-block subtransaction swallows it before it ever reaches
+// the caller (see B1 in adv_plpgsql_test.go). So the body is walked first as usual, then
+// whatever it newly added to b.out.Violations / b.raises is filtered against the union of
+// every handler's WHEN conditions: caught codes are removed (they cannot propagate),
+// anything left over stays. The handler bodies are then walked as ordinary statements, so
+// whatever they raise themselves is added back on top -- catching an error and raising a
+// different one still fails the call.
+func (b *plBody) block(m map[string]any) error {
+	violAt, raiseAt := len(b.out.Violations), len(b.raises)
+	if err := b.walkList(m["body"]); err != nil {
+		return err
+	}
+	ex, ok := m["exceptions"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	protectedViol := append([]Violation(nil), b.out.Violations[violAt:]...)
+	protectedRaise := append([]schema.RaisedError(nil), b.raises[raiseAt:]...)
+	b.out.Violations = b.out.Violations[:violAt]
+	b.raises = b.raises[:raiseAt]
+
+	excBlock, _ := ex["PLpgSQL_exception_block"].(map[string]any)
+	excList, _ := excBlock["exc_list"].([]any)
+
+	caught := func(code string) bool {
+		for _, e := range excList {
+			for _, cond := range exceptionConditionNames(e) {
+				if sqlstateMatchesCondition(cond, code) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, v := range protectedViol {
+		if !caught(v.Code) {
+			b.out.Violations = append(b.out.Violations, v)
+		}
+	}
+	for _, r := range protectedRaise {
+		if !caught(r.Code) {
+			b.raises = append(b.raises, r)
+		}
+	}
+
+	b.inExcept++
+	b.declare(&plVar{name: "sqlstate", typ: ref(catalog.Text)})
+	b.declare(&plVar{name: "sqlerrm", typ: ref(catalog.Text)})
+	defer func() { b.inExcept-- }()
+	for _, e := range excList {
+		names := exceptionConditionNames(e)
+		var codes []string
+		others := false
+		for _, n := range names {
+			if strings.EqualFold(n, "others") {
+				others = true
+				continue
+			}
+			if c := conditionCode(n); c != "" {
+				codes = append(codes, c)
+			}
+		}
+		if others {
+			// OTHERS catches (and RAISE ... USING ERRCODE = SQLSTATE can only be) whatever
+			// the protected body actually raised.
+			codes = nil
+			seen := map[string]bool{}
+			add := func(c string) {
+				if c != "" && !seen[c] {
+					seen[c] = true
+					codes = append(codes, c)
+				}
+			}
+			for _, v := range protectedViol {
+				add(v.Code)
+			}
+			for _, r := range protectedRaise {
+				add(r.Code)
+			}
+		}
+		savedHandlerCodes := b.handlerCodes
+		b.handlerCodes = codes
+		em, _ := e.(map[string]any)
+		exc, _ := em["PLpgSQL_exception"].(map[string]any)
+		err := b.walkList(exc["action"])
+		b.handlerCodes = savedHandlerCodes
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// exceptionConditionNames is the WHEN clause condition names of one exc_list entry
+// (PLpgSQL_condition.condname): a built-in condition name, "others", or a bare 5-char
+// SQLSTATE from `WHEN SQLSTATE '...'`.
+func exceptionConditionNames(e any) []string {
+	em, _ := e.(map[string]any)
+	exc, _ := em["PLpgSQL_exception"].(map[string]any)
+	conds, _ := exc["conditions"].([]any)
+	var out []string
+	for _, c := range conds {
+		cm, _ := c.(map[string]any)
+		cond, _ := cm["PLpgSQL_condition"].(map[string]any)
+		if name, ok := cond["condname"].(string); ok && name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// conditionCode resolves a WHEN clause condition name to its SQLSTATE: a built-in name
+// via sqlstateOf, or the bare code itself for `WHEN SQLSTATE 'xxxxx'` (which the PL
+// parser also records as a condname, already 5 characters). "" if neither.
+func conditionCode(name string) string {
+	if c := sqlstateOf(name); c != "" {
+		return c
+	}
+	if len(name) == 5 {
+		return strings.ToUpper(name)
+	}
+	return ""
+}
+
+// sqlstateMatchesCondition reports whether a WHEN clause condition (a name sqlstateOf
+// knows, "others", or a bare SQLSTATE) catches an error with the given SQLSTATE. PG
+// treats a condition name that denotes an entire error class (its code ends in "000",
+// e.g. integrity_constraint_violation = 23000) as matching every code in that class by
+// its first two characters; a specific condition or a literal SQLSTATE matches exactly.
+func sqlstateMatchesCondition(cond, code string) bool {
+	if strings.EqualFold(cond, "others") {
+		return true
+	}
+	c := conditionCode(cond)
+	if c == "" {
+		return false
+	}
+	if strings.HasSuffix(c, "000") && sqlstateOf(cond) != "" {
+		return len(code) >= 2 && code[:2] == c[:2]
+	}
+	return code == c
 }
 
 // cursorVar is the cursor variable a statement's curvar names.
@@ -1027,12 +1224,13 @@ func (b *plBody) raise(m map[string]any, line int) error {
 	if int(level) < 21 { // below ERROR (NOTICE, WARNING, ...): nothing is thrown
 		return nil
 	}
-	code := "P0001" // raise_exception
+	codes := []string{"P0001"} // raise_exception
 	if cn, ok := m["condname"].(string); ok && cn != "" {
 		if c := sqlstateOf(cn); c != "" {
-			code = c
+			codes = []string{c}
 		}
 	}
+	unresolved := false
 	if opts, ok := m["options"].([]any); ok {
 		for _, o := range opts {
 			om, _ := o.(map[string]any)
@@ -1040,20 +1238,39 @@ func (b *plBody) raise(m map[string]any, line int) error {
 			t, _ := ro["opt_type"].(float64)
 			q := plQuery(ro["expr"])
 			if int(t) == 0 { // ERRCODE
-				if lit := plStringLiteral(q); lit != "" {
-					if c := sqlstateOf(lit); c != "" {
-						code = c
-					} else if len(lit) == 5 {
-						code = strings.ToUpper(lit)
-					}
+				if resolved, ok := b.resolveErrcode(q); ok {
+					codes = resolved
+				} else {
+					unresolved = true
 				}
-			} else if q != "" {
+				continue
+			}
+			if q != "" {
 				if _, err := b.expr(q, line, schema.TypeRef{}); err != nil {
 					return err
 				}
 			}
 		}
 	}
+	if unresolved {
+		// don't silently default to P0001: that misreports what the RAISE actually
+		// throws (a variable / expression ERRCODE, a re-raised SQLSTATE this analyzer
+		// could not pin down).
+		b.out.Notes = append(b.out.Notes, Note{Code: noteSQLStateDynamic,
+			Message: fmt.Sprintf("line %d: RAISE ... USING ERRCODE is not a literal, a variable set once to a literal, or a caught SQLSTATE re-raise, so its SQLSTATE cannot be determined statically", line)})
+		return nil
+	}
+	for _, code := range codes {
+		b.addRaise(code)
+	}
+	return nil
+}
+
+// addRaise records that the body can throw code (deduplicated), naming it from the
+// function's own `-- sqlshape: error` annotations when one exists for that code -- the
+// same bookkeeping RAISE itself does, reused by the implicit SQLSTATEs PL/pgSQL statements
+// throw on their own (CASE_NOT_FOUND, no_data_found / too_many_rows, ASSERT, ...).
+func (b *plBody) addRaise(code string) {
 	name := ""
 	for _, r := range b.fn.Raises {
 		if r.Code == code {
@@ -1062,11 +1279,64 @@ func (b *plBody) raise(m map[string]any, line int) error {
 	}
 	for _, r := range b.raises {
 		if r.Code == code {
-			return nil
+			return
 		}
 	}
 	b.raises = append(b.raises, schema.RaisedError{Code: code, Name: name})
-	return nil
+}
+
+// checkIntoStrict models the run-time cardinality check an INTO STRICT target does
+// (SELECT ... INTO STRICT, static or dynamic): PostgreSQL raises no_data_found (P0002) on
+// zero rows and too_many_rows (P0003) on more than one. r.AtMostOne (card.go's proof, via
+// analyzeStmtIn) rules out the "too many" half when the query is provably at most one
+// row; whether it returns at least one row is not proved here, so P0002 always stays
+// possible (see A2 in adv_plpgsql_test.go).
+func (b *plBody) checkIntoStrict(r *Result) {
+	b.addRaise("P0002")
+	if !r.AtMostOne {
+		b.addRaise("P0003")
+	}
+}
+
+// identRe matches a bare PL/pgSQL identifier (unquoted): resolveErrcode uses it to tell
+// "USING ERRCODE = my_var" from an arbitrary expression it should not try to constant-fold.
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*$`)
+
+// resolveErrcode statically resolves a RAISE ... USING ERRCODE = <q> expression to the
+// SQLSTATE(s) it can throw, when possible: a literal ('55000'), a bare reference to a
+// variable that was declared with a literal default and is never reassigned (see
+// plVar.constVal), or, inside an EXCEPTION handler, the bare SQLSTATE pseudo-variable
+// re-raising whatever this handler caught (b.handlerCodes; see block). ok is false when q
+// is some other expression -- the caller reports that rather than guessing.
+func (b *plBody) resolveErrcode(q string) ([]string, bool) {
+	q = strings.TrimSpace(q)
+	if lit := plStringLiteral(q); lit != "" {
+		if c := sqlstateOf(lit); c != "" {
+			return []string{c}, true
+		}
+		if len(lit) == 5 {
+			return []string{strings.ToUpper(lit)}, true
+		}
+		return nil, false
+	}
+	if !identRe.MatchString(q) {
+		return nil, false
+	}
+	if strings.EqualFold(q, "sqlstate") {
+		if b.inExcept > 0 && len(b.handlerCodes) > 0 {
+			return append([]string(nil), b.handlerCodes...), true
+		}
+		return nil, false
+	}
+	if v, ok := b.vars[strings.ToLower(q)]; ok && v.constVal != "" {
+		if c := sqlstateOf(v.constVal); c != "" {
+			return []string{c}, true
+		}
+		if len(v.constVal) == 5 {
+			return []string{strings.ToUpper(v.constVal)}, true
+		}
+	}
+	return nil, false
 }
 
 // plStringLiteral unquotes a single-quoted SQL string literal, "" if q is not one.
@@ -1134,9 +1404,36 @@ func sqlstateOf(name string) string {
 }
 
 // dynexecute handles EXECUTE: a constant string is analyzed as the statement it is; a
-// string built at run time cannot be checked and gets an advisory note.
+// string built at run time cannot be checked and gets an advisory note. INTO STRICT
+// (into && strict) additionally means P0002 / P0003, the same as a static
+// PLpgSQL_stmt_execsql (see A2 in adv_plpgsql_test.go) -- but for a dynamic (non-literal)
+// query there is no query to cardinality-prove single, so both stay possible.
 func (b *plBody) dynexecute(m map[string]any, line int) error {
-	return b.dynexecuteText(plQuery(m["query"]), m["params"], line)
+	into, _ := m["into"].(bool)
+	strict, _ := m["strict"].(bool)
+	q := plQuery(m["query"])
+	if lit := plStringLiteral(q); lit != "" {
+		r, err := b.sql(lit, line)
+		if err != nil {
+			return err
+		}
+		if ps, ok := m["params"].([]any); ok {
+			for _, p := range ps {
+				if _, err := b.expr(plQuery(p), line, schema.TypeRef{}); err != nil {
+					return err
+				}
+			}
+		}
+		if into && strict && r != nil {
+			b.checkIntoStrict(r)
+		}
+		return nil
+	}
+	if into && strict {
+		b.addRaise("P0002")
+		b.addRaise("P0003")
+	}
+	return b.dynexecuteText(q, m["params"], line)
 }
 
 func (b *plBody) dynexecuteText(q string, params any, line int) error {

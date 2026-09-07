@@ -391,7 +391,7 @@ var hostParams = sqlshape.Query[struct{ ID int32 }, struct {
 	Span   pgtype.Range[int64]
 	Spans  string
 	Rel    int64
-}](`SELECT id FROM hosts WHERE addr = {{.Addr}} AND net = {{.Net}} AND uptime > {{.Uptime}} AND attrs @> {{.Attrs}} AND span && {{.Span}} AND spans && {{.Spans}} AND rel = {{.Rel}}`)
+}](`SELECT id FROM hosts WHERE addr = {{.Addr}} AND net = {{.Net}} AND uptime > {{.Uptime}} AND attrs @> {{.Attrs}} AND span && {{.Span}} AND spans && {{.Spans}} AND rel = {{.Rel}}`) // want `parameter .Span: int64 into integer may overflow`
 
 var badHostParams = sqlshape.Query[struct{ ID int32 }, struct {
 	Addr int64

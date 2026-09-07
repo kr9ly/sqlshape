@@ -190,8 +190,8 @@ func (ts *Types) Format(r TypeRef) string {
 		}
 		return "character varying"
 	case catalog.Numeric:
-		if m >= 4 {
-			return fmt.Sprintf("numeric(%d,%d)", (m-4)>>16&0xffff, int16((m-4)&0xffff))
+		if p, sc, ok := NumericTypmod(m); ok {
+			return fmt.Sprintf("numeric(%d,%d)", p, sc)
 		}
 		return "numeric"
 	case catalog.Timestamp:
@@ -497,3 +497,12 @@ func (ts *Types) removeSchema(schema string) {
 // User lists the types declared by the schema text (CREATE TYPE / DOMAIN and the row
 // types of relations), in declaration order.
 func (ts *Types) User() []*catalog.Type { return ts.user }
+
+// NumericTypmod decodes a numeric typmod into precision and scale (the scale may be
+// negative since PG 15); ok is false for -1 / no typmod.
+func NumericTypmod(m int32) (precision, scale int32, ok bool) {
+	if m < 4 {
+		return 0, 0, false
+	}
+	return (m - 4) >> 16 & 0xffff, int32(int16((m - 4) & 0xffff)), true
+}

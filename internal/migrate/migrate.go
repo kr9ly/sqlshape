@@ -475,6 +475,9 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 		fp, tp := colProps(p.from, fc), colProps(p.to, c)
 		if fp["type"] != tp["type"] && !p.enumColumn(fc) {
 			p.emit("ALTER TABLE %s ALTER COLUMN %s TYPE %s", qrel(r), q(c.Name), typeText(p.to, c))
+			if typmodNarrows(p.to, fc, c) {
+				p.note("table %s: column %s type %s -> %s narrows precision; PostgreSQL runs this ALTER without a USING clause and rounds or truncates the existing values silently -- add a USING clause, or fix the data first", r.FullName(), c.Name, fp["type"], tp["type"])
+			}
 		}
 		if fp["default"] != tp["default"] {
 			if c.Default == nil {

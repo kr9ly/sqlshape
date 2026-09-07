@@ -96,7 +96,11 @@ type User struct {
 Whether a column may be NULL is derived from NOT NULL constraints and primary keys, from the WHERE
 clause (`deleted_at IS NOT NULL` or `deleted_at = ...` rules NULL out), from outer joins (the inner
 side may be NULL), from functions (a `strict` function of non-NULL arguments is not NULL, nor is
-`coalesce(x, 0)`), and from a view's own WHERE clause. If you know better than the checker, override
+`coalesce(x, 0)`; a handful of strict built-ins and operators, `meta ->> 'key'` among them, can
+still return NULL when there is nothing to report), and from a view's own WHERE clause. A view
+tracks its underlying column's NOT NULL live, the way PostgreSQL itself does: a later
+`ALTER TABLE ... DROP NOT NULL` on the base table reaches it too, even through a chain of views
+and past whatever the view's own WHERE clause does. If you know better than the checker, override
 it on the Go side with the `col:",notnull"` tag or on the SQL side with a
 `-- sqlshape: not null deleted_at` line in the template. For a function's result, put
 `-- sqlshape: not null` above its `CREATE FUNCTION` in `schema.sql`.
@@ -260,7 +264,7 @@ to receiving columns and to passing parameters.
 | `cidr` | `netip.Prefix` |
 | `macaddr` | `net.HardwareAddr` / `string` |
 | `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)` |
+| `T[]` | `[]Go(T)` (each element is checked the same way a plain `T` parameter or column is, notes included) |
 | ranges | `pgtype.Range[T]`, with `T` checked against the subtype (user-defined ranges too) |
 | multiranges | `pgtype.Multirange[pgtype.Range[T]]` |
 | `bit` / `point` / `tsvector` | the `pgtype` value |
@@ -311,8 +315,10 @@ type Params struct {
 ```
 
 A `string` can be passed as a parameter of any type (it is sent in text form and interpreted by
-PostgreSQL). A narrower type gets a note: `int32` into a `bigint` column is
-`parameter .ID: bigint into int32`.
+PostgreSQL). A parameter *wider* than the column it feeds gets an overflow note: an `int64` value
+going into an `integer` column is `parameter .ID: int64 into integer may overflow` (the same for a
+`float64` value going into a `real` column). This applies element-wise to an array parameter too:
+`[]int64` into `smallint[]` gets `parameter .Tags: int64 into smallint may overflow`.
 
 ### A parameter that may be NULL is a pointer
 
@@ -580,9 +586,23 @@ if sqlshape.Violates(err, "customers_email_key") { ... }
 ```
 
 Listed are unique constraints and primary keys, foreign keys in both directions (the inserted row
-references a missing parent; the deleted row is still referenced by a child), CHECKs, domain CHECKs,
-and NOT NULL where the value written may be NULL. A NULL that would come from a parameter is dropped
-when the field's Go type cannot be nil (a `string`, for instance).
+references a missing parent; the deleted row is still referenced by a child), EXCLUDE constraints,
+CHECKs, domain CHECKs, and NOT NULL where the value written may be NULL. A NULL that would come from
+a parameter is dropped when the field's Go type cannot be nil (a `string`, for instance).
+
+A DELETE or an UPDATE that changes a referenced key can also fail through what its foreign keys'
+`ON DELETE` / `ON UPDATE` actions do to the referencing rows, not just through a foreign key that
+rejects the change outright (`NO ACTION` / `RESTRICT`): `SET NULL` can hit a NOT NULL constraint on
+the referencing column, `SET DEFAULT` can hit the same foreign key again (its default value need not
+exist in the parent) and the same NOT NULL if there is no default, and `CASCADE` deletes (or updates)
+the referencing rows, which is checked the same way one level further down -- so a chain of several
+`ON DELETE CASCADE` foreign keys can still end in a failure several tables away.
+
+A write through a view with `WITH [LOCAL | CASCADED] CHECK OPTION` can also fail with SQLSTATE
+44000 (PostgreSQL's own error names no constraint here, so the SQLSTATE is the expect line's key,
+the same way an unannotated trigger SQLSTATE is). `CASCADED` (the default when the option is given
+without a qualifier) checks the WHERE clause of every updatable view further down the stack as
+well, not just this one.
 
 ### Do not declare a violation that cannot happen
 
@@ -607,13 +627,16 @@ diagnostic, the expect line and the run-time error all carry the same string.
 | `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
 | `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
 | `REFERENCES` on `(a)` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| table `CHECK` referencing `(a)` | `<table>_<a>_check` (a CHECK on several columns, or on none, is `<table>_check`) | `orders_total_check` |
+| table `CHECK` referencing exactly one column `(a)` | `<table>_<a>_check` (a CHECK on several columns, or on none, is `<table>_check`) | `orders_total_check` |
 | domain `CHECK` | `<domain>_check` | `yen_check` |
+| `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
 | an error raised by a trigger | the SQLSTATE, or the name given with `-- sqlshape: error` | `P0401`, `OrderTooLarge` |
+| `WITH CHECK OPTION` on a view | the SQLSTATE (PostgreSQL's own 44000 error names no constraint) | `44000` |
 
 A second constraint that would get the same name is numbered, as PostgreSQL does
-(`orders_total_check1`).
+(`orders_total_check1`). A generated name over PostgreSQL's 63-byte identifier limit is cut down the
+same way PostgreSQL cuts it, without splitting a multibyte character.
 
 ### Name the errors a trigger raises
 
@@ -639,6 +662,27 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 
 The SQLSTATE joins the failure modes of the statements on the trigger's table for the events it
 fires on (here INSERT and UPDATE).
+
+### PL/pgSQL statements that fail on their own
+
+A few PL/pgSQL statements can fail without a `RAISE`, and the checker adds their SQLSTATE to the
+body's failure modes the same way it does for an explicit one:
+
+- `SELECT ... INTO STRICT` and `EXECUTE ... INTO STRICT` are `P0002` (no_data_found) when the
+  query returns no rows, and `P0003` (too_many_rows) when it returns more than one; `P0003` is
+  dropped when the query is provably at most one row (the same proof `One` uses).
+- A `CASE` statement with no matching `WHEN` and no `ELSE` is `20000` (case_not_found).
+- An `ASSERT` is `P0004` (assert_failure) when its condition is false.
+
+`RAISE ... USING ERRCODE = <expr>` resolves statically when `<expr>` is a string literal, a
+variable declared with a literal default that is never reassigned, or, inside an `EXCEPTION`
+handler, the bare `SQLSTATE` re-raising what the handler caught. Any other expression leaves the
+SQLSTATE undetermined, which the checker reports rather than assuming `P0001`.
+
+A `BEGIN ... EXCEPTION WHEN ... END` block catches whatever its `WHEN` conditions cover -- a
+condition name, an error class name (matches every code of that class, so
+`integrity_constraint_violation` catches any `23xxx`), a literal `SQLSTATE '...'`, or `OTHERS` --
+so those failure modes do not reach the caller. Whatever the handler itself goes on to raise does.
 
 ### A statement that calls a function declares the function's failure modes too
 
@@ -683,7 +727,9 @@ index, or a partial unique index whose predicate the WHERE clause repeats) is fi
 literal, a parameter, an outer reference or an uncorrelated scalar subquery. Equalities are followed
 through joins (an outer join's ON fixes only the nullable side), views, subqueries and CTEs. An
 aggregate without `GROUP BY`, a constant `LIMIT 0` / `LIMIT 1`, a SELECT without FROM, a one-row
-`VALUES` and a one-row `INSERT ... RETURNING` are single too. A `FULL JOIN` never is.
+`VALUES` and a one-row `INSERT ... RETURNING` are single too. A `FULL JOIN` never is, and neither is
+a key declared `DEFERRABLE`: its uniqueness is not enforced until commit, so a transaction can hold
+two rows sharing it for its own lifetime.
 
 ### Every branch must be provable
 

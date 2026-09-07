@@ -537,6 +537,12 @@ func (p *prover) leafSingle(r *rte) bool {
 			if con.Kind != schema.PrimaryKey && con.Kind != schema.Unique {
 				continue
 			}
+			// a DEFERRABLE unique/PK constraint (typically INITIALLY DEFERRED) is not
+			// enforced until commit, so a transaction can hold duplicate rows through it;
+			// it cannot ground a single-row proof.
+			if con.Deferrable {
+				continue
+			}
 			if p.keyFixed(r, con) {
 				return true
 			}
@@ -683,7 +689,7 @@ func (p *prover) describe(r *rte) string {
 		}
 		var keys []string
 		for _, con := range r.rel.Constraints {
-			if con.Kind == schema.PrimaryKey || con.Kind == schema.Unique {
+			if (con.Kind == schema.PrimaryKey || con.Kind == schema.Unique) && !con.Deferrable {
 				k := "(" + strings.Join(con.Columns, ", ") + ")"
 				if con.Predicate != nil {
 					k += " WHERE ..."

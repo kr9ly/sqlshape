@@ -518,6 +518,10 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 		// resolve after the base tables changed
 		frozen := make([]rteCol, len(rel.Frozen))
 		for i, vc := range rel.Frozen {
+			// vc.Nullable is kept live, not just fixed at CREATE VIEW: the analyzer's
+			// NotNullHook (analyze.go's refreezeDependentNullability) rewrites it in place
+			// whenever a base table's NOT NULL changes, matching how PG itself rechecks a
+			// view's underlying attnotnull on every query instead of freezing it.
 			frozen[i] = rteCol{name: vc.Name, typ: vc.Type, nullable: vc.Nullable}
 			if vc.Collation != "" {
 				frozen[i].coll = collation{strength: collImplicit, name: vc.Collation}
@@ -547,6 +551,38 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 	}
 	a.viewCache[rel] = cols
 	a.viewScopes[rel] = &subquery{what: "view", sel: sel, sc: vsc}
+	return cols, nil
+}
+
+// freshViewColumns re-analyzes rel's defining query against the schema as it currently
+// stands, bypassing viewColumns' frozen-snapshot shortcut (which, once rel.Frozen is set,
+// trusts and returns that rather than the fresh computation). refreezeDependentNullability
+// (analyze.go's NotNullHook) needs the live answer -- rel.Frozen is exactly what it is
+// about to overwrite, so consulting it first would just echo the stale value back.
+func freshViewColumns(a *analyzer, rel *schema.Relation) ([]rteCol, *Error) {
+	if a.viewBusy[rel] {
+		return nil, errAt(codeFeatureNotSupported, -1, "recursive view %s", rel.Name)
+	}
+	a.viewBusy[rel] = true
+	defer delete(a.viewBusy, rel)
+	a.inView++
+	defer func() { a.inView-- }()
+	sel := rel.Query.GetSelectStmt()
+	if sel == nil {
+		return nil, errAt(codeFeatureNotSupported, -1, "view %s: unsupported defining query", rel.Name)
+	}
+	vsc := newScope(nil)
+	savedNotes := a.notes
+	cols, err := a.selectStmt(sel, vsc)
+	a.notes = savedNotes
+	if err != nil {
+		return nil, err
+	}
+	for i, n := range rel.ColumnAliases { // CREATE VIEW v (x, y) AS ...: the frozen names are the aliases
+		if i < len(cols) {
+			cols[i].name = n
+		}
+	}
 	return cols, nil
 }
 

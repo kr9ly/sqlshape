@@ -20,6 +20,7 @@ CREATE TABLE users (
     vflags     bit varying(8),
     avatar     bytea,
     born       date,
+    reminders  date[],
     wake       time(3),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamp(0) without time zone

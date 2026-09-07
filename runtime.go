@@ -87,6 +87,16 @@ func wrapPgErr(err error, expects func(code string) bool) error {
 	return err
 }
 
+// isStaleResultTypeErr reports whether err is PostgreSQL's "cached plan must not change
+// result type" (SQLSTATE 0A000): formatCache asked for a column's format by an OID from a
+// composite/domain type DDL has since recreated (same name, new OID), and requesting an
+// explicit QueryResultFormatsByOID bypasses pgx's own describe-and-reprepare path that
+// would otherwise absorb the change.
+func isStaleResultTypeErr(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "0A000" && strings.Contains(pgErr.Message, "cached plan must not change result type")
+}
+
 var expectRe = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*expect[ \t]+(.+?)[ \t]*$`)
 
 // expects reports whether the template's `-- sqlshape: expect` line names the SQLSTATE.
@@ -115,71 +125,110 @@ func (s Stmt[R, P]) Run(ctx context.Context, db DB, p P) iter.Seq2[R, error] {
 			yield(zero, err)
 			return
 		}
-		var formats pgx.QueryResultFormatsByOID
 		fkey := formatKey{typ: reflect.TypeOf(zero), sql: r.SQL}
+		var formats pgx.QueryResultFormatsByOID
 		if f, ok := formatCache.Load(fkey); ok {
 			formats = f.(pgx.QueryResultFormatsByOID)
 		}
-		var rows pgx.Rows
-		err = withParamTypes(ctx, db, len(r.Args), func() error {
-			rows, err = db.Query(ctx, r.SQL, s.args(r.Args, formats)...)
-			return err
-		})
-		if err != nil {
-			yield(zero, s.wrapErr(err))
-			return
-		}
-		// result types the connection cannot decode yet (user enums, composites): load them and re-run
-		if oids := unknownTypes(rows.Conn(), rows.FieldDescriptions()); len(oids) > 0 {
-			conn := rows.Conn()
-			rows.Close()
-			if err := loadTypes(ctx, conn, oids); err != nil {
-				yield(zero, err)
-				return
-			}
-			if rows, err = db.Query(ctx, r.SQL, s.args(r.Args, formats)...); err != nil {
-				yield(zero, s.wrapErr(err))
-				return
-			}
-		}
-		var m *mapper[R]
-		if fds := rows.FieldDescriptions(); len(fds) > 0 { // empty when the statement failed: rows.Err tells
-			if m, err = newMapper[R](fds); err != nil {
-				rows.Close()
-				yield(zero, err)
-				return
-			}
-			// columns a Scanner receives must come as text: remember that for this statement and re-run once
-			if len(m.textOIDs) > 0 && formats == nil {
-				formatCache.Store(fkey, m.textOIDs)
-				rows.Close()
-				if rows, err = db.Query(ctx, r.SQL, s.args(r.Args, m.textOIDs)...); err != nil {
-					yield(zero, s.wrapErr(err))
-					return
-				}
-			}
-		}
-		defer rows.Close()
-		for rows.Next() {
-			if m == nil {
-				if m, err = newMapper[R](rows.FieldDescriptions()); err != nil {
-					yield(zero, err)
-					return
-				}
-			}
-			row, err := m.scan(rows)
-			if err != nil {
-				yield(zero, err)
-				return
-			}
-			if !yield(row, nil) {
-				return
-			}
-		}
-		if err := rows.Err(); err != nil {
-			yield(zero, s.wrapErr(err))
+		if s.runAttempt(ctx, db, r, formats, yield) == staleFormatCache {
+			// the cached result-format request named a column OID from a composite /
+			// domain type DDL has since recreated (same name, new OID); nothing was
+			// yielded yet, so it is safe to drop the entry and retry once from scratch.
+			formatCache.Delete(fkey)
+			s.runAttempt(ctx, db, r, nil, yield)
 		}
 	}
+}
+
+// runOutcome is what one execution of a statement ended with.
+type runOutcome int
+
+const (
+	runDone runOutcome = iota
+	staleFormatCache
+)
+
+// runAttempt runs one execution of the statement (formats nil for the connection's
+// normal decoding, or a formatCache entry requesting text format for Scanner columns)
+// and yields its rows to yield. It returns staleFormatCache, without yielding anything,
+// only when the very first thing the server reported was PostgreSQL's "cached plan must
+// not change result type" (0A000) for a request that came from formatCache: no row had
+// been produced yet, so the caller may retry with the entry dropped.
+func (s Stmt[R, P]) runAttempt(ctx context.Context, db DB, r Rendered, formats pgx.QueryResultFormatsByOID, yield func(R, error) bool) runOutcome {
+	var zero R
+	var rows pgx.Rows
+	err := withParamTypes(ctx, db, len(r.Args), func() error {
+		var qerr error
+		rows, qerr = db.Query(ctx, r.SQL, s.args(r.Args, formats)...)
+		return qerr
+	})
+	if err != nil {
+		if formats != nil && isStaleResultTypeErr(err) {
+			return staleFormatCache
+		}
+		yield(zero, s.wrapErr(err))
+		return runDone
+	}
+	// result types the connection cannot decode yet (user enums, composites): load them and re-run
+	if oids := unknownTypes(rows.Conn(), rows.FieldDescriptions()); len(oids) > 0 {
+		conn := rows.Conn()
+		rows.Close()
+		if err := loadTypes(ctx, conn, oids); err != nil {
+			yield(zero, err)
+			return runDone
+		}
+		if rows, err = db.Query(ctx, r.SQL, s.args(r.Args, formats)...); err != nil {
+			if formats != nil && isStaleResultTypeErr(err) {
+				return staleFormatCache
+			}
+			yield(zero, s.wrapErr(err))
+			return runDone
+		}
+	}
+	var m *mapper[R]
+	fkey := formatKey{typ: reflect.TypeOf(zero), sql: r.SQL}
+	if fds := rows.FieldDescriptions(); len(fds) > 0 { // empty when the statement failed: rows.Err tells
+		if m, err = newMapper[R](fds); err != nil {
+			rows.Close()
+			yield(zero, err)
+			return runDone
+		}
+		// columns a Scanner receives must come as text: remember that for this statement and re-run once
+		if len(m.textOIDs) > 0 && formats == nil {
+			formatCache.Store(fkey, m.textOIDs)
+			rows.Close()
+			if rows, err = db.Query(ctx, r.SQL, s.args(r.Args, m.textOIDs)...); err != nil {
+				yield(zero, s.wrapErr(err))
+				return runDone
+			}
+		}
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+		if m == nil {
+			if m, err = newMapper[R](rows.FieldDescriptions()); err != nil {
+				yield(zero, err)
+				return runDone
+			}
+		}
+		row, err := m.scan(rows)
+		if err != nil {
+			yield(zero, err)
+			return runDone
+		}
+		if !yield(row, nil) {
+			return runDone
+		}
+	}
+	if err := rows.Err(); err != nil {
+		if n == 0 && formats != nil && isStaleResultTypeErr(err) {
+			return staleFormatCache
+		}
+		yield(zero, s.wrapErr(err))
+	}
+	return runDone
 }
 
 // Collect runs the statement and returns all rows.
@@ -688,10 +737,25 @@ func snake(s string) string {
 // IsNoRows reports whether err is ErrNoRows.
 func IsNoRows(err error) bool { return errors.Is(err, ErrNoRows) }
 
-// optionalKind reports whether a field type can stay unset when a branch does not select it.
+// optionalKind reports whether a field type can stay unset when a branch does not select
+// it: pointer, slice, map, interface, sql.Null*, pgtype.*, or a struct that scans NULL
+// itself through sql.Scanner. Kept in sync with the checker's nullable rule
+// (internal/vet/gotypes.go unwrapNullable / matchDir) rather than a fixed type list, so a
+// user's own sql.Scanner type is recognized the same way the checker recognizes it.
 func optionalKind(t reflect.Type) bool {
 	switch t.Kind() {
 	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Interface:
+		return true
+	}
+	pkg := t.PkgPath()
+	if pkg == "database/sql" && strings.HasPrefix(t.Name(), "Null") {
+		return true // sql.NullString etc.: type checked loosely
+	}
+	if strings.HasSuffix(pkg, "jackc/pgx/v5/pgtype") {
+		return true // pgtype.* all carry Valid
+	}
+	// a Scanner sees NULL as Scan(nil) and represents it itself
+	if pkg != "" && !scalarStruct(t) && reflect.PointerTo(t).Implements(scannerType) {
 		return true
 	}
 	return false

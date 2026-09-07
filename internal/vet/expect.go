@@ -131,6 +131,8 @@ func describeViolationAt(v analyze.Violation) string {
 		return "CHECK on " + v.Table + " (" + cols + "), SQLSTATE 23514"
 	case "23502":
 		return "NOT NULL on " + v.Table + "." + cols + ", SQLSTATE 23502"
+	case "23P01":
+		return "EXCLUDE (" + cols + ") on " + v.Table + ", SQLSTATE 23P01"
 	}
 	if v.Trigger != "" {
 		s := "raised by trigger " + v.Trigger + " on " + v.Table

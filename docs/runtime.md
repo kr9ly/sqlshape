@@ -74,7 +74,11 @@ still load.
 
 A type with a declared binding (`// sqlshape: type money_amount`) is left to its own
 `sql.Scanner` / `driver.Valuer`; the runtime asks PostgreSQL for the text format on those
-columns, so the Scanner receives the value's text form.
+columns, so the Scanner receives the value's text form. That request is remembered per
+statement so later runs skip the extra round trip; if the type was dropped and recreated
+since (a migration, same name, new OID), the runtime notices PostgreSQL's resulting
+"cached plan must not change result type" and re-derives the request once, so the
+statement keeps working without a restart.
 
 ## Errors
 
@@ -113,6 +117,11 @@ mid-batch, so with user enums or composites in play call `LoadUserTypes` first (
 `AfterConnect`). A statement whose rows carry a `sql.Scanner` type cannot ride in a pgx batch,
 which never asks for text format; `Send` runs it as a plain query right after the batch, in
 queue order.
+
+A queued statement's constraint violations and `-- sqlshape: expect` SQLSTATEs are mapped to
+`*ConstraintError` the same way `Run` maps them, whether it was queued as a row-returning
+statement or as an `Exec` (no `RETURNING`). `Send` returns the first such error; the queued
+statements after the failing one were not executed, and their `Rows` / `Tag` return `ErrNotSent`.
 
 ## Bulk loads
 

@@ -66,6 +66,14 @@ the column exists.
 Changes to a domain's base type, a range's subtype, `INHERITS`, partitioning and `OF type` are
 printed as `-- ` notes for the operator rather than as DDL.
 
+A column's `ALTER COLUMN ... TYPE` gets one of these notes too when the new type narrows a
+`numeric`'s precision or scale, a `varchar(n)` / `char(n)` length, a `time` / `timestamp` family's
+fractional-second precision, or a `bit(n)` length: PostgreSQL runs a same-base-type `ALTER` without
+a `USING` and without complaint, rounding or truncating the existing values to fit. The note is a
+warning, not a block -- the same "proposal, edited by hand" contract as the rest of the diff -- so
+running it unedited still rounds or truncates the data; add a `USING` (or fix the data first)
+before applying it.
+
 ## apply
 
 `sqlshape apply -db DSN up.sql` takes the DDL file, hand-edited or not, and checks it by its end
@@ -115,6 +123,11 @@ column would. The plan ends with one `MERGE` per table whose content differs, de
 declaration no longer lists; seeded tables joined by a foreign key are merged parent first and
 their deletions child first. `-- sqlshape: seed` above the INSERT makes the seed additive: rows
 the declaration does not list stay.
+
+Removing the INSERT altogether turns the table back into an ordinary one: its rows are no longer
+part of the schema, so `diff` and `verify-schema` stop reading them and the plan does not delete
+them. The rows stay in the database. To empty the table, keep the seed and delete its rows first,
+or write the `DELETE` yourself.
 
 The checker reads the same rows as a value set: a Go named type that meets the key column, or a
 column referencing it, is diffed against them like enum labels

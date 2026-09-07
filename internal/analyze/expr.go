@@ -1000,7 +1000,28 @@ func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_que
 		a.noteCollConflict(coll, at, "string comparison")
 	}
 	nullable := r.nullable || (l != nil && l.nullable)
+	if !nullable && a.opStrictButNullable(c.op) {
+		nullable = true
+	}
 	return &expr{typ: ref(res), nullable: nullable, node: self, lit: isLit(l) && isLit(r), coll: a.resultColl(coll, res)}, nil
+}
+
+// opStrictButNullable reports whether op's implementing function is one of the
+// strict-but-nullable built-ins (strictNullableFunc): even with all-non-NULL inputs it
+// can still return SQL NULL because there is nothing to report (missing key, no such
+// element, ...). Operators like jsonb's `->`/`->>`/`#>`/`#>>` and hstore's `->` share
+// their implementation with the function form (json_object_field_text and friends),
+// so routing through the operator's pg_operator.oprcode catches them the same way the
+// function-call path already does, extensions (hstore, ...) included.
+func (a *analyzer) opStrictButNullable(op *catalog.Operator) bool {
+	if op == nil || op.Code == 0 {
+		return false
+	}
+	fn := a.s.Catalog.FuncByOID(op.Code)
+	if fn == nil {
+		return false
+	}
+	return strictNullableFunc[fn.Name]
 }
 
 func firstParam(es ...*expr) int32 {
@@ -1753,12 +1774,24 @@ var strictNullableFunc = map[string]bool{
 	"to_regclass": true, "to_regtype": true, "to_regproc": true, "to_regprocedure": true, "to_regoper": true,
 	"to_regoperator": true, "to_regnamespace": true, "to_regrole": true, "to_regcollation": true,
 	"substring_index": true, "split_part": false, "nullif": true, "pg_get_userbyid": false,
+	// hstore's `->` (single key lookup) implements as fetchval: a missing key returns SQL
+	// NULL even though the hstore argument is non-NULL. Reached only via applyOperator's
+	// oprcode -> pg_proc.Name lookup (opStrictButNullable), since hstore has no function
+	// spelling of its own for this operator.
+	"fetchval": true,
 }
 
 // strictButNullable: a strict function that still yields NULL from non-NULL inputs: the
 // listed ones, and lower / upper of a range or multirange (an unbounded side has no value).
 func (a *analyzer) strictButNullable(name string, args []*expr) bool {
 	if strictNullableFunc[name] {
+		return true
+	}
+	// A strict nullary function that reports an absent value (zeroArgNullable) hits the
+	// IsStrict case in funcCall's switch before the zero-arg case ever runs, since strict
+	// short-circuits there for lack of any argument to propagate NULL from. Route it
+	// through here too so it isn't forced to nullable=false.
+	if len(args) == 0 && zeroArgNullable[name] {
 		return true
 	}
 	if (name == "lower" || name == "upper") && len(args) == 1 {
@@ -1773,7 +1806,7 @@ func (a *analyzer) strictButNullable(name string, args []*expr) bool {
 var zeroArgNullable = map[string]bool{
 	"inet_client_addr": true, "inet_client_port": true, "inet_server_addr": true, "inet_server_port": true,
 	"pg_last_wal_receive_lsn": true, "pg_last_wal_replay_lsn": true, "pg_last_xact_replay_timestamp": true,
-	"pg_current_xact_id_if_assigned": true, "current_query": true, "pg_current_logfile": true,
+	"pg_current_xact_id_if_assigned": true, "txid_current_if_assigned": true, "current_query": true, "pg_current_logfile": true,
 }
 
 // plainAggregate reports whether sel is a single aggregate query without GROUP BY / HAVING /

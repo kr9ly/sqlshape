@@ -249,6 +249,9 @@ func relProps(s *schema.Schema, r *schema.Relation) map[string]string {
 			types = append(types, s.Types.Format(c.Type)+collation(c.Collation))
 		}
 		p["column types"] = strings.Join(types, ", ")
+		if r.CheckOption != 0 {
+			p["check option"] = string(r.CheckOption)
+		}
 	}
 	if r.Kind == schema.Sequence {
 		p["owned by"] = r.OwnedBy
@@ -360,6 +363,13 @@ func conProps(c *schema.Constraint) map[string]string {
 		}
 	case schema.Check:
 		p["check"] = schema.Deparse(c.Expr)
+	case schema.Exclude:
+		p["exclude"] = strings.Join(c.Columns, ", ")
+		p["using"] = c.AccessMethod
+		p["operators"] = strings.Join(c.Operators, ", ")
+		if c.Predicate != nil {
+			p["where"] = schema.Deparse(c.Predicate)
+		}
 	}
 	if c.Deferrable {
 		p["deferrable"] = "true"

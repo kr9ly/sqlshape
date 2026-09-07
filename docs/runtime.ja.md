@@ -49,7 +49,7 @@ cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 
 pgx自身の型ローダーが読まない拡張のスカラー型（`citext`、`hstore`、`ltree`など）も登録される。`hstore`はpgxのhstore codec（`map[string]*string`）で、それ以外はテキストとして（`string`、配列なら`[]string`）扱う。`money`のようにpgxにcodecの無い型を持つテーブルも読み込める。
 
-宣言型バインディング（`// sqlshape: type money_amount`）を持つ型は、その型自身の`sql.Scanner` / `driver.Valuer`で変換される。ランタイムはその列についてPostgreSQLにテキスト形式を要求するので、Scannerには値のテキスト表現が渡る。
+宣言型バインディング（`// sqlshape: type money_amount`）を持つ型は、その型自身の`sql.Scanner` / `driver.Valuer`で変換される。ランタイムはその列についてPostgreSQLにテキスト形式を要求するので、Scannerには値のテキスト表現が渡る。この要求は文ごとに覚えておくので、以降の実行では余計な往復が省ける。もしその後に型が削除・再作成されていたら（マイグレーション、名前は同じでOIDだけ変わる）、ランタイムはPostgreSQLが返す「cached plan must not change result type」に気づいて要求を1回だけ作り直すので、再起動なしに文は動き続ける。
 
 ## エラー
 
@@ -78,6 +78,8 @@ tag, err  := paid.Tag()
 ```
 
 `BatchDB`は`SendBatch`を持つもので、接続・プール・トランザクションのどれでもよい。バッチの途中では型を登録できないので、ユーザー定義のenumや複合型を使う文があるなら、先に`LoadUserTypes`を呼んでおく（プールなら`AfterConnect`で）。結果に`sql.Scanner`型が含まれる文はpgxのバッチには乗せられない（バッチではテキスト形式を要求できない）ので、`Send`はそれをバッチの直後に、キューに入れた順で通常のクエリとして実行する。
+
+キューに入れた文の制約違反や`-- sqlshape: expect`のSQLSTATEは、`Run`と同じ規則で`*ConstraintError`に包まれる。行を返す文として積んだか、`Exec`（`RETURNING`なし）として積んだかは関係ない。`Send`は最初に失敗した文のエラーを返し、それより後にキューへ入れた文は実行されない。それらの`Rows` / `Tag`は`ErrNotSent`を返す。
 
 ## 一括ロード
 

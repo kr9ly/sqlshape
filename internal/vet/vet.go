@@ -521,9 +521,6 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	if c.strict {
 		c.reportUnusedParams(pType, res, call.Pos())
 	}
-	checkActionPlacement(lit.text, lit, func(pos token.Pos, format string, args ...any) {
-		pass.Reportf(pos, "sqlshape: "+format, args...)
-	})
 
 	// One diagnostic per distinct message; the branch suffix (after " [") does not count
 	// towards distinctness, so a problem shared by many expansions is reported once.
@@ -581,6 +578,8 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		if multi {
 			where = " [" + e.Branch + "]"
 		}
+		// a text scan of the rendered SQL: it does not need the statement to analyze
+		checkActionPlacement(e, lit, report, where)
 		r, err := analyze.Analyze(c.s, e.SQL)
 		if err != nil {
 			analyzedAll = false
@@ -714,10 +713,30 @@ func (c *checker) adviseParam(p expand.Param, gt types.Type, pg schema.TypeRef, 
 // interpretation the application then owns (advisory).
 func (c *checker) fidelity(pg schema.TypeRef, gt types.Type) string {
 	inner, _ := unwrapNullable(gt)
-	if inner == nil || !isNamed(inner, "time", "Time") {
+	if inner == nil {
 		return ""
 	}
-	switch c.s.Types.BaseOf(pg).OID {
+	// an array parameter/result: apply the same advice to the element type, the way
+	// matchValue's array branch decides an element's fit (multi-dimensional arrays
+	// recurse the same way, one level of []/[N] at a time).
+	base := c.s.Types.BaseOf(pg)
+	if pt := c.s.Types.ByOID(base.OID); pt != nil && pt.Elem != 0 && strings.HasPrefix(pt.Name, "_") {
+		var elem types.Type
+		switch u := inner.Underlying().(type) {
+		case *types.Slice:
+			elem = u.Elem()
+		case *types.Array:
+			elem = u.Elem()
+		}
+		if elem == nil {
+			return ""
+		}
+		return c.fidelity(schema.TypeRef{OID: pt.Elem, Typmod: -1}, elem)
+	}
+	if !isNamed(inner, "time", "Time") {
+		return ""
+	}
+	switch base.OID {
 	case catalog.Timestamp:
 		return "timestamp without time zone into time.Time: which zone the value is in becomes the application's implicit choice (prefer timestamptz)"
 	case catalog.Date:

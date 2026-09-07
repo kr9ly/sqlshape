@@ -6,6 +6,7 @@ import (
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 
+	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/diff"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -42,6 +43,44 @@ func columnText(s *schema.Schema, c *schema.Column, notNull bool) string {
 	return b.String()
 }
 
+// typmodNarrows reports whether an ALTER COLUMN ... TYPE from fc's type to c's type can
+// round or truncate values already in the column: same base type, both sides give an
+// explicit typmod, and the new one holds less than the old one (numeric precision/scale,
+// varchar(n)/char(n) length, a time family's fractional-second precision, bit(n) length).
+// PostgreSQL runs a same-base-type ALTER without a USING clause and without complaint --
+// unlike a NOT NULL addition (which the planner refuses without `@migrate backfill`) or an
+// enum label drop (which it refuses without `@migrate enum ... drop`), so this can only
+// leave a note: it is a proposal the schema author edits, not an error the plan can raise.
+func typmodNarrows(s *schema.Schema, fc, c *schema.Column) bool {
+	if fc.Type.OID != c.Type.OID {
+		return false
+	}
+	fm, tm := fc.Type.Typmod, c.Type.Typmod
+	if fm < 0 || tm < 0 {
+		return false
+	}
+	switch fc.Type.OID {
+	case catalog.Numeric:
+		fPrec, fScale, fok := schema.NumericTypmod(fm)
+		tPrec, tScale, tok := schema.NumericTypmod(tm)
+		if !fok || !tok {
+			return false
+		}
+		return tScale < fScale || tPrec-tScale < fPrec-fScale
+	case catalog.Varchar, catalog.BPChar:
+		if fm < 4 || tm < 4 {
+			return false
+		}
+		return tm < fm
+	case catalog.Time, catalog.TimeTZ, catalog.Timestamp, catalog.TimestampTZ:
+		return tm < fm
+	}
+	if t := s.Types.ByOID(fc.Type.OID); t != nil && (t.Name == "bit" || t.Name == "varbit") {
+		return tm < fm
+	}
+	return false
+}
+
 func identityWord(id byte) string {
 	if id == 'a' {
 		return "ALWAYS"
@@ -74,6 +113,20 @@ func constraintText(s *schema.Schema, c *schema.Constraint) string {
 		return t
 	case schema.Check:
 		return "CHECK (" + schema.Deparse(c.Expr) + ")"
+	case schema.Exclude:
+		var elems []string
+		for i, col := range c.Columns {
+			op := ""
+			if i < len(c.Operators) {
+				op = c.Operators[i]
+			}
+			elems = append(elems, q(col)+" WITH "+op)
+		}
+		t := "EXCLUDE USING " + c.AccessMethod + " (" + strings.Join(elems, ", ") + ")"
+		if c.Predicate != nil {
+			t += " WHERE (" + schema.Deparse(c.Predicate) + ")"
+		}
+		return t
 	}
 	return ""
 }

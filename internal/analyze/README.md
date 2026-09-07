@@ -10,6 +10,22 @@ on a base table does not reach `SELECT *`, and a matview keeps its names), so re
 list and re-analyze the body only for the cardinality proof. Frozen columns keep the base column they
 reference (`SrcRel` / `Src`) so writes through the view still land on the base table.
 
+The column list is the only part PG really freezes; NOT NULL is not — a view rechecks the referenced
+column's attnotnull live, on every query, the same as any other read of the table. `analyze.Load` also
+installs a `NotNullHook`, fired whenever an `ALTER TABLE ... ALTER COLUMN SET/DROP NOT NULL` (or a
+`PRIMARY KEY` added after the fact) changes a table's column
+(`schema.Schema.notifyNotNullChange`, `internal/schema/schema.go`). The hook
+(`refreezeDependentNullability`, `analyze.go`) finds every (plain, not materialized) view that depends
+on that table, transitively, via `schema.DependentViews`, and re-analyzes each one fresh in declaration
+order (`freshViewColumns`, `scope.go` — it bypasses `viewColumns`' shortcut of trusting whatever is
+already frozen, which is exactly what is being replaced), overwriting only its Frozen columns' Nullable in
+place (Type stays frozen: PG refuses to alter the type of a column a view depends on). The column list itself, and everything else about Frozen, is left alone: only PG's
+own asymmetry (column list fixed, NOT NULL live) is modeled, nothing more. Declaration order matters for
+a view-of-view: a base is refrozen before the views built on it, so by the time a nested view is
+revisited, resolving its FROM already reads the inner view's just-updated Frozen. A materialized view is
+its own physical snapshot (PG never copies attnotnull into one, confirmed against a real embedded PG),
+so it is skipped, not refrozen.
+
 `Result.Notes` carries findings PG itself would accept and so never appear in a golden: domains as
 opaque units (`domain.go` — a domain value only meets the same domain or a literal / parameter; mixing
 with another domain or the plain base type is a note; unit-preserving operations keep the domain on

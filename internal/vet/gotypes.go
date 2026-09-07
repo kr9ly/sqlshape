@@ -124,27 +124,51 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type, param bool) fit {
 	if param && is(types.String) {
 		return fit{ok: true}
 	}
-	// arrays (record[] is a pseudo-type array, so not IsArray)
+	// arrays (record[] is a pseudo-type array, so not IsArray). Elements go through
+	// matchDir (not matchValue directly) so a pointer/NULL-able element is unwrapped the
+	// same way a top-level parameter or result is, and so the per-element fit — including
+	// the param-direction overflow notes below — is the single place that decides an
+	// element's fit; nothing here duplicates that decision.
 	if pt.Elem != 0 && strings.HasPrefix(pt.Name, "_") {
+		elemPG := schema.TypeRef{OID: pt.Elem, Typmod: -1}
 		switch u := t.Underlying().(type) {
 		case *types.Slice:
-			ef := c.matchValue(schema.TypeRef{OID: pt.Elem, Typmod: -1}, u.Elem(), param)
+			ef := c.matchDir(elemPG, u.Elem(), param)
 			return fit{ok: ef.ok, lossy: ef.lossy, unknown: ef.unknown}
 		case *types.Array:
-			ef := c.matchValue(schema.TypeRef{OID: pt.Elem, Typmod: -1}, u.Elem(), param)
+			ef := c.matchDir(elemPG, u.Elem(), param)
 			return fit{ok: ef.ok, lossy: ef.lossy, unknown: ef.unknown}
 		}
 		return fit{}
 	}
+	// The notes below are direction-specific: a narrower Go type given a wider PG value
+	// only matters when scanning a result (may truncate what's already there); a wider Go
+	// type given a narrower PG parameter only matters when encoding a parameter (the PG
+	// column may reject a value the Go type has room for). Each case picks the note for
+	// the direction it's actually asked about, so paramFit needs no separate pass over
+	// these same cases: matchDir(..., param: true) already carries the right note,
+	// scalar or, via the array branch above, per element.
 	switch base.OID {
 	case catalog.Int2:
+		if param && is(types.Int32, types.Int64, types.Int) {
+			return fit{ok: true, lossy: t.String() + " into smallint may overflow"}
+		}
 		return fit{ok: is(types.Int16, types.Int32, types.Int64, types.Int)}
 	case catalog.Int4:
+		if param {
+			if is(types.Int64, types.Int) {
+				return fit{ok: true, lossy: t.String() + " into integer may overflow"}
+			}
+			return fit{ok: is(types.Int16, types.Int32, types.Int64, types.Int)}
+		}
 		if is(types.Int16) {
 			return fit{ok: true, lossy: "integer into int16"}
 		}
 		return fit{ok: is(types.Int32, types.Int64, types.Int)}
 	case catalog.Int8:
+		if param {
+			return fit{ok: is(types.Int32, types.Int64, types.Int)}
+		}
 		if is(types.Int32) {
 			return fit{ok: true, lossy: "bigint into int32"}
 		}
@@ -156,8 +180,14 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type, param bool) fit {
 		}
 		return fit{ok: is(types.Uint32)}
 	case catalog.Float4:
+		if param && is(types.Float64) {
+			return fit{ok: true, lossy: "float64 into real loses precision"}
+		}
 		return fit{ok: is(types.Float32, types.Float64)}
 	case catalog.Float8:
+		if param {
+			return fit{ok: is(types.Float32, types.Float64)}
+		}
 		if is(types.Float32) {
 			return fit{ok: true, lossy: "double precision into float32"}
 		}
@@ -168,8 +198,14 @@ func (c *checker) matchValue(pg schema.TypeRef, t types.Type, param bool) fit {
 			isNamed(t, "decimal", "Decimal"), isNamed(t, "apd", "Decimal"):
 			return fit{ok: true}
 		case is(types.Float64, types.Float32):
+			if param {
+				return fit{ok: true}
+			}
 			return fit{ok: true, lossy: "numeric into " + t.String() + " loses precision"}
 		case is(types.Int64, types.Int, types.Int32):
+			if param {
+				return fit{ok: true}
+			}
 			return fit{ok: true, lossy: "numeric into " + t.String() + " drops the fraction"}
 		}
 		return fit{}
@@ -435,36 +471,9 @@ func snake(s string) string {
 }
 
 // paramFit is match in the Go → PG direction: the Go value must fit the PG parameter type,
-// so the lossy cases are the ones where Go is wider than PG.
+// so the lossy cases are the ones where Go is wider than PG. matchValue already picks the
+// param-direction note (see the switch in matchValue), scalar or per array element, so
+// there is nothing left to add here.
 func (c *checker) paramFit(pg schema.TypeRef, t types.Type) fit {
-	f := c.matchDir(pg, t, true)
-	// the type table's notes describe the result direction (bigint into int32); for a
-	// parameter only the overflow notes below apply. A declared type's note (no
-	// driver.Valuer) is about encoding and stays
-	if _, declared := c.declaredOf(t); !declared {
-		f.lossy = ""
-	}
-	inner, _ := unwrapNullable(t)
-	if inner == nil || !f.ok {
-		return f
-	}
-	kind, isBasic := basicKind(inner)
-	if !isBasic {
-		return f
-	}
-	switch c.s.Types.BaseOf(pg).OID {
-	case catalog.Int2:
-		if kind == types.Int32 || kind == types.Int64 || kind == types.Int {
-			f.lossy = inner.String() + " into smallint may overflow"
-		}
-	case catalog.Int4:
-		if kind == types.Int64 || kind == types.Int {
-			f.lossy = inner.String() + " into integer may overflow"
-		}
-	case catalog.Float4:
-		if kind == types.Float64 {
-			f.lossy = "float64 into real loses precision"
-		}
-	}
-	return f
+	return c.matchDir(pg, t, true)
 }

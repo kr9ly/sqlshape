@@ -60,6 +60,12 @@ var paramFidelity = sqlshape.Query[struct{}, struct {
 	T time.Time
 }]("UPDATE users SET updated_at = {{.T}} WHERE id = 1") // want `parameter .T: timestamp without time zone into time.Time`
 
+// fidelity applies element-wise to an array parameter too: []time.Time into date[] carries
+// the same implicit-zone question as the scalar case above, once per element.
+var paramFidelityArray = sqlshape.Query[struct{}, struct {
+	R []time.Time
+}]("UPDATE users SET reminders = {{.R}} WHERE id = 1") // want `parameter .R: date into time.Time`
+
 var identityAssign = sqlshape.Query[struct{}, struct {
 	Seq int64
 }]("UPDATE flags_test SET seq = {{.Seq}} WHERE id = 1") // want `parameter .Seq sends a value into flags_test.seq, which the database generates`

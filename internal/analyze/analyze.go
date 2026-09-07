@@ -122,10 +122,14 @@ func Load(schemaSQL string) (*schema.Schema, error) {
 
 // LoadWith is Load with an explicit catalog.
 func LoadWith(cat *catalog.Catalog, schemaSQL string) (*schema.Schema, error) {
-	return schema.LoadWithHook(cat, schemaSQL, freezeView)
+	return schema.LoadWithHooks(cat, schemaSQL, freezeView, refreezeDependentNullability)
 }
 
-// freezeView is the ViewHook: the view body analyzed against the schema as it stands now.
+// freezeView is the ViewHook: the view body analyzed against the schema as it stands now,
+// building rel.Frozen from scratch (this is the one place the column list itself -- name,
+// count, order -- is decided; PG fixes those at CREATE VIEW and nothing later reopens
+// them). refreezeDependentNullability (the NotNullHook) later revisits Nullable in
+// place, but never the shape freezeView established here.
 func freezeView(s *schema.Schema, rel *schema.Relation) {
 	a := newAnalyzer(s, nil, nil)
 	cols, err := a.viewColumns(rel)
@@ -134,18 +138,68 @@ func freezeView(s *schema.Schema, rel *schema.Relation) {
 	}
 	rel.Frozen = make([]schema.ViewColumn, len(cols))
 	for i, c := range cols {
-		vc := schema.ViewColumn{Name: c.name, Type: c.typ, Nullable: c.nullable}
-		if cv := c.coll.asVar(); cv.strength == collImplicit {
-			vc.Collation = cv.name
+		rel.Frozen[i] = viewColumnOf(a, c)
+	}
+}
+
+// viewColumnOf builds one schema.ViewColumn from a resolved view output column.
+func viewColumnOf(a *analyzer, c rteCol) schema.ViewColumn {
+	vc := schema.ViewColumn{Name: c.name, Type: c.typ, Nullable: c.nullable}
+	if cv := c.coll.asVar(); cv.strength == collImplicit {
+		vc.Collation = cv.name
+	}
+	if c.src != nil {
+		vc.SrcTable, vc.SrcColumn = c.src.Table, c.src.Column
+		if br := a.relByFullName(c.src.Table); br != nil {
+			vc.SrcRel = br
+			vc.Src = br.Column(c.src.Column) // nil when the base is a view
 		}
-		if c.src != nil {
-			vc.SrcTable, vc.SrcColumn = c.src.Table, c.src.Column
-			if br := a.relByFullName(c.src.Table); br != nil {
-				vc.SrcRel = br
-				vc.Src = br.Column(c.src.Column) // nil when the base is a view
+	}
+	return vc
+}
+
+// refreezeDependentNullability is the NotNullHook: it runs whenever a table's column NOT
+// NULL changes (ALTER COLUMN SET/DROP NOT NULL, or a PRIMARY KEY added after the fact),
+// passing that table as rel. PG does not freeze a view's nullability at CREATE VIEW the
+// way it freezes the column list -- SELECT through a view rechecks attnotnull on the
+// referenced column live, on every query -- so every (plain, not materialized) view that
+// depends on rel, transitively, is re-analyzed in declaration order and has its existing
+// Frozen columns' Nullable refreshed in place. Type stays frozen too: PG refuses to alter
+// the type of a column a view depends on (0A000), so a type that differs here is a schema
+// PG would not have accepted, not a change to follow. The column list itself (name,
+// count, order) is never touched here: PG really does freeze that part, and re-deriving
+// it from a fresh analysis risks disagreeing with the frozen shape for unrelated reasons
+// (e.g. a later, unrelated schema change the view's SELECT * would now expand
+// differently) that have nothing to do with why this hook ran.
+//
+// Declaration order matters for a view-of-view: DependentViews returns bases before the
+// views built on them, so by the time a nested view is refrozen, viewColumns resolving
+// its FROM already reads the inner view's just-updated rel.Frozen (relationRTE's `case
+// schema.View, schema.MatView` path takes the frozen branch of viewColumns when
+// rel.Frozen != nil).
+func refreezeDependentNullability(s *schema.Schema, rel *schema.Relation) {
+	for _, v := range s.DependentViews(rel) {
+		if v.Kind != schema.View || v.Frozen == nil {
+			// a materialized view is its own physical snapshot (PG never copies attnotnull
+			// into one; confirmed against a real embedded PG), so it keeps whatever was
+			// frozen. A view whose body never froze (freezeView bailed on an error) has
+			// nothing to refresh.
+			continue
+		}
+		a := newAnalyzer(s, nil, nil)
+		cols, err := freshViewColumns(a, v)
+		if err != nil || len(cols) != len(v.Frozen) {
+			// the body no longer resolves, or the column count somehow disagrees with what
+			// was frozen (should not happen: nothing about the view's own query changed) --
+			// either way, leave the last-good Frozen alone rather than risk a bad rewrite.
+			continue
+		}
+		for i, c := range cols {
+			if v.Frozen[i].Name != c.name {
+				continue // defensive: names are supposed to stay fixed too
 			}
+			v.Frozen[i].Nullable = c.nullable
 		}
-		rel.Frozen[i] = vc
 	}
 }
 

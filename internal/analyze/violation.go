@@ -51,10 +51,12 @@ func (v Violation) Key() string {
 }
 
 const (
-	codeNotNullViolation    = "23502"
-	codeForeignKeyViolation = "23503"
-	codeUniqueViolation     = "23505"
-	codeCheckViolation      = "23514"
+	codeNotNullViolation     = "23502"
+	codeForeignKeyViolation  = "23503"
+	codeUniqueViolation      = "23505"
+	codeCheckViolation       = "23514"
+	codeExclusionViolation   = "23P01"
+	codeCheckOptionViolation = "44000"
 )
 
 // assignment is one value stored into a column by the statement.
@@ -201,6 +203,10 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 			if anyIn(checkColumns(con), inserted) {
 				out = append(out, Violation{Code: codeCheckViolation, Constraint: con.Name, Table: rel.Name, Columns: checkColumns(con)})
 			}
+		case schema.Exclude:
+			if anyIn(con.Columns, inserted) && !absorbed[con.Name] {
+				out = append(out, Violation{Code: codeExclusionViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns})
+			}
 		}
 	}
 	for _, c := range rel.Columns {
@@ -217,6 +223,7 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 			out = append(out, v)
 		}
 	}
+	out = append(out, a.checkOptionViolations(rel)...)
 	return dedupe(out)
 }
 
@@ -272,6 +279,10 @@ func (a *analyzer) updateViolations(rel *schema.Relation, set map[string]bool, s
 			if anyIn(checkColumns(con), set) {
 				out = append(out, Violation{Code: codeCheckViolation, Constraint: con.Name, Table: rel.Name, Columns: checkColumns(con)})
 			}
+		case schema.Exclude:
+			if anyIn(con.Columns, set) {
+				out = append(out, Violation{Code: codeExclusionViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns})
+			}
 		}
 	}
 	for _, c := range rel.Columns {
@@ -280,6 +291,7 @@ func (a *analyzer) updateViolations(rel *schema.Relation, set map[string]bool, s
 		}
 	}
 	out = append(out, a.referencingViolations(rel, set, false)...)
+	out = append(out, a.checkOptionViolations(rel)...)
 	return dedupe(out)
 }
 
@@ -315,12 +327,22 @@ func (a *analyzer) columnViolations(rel *schema.Relation, c *schema.Column) []Vi
 }
 
 // referencingViolations lists foreign keys of other tables that point at rel and would
-// reject the change: any on DELETE, those referencing a changed column on UPDATE
-// (CASCADE / SET NULL / SET DEFAULT never fail here; they fail as the cascaded change).
+// reject the change: any on DELETE, those referencing a changed column on UPDATE.
+// CASCADE / SET NULL / SET DEFAULT never fail on rel itself, but the cascaded change they
+// make to the referencing table can itself fail: CASCADE deletes (or updates) the
+// referencing rows, which is enumerated the same way one level down (recursively, since
+// that table may in turn be referenced); SET NULL can hit the referencing column's NOT
+// NULL; SET DEFAULT can hit the FK again (the default value need not exist in the parent)
+// and the same NOT NULL if the default is absent.
 func (a *analyzer) referencingViolations(rel *schema.Relation, changed map[string]bool, del bool) []Violation {
-	if rel == nil {
+	return a.cascadingViolations(rel, changed, del, map[*schema.Relation]bool{})
+}
+
+func (a *analyzer) cascadingViolations(rel *schema.Relation, changed map[string]bool, del bool, visited map[*schema.Relation]bool) []Violation {
+	if rel == nil || visited[rel] {
 		return nil
 	}
+	visited[rel] = true
 	var out []Violation
 	for _, other := range a.s.Relations {
 		for _, con := range other.Constraints {
@@ -331,9 +353,6 @@ func (a *analyzer) referencingViolations(rel *schema.Relation, changed map[strin
 			if del {
 				action = con.OnDelete
 			}
-			if action != 'a' && action != 'r' {
-				continue
-			}
 			if !del {
 				ref := con.RefColumns
 				if len(ref) == 0 {
@@ -343,8 +362,77 @@ func (a *analyzer) referencingViolations(rel *schema.Relation, changed map[strin
 					continue
 				}
 			}
-			out = append(out, Violation{Code: codeForeignKeyViolation, Constraint: con.Name, Table: other.Name, Columns: con.Columns, RefTable: rel.Name})
+			switch action {
+			case 'a', 'r': // NO ACTION, RESTRICT: the change itself is rejected
+				out = append(out, Violation{Code: codeForeignKeyViolation, Constraint: con.Name, Table: other.Name, Columns: con.Columns, RefTable: rel.Name})
+			case 'c': // CASCADE: the referencing rows are deleted/updated the same way, cascading further
+				out = append(out, a.cascadingViolations(other, colSet(con.Columns), del, visited)...)
+			case 'n': // SET NULL: the FK columns are set to NULL
+				for _, cn := range con.Columns {
+					if c := other.Column(cn); c != nil && (c.NotNull || a.domainNotNull(c.Type.OID)) {
+						out = append(out, Violation{Code: codeNotNullViolation, Table: other.Name, Columns: []string{cn}})
+					}
+				}
+			case 'd': // SET DEFAULT: the FK columns take their DEFAULT, which the parent may not have
+				out = append(out, Violation{Code: codeForeignKeyViolation, Constraint: con.Name, Table: other.Name, Columns: con.Columns, RefTable: rel.Name})
+				for _, cn := range con.Columns {
+					if c := other.Column(cn); c != nil && (c.NotNull || a.domainNotNull(c.Type.OID)) && c.Default == nil {
+						out = append(out, Violation{Code: codeNotNullViolation, Table: other.Name, Columns: []string{cn}})
+					}
+				}
+			}
 		}
+	}
+	return out
+}
+
+func colSet(cols []string) map[string]bool {
+	m := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		m[c] = true
+	}
+	return m
+}
+
+// checkedViews walks the auto-updatable view chain starting at rel down toward its base
+// table and returns the views whose WITH CHECK OPTION a write through rel must satisfy:
+// rel's own check option (if any), plus every view further down once a CASCADED option
+// forces checking to propagate (a LOCAL option only checks rel itself; a lower view still
+// enforces its own CHECK OPTION independently when reached).
+func (a *analyzer) checkedViews(rel *schema.Relation, cascading bool) []*schema.Relation {
+	return a.checkedViewsFrom(rel, cascading, map[*schema.Relation]bool{})
+}
+
+func (a *analyzer) checkedViewsFrom(rel *schema.Relation, cascading bool, visited map[*schema.Relation]bool) []*schema.Relation {
+	if rel == nil || rel.Kind != schema.View || rel.Query == nil || visited[rel] {
+		return nil // visited: a view chain the loader accepted but PG would not (a -> b -> a)
+	}
+	visited[rel] = true
+	var out []*schema.Relation
+	if cascading || rel.CheckOption != 0 {
+		out = append(out, rel)
+	}
+	nextCascading := cascading || rel.CheckOption == 'c'
+	baseRV := autoUpdatableBase(a, rel.Query.GetSelectStmt())
+	if baseRV == nil {
+		return out
+	}
+	base := a.s.Relation(baseRV.Schemaname, baseRV.Relname)
+	if base == nil || base.Kind != schema.View {
+		return out
+	}
+	return append(out, a.checkedViewsFrom(base, nextCascading, visited)...)
+}
+
+// checkOptionViolations is the 44000 a write through rel (INSERT / UPDATE, including a
+// MERGE action or an ON CONFLICT DO UPDATE) may hit: one entry per checked view. PG's own
+// 44000 error carries no constraint name (unlike a table constraint violation), so -- like
+// a trigger's custom SQLSTATE -- the code itself is the Constraint/Key expect lines name;
+// Name carries the view for the checker's diagnostic text.
+func (a *analyzer) checkOptionViolations(rel *schema.Relation) []Violation {
+	var out []Violation
+	for _, v := range a.checkedViews(rel, false) {
+		out = append(out, Violation{Code: codeCheckOptionViolation, Constraint: codeCheckOptionViolation, Table: v.Name, Name: v.Name})
 	}
 	return out
 }

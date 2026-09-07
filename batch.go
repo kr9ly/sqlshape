@@ -116,11 +116,20 @@ func Queue[R, P any](b *Batch, s Stmt[R, P], p P) *Queued[R] {
 	}
 	qq := b.b.Queue(r.SQL, r.Args...)
 	if rt := reflect.TypeOf(zero); rt != nil && rt.Kind() == reflect.Struct && rt.NumField() == 0 {
-		// R = struct{}: a statement without rows
-		qq.Exec(func(tag pgconn.CommandTag) error {
-			q.tag, q.done = tag, true
+		// R = struct{}: a statement without rows. Set Fn directly rather than through
+		// QueuedQuery.Exec: pgx's Exec wrapper calls its callback only when br.Exec()
+		// succeeds, so a failing statement would leave q.err unset and q.done false
+		// (Tag reporting ErrNotSent instead of the real error).
+		qq.Fn = func(br pgx.BatchResults) error {
+			tag, err := br.Exec()
+			q.done = true
+			if err != nil {
+				q.err = s.wrapErr(err)
+				return q.err
+			}
+			q.tag = tag
 			return nil
-		})
+		}
 		return q
 	}
 	qq.Query(func(rows pgx.Rows) error {

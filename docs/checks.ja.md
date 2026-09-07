@@ -84,7 +84,7 @@ type User struct {
 }
 ```
 
-補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない）、ビュー自身のWHERE句から判定する。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。
+補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。
 
 ### 一部の分岐だけが選ぶ列はNULLを受けられる型で受ける
 
@@ -240,7 +240,7 @@ pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQL
 | `cidr` | `netip.Prefix` |
 | `macaddr` | `net.HardwareAddr` / `string` |
 | `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)` |
+| `T[]` | `[]Go(T)`（各要素は単体の`T`のパラメータ/列と同じ判定を受ける。注記も含めて） |
 | 範囲型 | `pgtype.Range[T]`。`T`はサブタイプと照合される（ユーザー定義の範囲型も同様） |
 | 多重範囲型 | `pgtype.Multirange[pgtype.Range[T]]` |
 | `bit` / `point` / `tsvector` | `pgtype`の対応する型 |
@@ -285,7 +285,7 @@ type Params struct {
 }
 ```
 
-補足。`string`はどの型のパラメータにも渡せる（テキスト形式で送られ、PostgreSQL側で解釈される）。狭い型を渡すと注記が出る。`bigint`の列に`int32`なら`parameter .ID: bigint into int32`。
+補足。`string`はどの型のパラメータにも渡せる（テキスト形式で送られ、PostgreSQL側で解釈される）。パラメータが渡す先の列より広い型だとオーバーフローの注記が出る。`integer`の列に`int64`なら`parameter .ID: int64 into integer may overflow`（`real`の列に`float64`でも同様）。配列パラメータでも要素ごとに同じ注記が付く。`smallint[]`に`[]int64`なら`parameter .Tags: int64 into smallint may overflow`。
 
 ### NULLを渡しうるパラメータはポインタにする
 
@@ -529,7 +529,11 @@ _, err := CreateCustomer.First(ctx, db, p)
 if sqlshape.Violates(err, "customers_email_key") { ... }
 ```
 
-補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。
+補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、EXCLUDE制約、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。
+
+参照される側のキーを変えるDELETEやUPDATEは、外部キー自体が変更を拒む場合（`NO ACTION` / `RESTRICT`）だけでなく、その`ON DELETE` / `ON UPDATE`アクションが参照する側の行に対して行うことを通じても失敗しうる。`SET NULL`は参照列のNOT NULL制約に触れうる、`SET DEFAULT`は同じ外部キーに再び触れうる（デフォルト値が親に存在するとは限らない）うえデフォルトが無ければ同じNOT NULLにも触れうる、`CASCADE`は参照する側の行を削除（または更新）し、それはさらに一段下で同じように検査される——したがって`ON DELETE CASCADE`が連鎖する外部キーは、何段も先のテーブルで失敗することがある。
+
+`WITH [LOCAL | CASCADED] CHECK OPTION`付きのビューへの書き込みは、SQLSTATE 44000でも失敗しうる（PostgreSQL自身のこのエラーは制約名を持たないため、注釈の無いトリガーのSQLSTATEと同様に、expect行はSQLSTATEそのものをキーにする）。`CASCADED`（オプションを修飾子無しで書いたときの既定）は、このビューだけでなく、さらに下位にある更新可能なビューのWHERE句も検査対象にする。
 
 ### 起こりえない違反を宣言しない
 
@@ -552,12 +556,14 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 | `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
 | `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
 | 列`(a)`の`REFERENCES` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| 列`(a)`を参照するテーブルの`CHECK` | `<table>_<a>_check`（複数列を参照するか、列を参照しないCHECKは`<table>_check`） | `orders_total_check` |
+| 列をちょうど1つだけ参照するテーブルの`CHECK` `(a)` | `<table>_<a>_check`（複数列を参照するか、列を参照しないCHECKは`<table>_check`） | `orders_total_check` |
 | ドメインの`CHECK` | `<domain>_check` | `yen_check` |
+| `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
 | トリガーが送出するエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
+| ビューの`WITH CHECK OPTION` | SQLSTATE（PostgreSQL自身の44000エラーは制約名を持たない） | `44000` |
 
-同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。
+同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。生成した名前がPostgreSQLの63バイトという識別子の上限を超える場合は、マルチバイト文字を途中で切らないよう、PostgreSQLと同じやり方で切り詰める。
 
 ### トリガーが送出するエラーには名前を付ける
 
@@ -580,6 +586,18 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
 トリガーが付いているテーブルへの、トリガーが発火するイベント（この例ではINSERTとUPDATE）の失敗モードに、そのSQLSTATEが加わる。
+
+### RAISE無しで失敗するPL/pgSQL文
+
+PL/pgSQLの一部の文は`RAISE`が無くても失敗しうる。検査器はそのSQLSTATEも、明示的な`RAISE`と同様に本体の失敗モードへ加える。
+
+- `SELECT ... INTO STRICT`と`EXECUTE ... INTO STRICT`は、問い合わせが1行も返さなければ`P0002`（no_data_found）、2行以上返せば`P0003`（too_many_rows）。問い合わせが1行以下だと証明できる場合（`One`が使うのと同じ証明）は`P0003`を落とす。
+- マッチする`WHEN`が無く`ELSE`も無い`CASE`文は`20000`（case_not_found）。
+- `ASSERT`は条件が偽なら`P0004`（assert_failure）。
+
+`RAISE ... USING ERRCODE = <式>`は、`<式>`が文字列リテラルの場合、リテラルの初期値のまま再代入されない変数の場合、あるいは`EXCEPTION`ハンドラの中で捕捉したSQLSTATEをそのまま再送出する`SQLSTATE`そのものの場合に、静的に解決する。それ以外の式はSQLSTATEを特定できないままとし、`P0001`と決め打ちせずその旨を検査器が報告する。
+
+`BEGIN ... EXCEPTION WHEN ... END`ブロックは、`WHEN`の条件がカバーするものをすべて捕捉する — 条件名、エラークラス名（そのクラスの全コードにマッチする。たとえば`integrity_constraint_violation`はどの`23xxx`にもマッチする）、リテラルの`SQLSTATE '...'`、`OTHERS`のいずれでも。捕捉された失敗モードは呼び出し元まで届かない。ハンドラ自身が新たに送出するものは届く。
 
 ### 関数を呼ぶ文は、関数の中の失敗モードも宣言する
 
@@ -613,7 +631,7 @@ var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email FROM users WHERE email = {{.Email}}`)
 ```
 
-補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。
+補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`DEFERRABLE`と宣言したキーも同様——一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。
 
 ### すべての分岐で証明できなければならない
 
