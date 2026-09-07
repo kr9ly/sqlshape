@@ -123,6 +123,7 @@ PostgreSQL 17の構文はすべて扱える。SELECTとDML、MERGE、CTE、ウ�
 
 「すべて」の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の22,000文を本物のPostgreSQL 17と並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは19件で、行レベルセキュリティの再帰、権限、サーバー内部のエラーなど、静的解析では判定できないもの。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
 
-## ライセンス
+## License
 
-Apache License 2.0（[LICENSE](LICENSE)）。埋め込んでいる`pg_catalog`のデータと、PostgreSQLから移植した検証規則はPostgreSQL Licenseに従う（[NOTICE](NOTICE)）。
+Apache License 2.0, see [LICENSE](LICENSE). The embedded `pg_catalog` data and the validation
+rules ported from PostgreSQL are used under the PostgreSQL License, see [NOTICE](NOTICE).
