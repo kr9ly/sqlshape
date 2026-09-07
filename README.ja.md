@@ -95,7 +95,7 @@ $ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...
 
 ## マイグレーション
 
-マイグレーションファイルは書かない。`sqlshape`がデータベースと`schema.sql`を比較し、その差分から動く:
+マイグレーションファイルは書かない。`schema.sql`を直すと、`sqlshape`がデータベースとの差分からDDLを生成する:
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # データベースの状態から schema.sql に至る DDL
@@ -104,7 +104,7 @@ $ sqlshape apply -db "$DSN" -packages ./... up.sql
 $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベースが schema.sql と違う箇所
 ```
 
-`apply`は、データベースにDDLを当てた結果が`schema.sql`と一致することを確認してから実行する。`-packages`を付けると、DDLが落とす列にまだ依存しているGoの文があれば拒否する。リネーム、enumラベルの削除、backfillはdiffだけでは決められないので、`schema.sql`に`-- @migrate`行で宣言する。seed済みlookupテーブルは行単位で比較され、`MERGE` 1文で揃えられる。詳細は[docs/migrations.ja.md](docs/migrations.ja.md)。
+生成されたDDLは手で直してよい。`apply`は、そのDDLを当てた結果が本当に`schema.sql`と一致するかを実行前に確認し、一致しなければ実行しない。`-packages`を付けると、DDLで消える列や型が変わる列をまだ使っているGoのコードがあれば、それも実行前に止まる。リネームやenumのラベル削除のように差分だけでは意図が決められない変更は、`schema.sql`に`-- @migrate`行で書き添える。詳細は[docs/migrations.ja.md](docs/migrations.ja.md)。
 
 ## ドキュメント
 
