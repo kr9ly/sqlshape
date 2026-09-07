@@ -12,31 +12,60 @@
 
 対応は`col:"..."`タグ、`db:"..."`タグ、フィールド名をsnake_caseにしたもの、の順で探す。
 
-```go
-// NG
-type Order struct{ ID int64; CustomerName string }
-SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
-// → result column "name" has no field in Order
-// → field Order.CustomerName has no result column
+NG
 
-// OK: 列に別名を付ける
+```go
+type Order struct {
+	ID           int64
+	CustomerName string
+}
+```
+
+```sql
+SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
+```
+
+```
+result column "name" has no field in Order
+field Order.CustomerName has no result column
+```
+
+OK。列に別名を付けるか、タグで対応を指定する。
+
+```sql
 SELECT o.id, c.name AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id
-// OK: タグで対応を指定する
-type Order struct{ ID int64; CustomerName string `col:"name"` }
+```
+
+```go
+type Order struct {
+	ID           int64
+	CustomerName string `col:"name"`
+}
 ```
 
 ### 名前の無い列と同名の列には別名を付ける
 
-```go
-// NG
+NG
+
+```sql
 SELECT id, count(*) FROM orders GROUP BY id
-// → result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
+```
 
-// NG
+```
+result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
+```
+
+```sql
 SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
-// → result columns 1 and 2 are both named "id": alias one of them (... AS other_name)
+```
 
-// OK
+```
+result columns 1 and 2 are both named "id": alias one of them (... AS other_name)
+```
+
+OK
+
+```sql
 SELECT id, count(*) AS n FROM orders GROUP BY id
 SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.customer_id
 ```
@@ -45,84 +74,182 @@ SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.cust
 
 NULLを受けられる型は、ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、`sql.Scanner`を実装した型。
 
-```go
-// NG
-type User struct{ ID int64; DeletedAt time.Time }
-SELECT id, deleted_at FROM users
-// → field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
+NG
 
-// OK
-type User struct{ ID int64; DeletedAt *time.Time }
+```go
+type User struct {
+	ID        int64
+	DeletedAt time.Time
+}
+```
+
+```sql
+SELECT id, deleted_at FROM users
+```
+
+```
+field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
+```
+
+OK
+
+```go
+type User struct {
+	ID        int64
+	DeletedAt *time.Time
+}
 ```
 
 補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない）、ビュー自身のWHERE句から判定する。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。
 
 ### 一部の分岐だけが選ぶ列はNULLを受けられる型で受ける
 
-```go
-// NG
-type Order struct{ ID int64; Total string }
-SELECT id {{if .WithTotal}}, total{{end}} FROM orders
-// → field Order.Total is not selected in every branch [if@11:else]: make it a pointer so those branches leave it nil
+NG
 
-// OK
-type Order struct{ ID int64; Total *string }
+```go
+type Order struct {
+	ID    int64
+	Total string
+}
+```
+
+```sql
+SELECT id {{if .WithTotal}}, total{{end}} FROM orders
+```
+
+```
+field Order.Total is not selected in every branch [if@11:else]: make it a pointer so those branches leave it nil
+```
+
+OK
+
+```go
+type Order struct {
+	ID    int64
+	Total *string
+}
 ```
 
 補足。選ばない分岐ではフィールドはnilのまま。どの分岐も選ばない列に対応するフィールドは`has no result column`になる。
 
 ### 列の型とフィールドの型は下の表に従う
 
-```go
-// NG
-type Order struct{ ID int64; Total float64 }
-SELECT id, total FROM orders            -- total numeric(12,2)
-// → field Total is float64 but column "total" is numeric(12,2)
+NG
 
-// OK
-type Order struct{ ID int64; Total string }           // 全桁を保つ
-type Order struct{ ID int64; Total decimal.Decimal }  // shopspring/decimal
+```go
+type Order struct {
+	ID    int64
+	Total float64
+}
+```
+
+```sql
+SELECT id, total FROM orders   -- total は numeric(12,2)
+```
+
+```
+field Total is float64 but column "total" is numeric(12,2)
+```
+
+OK
+
+```go
+type Order struct {
+	ID    int64
+	Total string          // 全桁を保つ。decimal.Decimal（shopspring/decimal）でもよい
+}
 ```
 
 ### ネストした行は構造体で受ける
 
 `array_agg(row(...))`、`array_agg(t)`、`row(...)`、複合型の列は構造体、または構造体のスライスで受ける。無名の`row(...)`はフィールドの位置で、名前付きの複合型は名前と順序で対応づける。
 
+NG。構造体のフィールドの順序が複合型の列の順序と違う。
+
+```sql
+-- schema.sql
+CREATE TYPE order_item AS (sku text, qty integer);
+```
+
 ```go
-// schema.sql: CREATE TYPE order_item AS (sku text, qty integer)
+type Item struct {
+	Qty int32
+	Sku string
+}
+type Order struct {
+	ID    int64
+	Items []Item
+}
+```
 
-// NG: 構造体のフィールドの順序が複合型の列の順序と違う
-type Item struct{ Qty int32; Sku string }
-type Order struct{ ID int64; Items []Item }
-SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items FROM orders o JOIN order_items i ON ... GROUP BY o.id
-// → field Items.Qty is at position 1 but the row type's column 1 is "sku" (fields are scanned in order)
+```sql
+SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items
+  FROM orders o JOIN order_items i ON i.order_id = o.id
+ GROUP BY o.id
+```
 
-// OK
-type Item struct{ Sku string; Qty int32 }
+```
+field Items.Qty is at position 1 but the row type's column 1 is "sku" (fields are scanned in order)
+```
+
+OK
+
+```go
+type Item struct {
+	Sku string
+	Qty int32
+}
 ```
 
 ### 1列だけ返すSQLはスカラーで受けられる
 
-```go
-// OK
-var Count = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orders`)
+OK
 
-// NG
+```go
+var Count = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orders`)
+```
+
+NG
+
+```go
 var Count = sqlshape.Query[int64, struct{}](`SELECT id, total FROM orders`)
-// → R is int64 but the query returns 2 columns
+```
+
+```
+R is int64 but the query returns 2 columns
 ```
 
 ### 埋め込み構造体は平坦化される
 
-```go
-// OK
-type Base struct{ ID int64; CreatedAt time.Time }
-type Order struct{ Base; Total string }
-SELECT id, created_at, total FROM orders
+OK
 
-// NG: 2つのフィールドが同じ列を受けようとしている
-type Order struct{ Base; ID int64; Total string }
-// → Order: fields Base.ID and ID both bind to column "id"
+```go
+type Base struct {
+	ID        int64
+	CreatedAt time.Time
+}
+type Order struct {
+	Base
+	Total string
+}
+```
+
+```sql
+SELECT id, created_at, total FROM orders
+```
+
+NG。2つのフィールドが同じ列を受けようとしている。
+
+```go
+type Order struct {
+	Base
+	ID    int64
+	Total string
+}
+```
+
+```
+Order: fields Base.ID and ID both bind to column "id"
 ```
 
 補足。名前付きの構造体フィールド、または`col:"..."`タグを付けた埋め込みフィールドは、平坦化されずにネストした行として扱われる。
