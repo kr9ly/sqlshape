@@ -15,6 +15,25 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 - SQLインジェクションは起きない。`{{.X}}`は必ず`$n`のプレースホルダになり、値がSQLの文字列に埋め込まれることはない。実行時も、検査済みのSQLのみが実行できる。
 - スキーマの定義は`schema.sql`の1ファイルだけ。静的検査もマイグレーションもこのファイルから導かれるので、モデル定義やマイグレーションファイルを別に書く必要はない。ビュー・関数・ドメイン・複合型・行レベルセキュリティ・seed済みのlookupテーブルもテーブルと同じ厳しさで検査されるので、ロジックをデータベース側に置いても検査の抜け穴にはならない。
 
+## インストール
+
+検査器とマイグレーションコマンドは1つのバイナリになっている:
+
+```
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ sqlshape version
+```
+
+PostgreSQLのパーサ（libpg_query）をcgoでリンクするので、`go install`にはCコンパイラ（gccかclang）が必要。ビルド済みのバイナリ（LinuxとmacOS、amd64とarm64）は[releasesページ](https://github.com/kr9ly/sqlshape/releases)にある。
+
+ランタイムは通常のGoモジュール:
+
+```
+$ go get github.com/kr9ly/sqlshape
+```
+
+バージョンはsemantic versioningに従い、`vX.Y.Z`のタグを打つ。メジャーバージョンが0の間は、マイナーバージョンの間でもAPIが変わりうる。
+
 ## Quickstart
 
 ```sql
@@ -45,7 +64,7 @@ INSERT INTO users (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id`)
 ```
 
 ```
-$ go run github.com/kr9ly/sqlshape/cmd/sqlshape ./...
+$ sqlshape ./...
 users.go:20:13: sqlshape: field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
 users.go:25:46: sqlshape: may violate users_email_key (UNIQUE (email) on users, SQLSTATE 23505); add `-- sqlshape: expect users_email_key` to the template or make it impossible
 ```
@@ -62,11 +81,10 @@ if sqlshape.Violates(err, "users_email_key") { /* expect行で宣言した失敗
 
 構造体は自分で書かなくてもよい。`type Row struct{}`と`type Params struct{}`を空のまま宣言してSQLだけ書くと、列やパラメータに対応するフィールドが無いという診断が出て、それぞれにSQLから構造体を書き起こすquick fixが付く。`sqlshape -fix ./...`で一括適用できる。
 
-保存のたびに検査するには、ビルドしたバイナリを`go vet`の`-vettool`に指定する。エディタのGo統合が保存時に`go vet`を走らせる設定になっていれば、診断はそこに出る:
+保存のたびに検査するには、バイナリを`go vet`の`-vettool`に指定する。エディタのGo統合が保存時に`go vet`を走らせる設定になっていれば、診断はそこに出る:
 
 ```
-$ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
-$ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...
+$ go vet -vettool="$(which sqlshape)" ./...
 ```
 
 詳細は[docs/flags.ja.md](docs/flags.ja.md#エディタで使う)。

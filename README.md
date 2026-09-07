@@ -24,6 +24,28 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
   domains, composite types, row-level security and seeded lookup tables are all part of the
   checked surface, so the database can expose a typed API instead of raw tables.
 
+## Install
+
+The checker and the migration commands are one binary:
+
+```
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ sqlshape version
+```
+
+It links PostgreSQL's parser (libpg_query) through cgo, so `go install` needs a C compiler (gcc or
+clang) on the machine. Prebuilt binaries for Linux and macOS, amd64 and arm64, are on the
+[releases page](https://github.com/kr9ly/sqlshape/releases).
+
+The runtime is an ordinary Go module:
+
+```
+$ go get github.com/kr9ly/sqlshape
+```
+
+Versions follow semantic versioning and are tagged `vX.Y.Z`; while the major version is 0, the API
+may still change between minor versions.
+
 ## Quickstart
 
 ```sql
@@ -54,7 +76,7 @@ INSERT INTO users (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id`)
 ```
 
 ```
-$ go run github.com/kr9ly/sqlshape/cmd/sqlshape ./...
+$ sqlshape ./...
 users.go:20:13: sqlshape: field DeletedAt is time.Time but column "deleted_at" may be NULL (use a pointer, or tag it `col:",notnull"` if you know better)
 users.go:25:46: sqlshape: may violate users_email_key (UNIQUE (email) on users, SQLSTATE 23505); add `-- sqlshape: expect users_email_key` to the template or make it impossible
 ```
@@ -74,12 +96,11 @@ You do not have to write the structs. Declare `type Row struct{}` and `type Para
 empty, write the SQL, and every column and parameter without a field is reported with a quick fix
 that writes the struct from the SQL; `sqlshape -fix ./...` applies them all.
 
-To check on every save, build the binary once and pass it to `go vet` as the `-vettool`. Any
-editor whose Go integration runs `go vet` on save then shows the diagnostics:
+To check on every save, pass the binary to `go vet` as the `-vettool`. Any editor whose Go
+integration runs `go vet` on save then shows the diagnostics:
 
 ```
-$ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
-$ go vet -vettool="$(go env GOPATH)/bin/sqlshape" ./...
+$ go vet -vettool="$(which sqlshape)" ./...
 ```
 
 Details in [docs/flags.md](docs/flags.md#in-the-editor).

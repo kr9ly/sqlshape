@@ -25,7 +25,7 @@ import (
 )
 
 // Subcommands lists the names Main handles; anything else is the checker's business.
-var Subcommands = []string{"vet", "diff", "apply", "verify-schema", "help"}
+var Subcommands = []string{"vet", "diff", "apply", "verify-schema", "version", "help"}
 
 // IsSubcommand reports whether name is one of Subcommands.
 func IsSubcommand(name string) bool {
@@ -49,6 +49,9 @@ func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writ
 		err = runApply(ctx, args, stdout, stderr)
 	case "verify-schema":
 		err = runVerify(ctx, args, stdout, stderr)
+	case "version":
+		fmt.Fprintln(stdout, "sqlshape "+Version())
+		return 0
 	case "help", "":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -80,6 +83,7 @@ const usage = `usage: sqlshape <command> [flags] [arguments]
                                  verify the DDL reaches schema.sql from the database's state, then run it
   verify-schema -db DSN [-schema PATH]
                                  list where the database differs from schema.sql (drift)
+  version                        print the version
 
 -schema defaults to schema.sql, or a schema/ directory of *.sql files, in the working
 directory or above. -packages names Go packages (go list patterns) whose statements are

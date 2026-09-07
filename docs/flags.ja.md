@@ -49,8 +49,8 @@
 検査器は`go vet`のツールなので、`go vet`が走る場所ならどこでも走る。一度ビルドして`-vettool`に指定する:
 
 ```
-$ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
-$ go vet -vettool="$(go env GOPATH)/bin/sqlshape" -strict ./...
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 
 Go統合のあるエディタは保存時に`go vet`を走らせて診断をインラインに表示できるので、その設定に同じ`-vettool`と`-strict`を渡す。gopls自体はサードパーティのアナライザーを読み込まないため、goplsではなく`go vet`を経由する。CIでも同じコマンドを走らせればよい。golangci-lintにはモジュールプラグインとして読み込める。

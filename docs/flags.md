@@ -60,8 +60,8 @@ The checker is a `go vet` tool, so it runs wherever `go vet` runs. Build it once
 the `-vettool`:
 
 ```
-$ go build -o "$(go env GOPATH)/bin/sqlshape" github.com/kr9ly/sqlshape/cmd/sqlshape
-$ go vet -vettool="$(go env GOPATH)/bin/sqlshape" -strict ./...
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 
 Editors with a Go integration can run `go vet` on save and show its diagnostics inline; give that

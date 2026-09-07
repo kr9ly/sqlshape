@@ -1,0 +1,80 @@
+# Release: push a tag v* and this builds the sqlshape binary for each platform, packs it,
+# and publishes a GitHub Release with checksums.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The binary links libpg_query through cgo, so every platform is built on its own runner
+# rather than cross-compiled. Windows is not built here (libpg_query does not build reliably
+# with the toolchains on the Windows runners); `go install` still works there with a C
+# compiler installed.
+#
+# `go install github.com/kr9ly/sqlshape/cmd/sqlshape@<tag>` needs nothing from this
+# workflow: it reads the tag straight from the module proxy.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest,     goos: linux,  goarch: amd64 }
+          - { os: ubuntu-24.04-arm,  goos: linux,  goarch: arm64 }
+          - { os: macos-13,          goos: darwin, goarch: amd64 }
+          - { os: macos-14,          goos: darwin, goarch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/kr9ly/sqlshape/internal/cli.version=${GITHUB_REF_NAME}" \
+            -o sqlshape ./cmd/sqlshape
+          ./sqlshape version
+
+      - name: Pack
+        run: |
+          name="sqlshape_${GITHUB_REF_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir "$name"
+          cp sqlshape LICENSE NOTICE README.md "$name"/
+          tar -czf "$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sqlshape_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: sqlshape_*.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum sqlshape_*.tar.gz > checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
