@@ -134,7 +134,11 @@ The full list is in [docs/checks.md](docs/checks.md). Broadly:
   agree.
 - Failure modes: a write must declare the constraints it can violate on its expect line. A missing
   declaration and an impossible one are both reported, so the code always states which violations
-  it has to handle.
+  it has to handle. No ORM offers this: an ORM's model is a copy of the constraints, so nothing can
+  be derived from it about what will fail, and the exception arrives at run time with a name to
+  match by hand. Here the list is computed from `schema.sql` (triggers and called functions
+  included), the names are PostgreSQL's own, and the runtime error carries the same name, so the
+  declaration, the check and the handler are one string.
 - Cardinality: a statement declared with `One` is proved from the schema to return at most one
   row.
 - Boundaries: team rules that show up in the shape of the SQL, such as always filtering soft-deleted
