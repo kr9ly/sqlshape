@@ -41,12 +41,13 @@ type Schema struct {
 	// Problems are statements the loader could not apply. Loading continues past them.
 	Problems []Problem
 
-	relByName  map[string]*Relation
-	schemas    map[string]bool      // CREATE SCHEMA names
-	sysRels    map[string]*Relation // system relations named so far (systemRelation)
-	pending    []string             // directives preceding the statement being applied
-	nextOID    catalog.OID
-	searchPath []string // SET search_path, nil = public
+	relByName   map[string]*Relation
+	schemas     map[string]bool      // CREATE SCHEMA names
+	sysRels     map[string]*Relation // system relations named so far (systemRelation)
+	pending     []string             // directives preceding the statement being applied
+	pendingUsed bool                 // the statement being applied read them
+	nextOID     catalog.OID
+	searchPath  []string // SET search_path, nil = public
 	// datetime input GUCs (SET datestyle / intervalstyle / timezone); "" = PG default
 	dateOrder, intervalStyle, timeZone string
 	// TypeDefs holds the statement text that created each user type (enum, domain,
@@ -521,8 +522,15 @@ func (s *Schema) applyAll(tree *pg_query.ParseResult, schemaSQL string) {
 		span := schemaSQL[prev:end]
 		lead := leadingComments(span)
 		s.pending = directives(lead)
+		s.pendingUsed = false
 		s.stmtText = strings.TrimSuffix(strings.TrimSpace(span[len(lead):]), ";")
 		s.apply(raw.Stmt, raw.StmtLocation)
+		if !s.pendingUsed {
+			// a directive above a statement that does not read them would otherwise vanish
+			for _, d := range s.pending {
+				s.problem(raw.StmtLocation, "directive %q is written above a statement that takes no directives: write it directly above the CREATE TABLE, CREATE VIEW, CREATE FUNCTION or seed INSERT it belongs to", d)
+			}
+		}
 		prev = end
 	}
 }
@@ -1041,6 +1049,7 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		}
 		s.inherit(rel, parent, st.Partbound != nil, loc)
 	}
+	s.pendingUsed = true
 	for _, d := range s.pending {
 		norm := strings.Join(strings.Fields(d), " ")
 		rel.Directives = append(rel.Directives, norm)
@@ -1335,6 +1344,7 @@ func (s *Schema) viewDependsOnItself(rel *Relation) bool {
 
 // viewDirectives applies the directives written before a CREATE (MATERIALIZED) VIEW.
 func (s *Schema) viewDirectives(rel *Relation, loc int32) {
+	s.pendingUsed = true
 	for _, d := range s.pending {
 		norm := strings.Join(strings.Fields(d), " ")
 		rel.Directives = append(rel.Directives, norm)
@@ -1646,6 +1656,7 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 	}
 	fn := &Function{OID: s.nextOID, Schema: schema, Name: name, IsProc: st.IsProcedure, Volatile: 'v'}
 	s.nextOID++
+	s.pendingUsed = true
 	for _, d := range s.pending {
 		norm := strings.Join(strings.Fields(d), " ")
 		switch {

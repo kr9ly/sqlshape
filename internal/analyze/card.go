@@ -82,6 +82,10 @@ func (a *analyzer) cardinality(stmt *pg_query.Node, sc *scope) (bool, string) {
 		return a.fromSingle(sc, st.DeleteStmt.WhereClause, nil, nil, nil)
 	case *pg_query.Node_CallStmt:
 		return true, ""
+	case *pg_query.Node_MergeStmt:
+		if a.mergeScope != nil {
+			return a.fromSingle(a.mergeScope, st.MergeStmt.JoinCondition, nil, nil, nil)
+		}
 	}
 	return false, "unsupported statement"
 }

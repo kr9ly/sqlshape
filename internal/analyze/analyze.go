@@ -51,6 +51,11 @@ type analyzer struct {
 	inMerge bool
 	// mergeWhen is set while analyzing a MERGE WHEN condition (no system columns there)
 	mergeWhen bool
+	// mergeScope is the target + source level of a MERGE (its ON), for the One proof
+	mergeScope *scope
+	// probing is set while a column is resolved only to see whether it resolves (GROUP BY
+	// alias rules): no use is recorded
+	probing bool
 	// opAmbiguous is set by resolveOperator when more than one candidate fits equally
 	opAmbiguous bool
 	// polyErr is a specific error resolvePolymorphic leaves behind a false return
@@ -331,9 +336,12 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived
 		cols, aerr = a.mergeStmt(st.MergeStmt, sc)
 	case *pg_query.Node_TruncateStmt:
 		for _, rv := range st.TruncateStmt.Relations {
-			if _, _, err := a.targetRTE(rv.GetRangeVar(), sc); err != nil {
+			rel, r, err := a.targetRTE(rv.GetRangeVar(), sc)
+			if err != nil {
 				return nil, err
 			}
+			// every row goes: a delete of the whole table, for the obligations
+			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: r, cmd: "delete from"})
 		}
 	case *pg_query.Node_LockStmt:
 		for _, rv := range st.LockStmt.Relations {

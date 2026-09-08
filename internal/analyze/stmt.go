@@ -1010,7 +1010,9 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 			rel := a.relByRowType(t.OID)
 			r.rowType = t.OID
 			for _, c := range rel.Columns {
-				cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: !c.NotNull})
+				// the rows are the table's rows: a column read here is a read of the
+				// table's column (a labelled column keeps its label through the function)
+				cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: !c.NotNull, rowOf: &Source{Table: rel.FullName(), Column: c.Name}})
 			}
 		case e.typ.OID == catalog.Record && len(a.outParamCols()) > 0 && len(coldefs) > 0:
 			return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is redundant for a function with OUT parameters")
@@ -1234,7 +1236,7 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 		// default, which is a non-DEFAULT value for the base column
 		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
 	}
-	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e})
+	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e, w: len(a.writeRecs) - 1})
 	if e.param > 0 {
 		if _, done := a.paramSrc[e.param]; !done {
 			a.paramSrc[e.param] = &Source{Table: relName, Column: col.Name, NotNull: col.NotNull, Assigned: true}
@@ -1446,6 +1448,9 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 			}
 			upd := newScope(sc)
 			upd.items = []*rte{target, excluded}
+			// the DO UPDATE is an update of the existing row: its own write, so an
+			// obligation `on update` sees it
+			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: target, cmd: "update", inWith: a.inDMLCTE})
 			if err := a.setClause(oc.TargetList, rel, upd); err != nil {
 				return nil, err
 			}
@@ -1901,6 +1906,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	}
 	both := newScope(sc)
 	both.items = []*rte{target, source}
+	a.mergeScope = both
 	a.recordFacts(a.newProver(both, m.JoinCondition), sc, loc(m.JoinCondition))
 	srcOnly := newScope(sc)
 	srcOnly.items = []*rte{source}
@@ -1932,6 +1938,11 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 		a.mergeWhen = false
 		if err != nil {
 			return nil, err
+		}
+		if cmd := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert into", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete from"}[w.CommandType]; cmd != "" {
+			// each branch is a write of its own kind (facts: an obligation `on update` sees
+			// the UPDATE branch and not an INSERT-only MERGE)
+			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: target, cmd: cmd, inWith: a.inDMLCTE})
 		}
 		switch w.CommandType {
 		case pg_query.CmdType_CMD_UPDATE:

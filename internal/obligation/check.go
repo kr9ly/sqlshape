@@ -44,7 +44,7 @@ func Check(s *schema.Schema, decls []Obligation, f *facts.Facts, l Lowerer) []Di
 // single, transitions -- once per write target, a data-modifying WITH item's as much as
 // the statement's own.
 func (c *checker) writes(bySubject map[string][]*Obligation) {
-	for wi, w := range c.f.Writes {
+	for _, w := range c.f.Writes {
 		var kind Kinds
 		switch w.Kind {
 		case facts.Insert:
@@ -53,8 +53,8 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 			kind = OnUpdate
 		case facts.Delete:
 			kind = OnDelete
-		case facts.Merge:
-			kind = OnWrite
+		default:
+			continue
 		}
 		rel := relByFullName(c.s, w.Table)
 		if rel == nil {
@@ -65,7 +65,7 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 		if sc != nil {
 			leaf = sc.Leaves[li]
 		}
-		main := wi == len(c.f.Writes)-1
+		main := !w.InWith
 		for _, o := range bySubject[w.Table] {
 			if o.Kinds&kind == 0 {
 				continue
@@ -101,12 +101,31 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 				}
 			case o.Body.Transitions != nil:
 				c.transition(sc, li, &w, o, rel, &d)
+			case o.Body.Pinned != "" && w.Kind == facts.Update && c.f.Kind != facts.Update && assigns(w, o.Body.Pinned):
+				// an ON CONFLICT DO UPDATE / MERGE branch moving the pinned column: the rows
+				// it moves must still be pinned by the statement (a plain UPDATE's leaf
+				// judgment already asks for the WHERE)
+				if sc != nil && containsRef(sc.Fixed, facts.ColRef{Leaf: li, Column: o.Body.Pinned}) {
+					d.Path = ByStatement
+				} else {
+					d.Message = fmt.Sprintf("%s.%s is pinned: an UPDATE assigning it must also fix %s by equality in WHERE, or the row moves to another %s", rel.Name, o.Body.Pinned, o.Body.Pinned, o.Body.Pinned)
+				}
 			default:
 				continue
 			}
 			c.out = append(c.out, d)
 		}
 	}
+}
+
+// assigns: the write gives col a value.
+func assigns(w facts.Write, col string) bool {
+	for _, a := range w.Assigned {
+		if a == col {
+			return true
+		}
+	}
+	return false
 }
 
 // targetLeaf finds the level and index of the target leaf writing table, at any depth.
@@ -383,12 +402,18 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Rela
 	leaf := sc.Leaves[i]
 	col := o.Body.Pinned
 	ref := facts.ColRef{Leaf: i, Column: col}
-	if leaf.Role == facts.Target && c.assigned(leaf.Table, col) {
-		d.Path = ByStatement
+	if c.f.Kind == facts.Insert && leaf.Role == facts.Target {
+		// an INSERT pins by giving the column a value (its ON CONFLICT DO UPDATE is judged
+		// as a write of its own)
+		if c.assignedBy(leaf.Table, col, facts.Insert) {
+			d.Path = ByStatement
+			return
+		}
+		d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)", rel.Name, col, rel.Name, col)
 		return
 	}
-	if c.f.Kind == facts.Insert && leaf.Role == facts.Target {
-		d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)", rel.Name, col, rel.Name, col)
+	if c.f.Kind == facts.Merge && leaf.Role == facts.Target && c.mergeInsertOnly(leaf.Table) && c.assignedBy(leaf.Table, col, facts.Insert) {
+		d.Path = ByStatement // an INSERT-only MERGE pins by assigning, like an INSERT
 		return
 	}
 	if containsRef(sc.Fixed, ref) {
@@ -412,10 +437,26 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Rela
 			return
 		}
 	}
-	d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)", rel.Name, col, rel.Name, col)
+	d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name, col, rel.Name, col, occurrence(sc, i))
 	if root, ok := strings.CutPrefix(o.Source, "aggregate "); ok {
 		d.Message = fmt.Sprintf("%s is a child of aggregate %s: reach it through %s (fix %s.%s by equality, or join on %s's key)", rel.Name, root, root, rel.Name, col, root)
 	}
+}
+
+// occurrence names the leaf by its alias when the same table appears more than once at
+// the level (a self join), so the failing occurrence can be told from the others.
+func occurrence(sc *facts.Scope, i int) string {
+	leaf := sc.Leaves[i]
+	n := 0
+	for _, l := range sc.Leaves {
+		if l.Table == leaf.Table {
+			n++
+		}
+	}
+	if n < 2 || leaf.Alias == "" {
+		return ""
+	}
+	return " (the occurrence " + leaf.Alias + ")"
 }
 
 // viaForeignKey: a composite foreign key from this table whose other columns are joined
@@ -535,18 +576,40 @@ func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligati
 		d.Message = fmt.Sprintf("%s.%s: the current state of an UPDATE inside WITH cannot be checked", rel.Name, tr.Column)
 		return
 	}
+	col := facts.ColRef{Leaf: i, Column: tr.Column}
 	for _, p := range sc.Preds {
-		if p.Op == facts.Eq && p.Col == (facts.ColRef{Leaf: i, Column: tr.Column}) && p.Term.Kind == facts.Const && applies(p, i) {
-			from := stateOf(p.Term.Const)
-			for _, f := range froms {
-				if f == from {
-					d.Path = ByStatement
-					return
-				}
-			}
-			d.Message = fmt.Sprintf("%s.%s: %s -> %s is not a declared transition (%s comes from %s)", rel.Name, tr.Column, from, to, to, strings.Join(froms, " | "))
-			return
+		if p.Col != col || !applies(p, i) {
+			continue
 		}
+		var current []string
+		switch {
+		case p.Op == facts.Eq && p.Term.Kind == facts.Const:
+			current = []string{stateOf(p.Term.Const)}
+		case p.Op == facts.In:
+			for _, t := range p.Terms {
+				if t.Kind != facts.Const {
+					current = nil
+					break
+				}
+				current = append(current, stateOf(t.Const))
+			}
+		}
+		if current == nil {
+			continue
+		}
+		// every state the WHERE allows must be a declared predecessor
+		for _, from := range current {
+			declared := false
+			for _, f := range froms {
+				declared = declared || f == from
+			}
+			if !declared {
+				d.Message = fmt.Sprintf("%s.%s: %s -> %s is not a declared transition (%s comes from %s)", rel.Name, tr.Column, from, to, to, strings.Join(froms, " | "))
+				return
+			}
+		}
+		d.Path = ByStatement
+		return
 	}
 	d.Message = fmt.Sprintf("%s.%s: SET %s = '%s' must fix the current state in WHERE (%s = '%s')", rel.Name, tr.Column, tr.Column, to, tr.Column, strings.Join(froms, "' or '"))
 }
@@ -571,16 +634,31 @@ func (c *checker) immutable(o *Obligation, rel *schema.Relation, d *Discharge) {
 
 func (c *checker) assigned(table, col string) bool {
 	for _, w := range c.f.Writes {
-		if w.Table != table {
-			continue
-		}
-		for _, a := range w.Assigned {
-			if a == col {
-				return true
-			}
+		if w.Table == table && assigns(w, col) {
+			return true
 		}
 	}
 	return false
+}
+
+// assignedBy: a write of the given kind to table gives col a value.
+func (c *checker) assignedBy(table, col string, kind facts.StmtKind) bool {
+	for _, w := range c.f.Writes {
+		if w.Table == table && w.Kind == kind && assigns(w, col) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeInsertOnly: every write to table is an INSERT (a MERGE with WHEN NOT MATCHED only).
+func (c *checker) mergeInsertOnly(table string) bool {
+	for _, w := range c.f.Writes {
+		if w.Table == table && w.Kind != facts.Insert {
+			return false
+		}
+	}
+	return true
 }
 
 // waived: the statement (or the view definition the leaf sits in) opted out of o at this
@@ -751,6 +829,22 @@ func rebind(q facts.Pred, i int) facts.Pred {
 
 // implies: predicate p of the statement establishes the declared conjunct q.
 func implies(p, q facts.Pred) bool {
+	if q.Op == facts.In && p.Col == q.Col {
+		// the column is one of the declared values: fixed to one of them, or held to a
+		// subset of them
+		switch p.Op {
+		case facts.Eq:
+			return p.Term.Kind != facts.Column && anyTerm(q.Terms, p.Term)
+		case facts.In:
+			for _, t := range p.Terms {
+				if !anyTerm(q.Terms, t) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
 	if p.Op != q.Op {
 		return false
 	}
@@ -773,6 +867,16 @@ func implies(p, q facts.Pred) bool {
 			}
 		}
 		return true
+	}
+	return false
+}
+
+// anyTerm: p establishes one of the declared terms.
+func anyTerm(qs []facts.Term, p facts.Term) bool {
+	for _, q := range qs {
+		if sameTerm(p, q) {
+			return true
+		}
 	}
 	return false
 }

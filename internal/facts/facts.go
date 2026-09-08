@@ -17,8 +17,9 @@ const (
 	Insert
 	Update
 	Delete
-	// Merge is reported as a whole; each WHEN branch also appears as its own Write with
-	// the branch's kind, so an obligation `on update` sees the UPDATE branch.
+	// Merge is the statement's kind only: its writes are the WHEN branches, each a Write
+	// of the branch's own kind, so an obligation `on update` sees the UPDATE branch and
+	// an INSERT-only MERGE owes nothing on update.
 	Merge
 )
 
@@ -130,6 +131,9 @@ type Write struct {
 	Assigned []string
 	Values   []Term
 	Position int32
+	// InWith marks a write done by a data-modifying WITH item rather than the statement
+	// itself (the One proof does not cover it).
+	InWith bool
 }
 
 // Edge is one directed equality between two columns of a scope.
@@ -152,6 +156,9 @@ type Pred struct {
 	Col ColRef
 	// Term is the other side of an Eq.
 	Term Term
+	// Terms are the alternatives of an In (`col IN (a, b)`, `col = a OR col = b`): the
+	// column holds one of them. Each is a Param, Const or Known term.
+	Terms []Term
 	// Sub is the body of an Exists predicate: a scope of its own (its leaves, what holds
 	// for their rows), correlated to this scope through Outer terms. `x IN (SELECT y
 	// ...)` is recorded as Exists with the equality y = x added to the body.
@@ -181,6 +188,9 @@ const (
 	// Exists: an unnegated EXISTS / IN subquery conjunct; Sub is its body. The rows of
 	// this scope have a witness row in Sub's leaves satisfying Sub's predicates.
 	Exists
+	// In: Col holds one of Terms (a value list, or a disjunction of equalities on the
+	// column). Weaker than Eq; enough to know the column's value is among a set.
+	In
 	Opaque
 )
 

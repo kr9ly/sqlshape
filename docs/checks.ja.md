@@ -750,21 +750,23 @@ var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
 | `<what>` | 文に求めること | `on`の既定 |
 |---|---|---|
 | SQLのboolean式（`deleted_at IS NULL`、`status <> 'closed' AND amount > 0`、`EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)`） | その表の行についてこれが成り立つこと。各conjunctがWHERE / ONから含意される（等値、IS NULL、IS NOT NULL）か、字面どおり現れる。`EXISTS`は証人が要る（[後述](#表をまたぐ述語には証人が要るexists)） | `read` |
-| `pinned(tenant_id)` | 読み・UPDATE・DELETEではその列を一つの値に固定する（`= {{.X}}`、リテラル、外側の参照）。INSERTでは値を入れる | `all` |
+| `pinned(tenant_id)` | 読み・UPDATE・DELETEではその列を一つの値に固定する（`= {{.X}}`、リテラル、外側の参照）。INSERTでは値を入れる。その列に代入するUPDATEも、WHEREで固定していなければならない（固定しなければ行が別の値へ移る） | `all` |
 | `immutable(tenant_id)` | UPDATEでその列に代入しない | `update` |
 | `via view` | その表を直接参照しない（`on`に書き込みを含めなければ、書き込みの対象にはできる） | `read` |
 | `never` | そういう文が存在しないこと。追記専用の表（`require never on update, delete`） | `write` |
 | `paired(outbox)` | 同じ文で名指しの表にも書くこと（書き込みCTE） | `insert` |
 | `single` | 高々1行しか触らないと証明できること（`One`の証明） | `delete` |
 
-`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切りか、まとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。宣言の中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 — を指し、その番号のパラメータという意味ではない。Goテンプレートの`{{.X}}`はそういう値の一つ。
+`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切りか、まとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。文は表に対して実際にすることで判定される。MERGEの各枝はその枝の文種の書き込み（INSERT枝しかないMERGEは`on update`の義務を負わない）、`INSERT ... ON CONFLICT DO UPDATE`はinsertとupdateの両方、`TRUNCATE`は全行のdelete、自動更新可能ビューを通した書き込みは基底表への書き込み。宣言の中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 — を指し、その番号のパラメータという意味ではない。Goテンプレートの`{{.X}}`はそういう値の一つ。
 
-`require`行ではないが義務に展開される宣言が3つある。`visible where <expr>`（`require <expr> on read`のもとの綴り）、`aggregate`、`transitions`。`sensitive`は列にラベルを付ける。vetのフラグ`-require-columns=tenant_id`・`-no-table-reads`・`-no-tables`は、その列を持つ全表への`require pinned(tenant_id)`、全表への`require via view`、`require via view on all`の略記。
+`require`行ではないが義務に展開される宣言が3つある。`visible where <expr>`（`require <expr> on read`のもとの綴り）、`aggregate`、`transitions`。`sensitive`は列にラベルを付ける。vetのフラグ`-require-columns=tenant_id`・`-no-table-reads`・`-no-tables`は、その列を持つ全表への`require pinned(tenant_id)`、全表への`require via view`、`require via view on all`の略記で、文脈の`waive`は宣言と同じように解除できる。
+
+ディレクティブは直下の`CREATE TABLE`・`CREATE VIEW`・`CREATE FUNCTION`・seedの`INSERT`に属する。それ以外の文（`ALTER TABLE`、`COMMENT ON`）の直上に書いたものは宣言にならず、スキーマの問題として報告される。
 
 義務の履行経路は5つで、見ておくべきものは`-strict`が報告する。
 
 1. 文自身のWHERE / ON / SET
-2. ビュー経由。ビューの定義はスキーマ読み込み時にそれ自身が判定され、ビューの読み手はその中の表について再度判定されない（関数の本体も同じ扱い）
+2. ビュー経由。ビューの定義はスキーマ読み込み時にそれ自身が判定され、ビューの読み手はその中の表について再度判定されない（関数の本体も同じ扱いで、トリガー関数も含む。vetはスキーマの問題として、`sqlshape check`は発見として報告する）
 3. 行レベルセキュリティのポリシー。USINGがそれを成り立たせていれば、行セキュリティの対象ロールについて履行される（表が`FORCE ROW LEVEL SECURITY`でなければ`-strict`が所有者への注記を出す）
 4. 複合外部キーをまたいで。`FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`があれば、`order_id = orders.id`で結合し`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている
 5. 文側のopt-out。`-- sqlshape: unfiltered orders`（述語型の義務）か`-- sqlshape: waive orders pinned(tenant_id)`（宣言どおりの綴りで1つ。`waive orders`だけならその表の義務を全部）。opt-outは`-strict`で報告される
@@ -923,7 +925,7 @@ UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND 
 CREATE TABLE orders (...);
 ```
 
-ステータス列は小さな状態機械で、注文はdraftからsubmittedへ、そこからpaidかcancelledへ進み、draftからいきなりpaidにはならず、戻りもしない。この宣言はその機械を書き下したもの。検査は、その列をある状態にSETするUPDATEが、WHEREで現在の状態をその状態の前状態のいずれかに固定していること。これはcompare-and-setで、2つのリクエストが同じ注文を同時にpaidにしようとしても、後の方は`WHERE status = 'submitted'`がもう当たらず何も更新しない。黙って二重に支払うことがない。`One`のUPDATEならそれは`ErrNoRows`として返る。
+ステータス列は小さな状態機械で、注文はdraftからsubmittedへ、そこからpaidかcancelledへ進み、draftからいきなりpaidにはならず、戻りもしない。この宣言はその機械を書き下したもの。検査は、その列をある状態にSETするUPDATEが、WHEREで現在の状態をその状態の前状態のいずれかに固定していること（`status = 'submitted'`、あるいは列挙した状態がすべて前状態なら`status IN ('shipped', 'delivered')`）。これはcompare-and-setで、2つのリクエストが同じ注文を同時にpaidにしようとしても、後の方は`WHERE status = 'submitted'`がもう当たらず何も更新しない。黙って二重に支払うことがない。`One`のUPDATEならそれは`ErrNoRows`として返る。
 
 OK
 
@@ -952,7 +954,7 @@ CREATE TABLE ledger (...);
 CREATE TABLE orders (...);
 ```
 
-`never`は、そういう文が存在しないことを求める。`ledger`へのUPDATE / DELETEは、単独でも`WITH`の中でもNG（`ledger is declared \`require never on update, delete\`: no statement may do this to it`）。
+`never`は、そういう文が存在しないことを求める。`ledger`へのUPDATE / DELETEは、単独でも`WITH`の中でも、`ON CONFLICT DO UPDATE`でも`TRUNCATE`でも更新可能ビュー経由でもNG（`ledger is declared \`require never on update, delete\`: no statement may do this to it`）。
 
 `paired(outbox)`はoutboxパターンのためのもの。書き込みと一緒に外の世界（メッセージキュー、webhook、別サービス）にも知らせたいとき、通知を直接送ると二つがずれる。行は書けたのにメッセージが消える、メッセージは出たのに書き込みがロールバックする。outboxパターンは、メッセージを変更と同じトランザクションでテーブルに書き、別プロセスがそこから配送する。`paired`はその対を規則にする。`orders`へのINSERTは同じ文で`outbox`にも書かなければならないので、1行書き忘れただけで二つが離れることはなく、トランザクション層も要らない。
 
@@ -980,7 +982,7 @@ CREATE TABLE orders (...);
 CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone_masked FROM orders;
 ```
 
-ラベルの付いた列は、そのラベルを`may read`する文脈（[文脈](#呼び出し元ごとに規約を変えるcontext)）でしか参照できない。SELECT句でもWHEREでも同じ。値を書き込むのは読むことではない。ラベルは列をそのまま通すビューを通って伝わり、式（マスクした列）で止まる。
+ラベルの付いた列は、そのラベルを`may read`する文脈（[文脈](#呼び出し元ごとに規約を変えるcontext)）でしか参照できない。SELECT句でもWHEREでも同じ。値を書き込むのは読むことではない。ラベルは列をそのまま通すビューと、その表の行を返す関数（`RETURNS SETOF orders`）を通って伝わり、式（マスクした列）で止まる。
 
 ```sql
 SELECT email FROM orders WHERE id = {{.ID}}            -- billing以外ではNG
@@ -1008,7 +1010,7 @@ CREATE TABLE orders (...);
 package ops
 ```
 
-`waive <body>`はその文脈の中で基底の義務を解除する（宣言どおりの綴りで指定する）。`require ...`はその文脈だけの義務を追加する。`may read <label>`はラベルの読み取りを許す。パッケージはパッケージコメントで文脈を指定する。無ければvetの`-context`フラグ、`sqlshape check -context ops`はファイルに対して選ぶ。文脈を選ばなければ基底の義務だけが適用される。
+`waive <body> [on <kinds>]`はその文脈の中で基底の義務を解除する（宣言どおりの綴りで指定する。`on`を付ければその文種だけ。`waive pinned(tenant_id) on select`なら書き込みは縛られたまま）。`require ...`はその文脈だけの義務を追加する。`may read <label>`はラベルの読み取りを許す。パッケージはパッケージコメントの1行で文脈を指定する。無ければvetの`-context`フラグ、`sqlshape check -context ops`はファイルに対して選ぶ。スキーマに無い文脈名や、ディレクティブとして読めない`sqlshape: context`行は報告される。文脈を選ばなければ基底の義務だけが適用される。
 
 ### Goの外のSQLにも同じ規約を適用する（`sqlshape check`）
 
@@ -1022,7 +1024,7 @@ ops.sql:8: FAIL orders: visible where deleted_at IS NULL: rows of orders are vis
 sqlshape: 2 finding(s)
 ```
 
-判定は全部、履行経路つきで出る（`ok`、`ok(policy)`、`ok(fk)`、`waived`）。そのスクリプトに何が許されたかの監査ログを兼ねる。`-quiet`は失敗だけを出す。義務を履行できない文か解析に失敗する文があれば終了コード1。文の直上の`-- sqlshape:`行はその文のもので、`-context`・`-require-columns`・`-no-tables`・`-no-table-reads`はvetと同じく受け付ける。
+判定は全部、履行経路つきで出る（`ok`、`ok(policy)`、`ok(fk)`、`waived`）。そのスクリプトに何が許されたかの監査ログを兼ねる。`-quiet`は失敗だけを出す。義務を履行できない文か解析に失敗する文があれば終了コード1（構文エラーの文はその行だけが失敗し、他の文は判定される）。スキーマ自身の関数本体とビュー本体は、vetと同じように最初に判定される。文の直上の`-- sqlshape:`行はその文のもので、`-context`・`-require-columns`・`-no-tables`・`-no-table-reads`はvetと同じく受け付ける。
 
 ## 第3部 — 文の外側
 

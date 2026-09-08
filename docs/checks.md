@@ -877,7 +877,7 @@ obligation with what it provably does. The general form is a directive above `CR
 | `<what>` | the statement must | default `on` |
 |---|---|---|
 | an SQL boolean expression (`deleted_at IS NULL`, `status <> 'closed' AND amount > 0`, `EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)`) | carry it for the table's rows: each conjunct is implied by the WHERE / ON (equalities, IS NULL, IS NOT NULL) or appears verbatim; an `EXISTS` needs a witness ([below](#a-predicate-across-tables-has-a-witness-exists)) | `read` |
-| `pinned(tenant_id)` | fix the column to one value (`= {{.X}}`, a literal, an outer reference) when reading, updating or deleting; assign it when inserting | `all` |
+| `pinned(tenant_id)` | fix the column to one value (`= {{.X}}`, a literal, an outer reference) when reading, updating or deleting; assign it when inserting. An UPDATE that assigns the column must still fix it in its WHERE (otherwise the row moves to another value) | `all` |
 | `immutable(tenant_id)` | not assign the column in an UPDATE | `update` |
 | `via view` | not reference the table directly (a write target is allowed unless `on` includes writes) | `read` |
 | `never` | not exist: an append-only table (`require never on update, delete`) | `write` |
@@ -886,6 +886,10 @@ obligation with what it provably does. The general form is a directive above `CR
 
 `<kinds>` is a comma-separated list of `select`, `insert`, `update`, `delete`, or the groups `read`
 (SELECT, and the target of an UPDATE / DELETE / MERGE, whose WHERE reads it), `write` and `all`. A
+statement is judged by what it does to the table: each branch of a MERGE is the write of its own kind
+(an INSERT-only MERGE owes nothing `on update`), an `INSERT ... ON CONFLICT DO UPDATE` is an insert and
+an update, `TRUNCATE` is a delete of every row, and a write through an automatically updatable view is
+a write to the base table. A
 `$n` in a declaration stands for any value known before the row is examined -- a parameter, a
 literal, an outer reference -- not for that parameter number; a Go template's `{{.X}}` is such a
 value.
@@ -894,13 +898,19 @@ Three declarations are not `require` lines but expand into obligations: `visible
 original spelling of `require <expr> on read`), `aggregate` and `transitions`; `sensitive` labels
 columns. The vet flags `-require-columns=tenant_id`, `-no-table-reads` and `-no-tables` are
 shorthands for `require pinned(tenant_id)` on every table that has the column, `require via view` on
-every table, and `require via view on all`.
+every table, and `require via view on all`; a context's `waive` lifts them as it lifts a declaration.
+
+A directive belongs to the `CREATE TABLE`, `CREATE VIEW`, `CREATE FUNCTION` or seed `INSERT` directly
+below it. One written above another statement (an `ALTER TABLE`, a `COMMENT ON`) is a schema problem,
+not a declaration.
 
 An obligation is discharged one of five ways, and `-strict` reports the ones that deserve a look:
 
 1. by the statement's own WHERE / ON / SET;
 2. by a view: a view's definition is judged on its own when the schema loads, and readers of the
-   view are not judged again for the tables inside it (a function body is judged the same way);
+   view are not judged again for the tables inside it (a function body is judged the same way, a
+   trigger function's included: vet reports the failures as schema problems, `sqlshape check` as
+   findings);
 3. by a row-level security policy whose USING establishes it, for roles subject to row security
    (`-strict` notes the owner caveat unless the table has `FORCE ROW LEVEL SECURITY`);
 4. across a composite foreign key: with `FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`,
@@ -1092,7 +1102,8 @@ CREATE TABLE orders (...);
 A status column is a small state machine: an order goes from draft to submitted, then to paid or
 cancelled, never from draft straight to paid and never back. The declaration writes the machine down.
 The check is that an UPDATE setting the column to a state fixes the current state in its WHERE to
-one of that state's predecessors. This is compare-and-set: if two requests both try to mark the same
+one of that state's predecessors (`status = 'submitted'`, or `status IN ('shipped', 'delivered')` when
+every listed state is a predecessor). This is compare-and-set: if two requests both try to mark the same
 order paid, the second one's `WHERE status = 'submitted'` no longer matches and it updates nothing,
 instead of silently paying twice. A `One` UPDATE reports that as `ErrNoRows`.
 
@@ -1112,7 +1123,8 @@ UPDATE orders SET status = 'paid' WHERE id = {{.ID}} AND status = 'draft'
 ```
 
 The target must be a literal naming a declared state; `SET status = {{.S}}` is refused (no predecessor
-set can be checked for it). An INSERT is not a transition and is not checked. The declaration is the
+set can be checked for it). An INSERT is not a transition and is not checked; its `ON CONFLICT DO
+UPDATE SET status = ...` is an update and is. The declaration is the
 same shape as a seeded `(from_status, to_status)` lookup table, which a trigger can enforce on the
 database side.
 
@@ -1128,7 +1140,8 @@ CREATE TABLE orders (...);
 
 `never` says the statement must not exist: an UPDATE or DELETE on `ledger` is rejected
 (`ledger is declared \`require never on update, delete\`: no statement may do this to it`), inside
-a `WITH` as much as on its own.
+a `WITH` as much as on its own, as an `ON CONFLICT DO UPDATE`, as a `TRUNCATE`, or through an
+updatable view.
 
 `paired(outbox)` is for the outbox pattern. When a write must also notify the outside world (a
 message queue, a webhook, another service), sending the notification directly risks the two getting
@@ -1164,7 +1177,8 @@ CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone
 
 A statement may reference a labelled column -- in its SELECT list or in a WHERE alike -- only in a
 context that `may read` the label ([contexts](#different-callers-different-rules-context)); storing a
-value into it is not reading it. The label follows a column through a view that passes it through,
+value into it is not reading it. The label follows a column through a view that passes it through
+and through a function returning the table's rows (`RETURNS SETOF orders`),
 and stops at an expression (a masked column).
 
 ```sql
@@ -1195,10 +1209,13 @@ CREATE TABLE orders (...);
 package ops
 ```
 
-`waive <body>` lifts a base obligation (spelled as declared) inside the context; `require ...` adds
-one that holds there only; `may read <label>` permits a label. A package names its context in its
-package comment; otherwise vet's `-context` flag applies; `sqlshape check -context ops` selects one
-for a file. Without a context, the base obligations alone apply.
+`waive <body> [on <kinds>]` lifts a base obligation (spelled as declared) inside the context, for the
+kinds named or for all of them (`waive pinned(tenant_id) on select` leaves the writes bound);
+`require ...` adds one that holds there only; `may read <label>` permits a label. A package names its
+context in its package comment, on a line of its own; otherwise vet's `-context` flag applies;
+`sqlshape check -context ops` selects one for a file. A context name the schema does not declare, or
+a `sqlshape: context` line that does not read as the directive, is reported. Without a context, the
+base obligations alone apply.
 
 ### The same rules for SQL outside Go (`sqlshape check`)
 
@@ -1215,9 +1232,11 @@ sqlshape: 2 finding(s)
 
 Every judgment is printed, with the path that discharged it (`ok`, `ok(policy)`, `ok(fk)`,
 `waived`), so the output doubles as the audit of what a script was allowed to do; `-quiet` prints
-failures only. The exit code is 1 when a statement fails an obligation or does not analyze. The
-`-- sqlshape:` lines above a statement belong to it, and `-context`, `-require-columns`,
-`-no-tables` and `-no-table-reads` are accepted as in vet.
+failures only. The exit code is 1 when a statement fails an obligation or does not analyze (a
+statement that does not parse fails on its own line; the others are still judged). The schema's own
+function and view bodies are judged first, as vet judges them. The `-- sqlshape:` lines above a
+statement belong to it, and `-context`, `-require-columns`, `-no-tables` and `-no-table-reads` are
+accepted as in vet.
 
 ## Part 3 — Outside the statement
 

@@ -160,7 +160,7 @@ merge
   edge 0.order_id -> 1.id
   edge 1.id -> 0.order_id
   notnull 0.order_id 1.id 1.tenant_id
-  write merge order_items set qty=const i0
+  write update order_items set qty=const i0
 `},
 	}
 	for _, c := range cases {

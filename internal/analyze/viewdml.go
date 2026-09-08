@@ -23,7 +23,7 @@ func (a *analyzer) writeTarget(rv *pg_query.RangeVar, sc *scope, cmd string) (*s
 	if err != nil {
 		return nil, nil, err
 	}
-	a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: r, cmd: cmd})
+	a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: r, cmd: cmd, inWith: a.inDMLCTE})
 	switch rel.Kind {
 	case schema.MatView:
 		if cmd == "merge into" {
@@ -35,6 +35,9 @@ func (a *analyzer) writeTarget(rv *pg_query.RangeVar, sc *scope, cmd string) (*s
 		if err != nil {
 			return nil, nil, err
 		}
+		// the write lands on the base table (or stays with the view when INSTEAD OF
+		// triggers take it): facts report where the rows change
+		a.writeRecs[len(a.writeRecs)-1].rel = base
 		a.writeCmd = cmd
 		return base, r, nil
 	}

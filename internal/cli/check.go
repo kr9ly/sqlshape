@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -55,13 +56,19 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		return fmt.Errorf("%s: %s", schemaPath, strings.Join(lines, "\n  "))
 	}
-	decls = append(obligation.InContext(decls, *ctxName), obligation.FromFlags(s, *requireCols, *noTables, *noTableReads)...)
+	if *ctxName != "" && !slices.Contains(obligation.Contexts(decls), *ctxName) {
+		return fmt.Errorf("%s: context %q is not declared (declared: %s)", schemaPath, *ctxName, strings.Join(obligation.Contexts(decls), ", "))
+	}
+	// the flags are shorthand for declarations: a context's waive lifts them the same way
+	decls = obligation.InContext(append(decls, obligation.FromFlags(s, *requireCols, *noTables, *noTableReads)...), *ctxName)
 
 	inputs := fs.Args()
 	if len(inputs) == 0 {
 		inputs = []string{"-"}
 	}
-	failures := 0
+	// the schema's own statements first: a function body (a trigger's included) or a view
+	// body that breaks an obligation is a finding wherever the schema is judged
+	failures := checkSchemaBodies(s, decls, schemaPath, *quiet, stdout)
 	for _, in := range inputs {
 		var sql []byte
 		name := in
@@ -86,24 +93,90 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	return nil
 }
 
+// checkSchemaBodies judges the schema's function and view bodies (what vet reports as
+// schema problems) and returns how many failed.
+func checkSchemaBodies(s *schema.Schema, decls []obligation.Obligation, name string, quiet bool, w io.Writer) int {
+	failures := 0
+	judge := func(what string, f *facts.Facts) {
+		for _, d := range obligation.Check(s, decls, f, lowerer{s}) {
+			if d.Failed() {
+				failures++
+				fmt.Fprintf(w, "%s: %s: FAIL %s: %s: %s\n", name, what, d.Leaf.Table, d.Obligation.Source, d.Message)
+			}
+		}
+	}
+	for _, fn := range s.Functions {
+		fr, err := analyze.AnalyzeFunction(s, fn)
+		if err != nil {
+			continue // the body's own errors are schema problems, reported by vet
+		}
+		for _, st := range fr.Statements {
+			what := "function " + fn.Name
+			if st.Line > 0 {
+				what = fmt.Sprintf("%s line %d", what, st.Line)
+			}
+			judge(what, st.Facts)
+		}
+	}
+	for _, rel := range s.Relations {
+		if rel.Kind != schema.View && rel.Kind != schema.MatView {
+			continue
+		}
+		if r, err := analyze.AnalyzeView(s, rel); err == nil {
+			judge("view "+rel.Name, r.Facts)
+		}
+	}
+	return failures
+}
+
+// statementSpans splits text into [start, end) byte spans, one per statement, each span
+// starting right after the previous statement's semicolon (so the `-- sqlshape:` lines
+// written above a statement belong to it). A text the parser rejects as a whole is split
+// by the scanner instead, so that one bad statement leaves the others judged.
+func statementSpans(text string) ([][2]int, error) {
+	var spans [][2]int
+	prevEnd := 0
+	if tree, err := pg_query.Parse(text); err == nil {
+		for _, raw := range tree.Stmts {
+			end := int(raw.StmtLocation) + int(raw.StmtLen)
+			if raw.StmtLen == 0 {
+				end = len(text)
+			}
+			spans = append(spans, [2]int{prevEnd, end})
+			prevEnd = end + 1
+		}
+		return spans, nil
+	}
+	parts, err := pg_query.SplitWithScanner(text, false)
+	if err != nil {
+		return nil, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "syntax error "))
+	}
+	for _, part := range parts {
+		i := strings.Index(text[prevEnd:], part)
+		if i < 0 {
+			break
+		}
+		end := prevEnd + i + len(part)
+		spans = append(spans, [2]int{prevEnd, end})
+		prevEnd = end + 1
+	}
+	return spans, nil
+}
+
 // checkText judges each statement of text and returns how many failed.
 func checkText(s *schema.Schema, decls []obligation.Obligation, name, text string, quiet bool, w io.Writer) (int, error) {
-	tree, err := pg_query.Parse(text)
+	text = strings.TrimPrefix(text, "\ufeff") // a byte order mark is not part of the SQL
+	spans, err := statementSpans(text)
 	if err != nil {
-		return 0, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "syntax error "))
+		return 0, err
 	}
 	failures := 0
-	prevEnd := 0
-	for _, raw := range tree.Stmts {
-		end := int(raw.StmtLocation) + int(raw.StmtLen)
-		if raw.StmtLen == 0 {
-			end = len(text)
+	for _, span := range spans {
+		chunk := strings.TrimRight(text[span[0]:span[1]], "; \t\r\n")
+		chunkStart := span[0]
+		if strings.TrimSpace(chunk) == "" {
+			continue
 		}
-		// the chunk runs from the previous statement's end, so the `-- sqlshape:` lines
-		// written above this statement belong to it
-		chunk := strings.TrimRight(text[prevEnd:end], "; \t\r\n")
-		chunkStart := prevEnd
-		prevEnd = end + 1
 		// the statement's own line: past the blank and comment lines above it
 		first := 0
 		for _, l := range strings.SplitAfter(chunk, "\n") {

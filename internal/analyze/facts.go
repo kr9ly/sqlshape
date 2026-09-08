@@ -20,9 +20,10 @@ import (
 // writeRec is one write target the statement has (the main statement's, or a
 // data-modifying WITH item's), in analysis order: WITH items first, the statement last.
 type writeRec struct {
-	rel *schema.Relation
-	r   *rte
-	cmd string // "insert into" / "update" / "delete from" / "merge into"
+	rel    *schema.Relation
+	r      *rte
+	cmd    string // "insert into" / "update" / "delete from" / "merge into"; a MERGE branch has its own kind
+	inWith bool   // a data-modifying WITH item's
 }
 
 // factScope pairs an analyzer scope with the facts derived at it.
@@ -178,6 +179,9 @@ func (a *analyzer) leafFacts(l *rte, waived map[string][]string) facts.Leaf {
 	switch {
 	case l.rel != nil && l.rel.Kind == schema.Table:
 		rel, lf.Kind = l.rel, facts.Table
+	case l.target && l.viewRel != nil && a.viewTargets[l.viewRel] != nil && a.viewTargets[l.viewRel].Kind == schema.Table:
+		// a write through an automatically updatable view lands on the base table
+		rel, lf.Kind = a.viewTargets[l.viewRel], facts.Table
 	case l.viewRel != nil:
 		rel = l.viewRel
 		lf.Kind = facts.View
@@ -274,6 +278,24 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 			return pr
 		}
 	}
+	// col IN (a, b, ...) / col = a OR col = b: the column holds one of known values
+	if col, alts, ok := a.alternatives(n); ok {
+		if k, isCol := p.resolve(col); isCol {
+			if r, ok := ref(k); ok {
+				pr := facts.Pred{Op: facts.In, Col: r}
+				for _, x := range alts {
+					if _, isCol := p.resolve(x); isCol || !known(x) {
+						pr = facts.Pred{}
+						break
+					}
+					pr.Terms = append(pr.Terms, term(x))
+				}
+				if pr.Op == facts.In {
+					return pr
+				}
+			}
+		}
+	}
 	if nt := n.GetNullTest(); nt != nil {
 		if k, ok := p.resolve(nt.Arg); ok {
 			if r, ok := ref(k); ok {
@@ -309,6 +331,42 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 	})
 	sortRefs(cols)
 	return facts.Pred{Op: facts.Opaque, Text: strings.TrimPrefix(deparse(clone), "SELECT "), Cols: cols}
+}
+
+// alternatives reads `x IN (a, b, ...)` (two or more items) and `x = a OR x = b OR ...`
+// (every arm an equality with the same left operand, by text) as x and its alternatives.
+func (a *analyzer) alternatives(n *pg_query.Node) (*pg_query.Node, []*pg_query.Node, bool) {
+	if x := n.GetAExpr(); x != nil && x.Kind == pg_query.A_Expr_Kind_AEXPR_IN && x.Lexpr != nil {
+		if items := x.Rexpr.GetList().GetItems(); len(items) >= 2 {
+			return x.Lexpr, items, true
+		}
+		return nil, nil, false
+	}
+	b := n.GetBoolExpr()
+	if b == nil || b.Boolop != pg_query.BoolExprType_OR_EXPR || len(b.Args) < 2 {
+		return nil, nil, false
+	}
+	var col *pg_query.Node
+	var alts []*pg_query.Node
+	for _, arm := range b.Args {
+		l, r := equalitySides(arm)
+		if l == nil {
+			return nil, nil, false
+		}
+		if l.GetColumnRef() == nil {
+			l, r = r, l
+		}
+		if l.GetColumnRef() == nil {
+			return nil, nil, false
+		}
+		if col == nil {
+			col = l
+		} else if deparse(col) != deparse(l) {
+			return nil, nil, false
+		}
+		alts = append(alts, r)
+	}
+	return col, alts, true
 }
 
 // existsFacts turns an EXISTS (or a single-column `x IN (SELECT y ...)`) conjunct into an
@@ -434,6 +492,8 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 		f.Kind = facts.Delete
 	case *pg_query.Node_MergeStmt:
 		f.Kind = facts.Merge
+	case *pg_query.Node_TruncateStmt:
+		f.Kind = facts.Delete
 	default:
 		return nil
 	}
@@ -443,9 +503,14 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 	}
 	f.Top = byScope[top]
 	if f.Top == nil {
-		// INSERT (and a MERGE whose ON did not record): the target alone at the top
+		// INSERT (and a MERGE whose ON did not record): the target alone at the top;
+		// TRUNCATE: every table named
 		f.Top = &facts.Scope{At: -1}
-		if a.writeLeaf != nil {
+		if _, trunc := stmt.Node.(*pg_query.Node_TruncateStmt); trunc {
+			for _, w := range a.writeRecs {
+				f.Top.Leaves = append(f.Top.Leaves, a.leafFacts(w.r, nil))
+			}
+		} else if a.writeLeaf != nil {
 			f.Top.Leaves = []facts.Leaf{a.leafFacts(a.writeLeaf, nil)}
 		}
 		byScope[top] = f.Top
@@ -463,17 +528,21 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 		}
 		parent.Children = append(parent.Children, r.fs)
 	}
-	// writes: one per write target (WITH items first, the statement last), with the
-	// columns assigned to that table
-	for _, w := range a.writeRecs {
+	// writes: one per write target (WITH items first, the statement last; a MERGE's
+	// branches each, in order; an ON CONFLICT DO UPDATE after its INSERT), with the columns
+	// assigned by that write. A write through an automatically updatable view is the base
+	// table's, under the base table's column names.
+	for wi, w := range a.writeRecs {
 		name := w.r.alias
 		switch {
+		case w.rel != nil:
+			name = w.rel.FullName()
 		case w.r.rel != nil:
 			name = w.r.rel.FullName()
 		case w.r.viewRel != nil:
 			name = w.r.viewRel.FullName()
 		}
-		fw := facts.Write{Table: name, Position: w.r.pos}
+		fw := facts.Write{Table: name, Position: w.r.pos, InWith: w.inWith}
 		switch w.cmd {
 		case "insert into":
 			fw.Kind = facts.Insert
@@ -481,21 +550,25 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 			fw.Kind = facts.Update
 		case "delete from":
 			fw.Kind = facts.Delete
-		case "merge into":
-			fw.Kind = facts.Merge
+		default:
+			continue // "merge into": the branches are the writes
 		}
 		for _, as := range a.assigned {
-			if as.rel == nil || (as.rel != w.rel && as.rel.FullName() != name) {
+			if as.w != wi {
 				continue
+			}
+			colName := as.col.Name
+			if bc, ok := a.viewBase[as.col]; ok {
+				colName = bc.Name
 			}
 			dup := false
 			for _, c := range fw.Assigned {
-				dup = dup || c == as.col.Name
+				dup = dup || c == colName
 			}
 			if dup {
 				continue
 			}
-			fw.Assigned = append(fw.Assigned, as.col.Name)
+			fw.Assigned = append(fw.Assigned, colName)
 			v := facts.Term{Kind: facts.Known, Text: "?"}
 			if as.e != nil && as.e.node != nil {
 				v = termFacts(as.e.node)

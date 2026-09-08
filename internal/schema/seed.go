@@ -93,6 +93,7 @@ func (s *Schema) insert(st *pg_query.InsertStmt, node *pg_query.Node, loc int32)
 		return
 	}
 	additive := false
+	s.pendingUsed = true
 	for _, d := range s.pending {
 		if strings.Join(strings.Fields(d), " ") == "seed" {
 			additive = true

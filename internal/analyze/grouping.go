@@ -102,7 +102,10 @@ func (a *analyzer) coercedUsingColumn(n *pg_query.Node, sc *scope) bool {
 func (a *analyzer) groupExpr(n *pg_query.Node, sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *pg_query.Node {
 	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
 		name := cr.Fields[0].GetString_().GetSval()
-		if _, err := a.resolveColumn(sc, "", name, -1); err == nil {
+		a.probing = true
+		_, err := a.resolveColumn(sc, "", name, -1)
+		a.probing = false
+		if err == nil {
 			return n // input column wins over an output alias in GROUP BY
 		}
 	}

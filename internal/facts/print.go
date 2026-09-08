@@ -106,6 +106,12 @@ func (p Pred) String() string {
 		return p.Col.String() + " IS NOT NULL"
 	case Exists:
 		return "exists"
+	case In:
+		parts := make([]string, len(p.Terms))
+		for i, t := range p.Terms {
+			parts[i] = t.String()
+		}
+		return p.Col.String() + " IN (" + strings.Join(parts, ", ") + ")"
 	}
 	return fmt.Sprintf("opaque %q cols %s", p.Text, refs(p.Cols))
 }

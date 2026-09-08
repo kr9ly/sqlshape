@@ -64,6 +64,7 @@ type assignment struct {
 	rel *schema.Relation
 	col *schema.Column
 	e   *expr
+	w   int // index into a.writeRecs of the write this assignment belongs to (-1: none)
 }
 
 // violations enumerates the constraints the analyzed statement may violate.

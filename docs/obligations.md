@@ -143,6 +143,17 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 - 状態機械の遷移先は宣言された状態のリテラルに限る。`SET status = $1`は拒否（前状態の集合を検査できない）。初期状態（INSERTの値）は検査しない
 - `never` / `paired` / `single` / `transitions`は「葉」ではなく「書き込み」単位で判定する。WITH内のUPDATE / DELETEもその表の書き込みなので見逃さない
 
+1.1.0 の敵対的テスト（7レーン、rc後）で裁定したもの。
+
+- 書き込みは「表に対して実際にすること」で数える。MERGEは枝ごとに枝の文種の`Write`（文全体の`Write`は出さない）、`INSERT ... ON CONFLICT DO UPDATE`はINSERTの`Write`とUPDATEの`Write`の2つ、`TRUNCATE`は全行のDELETE、自動更新可能ビューへの書き込みは基底表の`Write`（列名も基底表のもの）。`Write.InWith`がWITH項目の書き込みを区別し、`single`の証明対象から外す
+- `pinned`をUPDATEで満たすのはWHEREの固定だけ。SETで列に代入しても満たさない（代入で満たすのはINSERTと、INSERT枝しかないMERGE）。ON CONFLICT DO UPDATE / MERGEの枝が`pinned`列に代入するなら、文が同じ列を固定していることも求める
+- 文脈の`waive <body> on <kinds>`は名指しの文種だけを解除する（`Kinds`の差分）。`-require-columns`等フラグ由来の義務は宣言と同格で、文脈の`waive`で解除できる（`FromFlags`を`InContext`の前に足す）
+- スキーマに無い文脈名、ディレクティブとして読めない`sqlshape: context`行、ディレクティブを読まない文（ALTER TABLE / COMMENT ON）の直上のディレクティブは、黙って無視せず報告する
+- `transitions`の前状態は`Eq`に加えて`In`（`status IN (...)`、`status = 'a' OR status = 'b'`）でも固定できる。列挙した状態がすべて前状態なら履行。`facts.Pred`に`In`を足し、宣言側の`IN (...)`との含意も部分集合で判定する
+- `sqlshape check`はスキーマの関数本体・ビュー本体をvetと同じく判定し、構文エラーの文はその文だけ失敗にして他を判定する。先頭のBOMは無視する
+- `sensitive`のラベルは`RETURNS SETOF <table>`の関数の結果列にも伝わる（`rteCol.rowOf`。結果列のsourceではない — オラクルはsourceを持たない）
+- 診断: 全分岐で同じ失敗は分岐タグを剥いで1回、`pinned`の失敗は同じ表が同じ階層に2回以上あるとき出現（alias）を名指す、GROUP BYだけで参照した列の位置が-1にならない
+
 落としたもの。
 
 - `bounded on select`: 「返す行数の上限」（LIMITか`One`の形）と「読む量の上限」のどちらを見るかで別物になり、前者は`One`と`LIMIT`で書き手が既に選んでいるもの。一言で言えなかった

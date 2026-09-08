@@ -13,9 +13,13 @@ type rteCol struct {
 	typ      schema.TypeRef
 	nullable bool
 	src      *Source
-	lit      bool     // a constant target column, see expr.lit
-	fields   []rteCol // record shape, see expr.fields
-	coll     collation
+	// rowOf is the table column this column carries when the item is a function returning
+	// the table's row type: not the result's source (the oracle names none), but a read of
+	// that column for the facts (a labelled column keeps its label through the function)
+	rowOf  *Source
+	lit    bool     // a constant target column, see expr.lit
+	fields []rteCol // record shape, see expr.fields
+	coll   collation
 }
 
 // rte is a FROM item: a table / view / CTE / subquery / function, or a join of two.
@@ -335,6 +339,7 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 				return rteCol{}, errAt(codeUndefinedColumn, loc, "column %s.%s does not exist", tbl, col)
 			}
 			a.use(hits[0].src, loc)
+			a.use(hits[0].rowOf, loc)
 			return hits[0], nil
 		}
 		var hits []rteCol
@@ -351,6 +356,7 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 		}
 		if len(hits) == 1 {
 			a.use(hits[0].src, loc)
+			a.use(hits[0].rowOf, loc)
 			return hits[0], nil
 		}
 	}
@@ -383,7 +389,7 @@ func (a *analyzer) use(src *Source, loc int32) {
 // a SET target), which facts report apart from reads (a sensitive column may be written
 // where it may not be read).
 func (a *analyzer) useAs(src *Source, loc int32, write bool) {
-	if a.inView > 0 || src == nil {
+	if a.inView > 0 || a.probing || src == nil {
 		return
 	}
 	key := src.Table + "." + src.Column
@@ -411,6 +417,7 @@ func (a *analyzer) useAs(src *Source, loc int32, write bool) {
 func (a *analyzer) useAll(cols []rteCol, loc int32) {
 	for _, c := range cols {
 		a.use(c.src, loc)
+		a.use(c.rowOf, loc)
 	}
 }
 

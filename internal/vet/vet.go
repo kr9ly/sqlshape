@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -299,7 +300,14 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 		c.adviseSchema(calls[0].Pos())
 	}
-	c.decls = append(obligation.InContext(ls.decls, packageContext(pass)), obligation.FromFlags(s, requireCols, noTables, noTableReads)...)
+	// the flags are shorthand for declarations: a context's waive lifts them the same way
+	ctxName, ctxProblem := packageContext(pass)
+	if ctxProblem != "" {
+		pass.Reportf(calls[0].Pos(), "sqlshape: %s", ctxProblem)
+	} else if ctxName != "" && !slices.Contains(obligation.Contexts(ls.decls), ctxName) {
+		pass.Reportf(calls[0].Pos(), "sqlshape: context %q is not declared in %s (declared: %s)", ctxName, path, strings.Join(obligation.Contexts(ls.decls), ", "))
+	}
+	c.decls = obligation.InContext(append(ls.decls, obligation.FromFlags(s, requireCols, noTables, noTableReads)...), ctxName)
 	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
 	}
@@ -573,24 +581,22 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	}
 
 	// One diagnostic per distinct message; the branch suffix (after " [") does not count
-	// towards distinctness, so a problem shared by many expansions is reported once.
-	seen := map[string]bool{}
-	dedupe := func(msg string) (string, bool) {
-		key := msg
-		if i := strings.LastIndex(msg, " ["); i >= 0 && strings.HasSuffix(msg, "]") {
-			key = msg[:i]
-		}
-		if seen[key] {
-			return "", false
-		}
-		seen[key] = true
-		return msg, true
-	}
+	// towards distinctness, so a problem shared by many expansions is reported once -- and
+	// when every expansion shares it, without the suffix (it is not one branch's problem).
+	// Reports are held until the end of the call for that.
+	dd := &deduper{seen: map[string]int{}, expansions: len(res.Expansions)}
+	dedupe := dd.add
+	var held []heldDiag
 	report := func(pos token.Pos, format string, args ...any) {
 		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
-			pass.Reportf(pos, "sqlshape: %s", msg)
+			held = append(held, heldDiag{pos, msg})
 		}
 	}
+	defer func() {
+		for _, h := range held {
+			pass.Reportf(h.pos, "sqlshape: %s", dd.finish(h.msg))
+		}
+	}()
 	multi := len(res.Expansions) > 1
 	if res.Sparse && c.strict {
 		pass.Reportf(lit.pos(0), "sqlshape: %d branch combinations exceed %d: checked sparsely (all branches off, all on, each on alone); the runtime cannot compare renderings with the checked set", res.Combinations, expand.MaxExpansions)
@@ -696,10 +702,53 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			}
 		}
 	}
-	c.emitHeld(call, d, res, rType, pType)
 	if analyzedAll {
 		c.checkExpectations(lit, possible, branch, report)
 	}
+	for i := range d.rDiags {
+		d.rDiags[i].msg = dd.finish(d.rDiags[i].msg)
+	}
+	for i := range d.pDiags {
+		d.pDiags[i].msg = dd.finish(d.pDiags[i].msg)
+	}
+	c.emitHeld(call, d, res, rType, pType)
+}
+
+// deduper keeps one diagnostic per message, the branch suffix aside, and counts the
+// branches each message came from.
+type deduper struct {
+	seen       map[string]int // key -> how many branch-tagged reports carried it
+	expansions int
+}
+
+func splitBranch(msg string) (key string, tagged bool) {
+	if i := strings.LastIndex(msg, " ["); i >= 0 && strings.HasSuffix(msg, "]") {
+		return msg[:i], true
+	}
+	return msg, false
+}
+
+// add returns whether msg is the first of its key (and so is to be reported).
+func (d *deduper) add(msg string) (string, bool) {
+	key, tagged := splitBranch(msg)
+	n, dup := d.seen[key]
+	if tagged {
+		n++
+	}
+	d.seen[key] = n
+	if dup {
+		return "", false
+	}
+	return msg, true
+}
+
+// finish strips the branch suffix from a message every expansion reported.
+func (d *deduper) finish(msg string) string {
+	key, tagged := splitBranch(msg)
+	if tagged && d.expansions > 1 && d.seen[key] >= d.expansions {
+		return key
+	}
+	return msg
 }
 
 // checkParams matches each $n's Go origin against the inferred PG parameter type.
@@ -1162,18 +1211,25 @@ func (c *checker) reportUnusedParams(pType types.Type, res *expand.Result, at to
 	walk(st)
 }
 
-var contextDirective = regexp.MustCompile(`(?m)^\s*sqlshape:\s*context\s+([a-z][a-z0-9_-]*)\s*$`)
+var (
+	contextDirective = regexp.MustCompile(`(?m)^\s*sqlshape:\s*context\s+([a-z][a-z0-9_-]*)\s*$`)
+	contextLike      = regexp.MustCompile(`(?m)^\s*sqlshape:\s*context\b.*$`)
+)
 
 // packageContext is the obligation context this package is judged under: the
-// `// sqlshape: context <name>` line of its package comment, else -context.
-func packageContext(pass *analysis.Pass) string {
+// `// sqlshape: context <name>` line of its package comment, else -context. A line that
+// starts like the directive but does not read as one is a problem, not a fallback.
+func packageContext(pass *analysis.Pass) (name, problem string) {
 	for _, f := range pass.Files {
 		if f.Doc == nil {
 			continue
 		}
 		if m := contextDirective.FindStringSubmatch(f.Doc.Text()); m != nil {
-			return m[1]
+			return m[1], ""
+		}
+		if m := contextLike.FindString(f.Doc.Text()); m != "" {
+			return contextFlag, fmt.Sprintf("package comment line %q is not a context directive: write `sqlshape: context <name>` on a line of its own (lowercase name, nothing after it)", strings.TrimSpace(m))
 		}
 	}
-	return contextFlag
+	return contextFlag, ""
 }

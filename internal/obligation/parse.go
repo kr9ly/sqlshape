@@ -442,10 +442,12 @@ func context(rel *schema.Relation, directive string) ([]Obligation, error) {
 // the base obligations minus those the context waives, plus the context's own. The
 // result carries no waivers and no other context's obligations, so it can be judged.
 func InContext(decls []Obligation, name string) []Obligation {
-	waived := map[string]bool{}
+	// a waiver lifts the statement kinds it names (`waive pinned(x) on select` leaves the
+	// writes bound); without `on` it lifts them all
+	waived := map[string]Kinds{}
 	for _, o := range decls {
 		if o.Waiver && o.Context == name {
-			waived[o.Subject+"\x00"+o.Body.Spec()] = true
+			waived[o.Subject+"\x00"+o.Body.Spec()] |= o.Kinds
 		}
 	}
 	var out []Obligation
@@ -453,11 +455,25 @@ func InContext(decls []Obligation, name string) []Obligation {
 		switch {
 		case o.Waiver:
 		case o.Context == "":
-			if !waived[o.Subject+"\x00"+o.Body.Spec()] {
+			if rest := o.Kinds &^ waived[o.Subject+"\x00"+o.Body.Spec()]; rest != 0 {
+				o.Kinds = rest
 				out = append(out, o)
 			}
 		case o.Context == name:
 			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// Contexts lists the context names the declarations mention, in order of first mention.
+func Contexts(decls []Obligation) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, o := range decls {
+		if o.Context != "" && !seen[o.Context] {
+			seen[o.Context] = true
+			out = append(out, o.Context)
 		}
 	}
 	return out
