@@ -73,6 +73,39 @@ type Body struct {
 	// Alone: the statement may not touch a table of another aggregate; the value is the
 	// aggregate's root. Produced by an `aggregate` declaration, never written by hand.
 	Alone string
+	// Never: no statement of the obligation's kinds may exist (`require never on update,
+	// delete`: an append-only table).
+	Never bool
+	// Paired: the statement must also write the named table, in the same statement (a
+	// data-modifying CTE): `require paired(outbox) on insert`.
+	Paired string
+	// Single: the statement must provably touch at most one row (the One proof):
+	// `require single on delete`.
+	Single bool
+	// Transitions: the column is a state machine; an UPDATE that sets it to a constant
+	// must fix the column to one of that state's predecessors in its WHERE, and may not set
+	// it to anything but a declared state. From a `transitions` declaration.
+	Transitions *Transitions
+	// Sensitive: the columns carry the label, and a statement may reference them only in
+	// a context that `may read` the label. From a `sensitive` declaration.
+	Sensitive *Sensitive
+	// MayRead: a context's permission to read the label (a `context X: may read pii`
+	// item). Not an obligation; InContext keeps it for the checker.
+	MayRead string
+}
+
+// Transitions is a state machine over one column: for each target state, the states an
+// UPDATE may move from.
+type Transitions struct {
+	Column string
+	From   map[string][]string // target -> predecessors, in declaration order
+	Order  []string            // targets in declaration order (for messages)
+}
+
+// Sensitive labels columns of a table.
+type Sensitive struct {
+	Label   string
+	Columns []string
 }
 
 // Spec spells the body the way a `require` directive does, whitespace-normalized: the
@@ -87,6 +120,18 @@ func (b Body) Spec() string {
 		return "via view"
 	case b.Alone != "":
 		return "alone"
+	case b.Never:
+		return "never"
+	case b.Paired != "":
+		return "paired(" + b.Paired + ")"
+	case b.Single:
+		return "single"
+	case b.Transitions != nil:
+		return "transitions " + b.Transitions.Column
+	case b.Sensitive != nil:
+		return "sensitive " + b.Sensitive.Label
+	case b.MayRead != "":
+		return "may read " + b.MayRead
 	}
 	return strings.Join(strings.Fields(b.Predicate), " ")
 }

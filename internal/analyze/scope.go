@@ -376,10 +376,23 @@ func (a *analyzer) resolveColumn(sc *scope, tbl, col string, loc int32) (rteCol,
 // use records that the statement depends on the column src (Result.Uses). Inside a view
 // definition nothing is recorded: the reference is the view's, not the statement's.
 func (a *analyzer) use(src *Source, loc int32) {
+	a.useAs(src, loc, false)
+}
+
+// useAs is use with the kind of reference: write marks a write target (an INSERT column,
+// a SET target), which facts report apart from reads (a sensitive column may be written
+// where it may not be read).
+func (a *analyzer) useAs(src *Source, loc int32, write bool) {
 	if a.inView > 0 || src == nil {
 		return
 	}
 	key := src.Table + "." + src.Column
+	if !write {
+		if a.readUses == nil {
+			a.readUses = map[string]bool{}
+		}
+		a.readUses[key] = true
+	}
 	if i, ok := a.useSeen[key]; ok {
 		// clauses are analyzed in PG's order (FROM, WHERE, targets), not the text's
 		if loc+1 < a.uses[i].Position {
@@ -403,7 +416,7 @@ func (a *analyzer) useAll(cols []rteCol, loc int32) {
 
 // useColumn records a target column of a write to rel.
 func (a *analyzer) useColumn(rel *schema.Relation, c *schema.Column, loc int32) {
-	a.use(&Source{Table: rel.FullName(), Column: c.Name}, loc)
+	a.useAs(&Source{Table: rel.FullName(), Column: c.Name}, loc, true)
 }
 
 // scopeOf is the scope (this one or an enclosing one) whose FROM list holds r.

@@ -726,6 +726,9 @@ SELECT id, customer_name FROM order_summary
 | `pinned(tenant_id)` | 読み・UPDATE・DELETEではその列を一つの値に固定する（`= {{.X}}`、リテラル、外側の参照）。INSERTでは値を入れる | `all` |
 | `immutable(tenant_id)` | UPDATEでその列に代入しない | `update` |
 | `via view` | その表を直接参照しない（`on`に書き込みを含めない限り、書き込みの対象にはできる） | `read` |
+| `never` | 存在しないこと。追記専用の表（`require never on update, delete`） | `write` |
+| `paired(outbox)` | 同じ文で名指しの表にも書くこと（書き込みCTE）。outboxの行は、それが告げる書き込みと一緒に動く | `insert` |
+| `single` | 高々1行しか触らないと証明できること（`One`の証明）。鍵なしのDELETEを止める | `delete` |
 
 `<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切り、またはまとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。
 
@@ -786,6 +789,40 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 ```
 
 ルートは`pinned(version) on update, delete`（見た版を名指しする）を負い、各子表はUPDATE / DELETEで、外部キーをたどった先（孫なら親を経由して）のルート行がその版であることの`EXISTS`を負う: `UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND o.version = {{.V}} AND i.id = {{.ID}}`。版を上げるのはDBの仕事のまま（ルートのトリガ。子から上げるなら子のトリガがルートを更新する）。何も当たらなかった`One`の書き込みは`ErrNoRows`を返す。
+
+文ではなく列についての宣言が2つある。
+
+```sql
+-- sqlshape: transitions status: draft -> submitted, submitted -> paid | cancelled, paid -> refunded
+-- sqlshape: sensitive pii: email, phone
+CREATE TABLE orders (...);
+```
+
+`transitions`は列を状態機械にする。その列をある状態にSETするUPDATEは、WHEREで現在の状態をその状態の前状態のいずれかに固定していなければならない（compare-and-set。2人の書き手が同じ行を同時に動かせない）。
+
+```sql
+UPDATE orders SET status = 'paid' WHERE id = {{.ID}} AND status = 'submitted'   -- OK
+UPDATE orders SET status = 'paid' WHERE id = {{.ID}}
+-- orders.status: SET status = 'paid' must fix the current state in WHERE (status = 'submitted')
+UPDATE orders SET status = 'paid' WHERE id = {{.ID}} AND status = 'draft'
+-- orders.status: draft -> paid is not a declared transition (paid comes from submitted)
+```
+
+遷移先は宣言された状態のリテラルでなければならず、`SET status = {{.S}}`は拒否される（前状態の集合を検査できない）。INSERTは遷移ではないので検査しない。この宣言はseed済みの`(from_status, to_status)`lookup表と同じ形で、DB側ではトリガで守れる。
+
+`sensitive`は列にラベルを付ける。ラベルの付いた列は、そのラベルを`may read`する文脈でしか参照できない（SELECT句でもWHEREでも同じ）。値を書き込むのは読むことではない。ラベルは、列をそのまま通すビューを通って伝わり、式（マスクした列）で止まる。
+
+```sql
+-- sqlshape: context billing: may read pii
+CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone_masked FROM orders;
+```
+
+```sql
+SELECT email FROM orders WHERE id = {{.ID}}            -- billing以外ではNG
+-- orders.email is pii: this context may not read it (a context with `may read pii`, or a view that masks it)
+SELECT email FROM order_contacts WHERE id = {{.ID}}    -- これもNG: ビューがemailをそのまま通している
+SELECT phone_masked FROM order_contacts                -- OK: 式にはラベルが付かない
+```
 
 呼び出し元が違えば規約も違う。運用スクリプトはテナントなしで走り、分析者はビューしか読まない。**文脈（context）**はその差分を表ごとに宣言し、パッケージや`check`の実行が一つを選ぶ。
 

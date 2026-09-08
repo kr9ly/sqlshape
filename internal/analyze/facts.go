@@ -17,6 +17,14 @@ import (
 // (recordFixed's callers, plus MERGE's ON) becomes one facts.Scope; view bodies are
 // converted on demand and hung off the leaf that reads them.
 
+// writeRec is one write target the statement has (the main statement's, or a
+// data-modifying WITH item's), in analysis order: WITH items first, the statement last.
+type writeRec struct {
+	rel *schema.Relation
+	r   *rte
+	cmd string // "insert into" / "update" / "delete from" / "merge into"
+}
+
 // factScope pairs an analyzer scope with the facts derived at it.
 type factScope struct {
 	sc *scope
@@ -455,43 +463,49 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 		}
 		parent.Children = append(parent.Children, r.fs)
 	}
-	// writes: one entry per assigned relation, in first-assignment order
-	kind := f.Kind
-	if kind == facts.Select {
-		kind = 0 // a data-modifying CTE under a SELECT still reports its assignments
+	// writes: one per write target (WITH items first, the statement last), with the
+	// columns assigned to that table
+	for _, w := range a.writeRecs {
+		name := w.r.alias
+		switch {
+		case w.r.rel != nil:
+			name = w.r.rel.FullName()
+		case w.r.viewRel != nil:
+			name = w.r.viewRel.FullName()
+		}
+		fw := facts.Write{Table: name, Position: w.r.pos}
+		switch w.cmd {
+		case "insert into":
+			fw.Kind = facts.Insert
+		case "update":
+			fw.Kind = facts.Update
+		case "delete from":
+			fw.Kind = facts.Delete
+		case "merge into":
+			fw.Kind = facts.Merge
+		}
+		for _, as := range a.assigned {
+			if as.rel == nil || (as.rel != w.rel && as.rel.FullName() != name) {
+				continue
+			}
+			dup := false
+			for _, c := range fw.Assigned {
+				dup = dup || c == as.col.Name
+			}
+			if dup {
+				continue
+			}
+			fw.Assigned = append(fw.Assigned, as.col.Name)
+			v := facts.Term{Kind: facts.Known, Text: "?"}
+			if as.e != nil && as.e.node != nil {
+				v = termFacts(as.e.node)
+			}
+			fw.Values = append(fw.Values, v)
+		}
+		f.Writes = append(f.Writes, fw)
 	}
-	pos := int32(-1)
-	if a.writeLeaf != nil {
-		pos = a.writeLeaf.pos
-	}
-	order := map[string]int{}
-	for _, as := range a.assigned {
-		if as.rel == nil {
-			continue
-		}
-		name := as.rel.FullName()
-		i, ok := order[name]
-		if !ok {
-			i = len(f.Writes)
-			order[name] = i
-			f.Writes = append(f.Writes, facts.Write{Table: name, Kind: kind, Position: pos})
-		}
-		dup := false
-		for _, c := range f.Writes[i].Assigned {
-			dup = dup || c == as.col.Name
-		}
-		if !dup {
-			f.Writes[i].Assigned = append(f.Writes[i].Assigned, as.col.Name)
-		}
-	}
-	if f.Kind == facts.Delete && a.writeLeaf != nil {
-		name := a.writeLeaf.alias
-		if a.writeLeaf.rel != nil {
-			name = a.writeLeaf.rel.FullName()
-		} else if a.writeLeaf.viewRel != nil {
-			name = a.writeLeaf.viewRel.FullName()
-		}
-		f.Writes = append(f.Writes, facts.Write{Table: name, Kind: facts.Delete, Position: pos})
+	for _, u := range a.uses {
+		f.Uses = append(f.Uses, facts.Use{Table: u.Table, Column: u.Column, Position: u.Position - 1, Assigned: !a.readUses[u.Table+"."+u.Column]})
 	}
 	return f
 }

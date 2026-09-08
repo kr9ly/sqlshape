@@ -23,6 +23,7 @@ func (a *analyzer) writeTarget(rv *pg_query.RangeVar, sc *scope, cmd string) (*s
 	if err != nil {
 		return nil, nil, err
 	}
+	a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: r, cmd: cmd})
 	switch rel.Kind {
 	case schema.MatView:
 		if cmd == "merge into" {

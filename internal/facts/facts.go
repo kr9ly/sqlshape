@@ -30,6 +30,21 @@ type Facts struct {
 	Top *Scope
 	// Writes are the tables the statement stores into, with the columns it assigns.
 	Writes []Write
+	// AtMostOne: the statement provably touches at most one row (the One proof).
+	AtMostOne bool
+	// Uses are the relation columns the statement references anywhere (a view's columns
+	// as the view's), each once, in order of first appearance.
+	Uses []Use
+}
+
+// Use is one column reference of the statement.
+type Use struct {
+	Table    string
+	Column   string
+	Position int32 // 0-based
+	// Assigned: the column is only a write target here (an INSERT column, a SET target),
+	// never read.
+	Assigned bool
 }
 
 // Scope is one level of name resolution: a set of leaves joined together, and what the
@@ -110,8 +125,10 @@ type Write struct {
 	Table string
 	Kind  StmtKind // Insert / Update / Delete (a MERGE branch reports its own kind)
 	// Assigned are the columns given a value: INSERT's column list (or all columns), an
-	// UPDATE / MERGE UPDATE branch's SET targets.
+	// UPDATE / MERGE UPDATE branch's SET targets. Values are the terms stored, parallel
+	// to Assigned (a Known term for an expression).
 	Assigned []string
+	Values   []Term
 	Position int32
 }
 

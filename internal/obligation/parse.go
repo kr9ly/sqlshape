@@ -66,6 +66,24 @@ func Parse(subject, directive string) (o Obligation, ok bool, err error) {
 			o.Kinds = OnRead
 		}
 		o.Body.IncludeWrites = o.Kinds&OnWrite != 0
+	case lb == "never":
+		o.Body.Never = true
+		if o.Kinds == 0 {
+			o.Kinds = OnWrite
+		}
+	case strings.HasPrefix(lb, "paired(") && strings.HasSuffix(lb, ")"):
+		o.Body.Paired = strings.TrimSpace(body[len("paired(") : len(body)-1])
+		if o.Body.Paired == "" {
+			return Obligation{}, true, fmt.Errorf("%s: paired needs a table", norm)
+		}
+		if o.Kinds == 0 {
+			o.Kinds = OnInsert
+		}
+	case lb == "single":
+		o.Body.Single = true
+		if o.Kinds == 0 {
+			o.Kinds = OnDelete
+		}
 	default:
 		o.Body.Predicate = body
 		if o.Kinds == 0 {
@@ -134,6 +152,16 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 	var problems []Problem
 	for _, rel := range s.Relations {
 		for _, d := range rel.Directives {
+			lower := strings.ToLower(d)
+			if strings.HasPrefix(lower, "sensitive ") || strings.HasPrefix(lower, "transitions ") {
+				o, err := columnRule(rel, d)
+				if err != nil {
+					problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: err.Error()})
+					continue
+				}
+				out = append(out, o)
+				continue
+			}
 			if strings.HasPrefix(strings.ToLower(d), "context ") {
 				ob, err := context(rel, d)
 				if err != nil {
@@ -162,6 +190,10 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 			}
 			if col := o.Body.Pinned + o.Body.Immutable; col != "" && !hasColumn(rel, col) {
 				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: fmt.Sprintf("%s has no column %s", rel.Name, col)})
+				continue
+			}
+			if t := o.Body.Paired; t != "" && relByFullName(s, t) == nil {
+				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: fmt.Sprintf("paired: relation %s does not exist", t)})
 				continue
 			}
 			out = append(out, o)
@@ -390,6 +422,12 @@ func context(rel *schema.Relation, directive string) ([]Obligation, error) {
 			}
 			o.Context, o.Source = name, norm
 			out = append(out, o)
+		case strings.HasPrefix(lower, "may read "):
+			label := strings.TrimSpace(it[len("may read "):])
+			if label == "" || strings.ContainsAny(label, " \t") {
+				return nil, fmt.Errorf("%s: `may read` names one label", norm)
+			}
+			out = append(out, Obligation{Subject: rel.FullName(), Context: name, Body: Body{MayRead: label}, Source: norm})
 		default:
 			return nil, fmt.Errorf("%s: %q is neither `require ...` nor `waive ...`", norm, it)
 		}
@@ -417,6 +455,77 @@ func InContext(decls []Obligation, name string) []Obligation {
 			}
 		case o.Context == name:
 			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// columnRule reads the two column-level declarations written above a CREATE TABLE:
+//
+//	sensitive <label>: col, col        the columns carry the label
+//	transitions <col>: a -> b, b -> c | d   the column is a state machine
+func columnRule(rel *schema.Relation, directive string) (Obligation, error) {
+	norm := strings.Join(strings.Fields(directive), " ")
+	o := Obligation{Subject: rel.FullName(), Kinds: OnAll, Source: norm}
+	head, body, ok := strings.Cut(norm, ":")
+	if !ok {
+		return Obligation{}, fmt.Errorf("%s: expected `<keyword> <name>: ...`", norm)
+	}
+	kw, name, _ := strings.Cut(strings.TrimSpace(head), " ")
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsAny(name, " \t") {
+		return Obligation{}, fmt.Errorf("%s: %s names one %s", norm, kw, map[string]string{"sensitive": "label", "transitions": "column"}[strings.ToLower(kw)])
+	}
+	switch strings.ToLower(kw) {
+	case "sensitive":
+		sens := &Sensitive{Label: name}
+		for _, c := range strings.Split(body, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				if !hasColumn(rel, c) {
+					return Obligation{}, fmt.Errorf("%s: %s has no column %s", norm, rel.Name, c)
+				}
+				sens.Columns = append(sens.Columns, c)
+			}
+		}
+		if len(sens.Columns) == 0 {
+			return Obligation{}, fmt.Errorf("%s: no columns", norm)
+		}
+		o.Body.Sensitive = sens
+	case "transitions":
+		if !hasColumn(rel, name) {
+			return Obligation{}, fmt.Errorf("%s: %s has no column %s", norm, rel.Name, name)
+		}
+		tr := &Transitions{Column: name, From: map[string][]string{}}
+		for _, edge := range strings.Split(body, ",") {
+			lhs, rhs, ok := strings.Cut(edge, "->")
+			if !ok {
+				return Obligation{}, fmt.Errorf("%s: %q is not `from -> to`", norm, strings.TrimSpace(edge))
+			}
+			froms := states(lhs)
+			tos := states(rhs)
+			if len(froms) == 0 || len(tos) == 0 {
+				return Obligation{}, fmt.Errorf("%s: %q is not `from -> to`", norm, strings.TrimSpace(edge))
+			}
+			for _, to := range tos {
+				if _, seen := tr.From[to]; !seen {
+					tr.Order = append(tr.Order, to)
+				}
+				tr.From[to] = append(tr.From[to], froms...)
+			}
+		}
+		o.Kinds = OnUpdate
+		o.Body.Transitions = tr
+	}
+	return o, nil
+}
+
+// states splits `a | b` into its state names, quotes stripped.
+func states(list string) []string {
+	var out []string
+	for _, st := range strings.Split(list, "|") {
+		st = strings.Trim(strings.TrimSpace(st), "'\"")
+		if st != "" {
+			out = append(out, st)
 		}
 	}
 	return out

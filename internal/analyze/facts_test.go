@@ -105,7 +105,7 @@ update
   pred 0.tenant_id = known "current_setting('app.tenant', true)::bigint" restricts [0] from policy
   fixed 0.id 0.tenant_id
   notnull 0.id 0.tenant_id
-  write update orders set status
+  write update orders set status=$1
 `},
 		{`DELETE FROM order_items i USING orders o WHERE o.id = i.order_id AND o.tenant_id = $1`, `
 delete
@@ -123,7 +123,7 @@ delete
 		{`INSERT INTO order_items (id, order_id, tenant_id, qty) VALUES ($1, $2, $3, 1)`, `
 insert
   leaf 0 table order_items target @12
-  write insert order_items set id,order_id,tenant_id,qty
+  write insert order_items set id=$1,order_id=$2,tenant_id=$3,qty=const i1
 `},
 		{`INSERT INTO order_items (id, order_id, tenant_id, qty) SELECT $1, id, tenant_id, 1 FROM orders WHERE id = $2 AND deleted_at IS NULL`, `
 insert
@@ -135,7 +135,7 @@ insert
     pred 0.tenant_id = known "current_setting('app.tenant', true)::bigint" restricts [0] from policy
     fixed 0.id
     notnull 0.id
-  write insert order_items set id,order_id,tenant_id,qty
+  write insert order_items set id=known "?",order_id=known "?",tenant_id=known "?",qty=known "?"
 `},
 		{`MERGE INTO order_items i USING orders o ON i.order_id = o.id AND o.tenant_id = $1 WHEN MATCHED THEN UPDATE SET qty = 0`, `
 merge
@@ -148,7 +148,7 @@ merge
   edge 0.order_id -> 1.id
   edge 1.id -> 0.order_id
   notnull 0.order_id 1.id 1.tenant_id
-  write merge order_items set qty
+  write merge order_items set qty=const i0
 `},
 	}
 	for _, c := range cases {

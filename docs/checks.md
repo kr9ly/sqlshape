@@ -836,6 +836,9 @@ and the flags are shorthands; the general form is a directive above `CREATE TABL
 | `pinned(tenant_id)` | fix the column to one value (`= {{.X}}`, a literal, an outer reference) when reading, updating or deleting; assign it when inserting | `all` |
 | `immutable(tenant_id)` | not assign the column in an UPDATE | `update` |
 | `via view` | not reference the table directly (a write target is allowed unless `on` includes writes) | `read` |
+| `never` | not exist: an append-only table (`require never on update, delete`) | `write` |
+| `paired(outbox)` | write the named table in the same statement too (a data-modifying `WITH`): an outbox row travels with the write it announces | `insert` |
+| `single` | provably touch at most one row (the `One` proof): no unkeyed DELETE | `delete` |
 
 `<kinds>` is a comma-separated list of `select`, `insert`, `update`, `delete`, or the groups `read`
 (SELECT, and the target of an UPDATE / DELETE / MERGE, whose WHERE reads it), `write` and `all`.
@@ -916,6 +919,48 @@ on UPDATE / DELETE, an `EXISTS` witnessing the root row at that version through 
 (through its parent's, for a grandchild): `UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND o.version = {{.V}} AND i.id = {{.ID}}`.
 Incrementing the version stays the database's job (a trigger on the root, fired by the children's
 triggers if they must bump it); a `One` write that matched nothing returns `ErrNoRows`.
+
+Two more declarations are about columns rather than statements:
+
+```sql
+-- sqlshape: transitions status: draft -> submitted, submitted -> paid | cancelled, paid -> refunded
+-- sqlshape: sensitive pii: email, phone
+CREATE TABLE orders (...);
+```
+
+`transitions` makes the column a state machine. An UPDATE that sets it to a state must fix the
+current state in its WHERE to one of that state's predecessors (compare-and-set, so two writers
+cannot both move the same row):
+
+```sql
+UPDATE orders SET status = 'paid' WHERE id = {{.ID}} AND status = 'submitted'   -- passes
+UPDATE orders SET status = 'paid' WHERE id = {{.ID}}
+-- orders.status: SET status = 'paid' must fix the current state in WHERE (status = 'submitted')
+UPDATE orders SET status = 'paid' WHERE id = {{.ID}} AND status = 'draft'
+-- orders.status: draft -> paid is not a declared transition (paid comes from submitted)
+```
+
+The target must be a literal naming a declared state; `SET status = {{.S}}` is refused (no predecessor
+set can be checked for it). An INSERT is not a transition and is not checked. The declaration is the
+same shape as a seeded `(from_status, to_status)` lookup table, which a trigger can enforce on the
+database side.
+
+`sensitive` labels columns. A statement may reference a labelled column -- in its SELECT list or in a
+WHERE alike -- only in a context that `may read` the label; storing a value into it is not reading it.
+The label follows a column through a view that passes it through, and stops at an expression (a
+masked column):
+
+```sql
+-- sqlshape: context billing: may read pii
+CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone_masked FROM orders;
+```
+
+```sql
+SELECT email FROM orders WHERE id = {{.ID}}            -- fails outside billing
+-- orders.email is pii: this context may not read it (a context with `may read pii`, or a view that masks it)
+SELECT email FROM order_contacts WHERE id = {{.ID}}    -- fails too: the view passes email through
+SELECT phone_masked FROM order_contacts                -- passes: an expression carries no label
+```
 
 Different callers need different rules: an operator's script may run without a tenant, an analyst
 may only read views. A **context** declares the difference per table, and a package or a `check`

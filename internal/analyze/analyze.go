@@ -73,6 +73,7 @@ type analyzer struct {
 	inReturning bool
 	uses        []Use
 	useSeen     map[string]int
+	readUses    map[string]bool // uses that are reads (not only write targets), by key
 	fixed       []Source
 	// inView is the depth of view definitions being analyzed: their references are the
 	// view's, not the statement's
@@ -111,6 +112,7 @@ type analyzer struct {
 	// facts.go: the levels recorded for internal/obligation, the last DML target, and the
 	// view bodies already converted
 	factScopes     []factScope
+	writeRecs      []writeRec
 	writeLeaf      *rte
 	viewFactScopes map[*schema.Relation]*facts.Scope
 	// scopeSel is the SELECT a query level analyzes (set before its facts are recorded);
@@ -455,6 +457,9 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived
 	}
 	res.Fixed = a.fixed
 	res.Facts = a.buildFacts(tree.Stmts[0].Stmt, sc)
+	if res.Facts != nil {
+		res.Facts.AtMostOne = res.AtMostOne
+	}
 	res.Notes = a.notes
 	return res, nil
 }

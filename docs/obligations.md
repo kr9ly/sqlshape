@@ -123,20 +123,25 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 - **書き込みは1文1集約**が`alone`で機械的に守られる。ただしこれは文単位の射影で、「1トランザクションで2集約を書く」は文が分かれていれば通る。集約の本来の意味はトランザクション境界なので、守れるのは文の形に映る分だけ。文をまたぐ層は未決のまま
 - `aggregate`宣言を残す価値は意図の保存にある。義務を個別に書くと「なぜこの5行が揃っているか」が消える。展開結果は診断文に使う（`order_items は集約 orders の子: order_id を固定してください`）
 
-## ロードマップ: 文の形に映るアプリケーションの意味
+## 文の形に映るアプリケーションの意味（1.1.0で実装）
 
-義務の枠組みに乗り、facts に文の形（SETの定数、CTEの書き込み集合、葉ごとの単一性）を足すだけで書けるもの。含意判定は変わらない。残す基準は「入れると何が嬉しいかを一言で言えること」で、言えなかったものは落とした（下記）。
+義務の枠組みに乗り、facts に文の形（SETの値、書き込み集合、文の単一性、参照列）を足すだけで書けるもの。残す基準は「入れると何が嬉しいかを一言で言えること」で、言えなかったものは落とした（下記）。
 
-| 述語 | 一言 |
-|---|---|
-| **状態機械** `-- sqlshape: transitions status: draft -> submitted -> paid \| cancelled` | `SET status = 'paid'`がWHEREで前状態（`status = 'submitted'`）を固定していないと通らない。CASを強制し、競合する遷移を静的に潰す。遷移表をseed済みlookup `(from_status, to_status)`として置けば宣言がSQLになり、トリガでDBも守れる |
-| **append-only** `require never on update, delete` | 台帳・イベント表を書き換える文が存在しないことの保証 |
-| **outbox** `require paired(outbox) on insert` | 書き込みとoutboxへのINSERTが1文（書き込みCTE）に揃っていないと通らない。「文をまたぐ」問題の一部を「1文にまとめろ」に変換し、トランザクション層なしで原子性を形で守る |
-| **単一行の削除** `require single on delete` | 一意キーで固定されていない（`One`で証明できない）DELETEを止める。一括削除事故 |
-| **データ分類** 列に`-- sqlshape: sensitive pii` | その列を読める文脈を絞る（マスク済みビュー経由のみ、等）。文脈（context）と組み合わせて意味が出るので、文脈の使われ方が見えてから |
-| **Go側との束縛** | `pinned(tenant_id)`の相手がGoのnamed type `TenantID`に束縛されたパラメータであることまで要求し、「tenantを固定している」を「**正しい**tenantを固定している」に上げる。sqlshapeがGoの型を見る唯一の層 |
+| 述語 | 一言 | 実装 |
+|---|---|---|
+| **状態機械** `transitions status: draft -> submitted, submitted -> paid \| cancelled` | `SET status = 'paid'`がWHEREで前状態を固定していないと通らない。CASを強制し、競合する遷移を静的に潰す | `Write.Values`（SETの値）とスコープの`Eq(col, Const)`。遷移先が非リテラルなら拒否。INSERTは遷移でない |
+| **append-only** `require never on update, delete` | 台帳・イベント表を書き換える文が存在しないことの保証 | 書き込みごとに判定。WITH内の書き込みも |
+| **outbox** `require paired(outbox) on insert` | 書き込みとoutboxへのINSERTが1文（書き込みCTE）に揃っていないと通らない。トランザクション層なしで原子性を形で守る | `Facts.Writes`に相手の表があるか |
+| **単一行の削除** `require single on delete` | 一意キーで固定されていないDELETEを止める | `Facts.AtMostOne`（`One`の証明）。WITH内の書き込みは証明できないので不可 |
+| **データ分類** `sensitive pii: email, phone` + `context billing: may read pii` | PIIを読める文脈を宣言し、それ以外の文脈でPIIを参照する文を止める | `Facts.Uses`（書き込み専用の参照は除く）。ビューの`Frozen[].Src`でラベルを基底列から伝播、式列で止まる |
 
-順序は状態機械 → outbox → never / single → データ分類・Go束縛。
+裁定。
+
+- `sensitive`は列ではなく表の直上に`sensitive <label>: 列, 列`で書く（ディレクティブは全部「CREATEの直上の行」で統一。列コメントの解釈を増やさない）
+- `sensitive`の「読む」はSELECT句に限らず参照全部（WHEREの`email = $1`も漏れる）。書き込み（INSERTの列・SETの対象）は読みではない
+- ラベルはビューを通す列に伝播し、式の列（マスク）で止まる。ビューを作るだけでは抜けられない
+- 状態機械の遷移先は宣言された状態のリテラルに限る。`SET status = $1`は拒否（前状態の集合を検査できない）。初期状態（INSERTの値）は検査しない
+- `never` / `paired` / `single` / `transitions`は「葉」ではなく「書き込み」単位で判定する。WITH内のUPDATE / DELETEもその表の書き込みなので見逃さない
 
 落としたもの。
 
@@ -145,6 +150,10 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 - `indexed`: `-strict`の助言をエラーに昇格するだけで、新しい判定ではない。EXPLAINなしの構造判定なので精度にも限界がある。助言のまま
 
 組み込み述語が増えるので「組み込みは3つに留める」は捨て、**SQL式で書けないものは文の構造述語として名前を持つ**に変える。増やす前に「SQL式で書けないか」と「何が嬉しいか一言で言えるか」を問う。
+
+## ロードマップ（1.2以降）
+
+- **Go側との束縛**: `pinned(tenant_id)`の相手がGoのnamed type `TenantID`に束縛されたパラメータであることまで要求し、「tenantを固定している」を「**正しい**tenantを固定している」に上げる。`Discharge`に履行した項の`$n`を載せ、vetがそのGo型を照合する。sqlshapeがGoの型を見る唯一の層で、「型を認証コンテキストからしか作れない」というアプリ側の規律が前提
 
 ## 文脈: vetの外の文にも義務を課す
 

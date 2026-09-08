@@ -15,10 +15,19 @@ func Check(s *schema.Schema, decls []Obligation, f *facts.Facts, l Lowerer) []Di
 	if f == nil || f.Top == nil {
 		return nil
 	}
-	c := &checker{s: s, f: f, lower: l, lowered: map[string][]facts.Pred{}, lowerErr: map[string]error{}, aggregate: map[string]string{}}
+	c := &checker{s: s, f: f, lower: l, lowered: map[string][]facts.Pred{}, lowerErr: map[string]error{}, aggregate: map[string]string{}, mayRead: map[string]bool{}}
 	bySubject := map[string][]*Obligation{}
+	var sensitive []*Obligation
 	for i := range decls {
 		o := &decls[i]
+		switch {
+		case o.Body.MayRead != "":
+			c.mayRead[o.Body.MayRead] = true
+			continue
+		case o.Body.Sensitive != nil:
+			sensitive = append(sensitive, o)
+			continue
+		}
 		bySubject[o.Subject] = append(bySubject[o.Subject], o)
 		if o.Body.Alone != "" {
 			c.aggregate[o.Subject] = o.Body.Alone
@@ -26,7 +35,100 @@ func Check(s *schema.Schema, decls []Obligation, f *facts.Facts, l Lowerer) []Di
 	}
 	c.collectTables(f.Top)
 	c.scope(f.Top, bySubject)
+	c.writes(bySubject)
+	c.sensitive(sensitive)
 	return c.out
+}
+
+// writes judges the obligations on what the statement does to a table -- never, paired,
+// single, transitions -- once per write target, a data-modifying WITH item's as much as
+// the statement's own.
+func (c *checker) writes(bySubject map[string][]*Obligation) {
+	for wi, w := range c.f.Writes {
+		var kind Kinds
+		switch w.Kind {
+		case facts.Insert:
+			kind = OnInsert
+		case facts.Update:
+			kind = OnUpdate
+		case facts.Delete:
+			kind = OnDelete
+		case facts.Merge:
+			kind = OnWrite
+		}
+		rel := relByFullName(c.s, w.Table)
+		if rel == nil {
+			continue
+		}
+		sc, li := c.targetLeaf(c.f.Top, w.Table)
+		leaf := facts.Leaf{Table: w.Table, Alias: rel.Name, Kind: facts.Table, Role: facts.Target, Position: w.Position}
+		if sc != nil {
+			leaf = sc.Leaves[li]
+		}
+		main := wi == len(c.f.Writes)-1
+		for _, o := range bySubject[w.Table] {
+			if o.Kinds&kind == 0 {
+				continue
+			}
+			d := Discharge{Obligation: o, Leaf: leaf, Position: w.Position}
+			if waived(leaf, o) {
+				d.Path = Waived
+				d.Message = fmt.Sprintf("%s: `%s` is waived by this statement", rel.Name, o.Source)
+				c.out = append(c.out, d)
+				continue
+			}
+			switch {
+			case o.Body.Never:
+				d.Message = fmt.Sprintf("%s is declared `%s`: no statement may do this to it", rel.Name, o.Source)
+			case o.Body.Paired != "":
+				paired := relByFullName(c.s, o.Body.Paired)
+				for _, other := range c.f.Writes {
+					if paired != nil && other.Table == paired.FullName() {
+						d.Path = ByStatement
+					}
+				}
+				if d.Path == 0 {
+					d.Message = fmt.Sprintf("a write to %s must also write %s in the same statement (a data-modifying WITH): %s", rel.Name, o.Body.Paired, o.Source)
+				}
+			case o.Body.Single:
+				switch {
+				case !main:
+					d.Message = fmt.Sprintf("%s requires a single-row %s, which cannot be proved for a write inside WITH", rel.Name, strings.ToUpper(w.Kind.String()))
+				case c.f.AtMostOne:
+					d.Path = ByStatement
+				default:
+					d.Message = fmt.Sprintf("%s requires a single-row %s: fix a unique key by equality (the One proof)", rel.Name, strings.ToUpper(w.Kind.String()))
+				}
+			case o.Body.Transitions != nil:
+				c.transition(sc, li, &w, o, rel, &d)
+			default:
+				continue
+			}
+			c.out = append(c.out, d)
+		}
+	}
+}
+
+// targetLeaf finds the level and index of the target leaf writing table, at any depth.
+func (c *checker) targetLeaf(sc *facts.Scope, table string) (*facts.Scope, int) {
+	for i, l := range sc.Leaves {
+		if l.Table == table && l.Role == facts.Target {
+			return sc, i
+		}
+	}
+	for _, p := range sc.Preds {
+		if p.Op == facts.Exists && p.Sub != nil {
+			if s, i := c.targetLeaf(p.Sub, table); s != nil {
+				return s, i
+			}
+		}
+	}
+	for _, ch := range sc.Children {
+		if s, i := c.targetLeaf(ch, table); s != nil {
+			return s, i
+		}
+	}
+	return nil, -1
 }
 
 type checker struct {
@@ -40,6 +142,68 @@ type checker struct {
 	// tables are every table the statement touches at any depth, in order
 	aggregate map[string]string
 	tables    []string
+	// mayRead are the labels the selected context may read
+	mayRead map[string]bool
+}
+
+// sensitive judges the labelled columns against every column the statement references,
+// through views (a view column that passes a base column through carries its label; an
+// expression column does not). A reference is a read wherever it stands: a labelled
+// column in a WHERE leaks as much as one in the SELECT list.
+func (c *checker) sensitive(decls []*Obligation) {
+	if len(decls) == 0 {
+		return
+	}
+	labels := map[string][]*Obligation{} // "table\x00column" -> declarations
+	for _, o := range decls {
+		for _, col := range o.Body.Sensitive.Columns {
+			labels[o.Subject+"\x00"+col] = append(labels[o.Subject+"\x00"+col], o)
+		}
+	}
+	for _, u := range c.f.Uses {
+		if u.Assigned {
+			continue // storing a labelled value is not reading it
+		}
+		table, col := u.Table, u.Column
+		for depth := 0; depth < 16; depth++ { // follow a view column to the base column it passes through
+			rel := relByFullName(c.s, table)
+			if rel == nil || (rel.Kind != schema.View && rel.Kind != schema.MatView) {
+				break
+			}
+			var src *schema.ViewColumn
+			for i := range rel.Frozen {
+				if rel.Frozen[i].Name == col {
+					src = &rel.Frozen[i]
+				}
+			}
+			if src == nil || src.SrcTable == "" && src.SrcRel == nil {
+				table = "" // an expression column: no base column, no label
+				break
+			}
+			if src.SrcRel != nil {
+				table = src.SrcRel.FullName()
+			} else {
+				table = src.SrcTable
+			}
+			col = src.SrcColumn
+		}
+		if table == "" {
+			continue
+		}
+		for _, o := range labels[table+"\x00"+col] {
+			d := Discharge{Obligation: o, Leaf: facts.Leaf{Table: u.Table, Kind: facts.Table}, Position: u.Position}
+			if c.mayRead[o.Body.Sensitive.Label] {
+				d.Path = ByStatement
+			} else {
+				via := ""
+				if u.Table != table {
+					via = " (through " + u.Table + "." + u.Column + ")"
+				}
+				d.Message = fmt.Sprintf("%s.%s is %s%s: this context may not read it (a context with `may read %s`, or a view that masks it)", table, col, o.Body.Sensitive.Label, via, o.Body.Sensitive.Label)
+			}
+			c.out = append(c.out, d)
+		}
+	}
 }
 
 func (c *checker) collectTables(sc *facts.Scope) {
@@ -131,6 +295,8 @@ func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 		c.pinned(sc, i, o, rel, &d)
 	case o.Body.Immutable != "":
 		c.immutable(o, rel, &d)
+	case o.Body.Never, o.Body.Paired != "", o.Body.Single, o.Body.Transitions != nil:
+		return // judged per write (writes), a WITH item's included
 	case o.Body.Alone != "":
 		if leaf.Kind != facts.Table {
 			return
@@ -336,6 +502,62 @@ func equalIn(sc *facts.Scope, i int, a, b facts.ColRef) bool {
 		}
 	}
 	return false
+}
+
+// transition: an UPDATE setting the state column to a constant must fix the column, in
+// its WHERE, to one of that state's predecessors (compare-and-set); a non-constant target
+// is refused, since no predecessor set can be checked for it. Not assigning the column
+// is not a transition.
+func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligation, rel *schema.Relation, d *Discharge) {
+	tr := o.Body.Transitions
+	var value *facts.Term
+	for k, col := range w.Assigned {
+		if col == tr.Column && k < len(w.Values) {
+			v := w.Values[k]
+			value = &v
+		}
+	}
+	if value == nil {
+		d.Path = ByStatement
+		return
+	}
+	if value.Kind != facts.Const {
+		d.Message = fmt.Sprintf("%s.%s is a state machine: SET it to a declared state (a literal), not to %s", rel.Name, tr.Column, value)
+		return
+	}
+	to := stateOf(value.Const)
+	froms, ok := tr.From[to]
+	if !ok {
+		d.Message = fmt.Sprintf("%s.%s is a state machine: %q is not a state anything transitions to (declared: %s)", rel.Name, tr.Column, to, strings.Join(tr.Order, ", "))
+		return
+	}
+	if sc == nil {
+		d.Message = fmt.Sprintf("%s.%s: the current state of an UPDATE inside WITH cannot be checked", rel.Name, tr.Column)
+		return
+	}
+	for _, p := range sc.Preds {
+		if p.Op == facts.Eq && p.Col == (facts.ColRef{Leaf: i, Column: tr.Column}) && p.Term.Kind == facts.Const && applies(p, i) {
+			from := stateOf(p.Term.Const)
+			for _, f := range froms {
+				if f == from {
+					d.Path = ByStatement
+					return
+				}
+			}
+			d.Message = fmt.Sprintf("%s.%s: %s -> %s is not a declared transition (%s comes from %s)", rel.Name, tr.Column, from, to, to, strings.Join(froms, " | "))
+			return
+		}
+	}
+	d.Message = fmt.Sprintf("%s.%s: SET %s = '%s' must fix the current state in WHERE (%s = '%s')", rel.Name, tr.Column, tr.Column, to, tr.Column, strings.Join(froms, "' or '"))
+}
+
+// stateOf reads a state name out of a constant's text (constText's "s<value>" for a
+// string, the bare text otherwise).
+func stateOf(c string) string {
+	if strings.HasPrefix(c, "s") {
+		return c[1:]
+	}
+	return c
 }
 
 // immutable: an UPDATE (or MERGE) may not assign the column.

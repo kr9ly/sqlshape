@@ -19,7 +19,14 @@ func (f *Facts) String() string {
 	for _, w := range f.Writes {
 		fmt.Fprintf(&b, "  write %s %s", w.Kind, w.Table)
 		if len(w.Assigned) > 0 {
-			fmt.Fprintf(&b, " set %s", strings.Join(w.Assigned, ","))
+			parts := make([]string, len(w.Assigned))
+			for i, c := range w.Assigned {
+				parts[i] = c
+				if i < len(w.Values) {
+					parts[i] += "=" + w.Values[i].String()
+				}
+			}
+			fmt.Fprintf(&b, " set %s", strings.Join(parts, ","))
 		}
 		b.WriteString("\n")
 	}
