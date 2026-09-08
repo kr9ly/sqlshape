@@ -718,20 +718,8 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 	if len(sc.items) == 0 {
 		return
 	}
-	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
-	for _, it := range sc.items {
-		p.addItem(it)
-	}
-	p.addQuals(where, nil)
-	for changed := true; changed; {
-		changed = false
-		for _, e := range p.edges {
-			if p.known[e.from] && !p.known[e.to] {
-				p.known[e.to] = true
-				changed = true
-			}
-		}
-	}
+	p := a.newProver(sc, where)
+	a.recordFacts(p, sc)
 	if a.inView == 0 {
 		for k := range p.known {
 			if k.r.rel != nil {

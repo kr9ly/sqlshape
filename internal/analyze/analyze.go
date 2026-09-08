@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -105,6 +106,11 @@ type analyzer struct {
 	// unfiltered are tables the template exempts from their visibility policy
 	// (`-- sqlshape: unfiltered t1, t2` in the SQL text)
 	unfiltered map[string]bool
+	// facts.go: the levels recorded for internal/obligation, the last DML target, and the
+	// view bodies already converted
+	factScopes     []factScope
+	writeLeaf      *rte
+	viewFactScopes map[*schema.Relation]*facts.Scope
 }
 
 // Analyze analyzes exactly one SQL statement against s.
@@ -259,6 +265,7 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, unfiltered map[string]bool) *
 		viewBase:       map[*schema.Column]*schema.Column{},
 		viewScopes:     map[*schema.Relation]*subquery{},
 		viewBusy:       map[*schema.Relation]bool{},
+		viewFactScopes: map[*schema.Relation]*facts.Scope{},
 		funcParams:     fp,
 		funcVolatility: map[*pg_query.FuncCall]byte{},
 		unfiltered:     unfiltered,
@@ -427,6 +434,7 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfilt
 		}
 	}
 	res.Fixed = a.fixed
+	res.Facts = a.buildFacts(tree.Stmts[0].Stmt, sc)
 	res.Notes = a.notes
 	return res, nil
 }

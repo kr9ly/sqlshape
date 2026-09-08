@@ -1215,6 +1215,8 @@ func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation
 			a.refs[i].Target = true
 		}
 	}
+	r.target = true
+	a.writeLeaf = r
 	return rel, r, nil
 }
 
@@ -1898,6 +1900,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	}
 	both := newScope(sc)
 	both.items = []*rte{target, source}
+	a.recordFacts(a.newProver(both, m.JoinCondition), sc)
 	srcOnly := newScope(sc)
 	srcOnly.items = []*rte{source}
 	tgtOnly := newScope(sc)

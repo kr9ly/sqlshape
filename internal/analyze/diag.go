@@ -7,6 +7,7 @@ package analyze
 import (
 	"fmt"
 
+	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -106,6 +107,9 @@ type Result struct {
 	Fixed []Source
 	// Uses are the relation columns the statement depends on (see Use).
 	Uses []Use
+	// Facts is what the statement provably does, in the form internal/obligation judges
+	// (facts.go); nil for statements that are not SELECT / INSERT / UPDATE / DELETE / MERGE.
+	Facts *facts.Facts
 }
 
 // Use is a relation column the statement depends on: read by name or by *, assigned by

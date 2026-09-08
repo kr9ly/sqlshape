@@ -39,6 +39,12 @@ type rte struct {
 	single bool
 	// outerNullable: an outer join made every column nullable (null-extended rows)
 	outerNullable bool
+	// pos is the 0-based location of the reference in the statement (relations only);
+	// target marks the leaf an INSERT / UPDATE / DELETE / MERGE writes (facts.go)
+	pos    int32
+	target bool
+	// viewRel is the view a view leaf reads (rel stays nil: cardinality goes through sub)
+	viewRel *schema.Relation
 	// noLateral: in the name space but not referenceable (p_lateral_ok = false): the left
 	// side of a RIGHT / FULL join while its right side is analyzed, an UPDATE / DELETE
 	// target while its FROM / USING items are
@@ -449,7 +455,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 			a.refs = append(a.refs, RelationRef{Schema: rel.Schema, Name: rel.Name, Kind: byte(rel.Kind), Position: loc + 1})
 		}
 	}
-	r := &rte{alias: rel.Name, rowType: rel.RowType}
+	r := &rte{alias: rel.Name, rowType: rel.RowType, pos: loc}
 	if alias != nil && alias.Aliasname != "" {
 		r.alias = alias.Aliasname
 	}
@@ -470,6 +476,7 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc 
 			return nil, err
 		}
 		r.sub = a.viewScopes[rel]
+		r.viewRel = rel
 		for _, c := range vc {
 			cols = append(cols, rteCol{
 				name: c.name, typ: c.typ, nullable: c.nullable, coll: c.coll.asVar(),

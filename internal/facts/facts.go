@@ -46,9 +46,11 @@ type Scope struct {
 	// Fixed are the columns equal to a value known before the statement runs (a literal,
 	// a parameter, an outer reference), after closing over the equalities in Preds.
 	Fixed []ColRef
-	// Equal are the equivalence classes of columns joined by equality, after closure;
-	// classes of size one are omitted. A class can span leaves and tables.
-	Equal [][]ColRef
+	// Edges are the directed equalities between columns: From fixed implies To fixed. An
+	// inner join's `a.x = b.y` yields both directions; an outer join's ON yields only the
+	// direction into its nullable side. Fixed is already closed over them; the checker
+	// uses them to carry an obligation across a join (foreign-key propagation).
+	Edges []Edge
 	// NotNull are the columns the predicates prove non-NULL for surviving rows.
 	NotNull []ColRef
 	// Children are the nested scopes (subqueries, CTE bodies, expanded view bodies,
@@ -110,6 +112,11 @@ type Write struct {
 	Position int32
 }
 
+// Edge is one directed equality between two columns of a scope.
+type Edge struct {
+	From, To ColRef
+}
+
 // ColRef names a column of a leaf in the enclosing scope.
 type ColRef struct {
 	Leaf   int
@@ -126,9 +133,12 @@ type Pred struct {
 	// Term is the other side of an Eq.
 	Term Term
 	// Text is the canonical rendering of a predicate the language cannot decompose
-	// (`amount > 0`, `status IN ('a','b')`); two Opaque predicates match when their Text
-	// is equal after the leaf's alias is normalized away. This is the syntactic fallback.
+	// (`amount > 0`, `status IN ('a','b')`), with every column reference that resolves
+	// to a leaf of the scope reduced to its bare column name; Cols lists those columns.
+	// Two Opaque predicates match when their Text is equal and they are about the same
+	// leaf. This is the syntactic fallback.
 	Text string
+	Cols []ColRef
 	// Restricts lists the leaves this conjunct is allowed to restrict; nil means all. An
 	// outer join's ON restricts only its nullable side.
 	Restricts []int
