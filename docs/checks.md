@@ -1032,7 +1032,14 @@ SELECT carrier FROM shipments s WHERE NOT EXISTS (SELECT 1 FROM orders x WHERE x
 
 ### An aggregate is reached through its root, one per statement (`aggregate`)
 
-An aggregate (DDD's consistency unit) is a bundle of obligations, declared once above its root:
+Some tables only make sense together. An order has its line items and its notes; nobody adds a line
+to an order without going through the order, and an invariant like "the total matches the lines"
+holds for the order as a whole, not for a line on its own. Domain-driven design calls such a cluster
+an **aggregate**: one table is the root, the others are its children, the outside world holds the
+root's ID and nothing else, and one change touches one aggregate. Applications enforce this by
+convention (a repository per aggregate, a service layer), which holds until someone writes the SQL
+directly. sqlshape can enforce the part of it that shows in the shape of a statement, and it is a
+bundle of obligations declared once above the root:
 
 ```sql
 -- sqlshape: aggregate orders (order_items, order_notes)
