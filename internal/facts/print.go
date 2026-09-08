@@ -33,6 +33,8 @@ func (f *Facts) String() string {
 	return b.String()
 }
 
+func (s *Scope) String() string { var b strings.Builder; s.write(&b, "  "); return b.String() }
+
 func (s *Scope) write(b *strings.Builder, ind string) {
 	if s.Returning {
 		fmt.Fprintf(b, "%sreturning\n", ind)

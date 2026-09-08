@@ -87,6 +87,34 @@ INSERT INTO audit (id, note) VALUES (1, 'done');
 	if code, _, errs = run(t, "check", "-schema", badSchema, clean); code != 2 || !strings.Contains(errs, "pinned needs a column") {
 		t.Errorf("bad schema: exit %d %s", code, errs)
 	}
+	// the audit shows the discharge path: a policy, a composite foreign key, an EXISTS witness
+	audit := filepath.Join(dir, "audit")
+	os.MkdirAll(audit, 0o755)
+	os.WriteFile(filepath.Join(audit, "schema.sql"), []byte(`
+-- sqlshape: require pinned(tenant_id)
+CREATE TABLE docs (id bigint PRIMARY KEY, tenant_id bigint NOT NULL, body text, UNIQUE (id, tenant_id));
+ALTER TABLE docs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY docs_tenant ON docs USING (tenant_id = current_setting('app.tenant', true)::bigint);
+-- sqlshape: require pinned(tenant_id)
+-- sqlshape: require EXISTS (SELECT 1 FROM docs d WHERE d.id = doc_id AND d.body IS NOT NULL) on read
+CREATE TABLE doc_tags (doc_id bigint NOT NULL, tenant_id bigint NOT NULL, tag text NOT NULL,
+  PRIMARY KEY (doc_id, tag), FOREIGN KEY (doc_id, tenant_id) REFERENCES docs (id, tenant_id));
+`), 0o644)
+	auditSQL := filepath.Join(audit, "q.sql")
+	os.WriteFile(auditSQL, []byte(`SELECT body FROM docs WHERE id = 1;
+SELECT t.tag FROM docs d JOIN doc_tags t ON t.doc_id = d.id WHERE d.tenant_id = 7 AND d.body IS NOT NULL;
+`), 0o644)
+	code, out, _ = run(t, "check", "-schema", filepath.Join(audit, "schema.sql"), auditSQL)
+	wantAudit := []string{
+		auditSQL + ":1: ok(policy) docs: require pinned(tenant_id): docs.tenant_id is pinned by policy docs_tenant for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner",
+		auditSQL + ":2: ok docs: require pinned(tenant_id)",
+		auditSQL + ":2: ok(fk) doc_tags: require pinned(tenant_id)",
+		auditSQL + ":2: ok doc_tags: require EXISTS (SELECT 1 FROM docs d WHERE d.id = doc_id AND d.body IS NOT NULL) on read",
+	}
+	if code != 0 || strings.TrimRight(out, "\n") != strings.Join(wantAudit, "\n") {
+		t.Errorf("audit: exit %d\n%s\nwant:\n%s", code, out, strings.Join(wantAudit, "\n"))
+	}
+
 	// a statement that does not analyze is a failure too
 	bad := filepath.Join(dir, "bad.sql")
 	os.WriteFile(bad, []byte("SELECT nope FROM orders"), 0o644)

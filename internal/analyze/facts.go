@@ -548,7 +548,28 @@ func Lower(s *schema.Schema, expr string, rel *schema.Relation) ([]facts.Pred, e
 	for _, c := range p.conjuncts {
 		pr := a.predFacts(p, c.n, ref, false)
 		pr.Origin = facts.FromStatement
+		if pr.Op == facts.Exists && pr.Sub != nil {
+			pr.Sub = declared(pr.Sub)
+		}
 		out = append(out, pr)
 	}
 	return out, nil
+}
+
+// declared strips what the analyzer added on its own to a lowered subquery body -- the
+// row-security predicates of its tables -- leaving what the declaration says. A witness
+// must establish the declaration, not the database's policies.
+func declared(sc *facts.Scope) *facts.Scope {
+	out := *sc
+	out.Preds = nil
+	for _, p := range sc.Preds {
+		if p.Origin == facts.FromPolicy {
+			continue
+		}
+		if p.Op == facts.Exists && p.Sub != nil {
+			p.Sub = declared(p.Sub)
+		}
+		out.Preds = append(out.Preds, p)
+	}
+	return &out
 }

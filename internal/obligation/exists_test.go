@@ -15,6 +15,9 @@ CREATE TABLE order_items (id bigint PRIMARY KEY, order_id bigint NOT NULL REFERE
 CREATE TABLE order_item_tags (item_id bigint NOT NULL REFERENCES order_items(id), tag text NOT NULL, PRIMARY KEY (item_id, tag));
 -- sqlshape: require EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)
 CREATE TABLE shipments (id bigint PRIMARY KEY, order_id bigint NOT NULL REFERENCES orders(id), carrier text);
+-- the witness table has row security: its policy is the database's, not part of the declaration
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY orders_tenant ON orders USING (tenant_id = current_setting('app.tenant', true)::bigint);
 `
 
 // A cross-table obligation is an EXISTS the statement must witness: by a join in the same
