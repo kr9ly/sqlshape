@@ -820,7 +820,7 @@ OK
 SELECT id, total FROM orders WHERE id = {{.ID}} AND tenant_id = {{.TenantID}}
 ```
 
-補足。INSERTは`tenant_id`に値を入れなければならない。行レベルセキュリティのポリシーが`tenant_id`を固定していれば、それでも要件を満たす。ただしテーブルが`FORCE ROW LEVEL SECURITY`でなければ所有者には効かないので、`-strict`で`orders.tenant_id is pinned by policy ... for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner`と注記される。
+補足。INSERTは`tenant_id`に値を入れなければならない。行レベルセキュリティのポリシーが`tenant_id`を固定していれば、それでも要件を満たす。ただしテーブルが`FORCE ROW LEVEL SECURITY`でなければ所有者には適用されないので、`-strict`で`orders.tenant_id is pinned by policy ... for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner`と注記される。
 
 楽観ロックは同じ宣言をバージョン列に、書き込みだけに付けたもの。
 

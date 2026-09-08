@@ -47,8 +47,8 @@ SELECT id FROM products
 |---|---|
 | `-- sqlshape: expect users_email_key, orders.total, P0401` | この書き込みが違反しうる制約、NOT NULL列、SQLSTATEの一覧。検査器はこの一覧が正確であることを保つ（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)） |
 | `-- sqlshape: not null total, note` | これらの結果列はNULLにならない、と検査器の判定を上書きする（`col:",notnull"`タグのSQL側版） |
-| `-- sqlshape: unfiltered memos` | この文は意図的に`memos`を`visible where`の条件なしで読む（述語型の義務だけを外す） |
-| `-- sqlshape: waive orders pinned(tenant_id), audit` | この文は`orders`の義務を1つ（宣言どおりの綴りで名指し）、`audit`の義務を全部外す。外したことは`-strict`で報告される（[checks.ja.md](checks.ja.md#宣言の仕組み)） |
+| `-- sqlshape: unfiltered memos` | この文は意図的に`memos`を`visible where`の条件なしで読む（述語型の義務だけを解除する） |
+| `-- sqlshape: waive orders pinned(tenant_id), audit` | この文は`orders`の義務を1つ（宣言どおりの綴りで指定する）、`audit`の義務を全部解除する。解除したことは`-strict`で報告される（[checks.ja.md](checks.ja.md#宣言の仕組み)） |
 
 `schema.sql`の中で使うもの:
 
