@@ -9,6 +9,7 @@ import (
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 
 	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -149,7 +150,7 @@ func isIdentByte(c byte) bool {
 // FIRST/LAST or not, inside a window definition's PARTITION BY or ORDER BY too — not only
 // when it is the leading item of a plain ORDER BY / GROUP BY.
 func checkBareOrderBy(e *expand.Expansion, lit literal, report func(token.Pos, string, ...any), where string) {
-	tree, err := pg_query.Parse(e.SQL)
+	tree, err := pgparse.Parse(e.SQL)
 	if err != nil {
 		return // analyze.Analyze reports the parse failure itself
 	}

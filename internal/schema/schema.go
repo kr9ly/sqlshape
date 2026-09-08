@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // Expr is an unanalyzed expression from the DDL (kept as libpg_query AST).
@@ -469,7 +470,7 @@ func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Re
 // LoadWithHooks is LoadWithHook with a NotNullHook installed too, before the first
 // statement applies.
 func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook func(*Schema, *Relation)) (*Schema, error) {
-	tree, err := pg_query.Parse(schemaSQL)
+	tree, err := pgparse.Parse(schemaSQL)
 	if err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
 	}
@@ -539,7 +540,7 @@ func (s *Schema) applyAll(tree *pg_query.ParseResult, schemaSQL string) {
 // Load saw. CREATE EXTENSION cannot be added after the fact (the catalog is fixed at
 // Load): it returns ErrNeedsReload and leaves the schema untouched.
 func (s *Schema) Apply(schemaSQL string) error {
-	tree, err := pg_query.Parse(schemaSQL)
+	tree, err := pgparse.Parse(schemaSQL)
 	if err != nil {
 		return fmt.Errorf("parse schema: %w", err)
 	}
@@ -1989,7 +1990,7 @@ func (s *Schema) Function(schema, name string) *Function {
 
 // parseExpr parses a standalone SQL expression.
 func parseExpr(text string) (Expr, error) {
-	tree, err := pg_query.Parse("SELECT " + text)
+	tree, err := pgparse.Parse("SELECT " + text)
 	if err != nil {
 		return nil, err
 	}
@@ -2292,7 +2293,7 @@ func Deparse(e Expr) string {
 	res := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: &pg_query.SelectStmt{
 		TargetList: []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: e}}}},
 	}}}}}}
-	s, err := pg_query.Deparse(res)
+	s, err := pgparse.Deparse(res)
 	if err != nil {
 		return ""
 	}
@@ -2304,7 +2305,7 @@ func DeparseStmt(n *pg_query.Node) string {
 	if n == nil {
 		return ""
 	}
-	s, err := pg_query.Deparse(&pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: n}}})
+	s, err := pgparse.Deparse(&pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: n}}})
 	if err != nil {
 		return ""
 	}

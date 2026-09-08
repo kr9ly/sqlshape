@@ -19,6 +19,7 @@ import (
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 
 	"github.com/kr9ly/sqlshape/internal/oracle"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -447,7 +448,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		if reStdin.MatchString(sql) { // would wait for client data
 			continue
 		}
-		tree, err := pg_query.Parse(sql)
+		tree, err := pgparse.Parse(sql)
 		if err != nil || len(tree.Stmts) == 0 {
 			p.count("unparsed")
 			exec(sql)
@@ -607,7 +608,7 @@ var sessionResets = []string{"RESET search_path", "RESET datestyle", "RESET inte
 func dropTemps(stmts []string) []string {
 	temps := map[string]string{} // name → TABLE / VIEW / SEQUENCE
 	for _, sql := range stmts {
-		tree, err := pg_query.Parse(sql)
+		tree, err := pgparse.Parse(sql)
 		if err != nil || len(tree.Stmts) != 1 {
 			continue
 		}
@@ -734,7 +735,7 @@ func (p *regressProbe) split(src string) []string {
 	text := strings.Join(lines, "\n")
 	text = reGset.ReplaceAllString(text, ";")
 	text = reMeta.ReplaceAllString(text, "")
-	stmts, err := pg_query.SplitWithScanner(text, true)
+	stmts, err := pgparse.SplitWithScanner(text, true)
 	if err != nil {
 		p.t.Logf("split: %v", err)
 		return nil

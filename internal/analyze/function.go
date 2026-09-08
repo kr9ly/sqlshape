@@ -8,6 +8,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -133,7 +134,7 @@ func functionBody(fn *schema.Function) ([]*pg_query.Node, error) {
 	case fn.SQLBody != nil:
 		return flattenLists(fn.SQLBody), nil
 	case fn.Body != "" && strings.EqualFold(fn.Language, "sql"):
-		tree, err := pg_query.Parse(fn.Body)
+		tree, err := pgparse.Parse(fn.Body)
 		if err != nil {
 			return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 		}

@@ -13,8 +13,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
 var uuidRe = regexp.MustCompile(`^\{?[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}\}?$`)
@@ -542,7 +542,7 @@ func (a *analyzer) validateRegtypeLiteral(s string, loc int32) *Error {
 	if _, err := parsePGInt(v, 64); err == nil {
 		return nil
 	}
-	res, err := pg_query.Parse("SELECT NULL::" + v)
+	res, err := pgparse.Parse("SELECT NULL::" + v)
 	if err != nil || len(res.Stmts) != 1 {
 		return errAt("42601", loc, "syntax error at or near %q", v)
 	}

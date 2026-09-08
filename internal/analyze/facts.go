@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -588,7 +589,7 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 // each conjunct becomes a facts.Pred whose ColRef.Leaf is 0, standing for the subject.
 // This is internal/obligation's Lowerer for PostgreSQL.
 func Lower(s *schema.Schema, expr string, rel *schema.Relation) ([]facts.Pred, error) {
-	tree, err := pg_query.Parse("SELECT " + expr)
+	tree, err := pgparse.Parse("SELECT " + expr)
 	if err != nil {
 		return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 	}

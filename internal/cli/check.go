@@ -9,11 +9,10 @@ import (
 	"slices"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/obligation"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -136,7 +135,7 @@ func checkSchemaBodies(s *schema.Schema, decls []obligation.Obligation, name str
 func statementSpans(text string) ([][2]int, error) {
 	var spans [][2]int
 	prevEnd := 0
-	if tree, err := pg_query.Parse(text); err == nil {
+	if tree, err := pgparse.Parse(text); err == nil {
 		for _, raw := range tree.Stmts {
 			end := int(raw.StmtLocation) + int(raw.StmtLen)
 			if raw.StmtLen == 0 {
@@ -147,7 +146,7 @@ func statementSpans(text string) ([][2]int, error) {
 		}
 		return spans, nil
 	}
-	parts, err := pg_query.SplitWithScanner(text, false)
+	parts, err := pgparse.SplitWithScanner(text, false)
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "syntax error "))
 	}

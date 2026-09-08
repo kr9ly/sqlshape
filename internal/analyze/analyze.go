@@ -12,6 +12,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -227,7 +228,7 @@ func refreezeDependentNullability(s *schema.Schema, rel *schema.Relation) {
 }
 
 func Analyze(s *schema.Schema, sql string) (*Result, error) {
-	tree, err := pg_query.Parse(sql)
+	tree, err := pgparse.Parse(sql)
 	if err != nil {
 		return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 	}
