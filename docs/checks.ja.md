@@ -430,6 +430,13 @@ INSERT INTO order_statuses VALUES ('pending', '保留'), ('paid', '支払済'), 
 CREATE TABLE orders (..., status text NOT NULL REFERENCES order_statuses(code));
 ```
 
+`OrderStatus`と`order_statuses`は名前で結びついているわけではない。型は、文の中で列と出会った場所で値集合に束縛される。下の文では`{{.Status}}`が`orders.status`に流れ、その列の外部キーが`order_statuses(code)`を指しているので、`OrderStatus`はこのlookupテーブルのGo側になる。束縛はfactとして書き出され、その型を使うすべてのパッケージで効く。列と一度も出会わない型は検査されない。
+
+```go
+var ByStatus = sqlshape.Query[Order, struct{ Status OrderStatus }](`
+SELECT id, total FROM orders WHERE status = {{.Status}}`)
+```
+
 NG
 
 ```go

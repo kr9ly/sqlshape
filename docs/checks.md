@@ -477,6 +477,17 @@ INSERT INTO order_statuses VALUES ('pending', 'Pending'), ('paid', 'Paid'), ('sh
 CREATE TABLE orders (..., status text NOT NULL REFERENCES order_statuses(code));
 ```
 
+Nothing ties `OrderStatus` to `order_statuses` by name. The type is bound to the value set where
+it meets the column in a statement: here `{{.Status}}` feeds `orders.status`, whose foreign key
+points at `order_statuses(code)`, so `OrderStatus` is now the Go side of that lookup table. The
+binding is exported as a fact and holds in every package that uses the type; a type that never
+meets a column is never checked.
+
+```go
+var ByStatus = sqlshape.Query[Order, struct{ Status OrderStatus }](`
+SELECT id, total FROM orders WHERE status = {{.Status}}`)
+```
+
 Rejected
 
 ```go
