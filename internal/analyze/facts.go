@@ -532,6 +532,9 @@ func Lower(s *schema.Schema, expr string, rel *schema.Relation) ([]facts.Pred, e
 	}
 	sc.items = []*rte{r}
 	if aerr := a.boolClause(n, sc, "WHERE"); aerr != nil {
+		if aerr.Position > int32(len("SELECT ")) {
+			aerr.Position -= int32(len("SELECT ")) // positions are the declaration's, not the wrapper's
+		}
 		return nil, aerr
 	}
 	p := a.newProver(sc, n)

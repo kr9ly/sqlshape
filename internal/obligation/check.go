@@ -551,10 +551,10 @@ func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligati
 	d.Message = fmt.Sprintf("%s.%s: SET %s = '%s' must fix the current state in WHERE (%s = '%s')", rel.Name, tr.Column, tr.Column, to, tr.Column, strings.Join(froms, "' or '"))
 }
 
-// stateOf reads a state name out of a constant's text (constText's "s<value>" for a
-// string, the bare text otherwise).
+// stateOf reads a state name out of a constant's text: the analyzer spells a constant as
+// one type letter and the value ("spaid", "i2"), and a declaration writes the bare value.
 func stateOf(c string) string {
-	if strings.HasPrefix(c, "s") {
+	if len(c) > 1 && strings.ContainsRune("ifsbx", rune(c[0])) {
 		return c[1:]
 	}
 	return c

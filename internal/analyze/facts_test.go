@@ -27,6 +27,7 @@ CREATE POLICY orders_tenant ON orders USING (tenant_id = current_setting('app.te
 -- sqlshape: unfiltered orders
 CREATE VIEW all_orders AS SELECT id, tenant_id, status FROM orders;
 CREATE VIEW live_orders AS SELECT id, tenant_id, status FROM orders WHERE deleted_at IS NULL;
+CREATE VIEW live_paid AS SELECT id FROM live_orders WHERE status = 'paid';
 `
 
 func TestFacts(t *testing.T) {
@@ -90,6 +91,17 @@ select
   pred 0.tenant_id = $1
   fixed 0.tenant_id
   notnull 0.tenant_id
+`},
+		{`SELECT id FROM live_paid`, `
+select
+  leaf 0 view live_paid @15
+      leaf 0 view live_orders @-1
+          leaf 0 table orders @-1
+          pred 0.deleted_at IS NULL
+          pred 0.tenant_id = known "current_setting('app.tenant', true)::bigint" restricts [0] from policy
+      pred 0.status = const spaid
+      fixed 0.status
+      notnull 0.status
 `},
 		{`SELECT id FROM all_orders`, `
 select

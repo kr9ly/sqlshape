@@ -68,6 +68,25 @@ INSERT INTO audit (id, note) VALUES (1, 'done');
 	if code, out, _ = run(t, "check", "-schema", filepath.Join(dir, "schema.sql"), "-context", "ops", "-quiet", sqlPath); code != 1 || strings.Count(out, "\n") != 1 || !strings.Contains(out, "visible where") {
 		t.Errorf("context ops: exit %d\n%s", code, out)
 	}
+	// stdin, a missing file, and a schema whose declarations do not parse
+	r, w, _ := os.Pipe()
+	w.WriteString("SELECT id FROM orders WHERE tenant_id = 1 AND deleted_at IS NULL")
+	w.Close()
+	saved := os.Stdin
+	os.Stdin = r
+	code, out, _ = run(t, "check", "-schema", filepath.Join(dir, "schema.sql"))
+	os.Stdin = saved
+	if code != 0 || !strings.Contains(out, "stdin:1: ok") {
+		t.Errorf("stdin: exit %d\n%s", code, out)
+	}
+	if code, _, errs = run(t, "check", "-schema", filepath.Join(dir, "schema.sql"), filepath.Join(dir, "missing.sql")); code != 2 || !strings.Contains(errs, "missing.sql") {
+		t.Errorf("missing: exit %d %s", code, errs)
+	}
+	badSchema := filepath.Join(dir, "bad_schema.sql")
+	os.WriteFile(badSchema, []byte("-- sqlshape: require pinned()\nCREATE TABLE t (id int);"), 0o644)
+	if code, _, errs = run(t, "check", "-schema", badSchema, clean); code != 2 || !strings.Contains(errs, "pinned needs a column") {
+		t.Errorf("bad schema: exit %d %s", code, errs)
+	}
 	// a statement that does not analyze is a failure too
 	bad := filepath.Join(dir, "bad.sql")
 	os.WriteFile(bad, []byte("SELECT nope FROM orders"), 0o644)

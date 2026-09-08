@@ -31,6 +31,9 @@ func Parse(subject, directive string) (o Obligation, ok bool, err error) {
 		return Obligation{}, false, nil
 	}
 	body := strings.TrimSpace(norm[len("require "):])
+	if strings.HasSuffix(strings.ToLower(body), " on") {
+		return Obligation{}, true, fmt.Errorf("%s: `on` needs statement kinds (select, insert, update, delete, read, write, all)", norm)
+	}
 	// the `on <kinds>` suffix: the last ` on ` outside parentheses
 	if i := lastTopLevel(body, " on "); i >= 0 {
 		kinds, err := parseKinds(body[i+len(" on "):])
