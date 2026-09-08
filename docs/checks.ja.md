@@ -4,7 +4,7 @@
 
 検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
 
-検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージに対して走り、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を走らせる（[第2部](#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
+検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージを対象に実行され、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を実行する（[第2部](#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
 
 三部に分かれる。**第1部**は何も宣言しなくても全部の文にかかる検査。結果とパラメータの形、型の意味、失敗モード、`One`の証明。**第2部**は`schema.sql`に宣言して初めてかかる規約。読み取り条件、列の固定、集約、状態機械、ラベル付きの列。**第3部**は文の外側の検査。文を囲むGoコードと、スキーマ自体。
 ## 目次
@@ -430,17 +430,17 @@ type UserID int64 // これだけ。タグもコメントも登録も無い
 ```
 
 ```go
-// 1. 最初の出会いが束縛する。UserIDはここからusers.idを表す
+// 1. 最初の対応づけで束縛される。UserIDはここからusers.idを表す
 var User = sqlshape.One[User, struct{ ID UserID }](`SELECT id, email FROM users WHERE id = {{.ID}}`)
 
-// 2. 以後の出会いはその束縛に照らされる
+// 2. 以後の対応づけはその束縛と照合される
 var Total = sqlshape.One[int64, struct{ ID UserID }](`SELECT total FROM orders WHERE id = {{.ID}}`)
 // sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id
 ```
 
-文字列型がenumの列やseed済みlookupテーブルのキーに出会えば同じことが起き（以後その定数がラベルと比較される）、整数型がドメインの列に出会えば単位を帯びる。どの文が先かは関係ない。型の束縛は全部集めて突き合わせ、食い違えば報告する。そういう列に一度も出会わない型は検査されない。束縛は解析のfactとして書き出されるので、あるパッケージで宣言して別のパッケージで使う型も、一つの型に一つの意味として扱われる。
+文字列型がenumの列やseed済みlookupテーブルのキーに渡されれば同じことが起き（以後その定数がラベルと比較される）、整数型がドメインの列に渡されればその単位を持つ。どの文が先かは関係ない。型の束縛は全部集めて突き合わせ、食い違えば報告する。そういう列に一度も対応づけられない型は検査されない。束縛は解析のfactとして書き出されるので、あるパッケージで宣言して別のパッケージで使う型も、一つの型に一つの意味として扱われる。
 
-なぜこうしているか。sqlshapeは何も生成せず、登録APIも持たないので、Goのコードは素のGoのまま。使用箇所で束縛すれば、型は意味を持つ場所でだけ検査され、事前に名乗る必要がない。
+なぜこうしているか。sqlshapeは何も生成せず、登録APIも持たないので、Goのコードは通常のGoのまま。使用箇所で束縛すれば、型は意味を持つ場所でだけ検査され、事前に宣言する必要がない。
 
 #### enumやlookupテーブルの値はnamed typeの定数と一致させる
 
@@ -453,7 +453,7 @@ INSERT INTO order_statuses VALUES ('pending', '保留'), ('paid', '支払済'), 
 CREATE TABLE orders (..., status text NOT NULL REFERENCES order_statuses(code));
 ```
 
-`OrderStatus`と`order_statuses`は名前で結びついているわけではない。型は、文の中で列と出会った場所で値集合に束縛される。下の文では`{{.Status}}`が`orders.status`に流れ、その列の外部キーが`order_statuses(code)`を指しているので、`OrderStatus`はこのlookupテーブルのGo側になる。束縛はfactとして書き出され、その型を使うすべてのパッケージに適用される。列と一度も出会わない型は検査されない。
+`OrderStatus`と`order_statuses`は名前で結びついているわけではない。型は、文の中で列と対応づけられた箇所で値集合に束縛される。下の文では`{{.Status}}`が`orders.status`に流れ、その列の外部キーが`order_statuses(code)`を指しているので、`OrderStatus`はこのlookupテーブルのGo側になる。束縛はfactとして書き出され、その型を使うすべてのパッケージに適用される。列に一度も対応づけられない型は検査されない。
 
 ```go
 var ByStatus = sqlshape.Query[Order, struct{ Status OrderStatus }](`
@@ -893,7 +893,7 @@ SELECT carrier FROM shipments s WHERE NOT EXISTS (SELECT 1 FROM orders x WHERE x
 CREATE TABLE orders (...);
 ```
 
-各子表への`require pinned(<ordersへの外部キー列>) on all`（子はルート経由で触る。鍵を固定するか、ルートの鍵で結合する）と、集約の全表への`alone`（1文は1集約にしか触らない）に展開される。集約をまたぐ読みはビューの仕事で、どの集約にも属さない表（lookup）は自由に結合できる。子表はルートか、集約の他のメンバーへの外部キーを持っていなければならない。孫はぶら下がる親の鍵を固定し、ルートまでの結合は1リンクずつ判定される。
+各子表への`require pinned(<ordersへの外部キー列>) on all`（子はルート経由で触る。鍵を固定するか、ルートの鍵で結合する）と、集約の全表への`alone`（1文は1集約にしか触らない）に展開される。集約をまたぐ読みはビューの仕事で、どの集約にも属さない表（lookup）は自由に結合できる。子表はルートか、集約の他のメンバーへの外部キーを持っていなければならない。孫は直接の親の鍵を固定し、ルートまでの結合は1リンクずつ判定される。
 
 NG
 
@@ -991,7 +991,7 @@ SELECT phone_masked FROM order_contacts                -- OK。式にはラベ�
 
 ### 呼び出し元ごとに規約を変える（`context`）
 
-運用スクリプトはテナントなしで走る、分析者はビューしか読まない、請求だけは個人情報を読む。**文脈（context）**はその差分を表ごとに宣言し、パッケージか`check`の実行が一つを選ぶ。
+運用スクリプトはテナントを固定せずに実行される、分析者はビューしか読まない、請求だけは個人情報を読む。**文脈（context）**はその差分を表ごとに宣言し、パッケージか`check`の実行が一つを選ぶ。
 
 ```sql
 -- sqlshape: require pinned(tenant_id)
@@ -1008,7 +1008,7 @@ CREATE TABLE orders (...);
 package ops
 ```
 
-`waive <body>`はその文脈の中で基底の義務を外す（宣言どおりの綴りで名指し）。`require ...`はその文脈だけの義務を足す。`may read <label>`はラベルの読み取りを許す。パッケージはパッケージコメントで文脈を名乗る。無ければvetの`-context`フラグ、`sqlshape check -context ops`はファイルに対して選ぶ。文脈を選ばなければ基底の義務だけが適用される。
+`waive <body>`はその文脈の中で基底の義務を解除する（宣言どおりの綴りで指定する）。`require ...`はその文脈だけの義務を追加する。`may read <label>`はラベルの読み取りを許す。パッケージはパッケージコメントで文脈を指定する。無ければvetの`-context`フラグ、`sqlshape check -context ops`はファイルに対して選ぶ。文脈を選ばなければ基底の義務だけが適用される。
 
 ### Goの外のSQLにも同じ規約を適用する（`sqlshape check`）
 
