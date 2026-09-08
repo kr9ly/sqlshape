@@ -140,7 +140,7 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 
 ### アクセスの形
 
-- `require bounded on select`: LIMITかキーセット条件のない全件走査を止める（大きい表）
+- ~~`require bounded on select`~~: 落とした。「返す行数の上限」（LIMITか`One`の形）と「読む量の上限」（述語に効くインデックス）のどちらを見るかで別物になり、前者は`One`と`LIMIT`で書き手が既に選んでいるもの、後者は`indexed`と重なる。入れて何が嬉しいかを一言で言えなかった
 - `require single on delete`: `One`で証明できる形のDELETEしか通さない（一括削除事故）
 - `require indexed`: `-strict`の助言「述語に効くインデックスがない」を、ホットな表だけエラーに昇格
 
