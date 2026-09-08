@@ -214,14 +214,44 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - 集約から共通に参照してよいlookup表（通貨・ステータス）の印。`alone`の分割から外す宣言が要る
 - 集約の入れ子（子の子）への伝播。`pinned(order_id)`を孫にもFK経由で要求するか、直接の親の鍵で足りるとするか
 
+## 境界: コアから切り離す
+
+義務はアドオンで、PostgreSQL / MySQLのどちらにも属さない。核（アナライザー・スキーマ・vet）との接点を3つの契約に固定し、義務の実装はその上で閉じる。
+
+```
+schema.sql ──schema──▶ Relation.Directives []string（生テキスト。文法は知らない）
+                              │
+Goの文 ──analyze──▶ facts.Facts ───┐
+                                  ├──▶ obligation.Check(schema, decls, facts, lowerer, opts) ──▶ []Discharge
+                    Lowerer ──────┘         ▲
+                 （analyzeが実装）       vet / cli check（入口: フラグの糖衣化・opt-outの読み取り・位置の写像）
+```
+
+| package | 依存 | 役割 |
+|---|---|---|
+| `internal/facts` | なし | データ契約。文種・スコープの木・葉（表・別名・役割・位置）・正規化述語・等値類・固定列・NULL拒否列・代入集合。パーサのノードを含まない |
+| `internal/obligation` | `facts` `schema` | 宣言の文法、フラグからの展開、含意判定、FK閉包、履行経路の記録。`analyze`にも`vet`にも依存しない |
+| `internal/analyze` | `facts` | 判定の代わりにFactsを出す。`recordFixed`が`checkVisibility`を呼んでいる場所が生産点。ビュー本体とポリシーのUSINGも同じ形で葉に付ける（`Origin`で区別） |
+| `internal/vet` / `internal/cli` | `obligation` | 入口。`-require-columns=tenant_id`を`Pinned("tenant_id")`の宣言列に、`-no-table-reads`を`ViaView`に展開して渡す。文の`waive`行を読んで葉に付ける。`Discharge`を診断に写す |
+
+**正規化述語（`facts.Pred`）が共通言語。** `Eq(col, Param | Const | Column | Known)` / `IsNull` / `IsNotNull` / `Opaque(正準テキスト)`。文のconjunctも、ビューの述語も、RLSのUSINGも、宣言のSQL式も、全部これに落ちる。落とすのは方言側の仕事（`obligation.Lowerer`インターフェースをanalyzeが実装する）で、obligationは含意しか判定しない。`Opaque`同士のテキスト一致が、今の`sameExpr`にあたる構文フォールバック。
+
+方言を足すときに要るのは「Factsを出すアナライザー」と「Lowerer」の2つで、宣言の文法・判定・診断はそのまま使える。
+
+**schemaは文法を知らない。** 今は`schema.go`が`visible where`をExprに、ビューの`unfiltered`をmapに解釈し、未知の指示行をProblemにしている。これをやめ、`-- sqlshape:`行を`Relation.Directives`に生で溜める。未知の文法の報告はobligation側の`Problem`に移る。`Relation.Visible`の読み手は`checkVisibility`だけ（diff / applyは見ていない）なので、移すのに障害はない。ビューの`unfiltered`は「ビュー定義文のopt-out」で、文側の`waive`と同じもの。Factsのビュー葉に`Waived`として載る。
+
+**Factsはスコープ単位。** `visible where`は今もサブクエリの各レベルで葉ごとに判定している。フラットにすると「外側のWHEREは内側の葉を絞らない」の区別が消えるので、スコープの木をそのまま持つ。外部結合のONがnull側しか絞らない制約は`Pred.Restricts`で運ぶ（proverの`allow`と同じ）。
+
+**判定は全数を記録する。** `Discharge`は失敗だけでなく、どの経路（文自身 / ビュー / ポリシー / FK / waive）で履行されたかを全部返す。vetは失敗だけを診断にし、`sqlshape check`は全数を監査ログとして出す（「文脈」の節の要件）。
+
 ## 移行
 
-1. `prover`の事実導出を`One`の証明から切り出し、参照集合・書き込み集合・FK閉包・ビュー継承・ポリシー継承を足す
-2. `visible where`を`require <expr> on read`の別名として同じ判定に載せる（診断文は変えない）
-3. `-require-columns`を`pinned`に載せ、`rls.go`の`pinsColumn`を事実の問い合わせに置き換える
-4. `-no-table-reads` / `-no-tables`を`via view`に載せる
-5. `on`の文種指定、`immutable`、表をまたぐ`EXISTS`を足す。ここから先が新機能
-6. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない
-7. `sqlshape check`と文脈。判定は共有し、入口とスコープの写像だけを足す
+0. 契約の型だけ切る: `internal/facts`、`internal/obligation`（`Check`は未実装）。済
+1. analyzeがFactsを出す。判定は従来のまま。Factsのスナップショットテストを足す。既存テストは無変更で緑
+2. obligationの中身: `require`文法、`Pinned` / `Immutable` / `ViaView`、含意エンジン、FK閉包、ビュー・ポリシー継承。schemaと手書きFactsだけで回る単体テスト
+3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**
+4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形
+5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない
+6. `sqlshape check`と文脈。判定は共有し、入口とスコープの写像だけを足す
 
-各段で既存のテスト（`internal/vet/testdata`、`internal/analyze/policy_test.go`）が回帰を押さえる。
+段3までユーザーに見える振る舞いは変わらない。以降はobligationパッケージの中で閉じる。
