@@ -123,38 +123,28 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 - **書き込みは1文1集約**が`alone`で機械的に守られる。ただしこれは文単位の射影で、「1トランザクションで2集約を書く」は文が分かれていれば通る。集約の本来の意味はトランザクション境界なので、守れるのは文の形に映る分だけ。文をまたぐ層は未決のまま
 - `aggregate`宣言を残す価値は意図の保存にある。義務を個別に書くと「なぜこの5行が揃っているか」が消える。展開結果は診断文に使う（`order_items は集約 orders の子: order_id を固定してください`）
 
-## ロードマップ（1.2以降）: 文の形に映るアプリケーションの意味
+## ロードマップ: 文の形に映るアプリケーションの意味
 
-1.1.0には入れていない。義務の枠組みに乗り、facts に文の形（SETの定数、選択列集合、LIMITの有無、CTEの書き込み集合）を足すだけで書けるもの。含意判定は変わらない。順序は状態機械 → outbox（`paired`）→ その他。
+義務の枠組みに乗り、facts に文の形（SETの定数、CTEの書き込み集合、葉ごとの単一性）を足すだけで書けるもの。含意判定は変わらない。残す基準は「入れると何が嬉しいかを一言で言えること」で、言えなかったものは落とした（下記）。
 
-### 値のライフサイクル
+| 述語 | 一言 |
+|---|---|
+| **状態機械** `-- sqlshape: transitions status: draft -> submitted -> paid \| cancelled` | `SET status = 'paid'`がWHEREで前状態（`status = 'submitted'`）を固定していないと通らない。CASを強制し、競合する遷移を静的に潰す。遷移表をseed済みlookup `(from_status, to_status)`として置けば宣言がSQLになり、トリガでDBも守れる |
+| **append-only** `require never on update, delete` | 台帳・イベント表を書き換える文が存在しないことの保証 |
+| **outbox** `require paired(outbox) on insert` | 書き込みとoutboxへのINSERTが1文（書き込みCTE）に揃っていないと通らない。「文をまたぐ」問題の一部を「1文にまとめろ」に変換し、トランザクション層なしで原子性を形で守る |
+| **単一行の削除** `require single on delete` | 一意キーで固定されていない（`One`で証明できない）DELETEを止める。一括削除事故 |
+| **データ分類** 列に`-- sqlshape: sensitive pii` | その列を読める文脈を絞る（マスク済みビュー経由のみ、等）。文脈（context）と組み合わせて意味が出るので、文脈の使われ方が見えてから |
+| **Go側との束縛** | `pinned(tenant_id)`の相手がGoのnamed type `TenantID`に束縛されたパラメータであることまで要求し、「tenantを固定している」を「**正しい**tenantを固定している」に上げる。sqlshapeがGoの型を見る唯一の層 |
 
-- **状態機械**: `-- sqlshape: transitions status: draft -> submitted -> paid | cancelled`。`UPDATE ... SET status = 'paid'`はWHEREで`status = 'submitted'`を固定していなければエラー。CASを強制し、遷移の競合を静的に潰す。遷移表をseed済みlookup `(from_status, to_status)`として置けば宣言がSQLになり、トリガでDBも守り、checkerはseedを読んでWHEREを要求する（enumよりlookupの裁定と噛む）
-- **append-only**: `require never on update, delete`。台帳・イベント表。その文が存在しないことを保証する
-- **immutable**: 既出。`created_at`、外部キーの付け替え禁止
+順序は状態機械 → outbox → never / single → データ分類・Go束縛。
 
-### 同時出現
+落としたもの。
 
-- `require together(amount, currency) on select`: 片方だけSELECTする文を止める。金額と通貨、値と単位、`(kind, ref_id)`のポリモーフィック参照
-- **outbox / 監査ログ**: `require paired(outbox) on insert`。書き込み集合に`outbox`が含まれなければエラー。書き込みCTE（`WITH ins AS (INSERT ...) INSERT INTO outbox ...`）なら1文で済むので、**「文をまたぐ」問題の一部は「1文にまとめろ」という義務に変換できる**。トランザクション層を作らずに、集約をまたぐ書き込みの原子性を文の形で守れる
+- `bounded on select`: 「返す行数の上限」（LIMITか`One`の形）と「読む量の上限」のどちらを見るかで別物になり、前者は`One`と`LIMIT`で書き手が既に選んでいるもの。一言で言えなかった
+- `together(a, b) on select`: 片方だけ読む文を止める、は言えるが、それで防げる事故が思い浮かばなかった（金額と通貨を別々に読む文は、読んだ側で困るので自然に直る）
+- `indexed`: `-strict`の助言をエラーに昇格するだけで、新しい判定ではない。EXPLAINなしの構造判定なので精度にも限界がある。助言のまま
 
-### アクセスの形
-
-- ~~`require bounded on select`~~: 落とした。「返す行数の上限」（LIMITか`One`の形）と「読む量の上限」（述語に効くインデックス）のどちらを見るかで別物になり、前者は`One`と`LIMIT`で書き手が既に選んでいるもの、後者は`indexed`と重なる。入れて何が嬉しいかを一言で言えなかった
-- `require single on delete`: `One`で証明できる形のDELETEしか通さない（一括削除事故）
-- `require indexed`: `-strict`の助言「述語に効くインデックスがない」を、ホットな表だけエラーに昇格
-
-### データ分類
-
-列に`-- sqlshape: sensitive pii`を付け、選択列集合を見て、その列を読めるpackageを`-may-read=pii`で絞る。またはマスク済みビュー経由のみ。`-schemas`のパッケージ単位フラグと同じ構造。
-
-### Go側との束縛（層をまたぐ）
-
-`pinned(tenant_id)`の相手が、Goのnamed type `TenantID`に束縛されたパラメータであることまで要求する。束縛は使用箇所から導く既存機構で、`TenantID`を認証コンテキストからしか作れないようにすれば「tenantを固定している」から「**正しい**tenantを固定している」に一段上がる。sqlshapeがGoの型を見る唯一の層をここに使う。
-
-### 裁定への影響
-
-組み込み述語が増える（`never` / `together` / `paired` / `bounded` / `single` / `indexed` / `alone`）ので、「組み込みは3つに留める」は捨て、**SQL式で書けないものは文の構造述語として名前を持つ**に変える。増やす前に「SQL式で書けないか」を問う規律は残す。一番効くのは状態機械とoutbox。前者は業務ロジックの大半を、後者は集約とトランザクションの隙間を埋める。
+組み込み述語が増えるので「組み込みは3つに留める」は捨て、**SQL式で書けないものは文の構造述語として名前を持つ**に変える。増やす前に「SQL式で書けないか」と「何が嬉しいか一言で言えるか」を問う。
 
 ## 文脈: vetの外の文にも義務を課す
 
