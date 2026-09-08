@@ -64,18 +64,18 @@ Directives are SQL comments the checker reads. In a template:
 | `-- sqlshape: expect users_email_key, orders.total, P0401` | the constraints, NOT NULL columns and SQLSTATEs this write can violate; the checker keeps the list exact ([checks.md](checks.md#preparing-for-a-write-to-fail)) |
 | `-- sqlshape: not null total, note` | these result columns are never NULL, overriding the checker's verdict (the SQL-side twin of the `col:",notnull"` tag) |
 | `-- sqlshape: unfiltered memos` | this statement deliberately reads `memos` without its `visible where` predicate (the predicate obligations only) |
-| `-- sqlshape: waive orders pinned(tenant_id), audit` | this statement opts out of one obligation of `orders`, named as it was declared, and of every obligation of `audit`; opt-outs are reported with `-strict` ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
+| `-- sqlshape: waive orders pinned(tenant_id), audit` | this statement opts out of one obligation of `orders`, named as it was declared, and of every obligation of `audit`; opt-outs are reported with `-strict` ([checks.md](checks.md#how-a-declaration-works)) |
 
 In `schema.sql`:
 
 | directive | placed above | meaning |
 |---|---|---|
 | `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE` | every statement reading the table must carry this predicate (short for `require deleted_at IS NULL on read`) |
-| `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW` | an obligation on every statement that touches the relation: a predicate, `pinned(col)`, `immutable(col)`, `via view`, `never`, `paired(table)` or `single`, optionally `on select, insert, update, delete` ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
-| `-- sqlshape: aggregate orders (order_items, order_notes) [lock version]` | the root's `CREATE TABLE` | the tables form one aggregate: children are pinned to the root's key, a statement touches one aggregate only, and with `lock` every write names the root's version ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
+| `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW` | an obligation on every statement that touches the relation: a predicate, `pinned(col)`, `immutable(col)`, `via view`, `never`, `paired(table)` or `single`, optionally `on select, insert, update, delete` ([checks.md](checks.md#how-a-declaration-works)) |
+| `-- sqlshape: aggregate orders (order_items, order_notes) [lock version]` | the root's `CREATE TABLE` | the tables form one aggregate: children are pinned to the root's key, a statement touches one aggregate only, and with `lock` every write names the root's version ([checks.md](checks.md#how-a-declaration-works)) |
 | `-- sqlshape: transitions status: draft -> submitted, submitted -> paid \| cancelled` | `CREATE TABLE` | the column is a state machine: an UPDATE setting it must fix the current state to a predecessor in its WHERE |
 | `-- sqlshape: sensitive pii: email, phone` | `CREATE TABLE` | the columns carry the label; only a context with `may read pii` may reference them (through views too; a masking expression drops the label) |
-| `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | `CREATE TABLE` / `CREATE VIEW` | the obligations that differ under the named context, selected by a package's `// sqlshape: context ops` comment, vet's `-context`, or `check -context` ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
+| `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | `CREATE TABLE` / `CREATE VIEW` | the obligations that differ under the named context, selected by a package's `// sqlshape: context ops` comment, vet's `-context`, or `check -context` ([checks.md](checks.md#how-a-declaration-works)) |
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW` | the view's own definition opts out, as a statement would |
 | `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
 | `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |

@@ -6,7 +6,7 @@
 `sqlshape vet ./...` or `go vet -vettool=$(which sqlshape) ./...`; the flags below are passed the
 same way in each case.
 `sqlshape check` takes `-schema`, `-quiet`, `-context` and the three boundary flags below
-([checks.md](checks.md#declaring-the-rules-in-schemasql-require)). The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
+([checks.md](checks.md#how-a-declaration-works)). The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
 [migrations.md](migrations.md).
 
 ## Checker flags
@@ -24,7 +24,7 @@ same way in each case.
 `-no-table-reads`, `-no-tables` and `-require-columns` are shorthands for obligations declared per
 table in `schema.sql` (`require via view`, `require via view on all`, `require pinned(col)`); the
 declaration form also gives `on` kinds, `immutable(col)` and arbitrary predicates
-([checks.md](checks.md#declaring-the-rules-in-schemasql-require)).
+([checks.md](checks.md#how-a-declaration-works)).
 | `-raw-sql=constant` | `constant` | driver calls outside sqlshape (pgx / `database/sql` `Query`, `Exec`, ...): `constant` requires their SQL to be a constant string, `forbid` rejects them, `allow` ignores them |
 | `-raw-sql-allow=pkg/...` | none | packages (or prefixes ending in `/...`) where `-raw-sql=forbid` does not apply |
 | `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |
