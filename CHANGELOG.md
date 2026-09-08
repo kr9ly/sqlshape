@@ -8,6 +8,12 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Changed
+
+- The parser (libpg_query) is compiled to WebAssembly and run by wazero instead of being linked
+  through cgo. `go install` no longer needs a C compiler, and the binary is a plain Go build.
+  Parse trees, error messages and positions are unchanged.
+
 ## [1.1.0] - 2026-09-08
 
 ### Added

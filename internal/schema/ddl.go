@@ -5,9 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // The DDL the loader applies beyond CREATE TABLE / VIEW / FUNCTION: inheritance and
@@ -60,7 +59,7 @@ func (s *Schema) ViewsRestricted() bool { return s.restrictViews }
 
 // setVariableValues flattens SET's argument list: constants, identifiers and the
 // comma-separated lists DateStyle accepts inside one string.
-func setVariableValues(st *pg_query.VariableSetStmt) []string {
+func setVariableValues(st *pgparse.VariableSetStmt) []string {
 	var out []string
 	for _, n := range st.Args {
 		var v string
@@ -89,9 +88,9 @@ func setVariableValues(st *pg_query.VariableSetStmt) []string {
 	return out
 }
 
-func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
-	reset := st.Kind == pg_query.VariableSetKind_VAR_RESET || st.Kind == pg_query.VariableSetKind_VAR_RESET_ALL ||
-		st.Kind == pg_query.VariableSetKind_VAR_SET_DEFAULT
+func (s *Schema) setVariable(st *pgparse.VariableSetStmt) {
+	reset := st.Kind == pgparse.VariableSetKind_VAR_RESET || st.Kind == pgparse.VariableSetKind_VAR_RESET_ALL ||
+		st.Kind == pgparse.VariableSetKind_VAR_SET_DEFAULT
 	switch strings.ToLower(st.Name) {
 	case "datestyle":
 		if reset {
@@ -151,7 +150,7 @@ func (s *Schema) setVariable(st *pg_query.VariableSetStmt) {
 	default:
 		return
 	}
-	if st.Kind == pg_query.VariableSetKind_VAR_RESET || st.Kind == pg_query.VariableSetKind_VAR_RESET_ALL {
+	if st.Kind == pgparse.VariableSetKind_VAR_RESET || st.Kind == pgparse.VariableSetKind_VAR_RESET_ALL {
 		s.searchPath = nil
 		return
 	}
@@ -211,39 +210,39 @@ func (s *Schema) inherit(rel *Relation, parent *Relation, partition bool, loc in
 // likeClause copies what CREATE TABLE (LIKE source INCLUDING ...) copies: columns with
 // NOT NULL and collation always; defaults, identity, generated expressions, CHECK
 // constraints and indexes on request (INCLUDING ALL takes everything).
-func (s *Schema) likeClause(rel *Relation, lk *pg_query.TableLikeClause, loc int32) {
+func (s *Schema) likeClause(rel *Relation, lk *pgparse.TableLikeClause, loc int32) {
 	schema, name := s.rangeVar(lk.Relation)
 	src := s.relByName[schema+"."+name]
 	if src == nil {
 		s.problem(loc, "table %s: LIKE: relation %q does not exist", rel.Name, name)
 		return
 	}
-	has := func(o pg_query.TableLikeOption) bool {
-		return lk.Options&(1<<uint(pg_query.TableLikeOption_CREATE_TABLE_LIKE_ALL)) != 0 || lk.Options&(1<<uint(o)) != 0
+	has := func(o pgparse.TableLikeOption) bool {
+		return lk.Options&(1<<uint(pgparse.TableLikeOption_CREATE_TABLE_LIKE_ALL)) != 0 || lk.Options&(1<<uint(o)) != 0
 	}
 	for _, sc := range src.Columns {
 		c := &Column{Num: int16(len(rel.Columns) + 1), Name: sc.Name, Type: sc.Type, NotNull: sc.NotNull, Collation: sc.Collation, Values: sc.Values}
-		if has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_DEFAULTS) {
+		if has(pgparse.TableLikeOption_CREATE_TABLE_LIKE_DEFAULTS) {
 			c.Default = sc.Default
 		}
-		if has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_IDENTITY) {
+		if has(pgparse.TableLikeOption_CREATE_TABLE_LIKE_IDENTITY) {
 			c.Identity = sc.Identity
 		}
-		if has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_GENERATED) {
+		if has(pgparse.TableLikeOption_CREATE_TABLE_LIKE_GENERATED) {
 			c.Generated = sc.Generated
 		}
 		rel.Columns = append(rel.Columns, c)
 	}
 	for _, pc := range src.Constraints {
 		switch {
-		case pc.Kind == Check && has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_CONSTRAINTS),
-			(pc.Kind == PrimaryKey || pc.Kind == Unique) && has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_INDEXES):
+		case pc.Kind == Check && has(pgparse.TableLikeOption_CREATE_TABLE_LIKE_CONSTRAINTS),
+			(pc.Kind == PrimaryKey || pc.Kind == Unique) && has(pgparse.TableLikeOption_CREATE_TABLE_LIKE_INDEXES):
 			c := *pc
 			c.Name = ""
 			s.addConstraint(rel, &c)
 		}
 	}
-	if has(pg_query.TableLikeOption_CREATE_TABLE_LIKE_INDEXES) {
+	if has(pgparse.TableLikeOption_CREATE_TABLE_LIKE_INDEXES) {
 		for _, ix := range src.Indexes {
 			c := *ix
 			c.Name = s.chooseIndexName(rel, c.nameParts)
@@ -254,17 +253,17 @@ func (s *Schema) likeClause(rel *Relation, lk *pg_query.TableLikeClause, loc int
 
 // --- rename / drop ---------------------------------------------------------------
 
-func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
+func (s *Schema) rename(st *pgparse.RenameStmt, loc int32) {
 	switch st.RenameType {
-	case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_INDEX:
+	case pgparse.ObjectType_OBJECT_TABLE, pgparse.ObjectType_OBJECT_VIEW, pgparse.ObjectType_OBJECT_MATVIEW, pgparse.ObjectType_OBJECT_SEQUENCE, pgparse.ObjectType_OBJECT_INDEX:
 		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
-			if st.RenameType == pg_query.ObjectType_OBJECT_INDEX {
+			if st.RenameType == pgparse.ObjectType_OBJECT_INDEX {
 				s.renameIndex(name, st.Newname, loc, st.MissingOk)
 				return
 			}
-			if !st.MissingOk && st.RenameType != pg_query.ObjectType_OBJECT_SEQUENCE {
+			if !st.MissingOk && st.RenameType != pgparse.ObjectType_OBJECT_SEQUENCE {
 				s.problem(loc, "ALTER ... RENAME: relation %q does not exist", name)
 			}
 			return
@@ -290,7 +289,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 				}
 			}
 		}
-	case pg_query.ObjectType_OBJECT_COLUMN, pg_query.ObjectType_OBJECT_ATTRIBUTE:
+	case pgparse.ObjectType_OBJECT_COLUMN, pgparse.ObjectType_OBJECT_ATTRIBUTE:
 		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
@@ -333,7 +332,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 				}
 			}
 		}
-	case pg_query.ObjectType_OBJECT_TABCONSTRAINT:
+	case pgparse.ObjectType_OBJECT_TABCONSTRAINT:
 		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
@@ -347,7 +346,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 			}
 		}
 		s.problem(loc, "%s: constraint %q does not exist", rel.Name, st.Subname)
-	case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+	case pgparse.ObjectType_OBJECT_TYPE, pgparse.ObjectType_OBJECT_DOMAIN:
 		var names []string
 		if tn := st.Object.GetTypeName(); tn != nil {
 			names = strs(tn.GetNames())
@@ -369,7 +368,7 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 			rel.Name = st.Newname
 			s.relByName[schema+"."+st.Newname] = rel
 		}
-	case pg_query.ObjectType_OBJECT_FUNCTION, pg_query.ObjectType_OBJECT_PROCEDURE, pg_query.ObjectType_OBJECT_AGGREGATE:
+	case pgparse.ObjectType_OBJECT_FUNCTION, pgparse.ObjectType_OBJECT_PROCEDURE, pgparse.ObjectType_OBJECT_AGGREGATE:
 		owa := st.Object.GetObjectWithArgs()
 		schema, name := qualified(strs(owa.GetObjname()))
 		found := false
@@ -382,15 +381,15 @@ func (s *Schema) rename(st *pg_query.RenameStmt, loc int32) {
 		if !found && !st.MissingOk {
 			s.problem(loc, "ALTER FUNCTION ... RENAME: function %q does not exist", name)
 		}
-	case pg_query.ObjectType_OBJECT_TRIGGER:
+	case pgparse.ObjectType_OBJECT_TRIGGER:
 		for _, tg := range s.Triggers {
 			if tg.Name == st.Subname {
 				tg.Name = st.Newname
 			}
 		}
-	case pg_query.ObjectType_OBJECT_POLICY:
+	case pgparse.ObjectType_OBJECT_POLICY:
 		s.renamePolicy(st, loc)
-	case pg_query.ObjectType_OBJECT_SCHEMA, pg_query.ObjectType_OBJECT_RULE, pg_query.ObjectType_OBJECT_COLLATION:
+	case pgparse.ObjectType_OBJECT_SCHEMA, pgparse.ObjectType_OBJECT_RULE, pgparse.ObjectType_OBJECT_COLLATION:
 		// no typing consequence
 	default:
 		s.problem(loc, "unsupported RENAME of %v", st.RenameType)
@@ -431,11 +430,11 @@ func fullName(schema, name string) string {
 	return schema + "." + name
 }
 
-func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
+func (s *Schema) drop(st *pgparse.DropStmt, loc int32) {
 	for _, on := range st.Objects {
 		switch st.RemoveType {
-		case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_SEQUENCE,
-			pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
+		case pgparse.ObjectType_OBJECT_TABLE, pgparse.ObjectType_OBJECT_VIEW, pgparse.ObjectType_OBJECT_MATVIEW, pgparse.ObjectType_OBJECT_SEQUENCE,
+			pgparse.ObjectType_OBJECT_FOREIGN_TABLE:
 			schema, name := qualified(strs(on.GetList().GetItems()))
 			rel := s.findRelation(schema, name)
 			if rel == nil {
@@ -445,7 +444,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				continue
 			}
 			for _, child := range append([]*Relation{}, s.Relations...) {
-				if child != rel && child.InheritsFrom(rel) && (st.Behavior == pg_query.DropBehavior_DROP_CASCADE || child.IsPartition) {
+				if child != rel && child.InheritsFrom(rel) && (st.Behavior == pgparse.DropBehavior_DROP_CASCADE || child.IsPartition) {
 					s.removeRelation(child)
 					s.dropDependentViews(child)
 				}
@@ -454,10 +453,10 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			if rel.Kind == Table {
 				s.dropOwnedSequences(rel, "")
 			}
-			if st.Behavior == pg_query.DropBehavior_DROP_CASCADE {
+			if st.Behavior == pgparse.DropBehavior_DROP_CASCADE {
 				s.dropDependentViews(rel)
 			}
-		case pg_query.ObjectType_OBJECT_INDEX:
+		case pgparse.ObjectType_OBJECT_INDEX:
 			_, name := qualified(strs(on.GetList().GetItems()))
 			found := false
 			for _, r := range s.Relations {
@@ -469,7 +468,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			if !found && !st.MissingOk {
 				s.problem(loc, "DROP INDEX: index %q does not exist", name)
 			}
-		case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+		case pgparse.ObjectType_OBJECT_TYPE, pgparse.ObjectType_OBJECT_DOMAIN:
 			schema, name := qualified(strs(on.GetTypeName().GetNames()))
 			if schema == "" {
 				schema = s.creationSchema()
@@ -481,7 +480,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 				continue
 			}
-			if !s.dropTypeDependents(t, st.Behavior == pg_query.DropBehavior_DROP_CASCADE) {
+			if !s.dropTypeDependents(t, st.Behavior == pgparse.DropBehavior_DROP_CASCADE) {
 				s.problem(loc, "DROP TYPE %s: other objects depend on it (use CASCADE)", name)
 				continue
 			}
@@ -489,7 +488,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			if rel := s.relByName[schema+"."+name]; rel != nil && rel.Kind == 'c' {
 				s.removeRelation(rel)
 			}
-		case pg_query.ObjectType_OBJECT_FUNCTION, pg_query.ObjectType_OBJECT_PROCEDURE, pg_query.ObjectType_OBJECT_AGGREGATE, pg_query.ObjectType_OBJECT_ROUTINE:
+		case pgparse.ObjectType_OBJECT_FUNCTION, pgparse.ObjectType_OBJECT_PROCEDURE, pgparse.ObjectType_OBJECT_AGGREGATE, pgparse.ObjectType_OBJECT_ROUTINE:
 			owa := on.GetObjectWithArgs()
 			schema, name := qualified(strs(owa.GetObjname()))
 			var kept []*Function
@@ -508,7 +507,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 						keyed = append(keyed, r)
 					}
 				}
-				if len(keyed) > 0 && st.Behavior != pg_query.DropBehavior_DROP_CASCADE {
+				if len(keyed) > 0 && st.Behavior != pgparse.DropBehavior_DROP_CASCADE {
 					s.problem(loc, "DROP FUNCTION %s: a partition key depends on it (use CASCADE)", name)
 					continue
 				}
@@ -526,9 +525,9 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			if !removed && !st.MissingOk {
 				s.problem(loc, "DROP FUNCTION: function %q does not exist", name)
 			}
-		case pg_query.ObjectType_OBJECT_POLICY:
+		case pgparse.ObjectType_OBJECT_POLICY:
 			s.dropPolicy(strs(on.GetList().GetItems()), st.MissingOk, loc)
-		case pg_query.ObjectType_OBJECT_TRIGGER:
+		case pgparse.ObjectType_OBJECT_TRIGGER:
 			items := strs(on.GetList().GetItems())
 			name := items[len(items)-1]
 			var kept []*Trigger
@@ -538,7 +537,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 			}
 			s.Triggers = kept
-		case pg_query.ObjectType_OBJECT_CAST:
+		case pgparse.ObjectType_OBJECT_CAST:
 			// on is a List [source TypeName, target TypeName]
 			items := on.GetList().GetItems()
 			if len(items) == 2 {
@@ -554,7 +553,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 					s.Casts = kept
 				}
 			}
-		case pg_query.ObjectType_OBJECT_OPERATOR:
+		case pgparse.ObjectType_OBJECT_OPERATOR:
 			owa := on.GetObjectWithArgs()
 			_, name := qualified(strs(owa.GetObjname()))
 			var kept []*catalog.Operator
@@ -564,7 +563,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 				}
 			}
 			s.Operators = kept
-		case pg_query.ObjectType_OBJECT_SCHEMA:
+		case pgparse.ObjectType_OBJECT_SCHEMA:
 			name := on.GetString_().GetSval()
 			for _, r := range append([]*Relation{}, s.Relations...) {
 				if r.Schema == name {
@@ -581,7 +580,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 			s.Functions = fns
 			s.Types.removeSchema(name)
 			delete(s.schemas, name)
-		case pg_query.ObjectType_OBJECT_RULE:
+		case pgparse.ObjectType_OBJECT_RULE:
 			// DROP RULE name ON table
 			parts := strs(on.GetList().GetItems())
 			if len(parts) >= 2 {
@@ -592,7 +591,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 					rel.rebuildRules()
 				}
 			}
-		case pg_query.ObjectType_OBJECT_EXTENSION, pg_query.ObjectType_OBJECT_COLLATION:
+		case pgparse.ObjectType_OBJECT_EXTENSION, pgparse.ObjectType_OBJECT_COLLATION:
 			// no typing consequence
 		default:
 			s.problem(loc, "unsupported DROP of %v", st.RemoveType)
@@ -601,7 +600,7 @@ func (s *Schema) drop(st *pg_query.DropStmt, loc int32) {
 }
 
 // argsMatch reports whether f's input parameters are the given types (DROP FUNCTION f(int, text)).
-func (s *Schema) argsMatch(f *Function, args []*pg_query.Node) bool {
+func (s *Schema) argsMatch(f *Function, args []*pgparse.Node) bool {
 	var in []TypeRef
 	for _, a := range f.Args {
 		if a.Mode == 'i' || a.Mode == 'b' || a.Mode == 'v' {
@@ -768,7 +767,7 @@ func (s *Schema) dropColumn(rel *Relation, name string, loc int32, missingOk boo
 
 // --- ALTER TYPE / ALTER DOMAIN --------------------------------------------------------
 
-func (s *Schema) alterEnum(st *pg_query.AlterEnumStmt, loc int32) {
+func (s *Schema) alterEnum(st *pgparse.AlterEnumStmt, loc int32) {
 	schema, name := qualified(strs(st.TypeName))
 	if schema == "" {
 		schema = s.creationSchema()
@@ -818,7 +817,7 @@ func (s *Schema) alterEnum(st *pg_query.AlterEnumStmt, loc int32) {
 	s.problem(loc, "ALTER TYPE %s: label %q does not exist", name, st.NewValNeighbor)
 }
 
-func (s *Schema) alterDomain(st *pg_query.AlterDomainStmt, loc int32) {
+func (s *Schema) alterDomain(st *pgparse.AlterDomainStmt, loc int32) {
 	schema, name := qualified(strs(st.TypeName))
 	if schema == "" {
 		schema = s.creationSchema()
@@ -838,7 +837,7 @@ func (s *Schema) alterDomain(st *pg_query.AlterDomainStmt, loc int32) {
 	case "C":
 		c := st.Def.GetConstraint()
 		switch c.GetContype() {
-		case pg_query.ConstrType_CONSTR_CHECK:
+		case pgparse.ConstrType_CONSTR_CHECK:
 			cn := c.Conname
 			if cn == "" {
 				cn = uniqueName(name+"_check", func(n string) bool {
@@ -851,7 +850,7 @@ func (s *Schema) alterDomain(st *pg_query.AlterDomainStmt, loc int32) {
 				})
 			}
 			d.Checks = append(d.Checks, &Constraint{Name: cn, Kind: Check, Expr: c.RawExpr})
-		case pg_query.ConstrType_CONSTR_NOTNULL:
+		case pgparse.ConstrType_CONSTR_NOTNULL:
 			d.NotNull = true
 		default:
 			s.problem(loc, "ALTER DOMAIN %s: unsupported constraint %v", name, c.GetContype())
@@ -878,7 +877,7 @@ func (s *Schema) alterDomain(st *pg_query.AlterDomainStmt, loc int32) {
 
 // --- CREATE TYPE AS RANGE, CREATE COLLATION, CREATE AGGREGATE / OPERATOR / CAST ------------
 
-func (s *Schema) createRange(st *pg_query.CreateRangeStmt, loc int32) {
+func (s *Schema) createRange(st *pgparse.CreateRangeStmt, loc int32) {
 	schema, name := qualified(strs(st.TypeName))
 	if schema == "" {
 		schema = s.creationSchema()
@@ -925,26 +924,26 @@ func (s *Schema) createRange(st *pg_query.CreateRangeStmt, loc int32) {
 }
 
 // define handles CREATE AGGREGATE / OPERATOR / COLLATION (DefineStmt).
-func (s *Schema) define(st *pg_query.DefineStmt, loc int32) {
+func (s *Schema) define(st *pgparse.DefineStmt, loc int32) {
 	schema, name := qualified(strs(st.Defnames))
 	if schema == "" {
 		schema = s.creationSchema()
 	}
-	defs := map[string]*pg_query.Node{}
+	defs := map[string]*pgparse.Node{}
 	for _, dn := range st.Definition {
 		d := dn.GetDefElem()
 		defs[strings.ToLower(d.GetDefname())] = d.GetArg()
 	}
 	switch st.Kind {
-	case pg_query.ObjectType_OBJECT_COLLATION:
+	case pgparse.ObjectType_OBJECT_COLLATION:
 		s.Types.Collations[name] = true
-	case pg_query.ObjectType_OBJECT_AGGREGATE:
+	case pgparse.ObjectType_OBJECT_AGGREGATE:
 		s.createAggregate(schema, name, st, defs, loc)
-	case pg_query.ObjectType_OBJECT_OPERATOR:
+	case pgparse.ObjectType_OBJECT_OPERATOR:
 		s.createOperator(schema, name, defs, loc)
-	case pg_query.ObjectType_OBJECT_TSCONFIGURATION, pg_query.ObjectType_OBJECT_TSDICTIONARY, pg_query.ObjectType_OBJECT_TSPARSER, pg_query.ObjectType_OBJECT_TSTEMPLATE:
+	case pgparse.ObjectType_OBJECT_TSCONFIGURATION, pgparse.ObjectType_OBJECT_TSDICTIONARY, pgparse.ObjectType_OBJECT_TSPARSER, pgparse.ObjectType_OBJECT_TSTEMPLATE:
 		// text search objects: no typing consequence
-	case pg_query.ObjectType_OBJECT_TYPE:
+	case pgparse.ObjectType_OBJECT_TYPE:
 		s.createBaseType(schema, name, defs, loc)
 	default:
 		s.problem(loc, "unsupported CREATE %v", st.Kind)
@@ -954,7 +953,7 @@ func (s *Schema) define(st *pg_query.DefineStmt, loc int32) {
 // createBaseType handles CREATE TYPE name (a shell type) and CREATE TYPE name (input = ...,
 // output = ..., like = t): an opaque base type the analyzer can only meet through the
 // casts and functions declared for it. LIKE lends its category, length and pass-by-value.
-func (s *Schema) createBaseType(schema, name string, defs map[string]*pg_query.Node, loc int32) {
+func (s *Schema) createBaseType(schema, name string, defs map[string]*pgparse.Node, loc int32) {
 	t := s.Types.Lookup(schema, name)
 	if t == nil {
 		t = s.Types.addUser(schema, name, 'b', 'U', 0, 0)
@@ -984,7 +983,7 @@ func (s *Schema) createBaseType(schema, name string, defs map[string]*pg_query.N
 // createAggregate registers CREATE AGGREGATE name (args) (sfunc = ..., stype = ...,
 // finalfunc = ...) as a function of kind aggregate: the result is finalfunc's return type
 // when there is one, the state type otherwise.
-func (s *Schema) createAggregate(schema, name string, st *pg_query.DefineStmt, defs map[string]*pg_query.Node, loc int32) {
+func (s *Schema) createAggregate(schema, name string, st *pgparse.DefineStmt, defs map[string]*pgparse.Node, loc int32) {
 	fn := &Function{OID: s.nextOID, Schema: schema, Name: name, IsAgg: true, AggKind: 'n', Volatile: 'i'}
 	s.nextOID++
 	// Args: [list of FunctionParameter (nil for the old syntax), numDirectArgs]
@@ -1007,7 +1006,7 @@ func (s *Schema) createAggregate(schema, name string, st *pg_query.DefineStmt, d
 				return
 			}
 			mode := byte('i')
-			if p.Mode == pg_query.FunctionParameterMode_FUNC_PARAM_VARIADIC {
+			if p.Mode == pgparse.FunctionParameterMode_FUNC_PARAM_VARIADIC {
 				mode = 'v'
 			}
 			fn.Args = append(fn.Args, FuncArg{Name: p.Name, Type: tr, Mode: mode})
@@ -1098,7 +1097,7 @@ func (s *Schema) functionReturn(schema, name string, args []TypeRef) (ret TypeRe
 
 // createOperator registers CREATE OPERATOR name (leftarg = ..., rightarg = ..., function = ...).
 // The result type is the implementing function's.
-func (s *Schema) createOperator(schema, name string, defs map[string]*pg_query.Node, loc int32) {
+func (s *Schema) createOperator(schema, name string, defs map[string]*pgparse.Node, loc int32) {
 	op := &catalog.Operator{OID: s.nextOID, Name: name, Kind: 'b', Schema: schema}
 	s.nextOID++
 	if l := defs["leftarg"]; l != nil {
@@ -1150,7 +1149,7 @@ func (s *Schema) createOperator(schema, name string, defs map[string]*pg_query.N
 	s.Operators = append(s.Operators, op)
 }
 
-func (s *Schema) createCast(st *pg_query.CreateCastStmt, loc int32) {
+func (s *Schema) createCast(st *pgparse.CreateCastStmt, loc int32) {
 	src, err := s.resolveType(st.Sourcetype)
 	if err != nil {
 		s.problem(loc, "CREATE CAST: %v", err)
@@ -1164,9 +1163,9 @@ func (s *Schema) createCast(st *pg_query.CreateCastStmt, loc int32) {
 	c := &catalog.Cast{OID: s.nextOID, Source: src.OID, Target: dst.OID, Context: 'e', Method: 'b'}
 	s.nextOID++
 	switch st.Context {
-	case pg_query.CoercionContext_COERCION_IMPLICIT:
+	case pgparse.CoercionContext_COERCION_IMPLICIT:
 		c.Context = 'i'
-	case pg_query.CoercionContext_COERCION_ASSIGNMENT:
+	case pgparse.CoercionContext_COERCION_ASSIGNMENT:
 		c.Context = 'a'
 	}
 	switch {
@@ -1252,7 +1251,7 @@ func (r *Relation) queryRangeVars() []rangeRef {
 	}
 	if r.queryRefsFor != r.Query {
 		r.queryRefs = r.queryRefs[:0]
-		WalkNodes(r.Query, func(n *pg_query.Node) {
+		WalkNodes(r.Query, func(n *pgparse.Node) {
 			if rv := n.GetRangeVar(); rv != nil {
 				r.queryRefs = append(r.queryRefs, rangeRef{rv.Schemaname, rv.Relname})
 			}
@@ -1265,11 +1264,11 @@ func (r *Relation) queryRangeVars() []rangeRef {
 type rangeRef struct{ schema, name string }
 
 // alterObjectSchema is ALTER ... SET SCHEMA for the objects the loader models.
-func (s *Schema) alterObjectSchema(st *pg_query.AlterObjectSchemaStmt, loc int32) {
+func (s *Schema) alterObjectSchema(st *pgparse.AlterObjectSchemaStmt, loc int32) {
 	to := st.Newschema
 	switch st.ObjectType {
-	case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW,
-		pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
+	case pgparse.ObjectType_OBJECT_TABLE, pgparse.ObjectType_OBJECT_VIEW, pgparse.ObjectType_OBJECT_MATVIEW,
+		pgparse.ObjectType_OBJECT_SEQUENCE, pgparse.ObjectType_OBJECT_FOREIGN_TABLE:
 		schema, name := s.lookupRangeVar(st.Relation)
 		rel := s.relByName[schema+"."+name]
 		if rel == nil {
@@ -1282,7 +1281,7 @@ func (s *Schema) alterObjectSchema(st *pg_query.AlterObjectSchemaStmt, loc int32
 		rel.Schema = to
 		s.relByName[to+"."+name] = rel
 		s.Types.moveUser(rel.RowType, to)
-	case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+	case pgparse.ObjectType_OBJECT_TYPE, pgparse.ObjectType_OBJECT_DOMAIN:
 		tn := st.Object.GetTypeName()
 		tr, err := s.resolveType(tn)
 		if err != nil {
@@ -1290,7 +1289,7 @@ func (s *Schema) alterObjectSchema(st *pg_query.AlterObjectSchemaStmt, loc int32
 			return
 		}
 		s.Types.moveUser(tr.OID, to)
-	case pg_query.ObjectType_OBJECT_FUNCTION, pg_query.ObjectType_OBJECT_PROCEDURE, pg_query.ObjectType_OBJECT_AGGREGATE, pg_query.ObjectType_OBJECT_ROUTINE:
+	case pgparse.ObjectType_OBJECT_FUNCTION, pgparse.ObjectType_OBJECT_PROCEDURE, pgparse.ObjectType_OBJECT_AGGREGATE, pgparse.ObjectType_OBJECT_ROUTINE:
 		owa := st.Object.GetObjectWithArgs()
 		schema, name := qualified(strs(owa.GetObjname()))
 		if schema == "" {
@@ -1310,7 +1309,7 @@ func (s *Schema) alterObjectSchema(st *pg_query.AlterObjectSchemaStmt, loc int32
 }
 
 // funcArgsMatch is whether an ObjectWithArgs signature (no args given = any) picks fn.
-func (s *Schema) funcArgsMatch(fn *Function, owa *pg_query.ObjectWithArgs) bool {
+func (s *Schema) funcArgsMatch(fn *Function, owa *pgparse.ObjectWithArgs) bool {
 	if owa.ArgsUnspecified || (len(owa.Objargs) == 0 && len(owa.Objfuncargs) == 0) {
 		return true
 	}

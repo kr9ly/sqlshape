@@ -15,10 +15,11 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/emscripten"
@@ -55,7 +56,7 @@ var pg17 = &module{wasm: wasm17}
 func (m *module) compile() error {
 	m.once.Do(func() {
 		ctx := context.Background()
-		m.runtime = wazero.NewRuntime(ctx)
+		m.runtime = wazero.NewRuntimeWithConfig(ctx, runtimeConfig())
 		if _, err := wasi_snapshot_preview1.Instantiate(ctx, m.runtime); err != nil {
 			m.err = err
 			return
@@ -71,6 +72,24 @@ func (m *module) compile() error {
 		}
 	})
 	return m.err
+}
+
+// runtimeConfig compiles through an on-disk cache when the user has a cache directory.
+// Compiling the module takes most of a second, and `go vet` starts one analyzer process per
+// package; from the cache the compiled code loads in a few tens of milliseconds. The cache
+// is keyed by wazero on the module's bytes and its own version, so a rebuilt wasm or an
+// upgraded wazero never reads a stale entry.
+func runtimeConfig() wazero.RuntimeConfig {
+	cfg := wazero.NewRuntimeConfig()
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return cfg
+	}
+	cache, err := wazero.NewCompilationCacheWithDir(filepath.Join(dir, "sqlshape", "wazero"))
+	if err != nil {
+		return cfg
+	}
+	return cfg.WithCompilationCache(cache)
 }
 
 // instance is one instantiated module: its own linear memory, in use by one call at a time.
@@ -224,12 +243,12 @@ func (m *module) parseProtobuf(sql string) (out []byte, err error) {
 }
 
 // Parse parses sql into a parse tree.
-func Parse(sql string) (*pg_query.ParseResult, error) {
+func Parse(sql string) (*ParseResult, error) {
 	b, err := pg17.parseProtobuf(sql)
 	if err != nil {
 		return nil, err
 	}
-	tree := &pg_query.ParseResult{}
+	tree := &ParseResult{}
 	if err := proto.Unmarshal(b, tree); err != nil {
 		return nil, fmt.Errorf("pgparse: decoding parse tree: %w", err)
 	}
@@ -237,7 +256,7 @@ func Parse(sql string) (*pg_query.ParseResult, error) {
 }
 
 // Deparse renders a parse tree back to SQL.
-func Deparse(tree *pg_query.ParseResult) (out string, err error) {
+func Deparse(tree *ParseResult) (out string, err error) {
 	b, err := proto.Marshal(tree)
 	if err != nil {
 		return "", fmt.Errorf("pgparse: encoding parse tree: %w", err)

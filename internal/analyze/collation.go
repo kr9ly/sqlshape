@@ -3,9 +3,8 @@ package analyze
 import (
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -227,12 +226,12 @@ func (a *analyzer) columnColl(c *schema.Column) collation {
 // setOpColl combines the collations of one output column of a set operation. PG resolves
 // it while parsing (select_common_collation), so unless the operation is UNION ALL, which
 // never compares rows, a conflict between implicit collations is an error too.
-func (a *analyzer) setOpColl(l, r collation, op pg_query.SetOperation, all bool) (collation, *Error) {
+func (a *analyzer) setOpColl(l, r collation, op pgparse.SetOperation, all bool) (collation, *Error) {
 	acc := l
 	if err := a.mergeColl(&acc, r); err != nil {
 		return collation{}, err
 	}
-	if acc.strength == collConflict && !(all && op == pg_query.SetOperation_SETOP_UNION) {
+	if acc.strength == collConflict && !(all && op == pgparse.SetOperation_SETOP_UNION) {
 		return collation{}, errAt(codeCollationMismatch, acc.loc2, "collation mismatch between implicit collations %q and %q", collDisplay(acc.name), collDisplay(acc.name2))
 	}
 	return acc, nil

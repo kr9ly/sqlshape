@@ -6,11 +6,12 @@ package analyze
 // aggregate.
 
 import (
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
-func (a *analyzer) checkRecursiveTerm(name string, term *pg_query.Node) *Error {
+func (a *analyzer) checkRecursiveTerm(name string, term *pgparse.Node) *Error {
 	w := &recursionWalker{a: a, name: name}
 	if err := w.walk(term, false, false, ""); err != nil {
 		return err
@@ -21,7 +22,7 @@ func (a *analyzer) checkRecursiveTerm(name string, term *pg_query.Node) *Error {
 	if w.refs > 1 {
 		return errAt(codeInvalidRecursion, w.loc, "recursive reference to query %q must not appear more than once", name)
 	}
-	if sel := term.GetSelectStmt(); sel != nil && sel.Op == pg_query.SetOperation_SETOP_NONE {
+	if sel := term.GetSelectStmt(); sel != nil && sel.Op == pgparse.SetOperation_SETOP_NONE {
 		for _, tn := range sel.TargetList {
 			if agg := a.aggregateIn(tn.GetResTarget().GetVal()); agg != nil {
 				return errAt(codeInvalidRecursion, agg.Location, "aggregate functions are not allowed in a recursive query's recursive term")
@@ -44,12 +45,12 @@ type recursionWalker struct {
 // walk descends the parse tree; inSub / inOuter say the current position is inside a
 // subquery / on the nullable side of an outer join, setop names the set operation whose
 // forbidden arm we are in.
-func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop string) *Error {
+func (w *recursionWalker) walk(n *pgparse.Node, inSub, inOuter bool, setop string) *Error {
 	if n == nil {
 		return nil
 	}
 	switch v := n.Node.(type) {
-	case *pg_query.Node_RangeVar:
+	case *pgparse.Node_RangeVar:
 		if v.RangeVar.Schemaname == "" && v.RangeVar.Relname == w.name {
 			switch {
 			case inSub:
@@ -63,17 +64,17 @@ func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop stri
 			w.loc = v.RangeVar.Location
 		}
 		return nil
-	case *pg_query.Node_SubLink, *pg_query.Node_RangeSubselect:
+	case *pgparse.Node_SubLink, *pgparse.Node_RangeSubselect:
 		for _, c := range children(n) {
 			if err := w.walk(c, true, inOuter, setop); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *pg_query.Node_JoinExpr:
+	case *pgparse.Node_JoinExpr:
 		j := v.JoinExpr
-		lOuter := inOuter || j.Jointype == pg_query.JoinType_JOIN_RIGHT || j.Jointype == pg_query.JoinType_JOIN_FULL
-		rOuter := inOuter || j.Jointype == pg_query.JoinType_JOIN_LEFT || j.Jointype == pg_query.JoinType_JOIN_FULL
+		lOuter := inOuter || j.Jointype == pgparse.JoinType_JOIN_RIGHT || j.Jointype == pgparse.JoinType_JOIN_FULL
+		rOuter := inOuter || j.Jointype == pgparse.JoinType_JOIN_LEFT || j.Jointype == pgparse.JoinType_JOIN_FULL
 		if err := w.walk(j.Larg, inSub, lOuter, setop); err != nil {
 			return err
 		}
@@ -81,7 +82,7 @@ func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop stri
 			return err
 		}
 		return w.walk(j.Quals, true, inOuter, setop)
-	case *pg_query.Node_SelectStmt:
+	case *pgparse.Node_SelectStmt:
 		sel := v.SelectStmt
 		if wc := sel.WithClause; wc != nil {
 			// a nested WITH: its items are walked in the same context; one defining the
@@ -108,17 +109,17 @@ func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop stri
 			}
 		}
 		switch sel.Op {
-		case pg_query.SetOperation_SETOP_EXCEPT:
+		case pgparse.SetOperation_SETOP_EXCEPT:
 			if err := w.walk(selNode(sel.Larg), inSub, inOuter, setop); err != nil {
 				return err
 			}
 			return w.walk(selNode(sel.Rarg), inSub, inOuter, "EXCEPT")
-		case pg_query.SetOperation_SETOP_INTERSECT:
+		case pgparse.SetOperation_SETOP_INTERSECT:
 			if err := w.walk(selNode(sel.Larg), inSub, inOuter, "INTERSECT"); err != nil {
 				return err
 			}
 			return w.walk(selNode(sel.Rarg), inSub, inOuter, "INTERSECT")
-		case pg_query.SetOperation_SETOP_UNION:
+		case pgparse.SetOperation_SETOP_UNION:
 			if err := w.walk(selNode(sel.Larg), inSub, inOuter, setop); err != nil {
 				return err
 			}
@@ -150,8 +151,8 @@ func (w *recursionWalker) walk(n *pg_query.Node, inSub, inOuter bool, setop stri
 
 // allNodes is children() that also looks through message fields that are not Nodes
 // themselves (WithClause, IntoClause, OnConflictClause, ...).
-func allNodes(n *pg_query.Node) []*pg_query.Node {
-	var out []*pg_query.Node
+func allNodes(n *pgparse.Node) []*pgparse.Node {
+	var out []*pgparse.Node
 	var descend func(m protoreflect.Message)
 	descend = func(m protoreflect.Message) {
 		m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
@@ -159,7 +160,7 @@ func allNodes(n *pg_query.Node) []*pg_query.Node {
 				return true
 			}
 			visit := func(mv protoreflect.Message) {
-				if c, ok := mv.Interface().(*pg_query.Node); ok {
+				if c, ok := mv.Interface().(*pgparse.Node); ok {
 					out = append(out, c)
 					return
 				}
@@ -186,17 +187,17 @@ func allNodes(n *pg_query.Node) []*pg_query.Node {
 	return out
 }
 
-func selNode(sel *pg_query.SelectStmt) *pg_query.Node {
+func selNode(sel *pgparse.SelectStmt) *pgparse.Node {
 	if sel == nil {
 		return nil
 	}
-	return &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: sel}}
+	return &pgparse.Node{Node: &pgparse.Node_SelectStmt{SelectStmt: sel}}
 }
 
 // topLevelRef reports whether the recursive term names the CTE directly in its own FROM
 // list (through joins, not inside a subquery or a nested WITH): where a SEARCH / CYCLE
 // clause needs it (analyzeCTE).
-func (w *recursionWalker) topLevelRef(sel *pg_query.SelectStmt) bool {
+func (w *recursionWalker) topLevelRef(sel *pgparse.SelectStmt) bool {
 	if sel == nil {
 		return false
 	}
@@ -207,8 +208,8 @@ func (w *recursionWalker) topLevelRef(sel *pg_query.SelectStmt) bool {
 			}
 		}
 	}
-	var inFrom func(n *pg_query.Node) bool
-	inFrom = func(n *pg_query.Node) bool {
+	var inFrom func(n *pgparse.Node) bool
+	inFrom = func(n *pgparse.Node) bool {
 		if rv := n.GetRangeVar(); rv != nil {
 			return rv.Schemaname == "" && rv.Relname == w.name
 		}
@@ -226,7 +227,7 @@ func (w *recursionWalker) topLevelRef(sel *pg_query.SelectStmt) bool {
 }
 
 // mentions reports whether the tree names the CTE anywhere.
-func (w *recursionWalker) mentions(n *pg_query.Node) bool {
+func (w *recursionWalker) mentions(n *pgparse.Node) bool {
 	if n == nil {
 		return false
 	}

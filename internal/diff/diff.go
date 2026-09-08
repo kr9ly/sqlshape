@@ -13,9 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -386,7 +385,7 @@ func idxProps(i *schema.Index) map[string]string {
 }
 
 func ruleProps(r schema.RuleDef) map[string]string {
-	return map[string]string{"definition": schema.DeparseStmt(&pg_query.Node{Node: &pg_query.Node_RuleStmt{RuleStmt: r.Stmt}}), "enabled": fmt.Sprint(r.Enabled)}
+	return map[string]string{"definition": schema.DeparseStmt(&pgparse.Node{Node: &pgparse.Node_RuleStmt{RuleStmt: r.Stmt}}), "enabled": fmt.Sprint(r.Enabled)}
 }
 
 func (d *differ) relations(a, b *schema.Schema) {

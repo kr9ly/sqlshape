@@ -1,18 +1,18 @@
 package analyze
 
 import (
-	"google.golang.org/protobuf/proto"
 	"strconv"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // selectStmt analyzes a SELECT (incl. set operations and VALUES) and returns its output columns.
-func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Error) {
 	keepUnknown := a.keepUnknown
 	a.keepUnknown = false
 	// a subquery is its own level for aggregate nesting and SRF placement
@@ -32,10 +32,10 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	}
 	a.selectDepth++
 	defer func() { a.selectDepth-- }()
-	if len(sel.LockingClause) > 0 && sel.Op != pg_query.SetOperation_SETOP_NONE {
+	if len(sel.LockingClause) > 0 && sel.Op != pgparse.SetOperation_SETOP_NONE {
 		return nil, errAt(codeFeatureNotSupported, -1, "%s is not allowed with UNION/INTERSECT/EXCEPT", lockStrength(sel.LockingClause[0]))
 	}
-	if sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Op != pg_query.SetOperation_SET_OPERATION_UNDEFINED {
+	if sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED {
 		return a.setOp(sel, sc)
 	}
 	if len(sel.ValuesLists) > 0 {
@@ -60,7 +60,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 			continue
 		}
 		if sc.windows == nil {
-			sc.windows = map[string]*pg_query.WindowDef{}
+			sc.windows = map[string]*pgparse.WindowDef{}
 		}
 		if _, dup := sc.windows[wd.Name]; dup {
 			return nil, errAt(codeWindowingError, wd.Location, "window %q is already defined", wd.Name)
@@ -182,7 +182,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	if err := a.checkGrouping(sel, sc, cols); err != nil {
 		return nil, err
 	}
-	for _, lim := range []*pg_query.Node{sel.LimitCount, sel.LimitOffset} {
+	for _, lim := range []*pgparse.Node{sel.LimitCount, sel.LimitOffset} {
 		if lim == nil {
 			continue
 		}
@@ -208,9 +208,9 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 // orderOrGroupItem types an ORDER BY / GROUP BY item; a bare integer constant is an
 // output-column ordinal. Sorting or grouping compares values, so an indeterminate
 // collation is noted here (what names the clause).
-func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, what string) *Error {
+func (a *analyzer) orderOrGroupItem(n *pgparse.Node, sc *scope, cols []rteCol, what string) *Error {
 	if c := n.GetAConst(); c != nil {
-		if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+		if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
 			i := int(iv.Ival.Ival)
 			if i < 1 || i > len(cols) {
 				return errAt(codeInvalidColumnRef, loc(n), "%s position %d is not in select list", what, i)
@@ -243,7 +243,7 @@ func (a *analyzer) orderOrGroupItem(n *pg_query.Node, sc *scope, cols []rteCol, 
 	return a.checkComparable(e.typ, what, loc(n))
 }
 
-func (a *analyzer) boolClause(n *pg_query.Node, sc *scope, what string) *Error {
+func (a *analyzer) boolClause(n *pgparse.Node, sc *scope, what string) *Error {
 	if n == nil {
 		return nil
 	}
@@ -272,11 +272,11 @@ func (a *analyzer) boolClause(n *pg_query.Node, sc *scope, what string) *Error {
 	return nil
 }
 
-func isStar(cr *pg_query.ColumnRef) bool {
+func isStar(cr *pgparse.ColumnRef) bool {
 	return len(cr.Fields) > 0 && cr.Fields[len(cr.Fields)-1].GetAStar() != nil
 }
 
-func (a *analyzer) expandStar(cr *pg_query.ColumnRef, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) expandStar(cr *pgparse.ColumnRef, sc *scope) ([]rteCol, *Error) {
 	if len(cr.Fields) == 1 {
 		var out []rteCol
 		for _, it := range sc.items {
@@ -301,7 +301,7 @@ func (a *analyzer) expandStar(cr *pg_query.ColumnRef, sc *scope) ([]rteCol, *Err
 	return cols, nil
 }
 
-func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
+func (a *analyzer) withClause(w *pgparse.WithClause, sc *scope) *Error {
 	if w.Recursive && len(w.Ctes) > 1 {
 		// every item sees every other: a reference cycle through two or more items is
 		// mutual recursion (makeDependencyGraph / TopologicalSort)
@@ -334,7 +334,7 @@ func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
 	}
 	pending := w.Ctes
 	for len(pending) > 0 {
-		var deferred []*pg_query.Node
+		var deferred []*pgparse.Node
 		var firstErr *Error
 		progress := false
 		for _, cn := range pending {
@@ -363,7 +363,7 @@ func (a *analyzer) withClause(w *pg_query.WithClause, sc *scope) *Error {
 }
 
 // namesLaterCTE reports whether a "relation does not exist" error names one of w's CTEs.
-func (a *analyzer) namesLaterCTE(err *Error, w *pg_query.WithClause) bool {
+func (a *analyzer) namesLaterCTE(err *Error, w *pgparse.WithClause) bool {
 	for _, cn := range w.Ctes {
 		if strings.Contains(err.Message, "\""+cn.GetCommonTableExpr().Ctename+"\"") {
 			return true
@@ -373,7 +373,7 @@ func (a *analyzer) namesLaterCTE(err *Error, w *pg_query.WithClause) bool {
 }
 
 // defineCTE analyzes one WITH item and exposes it in sc.
-func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause, sc *scope) *Error {
+func (a *analyzer) defineCTE(c *pgparse.CommonTableExpr, w *pgparse.WithClause, sc *scope) *Error {
 	sel := c.Ctequery.GetSelectStmt()
 	if sel == nil {
 		// data-modifying CTE: its RETURNING rows are the CTE's columns
@@ -386,13 +386,13 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		a.inDMLCTE = true
 		defer func() { a.inDMLCTE = false }()
 		switch st := c.Ctequery.Node.(type) {
-		case *pg_query.Node_InsertStmt:
+		case *pgparse.Node_InsertStmt:
 			cols, err = a.insertStmt(st.InsertStmt, csc)
-		case *pg_query.Node_UpdateStmt:
+		case *pgparse.Node_UpdateStmt:
 			cols, err = a.updateStmt(st.UpdateStmt, csc)
-		case *pg_query.Node_DeleteStmt:
+		case *pgparse.Node_DeleteStmt:
 			cols, err = a.deleteStmt(st.DeleteStmt, csc)
-		case *pg_query.Node_MergeStmt:
+		case *pgparse.Node_MergeStmt:
 			cols, err = a.mergeStmt(st.MergeStmt, csc)
 		default:
 			return errAt(codeFeatureNotSupported, c.Location, "unsupported CTE query %T", c.Ctequery.Node)
@@ -411,7 +411,7 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		return nil
 	}
 	def := &cte{name: c.Ctename, recursive: w.Recursive}
-	if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+	if w.Recursive && sel.Op == pgparse.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
 		// the recursive union itself takes no ORDER BY / LIMIT / OFFSET / FOR UPDATE
 		switch {
 		case len(sel.SortClause) > 0:
@@ -423,14 +423,14 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 		case len(sel.LockingClause) > 0 || sel.Rarg != nil && len(sel.Rarg.LockingClause) > 0 || sel.Larg != nil && len(sel.Larg.LockingClause) > 0:
 			return errAt(codeFeatureNotSupported, c.Location, "FOR UPDATE/SHARE in a recursive query is not implemented")
 		}
-		if (c.SearchClause != nil || c.CycleClause != nil) && sel.Larg != nil && sel.Larg.Op != pg_query.SetOperation_SETOP_NONE {
+		if (c.SearchClause != nil || c.CycleClause != nil) && sel.Larg != nil && sel.Larg.Op != pgparse.SetOperation_SETOP_NONE {
 			return errAt(codeFeatureNotSupported, c.Location, "with a SEARCH or CYCLE clause, the left side of the UNION must be a SELECT")
 		}
 	}
-	if w.Recursive && sel.Op != pg_query.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+	if w.Recursive && sel.Op != pgparse.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
 		return errAt(codeInvalidRecursion, c.Location, "recursive query %q does not have the form non-recursive-term UNION [ALL] recursive-term", c.Ctename)
 	}
-	if w.Recursive && sel.Op == pg_query.SetOperation_SETOP_UNION {
+	if w.Recursive && sel.Op == pgparse.SetOperation_SETOP_UNION {
 		// the CTE may not be referenced from its non-recursive term, nor from a WITH nested
 		// in its body; expose it (forbidden) before either is analyzed
 		def.forbidden = true
@@ -456,7 +456,7 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 			return err
 		}
 		if c.SearchClause != nil || c.CycleClause != nil {
-			if sel.Rarg != nil && sel.Rarg.Op != pg_query.SetOperation_SETOP_NONE {
+			if sel.Rarg != nil && sel.Rarg.Op != pgparse.SetOperation_SETOP_NONE {
 				return errAt(codeSyntaxError, c.Location, "with a SEARCH or CYCLE clause, the right side of the UNION must be a SELECT")
 			}
 			if rw := (&recursionWalker{a: a, name: c.Ctename}); rw.mentions(selNode(sel.Rarg)) && !rw.topLevelRef(sel.Rarg) {
@@ -573,7 +573,7 @@ func (a *analyzer) defineCTE(c *pg_query.CommonTableExpr, w *pg_query.WithClause
 }
 
 // addSearchCycleCols appends the columns a SEARCH / CYCLE clause adds to a recursive CTE.
-func (a *analyzer) addSearchCycleCols(def *cte, c *pg_query.CommonTableExpr, sc *scope) {
+func (a *analyzer) addSearchCycleCols(def *cte, c *pgparse.CommonTableExpr, sc *scope) {
 	{
 		if sc2 := c.SearchClause; sc2 != nil {
 			// SEARCH DEPTH FIRST ... SET seq is a record[] path, BREADTH FIRST a record
@@ -599,7 +599,7 @@ func (a *analyzer) addSearchCycleCols(def *cte, c *pg_query.CommonTableExpr, sc 
 	}
 }
 
-func (a *analyzer) aliasCols(cols []rteCol, aliases []*pg_query.Node) []rteCol {
+func (a *analyzer) aliasCols(cols []rteCol, aliases []*pgparse.Node) []rteCol {
 	out := make([]rteCol, len(cols))
 	copy(out, cols)
 	for i, n := range aliases {
@@ -610,7 +610,7 @@ func (a *analyzer) aliasCols(cols []rteCol, aliases []*pg_query.Node) []rteCol {
 	return out
 }
 
-func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) setOp(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Error) {
 	// each arm keeps its unknown literals (select null, 42 union all select x, y): the
 	// common type of the pair types them, text only when every arm is unknown
 	a.keepUnknown = true
@@ -638,7 +638,7 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 			typmod = l.typ.Typmod
 		}
 		// an arm's untyped literal is read by the common type's input function
-		for j, arm := range []*pg_query.SelectStmt{sel.Larg, sel.Rarg} {
+		for j, arm := range []*pgparse.SelectStmt{sel.Larg, sel.Rarg} {
 			if [2]catalog.OID{l.typ.OID, r.typ.OID}[j] != catalog.Unknown || t == catalog.Unknown {
 				continue
 			}
@@ -659,7 +659,7 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 	for _, sn := range sel.SortClause {
 		n := sn.GetSortBy().GetNode()
 		if c := n.GetAConst(); c != nil {
-			if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+			if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
 				if i := int(iv.Ival.Ival); i < 1 || i > len(out) {
 					return nil, errAt(codeInvalidColumnRef, c.Location, "ORDER BY position %d is not in select list", i)
 				}
@@ -680,7 +680,7 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 		return nil, errAt(codeFeatureNotSupported, loc(n), "invalid %s ORDER BY clause", "UNION/INTERSECT/EXCEPT")
 	}
 	// LIMIT on the whole set operation
-	for _, lim := range []*pg_query.Node{sel.LimitCount, sel.LimitOffset} {
+	for _, lim := range []*pgparse.Node{sel.LimitCount, sel.LimitOffset} {
 		if lim == nil {
 			continue
 		}
@@ -699,8 +699,8 @@ func (a *analyzer) setOp(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *Error)
 
 // armLiteral is the string constant at position i of a plain SELECT arm's target list
 // (nil when the arm is anything else, or a * makes the position uncertain).
-func armLiteral(sel *pg_query.SelectStmt, i int) *pg_query.A_Const {
-	if sel == nil || sel.Op != pg_query.SetOperation_SETOP_NONE || len(sel.ValuesLists) > 0 || i >= len(sel.TargetList) {
+func armLiteral(sel *pgparse.SelectStmt, i int) *pgparse.A_Const {
+	if sel == nil || sel.Op != pgparse.SetOperation_SETOP_NONE || len(sel.ValuesLists) > 0 || i >= len(sel.TargetList) {
 		return nil
 	}
 	for _, tn := range sel.TargetList {
@@ -714,17 +714,17 @@ func armLiteral(sel *pg_query.SelectStmt, i int) *pg_query.A_Const {
 	return nil
 }
 
-func setOpName(op pg_query.SetOperation) string {
+func setOpName(op pgparse.SetOperation) string {
 	switch op {
-	case pg_query.SetOperation_SETOP_INTERSECT:
+	case pgparse.SetOperation_SETOP_INTERSECT:
 		return "INTERSECT"
-	case pg_query.SetOperation_SETOP_EXCEPT:
+	case pgparse.SetOperation_SETOP_EXCEPT:
 		return "EXCEPT"
 	}
 	return "UNION"
 }
 
-func (a *analyzer) values(lists []*pg_query.Node, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) values(lists []*pgparse.Node, sc *scope) ([]rteCol, *Error) {
 	var rows [][]*expr
 	for _, ln := range lists {
 		// transformExpressionList: t.* in a VALUES row expands to t's columns (none for a
@@ -773,9 +773,9 @@ func (a *analyzer) values(lists []*pg_query.Node, sc *scope) ([]rteCol, *Error) 
 }
 
 // fromItem builds the rte for one FROM entry.
-func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
+func (a *analyzer) fromItem(n *pgparse.Node, sc *scope) (*rte, *Error) {
 	switch v := n.Node.(type) {
-	case *pg_query.Node_RangeVar:
+	case *pgparse.Node_RangeVar:
 		rv := v.RangeVar
 		if rv.Schemaname == "" {
 			if c := sc.findCTE(rv.Relname); c != nil {
@@ -813,7 +813,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			return nil, errAt(codeObjectNotInPrerequisiteState, -1, "access to non-system view %q is restricted", rel.Name)
 		}
 		return a.relationRTE(rel, rv.Alias, rv.Location)
-	case *pg_query.Node_RangeSubselect:
+	case *pgparse.Node_RangeSubselect:
 		sub := v.RangeSubselect
 		if ss := sub.Subquery.GetSelectStmt(); ss != nil && ss.IntoClause != nil {
 			return nil, errAt(codeSyntaxError, ss.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
@@ -837,7 +837,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			return nil, err
 		}
 		if sub.Alias == nil {
-			sub.Alias = &pg_query.Alias{Aliasname: "unnamed_subquery"} // optional since PG 16
+			sub.Alias = &pgparse.Alias{Aliasname: "unnamed_subquery"} // optional since PG 16
 		}
 		r := &rte{alias: sub.Alias.Aliasname, sub: &subquery{what: "subquery", sel: sub.Subquery.GetSelectStmt(), sc: child}}
 		if len(sub.Alias.Colnames) > len(cols) {
@@ -851,11 +851,11 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			r.cols = append(r.cols, c)
 		}
 		return r, nil
-	case *pg_query.Node_RangeFunction:
+	case *pgparse.Node_RangeFunction:
 		return a.rangeFunction(v.RangeFunction, sc)
-	case *pg_query.Node_RangeTableFunc:
+	case *pgparse.Node_RangeTableFunc:
 		return a.xmlTable(v.RangeTableFunc, sc)
-	case *pg_query.Node_JoinExpr:
+	case *pgparse.Node_JoinExpr:
 		r, err := a.joinExpr(v.JoinExpr, sc)
 		if err != nil {
 			return nil, err
@@ -874,9 +874,9 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			r.join.colAliases = strs(al.Colnames)
 		}
 		return r, nil
-	case *pg_query.Node_JsonTable:
+	case *pgparse.Node_JsonTable:
 		return a.jsonTable(v.JsonTable, sc)
-	case *pg_query.Node_RangeTableSample:
+	case *pgparse.Node_RangeTableSample:
 		ts := v.RangeTableSample
 		r, err := a.fromItem(ts.Relation, sc)
 		if err != nil {
@@ -886,7 +886,7 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 			return nil, errAt(codeFeatureNotSupported, loc(ts.Relation), "TABLESAMPLE clause can only be applied to tables and materialized views")
 		}
 		// the built-in methods take a real (percentage / limit); REPEATABLE takes a double
-		for i, arg := range append(append([]*pg_query.Node{}, ts.Args...), ts.Repeatable) {
+		for i, arg := range append(append([]*pgparse.Node{}, ts.Args...), ts.Repeatable) {
 			if arg == nil {
 				continue
 			}
@@ -911,20 +911,20 @@ func (a *analyzer) fromItem(n *pg_query.Node, sc *scope) (*rte, *Error) {
 	return nil, errAt(codeFeatureNotSupported, -1, "unsupported FROM item %T", n.Node)
 }
 
-func qualName(rv *pg_query.RangeVar) string {
+func qualName(rv *pgparse.RangeVar) string {
 	if rv.Schemaname != "" {
 		return rv.Schemaname + "." + rv.Relname
 	}
 	return rv.Relname
 }
 
-func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *Error) {
+func (a *analyzer) rangeFunction(rf *pgparse.RangeFunction, sc *scope) (*rte, *Error) {
 	if len(rf.Functions) > 1 {
 		// ROWS FROM (f1(), f2() AS (...)): the functions run in lockstep, columns side by side
 		r := &rte{alias: "rows_from"}
 		for _, fn := range rf.Functions {
 			items := fn.GetList().GetItems()
-			one := &pg_query.RangeFunction{Functions: []*pg_query.Node{fn}, Ordinality: false}
+			one := &pgparse.RangeFunction{Functions: []*pgparse.Node{fn}, Ordinality: false}
 			if len(items) > 1 {
 				one.Coldeflist = items[1].GetList().GetItems() // per-function column definition list
 			}
@@ -957,10 +957,10 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 	if fc != nil && len(fc.Args) > 1 && len(rf.Coldeflist) == 0 && (len(items) == 1 || len(items[1].GetList().GetItems()) == 0) {
 		if names := strs(fc.Funcname); names[len(names)-1] == "unnest" && (len(names) == 1 || names[0] == "pg_catalog") {
 			// unnest(a, b, ...) in FROM is shorthand for ROWS FROM (unnest(a), unnest(b), ...)
-			multi := &pg_query.RangeFunction{Alias: rf.Alias, Ordinality: rf.Ordinality, Lateral: rf.Lateral}
+			multi := &pgparse.RangeFunction{Alias: rf.Alias, Ordinality: rf.Ordinality, Lateral: rf.Lateral}
 			for _, arg := range fc.Args {
-				one := &pg_query.FuncCall{Funcname: fc.Funcname, Args: []*pg_query.Node{arg}, Location: fc.Location}
-				multi.Functions = append(multi.Functions, &pg_query.Node{Node: &pg_query.Node_List{List: &pg_query.List{Items: []*pg_query.Node{{Node: &pg_query.Node_FuncCall{FuncCall: one}}}}}})
+				one := &pgparse.FuncCall{Funcname: fc.Funcname, Args: []*pgparse.Node{arg}, Location: fc.Location}
+				multi.Functions = append(multi.Functions, &pgparse.Node{Node: &pgparse.Node_List{List: &pgparse.List{Items: []*pgparse.Node{{Node: &pgparse.Node_FuncCall{FuncCall: one}}}}}})
 			}
 			return a.rangeFunction(multi, sc)
 		}
@@ -1069,7 +1069,7 @@ func (a *analyzer) rangeFunction(rf *pg_query.RangeFunction, sc *scope) (*rte, *
 }
 
 // applyColnames renames columns after an alias column list (AS t(a, b, c)).
-func applyColnames(cols []rteCol, alias *pg_query.Alias) {
+func applyColnames(cols []rteCol, alias *pgparse.Alias) {
 	if alias == nil {
 		return
 	}
@@ -1080,7 +1080,7 @@ func applyColnames(cols []rteCol, alias *pg_query.Alias) {
 	}
 }
 
-func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
+func (a *analyzer) joinExpr(j *pgparse.JoinExpr, sc *scope) (*rte, *Error) {
 	left, err := a.fromItem(j.Larg, sc)
 	if err != nil {
 		return nil, err
@@ -1090,7 +1090,7 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	inner := newScope(sc)
 	inner.passthrough = true
 	inner.items = []*rte{left}
-	lateralOK := j.Jointype == pg_query.JoinType_JOIN_INNER || j.Jointype == pg_query.JoinType_JOIN_LEFT
+	lateralOK := j.Jointype == pgparse.JoinType_JOIN_INNER || j.Jointype == pgparse.JoinType_JOIN_LEFT
 	setNoLateral(left, !lateralOK)
 	right, err := a.fromItem(j.Rarg, inner)
 	setNoLateral(left, false)
@@ -1102,11 +1102,11 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 	}
 	// outer-join nullability
 	switch j.Jointype {
-	case pg_query.JoinType_JOIN_LEFT:
+	case pgparse.JoinType_JOIN_LEFT:
 		markNullable(right)
-	case pg_query.JoinType_JOIN_RIGHT:
+	case pgparse.JoinType_JOIN_RIGHT:
 		markNullable(left)
-	case pg_query.JoinType_JOIN_FULL:
+	case pgparse.JoinType_JOIN_FULL:
 		markNullable(left)
 		markNullable(right)
 	}
@@ -1144,10 +1144,10 @@ func (a *analyzer) joinExpr(j *pg_query.JoinExpr, sc *scope) (*rte, *Error) {
 		}
 		merged := lc[0]
 		merged.nullable = lc[0].nullable && rc[0].nullable
-		if j.Jointype == pg_query.JoinType_JOIN_FULL {
+		if j.Jointype == pgparse.JoinType_JOIN_FULL {
 			merged.src = nil
 		}
-		if j.Jointype == pg_query.JoinType_JOIN_RIGHT {
+		if j.Jointype == pgparse.JoinType_JOIN_RIGHT {
 			merged = rc[0]
 		}
 		if a.baseType(lc[0].typ.OID) != a.baseType(rc[0].typ.OID) {
@@ -1201,7 +1201,7 @@ func markNullable(r *rte) {
 
 // --- DML -------------------------------------------------------------------
 
-func (a *analyzer) targetRTE(rv *pg_query.RangeVar, sc *scope) (*schema.Relation, *rte, *Error) {
+func (a *analyzer) targetRTE(rv *pgparse.RangeVar, sc *scope) (*schema.Relation, *rte, *Error) {
 	rel := a.s.Relation(rv.Schemaname, rv.Relname)
 	if rel == nil {
 		return nil, nil, errAt(codeUndefinedTable, rv.Location, "relation %q does not exist", qualName(rv))
@@ -1247,7 +1247,7 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 			return err
 		}
 		if c := e.node.GetAConst(); c != nil {
-			if sv, ok := c.Val.(*pg_query.A_Const_Sval); ok {
+			if sv, ok := c.Val.(*pgparse.A_Const_Sval); ok {
 				// PG applies the length coercion at execution, not at parse time, so this
 				// never fails Prepare; it fails every execution, which is a note.
 				if err := a.validateAssignLength(sv.Sval.GetSval(), col.Type, c.Location); err != nil {
@@ -1271,7 +1271,7 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 	return nil
 }
 
-func (a *analyzer) returning(list []*pg_query.Node, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) returning(list []*pgparse.Node, sc *scope) ([]rteCol, *Error) {
 	if len(list) == 0 {
 		return nil, nil
 	}
@@ -1280,14 +1280,14 @@ func (a *analyzer) returning(list []*pg_query.Node, sc *scope) ([]rteCol, *Error
 			return nil, errAt(codeWindowingError, w.Location, "window functions are not allowed in RETURNING")
 		}
 	}
-	sel := &pg_query.SelectStmt{TargetList: list}
+	sel := &pgparse.SelectStmt{TargetList: list}
 	a.srfBanNext = "RETURNING"
 	a.inReturning = true
 	defer func() { a.inReturning = false }()
 	return a.selectStmt(sel, sc)
 }
 
-func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) insertStmt(ins *pgparse.InsertStmt, sc *scope) ([]rteCol, *Error) {
 	if ins.WithClause != nil {
 		if err := a.withClause(ins.WithClause, sc); err != nil {
 			return nil, err
@@ -1365,7 +1365,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 		if sel.IntoClause != nil {
 			return nil, errAt(codeSyntaxError, sel.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
 		}
-		if len(sel.ValuesLists) > 0 && sel.Op == pg_query.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
+		if len(sel.ValuesLists) > 0 && sel.Op == pgparse.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
 			// VALUES: coerce each expression directly to its column (assignment context)
 			for _, ln := range sel.ValuesLists {
 				items := ln.GetList().GetItems()
@@ -1376,7 +1376,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 					return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
 				}
 				for i, it := range items {
-					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
+					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override == pgparse.OverridingKind_OVERRIDING_NOT_SET {
 						return nil, errAt(codeGeneratedAlways, loc(it), "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
 					}
 					if indirect[i] && it.GetSetToDefault() != nil {
@@ -1403,7 +1403,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 				return nil, errAt(codeSyntaxError, -1, "INSERT has more expressions than target columns")
 			}
 			for i := range src {
-				if cols[i].Identity == 'a' && ins.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
+				if cols[i].Identity == 'a' && ins.Override == pgparse.OverridingKind_OVERRIDING_NOT_SET {
 					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
 				}
 			}
@@ -1437,7 +1437,7 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 				return nil, err
 			}
 		}
-		if oc.Action == pg_query.OnConflictAction_ONCONFLICT_UPDATE {
+		if oc.Action == pgparse.OnConflictAction_ONCONFLICT_UPDATE {
 			if oc.Infer == nil {
 				return nil, errAt(codeSyntaxError, oc.Location, "ON CONFLICT DO UPDATE requires inference specification or constraint name")
 			}
@@ -1462,9 +1462,9 @@ func (a *analyzer) insertStmt(ins *pg_query.InsertStmt, sc *scope) ([]rteCol, *E
 	return a.returning(ins.ReturningList, inner)
 }
 
-func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc *scope) *Error {
+func (a *analyzer) setClause(targets []*pgparse.Node, rel *schema.Relation, sc *scope) *Error {
 	// SET (a, b) = (x, y) / (SELECT ...): one source, analyzed once, one value per column
-	sources := map[*pg_query.Node][]*expr{}
+	sources := map[*pgparse.Node][]*expr{}
 	assignedCols := map[string]bool{}
 	var plain []*schema.Column
 	for _, tn := range targets {
@@ -1525,7 +1525,7 @@ func (a *analyzer) setClause(targets []*pg_query.Node, rel *schema.Relation, sc 
 
 // multiAssignSource types the right-hand side of SET (a, b, ...) = source: a row of
 // expressions, or a subquery whose columns are taken as the values.
-func (a *analyzer) multiAssignSource(src *pg_query.Node, n int, sc *scope) ([]*expr, *Error) {
+func (a *analyzer) multiAssignSource(src *pgparse.Node, n int, sc *scope) ([]*expr, *Error) {
 	if row := src.GetRowExpr(); row != nil {
 		if len(row.Args) == 1 && row.Args[0].GetColumnRef() != nil && len(row.Args[0].GetColumnRef().Fields) > 0 &&
 			row.Args[0].GetColumnRef().Fields[len(row.Args[0].GetColumnRef().Fields)-1].GetAStar() != nil {
@@ -1569,7 +1569,7 @@ func (a *analyzer) multiAssignSource(src *pg_query.Node, n int, sc *scope) ([]*e
 	return nil, errAt(codeFeatureNotSupported, loc(src), "unsupported multi-column assignment source %T", src.Node)
 }
 
-func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) updateStmt(upd *pgparse.UpdateStmt, sc *scope) ([]rteCol, *Error) {
 	if upd.WithClause != nil {
 		if err := a.withClause(upd.WithClause, sc); err != nil {
 			return nil, err
@@ -1613,7 +1613,7 @@ func (a *analyzer) updateStmt(upd *pg_query.UpdateStmt, sc *scope) ([]rteCol, *E
 	return a.returning(upd.ReturningList, sc)
 }
 
-func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Error) {
 	if del.WithClause != nil {
 		if err := a.withClause(del.WithClause, sc); err != nil {
 			return nil, err
@@ -1651,14 +1651,14 @@ func (a *analyzer) deleteStmt(del *pg_query.DeleteStmt, sc *scope) ([]rteCol, *E
 }
 
 // figureColname implements PG's FigureColname for unaliased target entries.
-func (a *analyzer) figureColname(n *pg_query.Node) string {
+func (a *analyzer) figureColname(n *pgparse.Node) string {
 	if name := a.figureColnameInternal(n); name != "" {
 		return name
 	}
 	return "?column?"
 }
 
-func (a *analyzer) figureColnameInternal(n *pg_query.Node) string {
+func (a *analyzer) figureColnameInternal(n *pgparse.Node) string {
 	name, _ := a.figureColnameStrength(n)
 	return name
 }
@@ -1666,16 +1666,16 @@ func (a *analyzer) figureColnameInternal(n *pg_query.Node) string {
 // figureColnameStrength is FigureColnameInternal: the name and how strongly the node
 // claims it (2 a real name, 1 a fallback such as a cast's type name, 0 none). A cast
 // only names the column when what it casts has no strong name of its own.
-func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
+func (a *analyzer) figureColnameStrength(n *pgparse.Node) (string, int) {
 	switch v := n.Node.(type) {
-	case *pg_query.Node_ColumnRef:
+	case *pgparse.Node_ColumnRef:
 		f := v.ColumnRef.Fields
 		for i := len(f) - 1; i >= 0; i-- {
 			if s := f[i].GetString_(); s != nil {
 				return s.Sval, 2
 			}
 		}
-	case *pg_query.Node_AIndirection:
+	case *pgparse.Node_AIndirection:
 		ind := v.AIndirection.Indirection
 		for i := len(ind) - 1; i >= 0; i-- {
 			if s := ind[i].GetString_(); s != nil {
@@ -1686,10 +1686,10 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 			}
 		}
 		return a.figureColnameStrength(v.AIndirection.Arg)
-	case *pg_query.Node_FuncCall:
+	case *pgparse.Node_FuncCall:
 		names := strs(v.FuncCall.Funcname)
 		return names[len(names)-1], 2
-	case *pg_query.Node_TypeCast:
+	case *pgparse.Node_TypeCast:
 		inner, strength := a.figureColnameStrength(v.TypeCast.Arg)
 		if strength > 1 {
 			return inner, strength
@@ -1699,32 +1699,32 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 			return names[len(names)-1], 1
 		}
 		return inner, strength
-	case *pg_query.Node_CollateClause:
+	case *pgparse.Node_CollateClause:
 		return a.figureColnameStrength(v.CollateClause.Arg)
-	case *pg_query.Node_CaseExpr:
+	case *pgparse.Node_CaseExpr:
 		if v.CaseExpr.Defresult != nil {
 			if inner, strength := a.figureColnameStrength(v.CaseExpr.Defresult); strength > 0 {
 				return inner, strength
 			}
 		}
 		return "case", 1
-	case *pg_query.Node_AArrayExpr:
+	case *pgparse.Node_AArrayExpr:
 		return "array", 2
-	case *pg_query.Node_RowExpr:
+	case *pgparse.Node_RowExpr:
 		return "row", 2
-	case *pg_query.Node_AExpr:
-		if v.AExpr.Kind == pg_query.A_Expr_Kind_AEXPR_NULLIF {
+	case *pgparse.Node_AExpr:
+		if v.AExpr.Kind == pgparse.A_Expr_Kind_AEXPR_NULLIF {
 			return "nullif", 2
 		}
-	case *pg_query.Node_SubLink:
+	case *pgparse.Node_SubLink:
 		switch v.SubLink.SubLinkType {
-		case pg_query.SubLinkType_EXISTS_SUBLINK:
+		case pgparse.SubLinkType_EXISTS_SUBLINK:
 			return "exists", 2
-		case pg_query.SubLinkType_ARRAY_SUBLINK:
+		case pgparse.SubLinkType_ARRAY_SUBLINK:
 			return "array", 2
-		case pg_query.SubLinkType_EXPR_SUBLINK:
+		case pgparse.SubLinkType_EXPR_SUBLINK:
 			sel := v.SubLink.Subselect.GetSelectStmt()
-			for sel != nil && sel.Op != pg_query.SetOperation_SETOP_NONE {
+			for sel != nil && sel.Op != pgparse.SetOperation_SETOP_NONE {
 				sel = sel.Larg // a set operation is named by its left arm
 			}
 			if sel != nil && len(sel.ValuesLists) > 0 {
@@ -1738,64 +1738,64 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 				return a.figureColnameStrength(t.Val)
 			}
 		}
-	case *pg_query.Node_SqlvalueFunction:
+	case *pgparse.Node_SqlvalueFunction:
 		s := strings.ToLower(strings.TrimPrefix(v.SqlvalueFunction.Op.String(), "SVFOP_"))
 		return strings.TrimSuffix(s, "_n"), 2
-	case *pg_query.Node_GroupingFunc:
+	case *pgparse.Node_GroupingFunc:
 		return "grouping", 2
-	case *pg_query.Node_NamedArgExpr:
+	case *pgparse.Node_NamedArgExpr:
 		return a.figureColnameStrength(v.NamedArgExpr.Arg)
-	case *pg_query.Node_CoalesceExpr:
+	case *pgparse.Node_CoalesceExpr:
 		return "coalesce", 2
-	case *pg_query.Node_MinMaxExpr:
-		if v.MinMaxExpr.Op == pg_query.MinMaxOp_IS_LEAST {
+	case *pgparse.Node_MinMaxExpr:
+		if v.MinMaxExpr.Op == pgparse.MinMaxOp_IS_LEAST {
 			return "least", 2
 		}
 		return "greatest", 2
-	case *pg_query.Node_MergeSupportFunc:
+	case *pgparse.Node_MergeSupportFunc:
 		return "merge_action", 2
-	case *pg_query.Node_XmlExpr:
+	case *pgparse.Node_XmlExpr:
 		switch v.XmlExpr.Op {
-		case pg_query.XmlExprOp_IS_XMLCONCAT:
+		case pgparse.XmlExprOp_IS_XMLCONCAT:
 			return "xmlconcat", 2
-		case pg_query.XmlExprOp_IS_XMLELEMENT:
+		case pgparse.XmlExprOp_IS_XMLELEMENT:
 			return "xmlelement", 2
-		case pg_query.XmlExprOp_IS_XMLFOREST:
+		case pgparse.XmlExprOp_IS_XMLFOREST:
 			return "xmlforest", 2
-		case pg_query.XmlExprOp_IS_XMLPARSE:
+		case pgparse.XmlExprOp_IS_XMLPARSE:
 			return "xmlparse", 2
-		case pg_query.XmlExprOp_IS_XMLPI:
+		case pgparse.XmlExprOp_IS_XMLPI:
 			return "xmlpi", 2
-		case pg_query.XmlExprOp_IS_XMLROOT:
+		case pgparse.XmlExprOp_IS_XMLROOT:
 			return "xmlroot", 2
-		case pg_query.XmlExprOp_IS_XMLSERIALIZE:
+		case pgparse.XmlExprOp_IS_XMLSERIALIZE:
 			return "xmlserialize", 2
-		case pg_query.XmlExprOp_IS_DOCUMENT:
+		case pgparse.XmlExprOp_IS_DOCUMENT:
 			return "", 0 // ?column?
 		}
-	case *pg_query.Node_XmlSerialize:
+	case *pgparse.Node_XmlSerialize:
 		return "xmlserialize", 2
-	case *pg_query.Node_JsonParseExpr:
+	case *pgparse.Node_JsonParseExpr:
 		return "json", 2
-	case *pg_query.Node_JsonScalarExpr:
+	case *pgparse.Node_JsonScalarExpr:
 		return "json_scalar", 2
-	case *pg_query.Node_JsonSerializeExpr:
+	case *pgparse.Node_JsonSerializeExpr:
 		return "json_serialize", 2
-	case *pg_query.Node_JsonObjectConstructor:
+	case *pgparse.Node_JsonObjectConstructor:
 		return "json_object", 2
-	case *pg_query.Node_JsonArrayConstructor, *pg_query.Node_JsonArrayQueryConstructor:
+	case *pgparse.Node_JsonArrayConstructor, *pgparse.Node_JsonArrayQueryConstructor:
 		return "json_array", 2
-	case *pg_query.Node_JsonObjectAgg:
+	case *pgparse.Node_JsonObjectAgg:
 		return "json_objectagg", 2
-	case *pg_query.Node_JsonArrayAgg:
+	case *pgparse.Node_JsonArrayAgg:
 		return "json_arrayagg", 2
-	case *pg_query.Node_JsonFuncExpr:
+	case *pgparse.Node_JsonFuncExpr:
 		switch v.JsonFuncExpr.Op {
-		case pg_query.JsonExprOp_JSON_EXISTS_OP:
+		case pgparse.JsonExprOp_JSON_EXISTS_OP:
 			return "json_exists", 2
-		case pg_query.JsonExprOp_JSON_QUERY_OP:
+		case pgparse.JsonExprOp_JSON_QUERY_OP:
 			return "json_query", 2
-		case pg_query.JsonExprOp_JSON_VALUE_OP:
+		case pgparse.JsonExprOp_JSON_VALUE_OP:
 			return "json_value", 2
 		}
 	}
@@ -1804,7 +1804,7 @@ func (a *analyzer) figureColnameStrength(n *pg_query.Node) (string, int) {
 
 // noteEnumSort flags ORDER BY on an enum: it sorts by declaration order, which surprises
 // readers expecting the labels' alphabetical order (advisory).
-func (a *analyzer) noteEnumSort(n *pg_query.Node, sc *scope, cols []rteCol) {
+func (a *analyzer) noteEnumSort(n *pgparse.Node, sc *scope, cols []rteCol) {
 	var typ schema.TypeRef
 	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
 		name := cr.Fields[0].GetString_().GetSval()
@@ -1832,7 +1832,7 @@ func (a *analyzer) noteEnumSort(n *pg_query.Node, sc *scope, cols []rteCol) {
 
 // callStmt analyzes CALL procedure(args): the arguments bind like a function call and
 // the OUT / INOUT parameters come back as one result row.
-func (a *analyzer) callStmt(call *pg_query.CallStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) callStmt(call *pgparse.CallStmt, sc *scope) ([]rteCol, *Error) {
 	a.inCall = true
 	e, err := a.funcCall(call.Funccall, sc)
 	a.inCall = false
@@ -1857,7 +1857,7 @@ func (a *analyzer) callStmt(call *pg_query.CallStmt, sc *scope) ([]rteCol, *Erro
 // mergeStmt analyzes MERGE INTO target USING source ON cond WHEN ... (PG 15; RETURNING and
 // WHEN NOT MATCHED BY SOURCE are PG 17). A WHEN MATCHED / NOT MATCHED BY SOURCE action
 // sees both relations, a WHEN NOT MATCHED [BY TARGET] action sees the source only.
-func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) mergeStmt(m *pgparse.MergeStmt, sc *scope) ([]rteCol, *Error) {
 	if m.WithClause != nil {
 		if m.WithClause.Recursive {
 			return nil, errAt(codeSyntaxError, -1, "WITH RECURSIVE is not supported for MERGE statement")
@@ -1868,7 +1868,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	}
 	writes := false
 	for _, wn := range m.MergeWhenClauses {
-		if wn.GetMergeWhenClause().CommandType != pg_query.CmdType_CMD_NOTHING {
+		if wn.GetMergeWhenClause().CommandType != pgparse.CmdType_CMD_NOTHING {
 			writes = true
 		}
 	}
@@ -1880,7 +1880,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 			var actions []string
 			seen := map[string]bool{}
 			for _, wn := range m.MergeWhenClauses {
-				cmd := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert into", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete from"}[wn.GetMergeWhenClause().CommandType]
+				cmd := map[pgparse.CmdType]string{pgparse.CmdType_CMD_INSERT: "insert into", pgparse.CmdType_CMD_UPDATE: "update", pgparse.CmdType_CMD_DELETE: "delete from"}[wn.GetMergeWhenClause().CommandType]
 				if cmd != "" && !seen[cmd] {
 					seen[cmd] = true
 					actions = append(actions, cmd)
@@ -1917,7 +1917,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	}
 	a.inMerge = true
 	defer func() { a.inMerge = false }()
-	unconditional := map[pg_query.MergeMatchKind]bool{}
+	unconditional := map[pgparse.MergeMatchKind]bool{}
 	for _, wn := range m.MergeWhenClauses {
 		w := wn.GetMergeWhenClause()
 		if unconditional[w.MatchKind] {
@@ -1928,9 +1928,9 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 		}
 		wsc := both
 		switch w.MatchKind {
-		case pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET:
+		case pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET:
 			wsc = srcOnly
-		case pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_SOURCE:
+		case pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_SOURCE:
 			wsc = tgtOnly
 		}
 		a.mergeWhen = true
@@ -1939,27 +1939,27 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 		if err != nil {
 			return nil, err
 		}
-		if cmd := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert into", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete from"}[w.CommandType]; cmd != "" {
+		if cmd := map[pgparse.CmdType]string{pgparse.CmdType_CMD_INSERT: "insert into", pgparse.CmdType_CMD_UPDATE: "update", pgparse.CmdType_CMD_DELETE: "delete from"}[w.CommandType]; cmd != "" {
 			// each branch is a write of its own kind (facts: an obligation `on update` sees
 			// the UPDATE branch and not an INSERT-only MERGE)
 			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: target, cmd: cmd, inWith: a.inDMLCTE})
 		}
 		switch w.CommandType {
-		case pg_query.CmdType_CMD_UPDATE:
-			if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+		case pgparse.CmdType_CMD_UPDATE:
+			if w.MatchKind == pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
 				return nil, errAt(codeSyntaxError, -1, "UPDATE is not allowed in WHEN NOT MATCHED clause")
 			}
 			if err := a.setClause(w.TargetList, rel, wsc); err != nil {
 				return nil, err
 			}
 			a.mergeActions |= mergeUpdate
-		case pg_query.CmdType_CMD_DELETE:
-			if w.MatchKind == pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+		case pgparse.CmdType_CMD_DELETE:
+			if w.MatchKind == pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
 				return nil, errAt(codeSyntaxError, -1, "DELETE is not allowed in WHEN NOT MATCHED clause")
 			}
 			a.mergeActions |= mergeDelete
-		case pg_query.CmdType_CMD_INSERT:
-			if w.MatchKind != pg_query.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+		case pgparse.CmdType_CMD_INSERT:
+			if w.MatchKind != pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
 				return nil, errAt(codeSyntaxError, -1, "INSERT is not allowed in WHEN MATCHED clause")
 			}
 			var cols []*schema.Column
@@ -1991,7 +1991,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 				return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
 			}
 			for i, vn := range w.Values {
-				if cols[i].Identity == 'a' && vn.GetSetToDefault() == nil && w.Override == pg_query.OverridingKind_OVERRIDING_NOT_SET {
+				if cols[i].Identity == 'a' && vn.GetSetToDefault() == nil && w.Override == pgparse.OverridingKind_OVERRIDING_NOT_SET {
 					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
 				}
 				e, err := a.analyzeExpr(vn, srcOnly)
@@ -2003,7 +2003,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 				}
 			}
 			a.mergeActions |= mergeInsert
-		case pg_query.CmdType_CMD_NOTHING:
+		case pgparse.CmdType_CMD_NOTHING:
 		}
 	}
 	ret := newScope(sc)
@@ -2018,8 +2018,8 @@ const (
 )
 
 // expandCompositeStar expands (expr).* in a target list to the columns of expr's row type.
-func (a *analyzer) expandCompositeStar(ind *pg_query.A_Indirection, sc *scope) ([]rteCol, *Error) {
-	inner := &pg_query.A_Indirection{Arg: ind.Arg, Indirection: ind.Indirection[:len(ind.Indirection)-1]}
+func (a *analyzer) expandCompositeStar(ind *pgparse.A_Indirection, sc *scope) ([]rteCol, *Error) {
+	inner := &pgparse.A_Indirection{Arg: ind.Arg, Indirection: ind.Indirection[:len(ind.Indirection)-1]}
 	var e *expr
 	var err *Error
 	if len(inner.Indirection) == 0 {
@@ -2085,7 +2085,7 @@ func (a *analyzer) singleOutName() string {
 
 // aggregateIn returns an aggregate call directly in the expression (not inside a
 // subquery), or nil.
-func (a *analyzer) aggregateIn(n *pg_query.Node) *pg_query.FuncCall {
+func (a *analyzer) aggregateIn(n *pgparse.Node) *pgparse.FuncCall {
 	if n == nil || n.GetSubLink() != nil {
 		return nil
 	}
@@ -2102,13 +2102,13 @@ func (a *analyzer) aggregateIn(n *pg_query.Node) *pg_query.FuncCall {
 
 // xmlTable is XMLTABLE(... PASSING doc COLUMNS ...) in FROM: the declared columns (FOR
 // ORDINALITY is integer), or one xml column when none are declared.
-func (a *analyzer) xmlTable(x *pg_query.RangeTableFunc, sc *scope) (*rte, *Error) {
+func (a *analyzer) xmlTable(x *pgparse.RangeTableFunc, sc *scope) (*rte, *Error) {
 	inner := sc
 	if x.Lateral {
 		inner = newScope(sc)
 		inner.items = sc.items
 	}
-	for _, n := range append([]*pg_query.Node{x.Docexpr, x.Rowexpr}, x.Namespaces...) {
+	for _, n := range append([]*pgparse.Node{x.Docexpr, x.Rowexpr}, x.Namespaces...) {
 		if n == nil {
 			continue
 		}
@@ -2134,7 +2134,7 @@ func (a *analyzer) xmlTable(x *pg_query.RangeTableFunc, sc *scope) (*rte, *Error
 		if err != nil {
 			return nil, errAt(codeUndefinedObject, c.Location, "%v", err)
 		}
-		for _, n := range []*pg_query.Node{c.Colexpr, c.Coldefexpr} {
+		for _, n := range []*pgparse.Node{c.Colexpr, c.Coldefexpr} {
 			if n == nil {
 				continue
 			}
@@ -2166,12 +2166,12 @@ func (a *analyzer) xmlTable(x *pg_query.RangeTableFunc, sc *scope) (*rte, *Error
 // indirectTarget is the column an INSERT / UPDATE target with subscripts or field
 // selection (f2[1], f3.if1, f4[1].if2[2]) assigns: a copy of the column typed as that
 // element or field.
-func (a *analyzer) indirectTarget(col *schema.Column, ind []*pg_query.Node, at int32) (*schema.Column, *Error) {
+func (a *analyzer) indirectTarget(col *schema.Column, ind []*pgparse.Node, at int32) (*schema.Column, *Error) {
 	cur := a.baseType(col.Type.OID)
 	for i := 0; i < len(ind); i++ {
 		n := ind[i]
 		switch v := n.Node.(type) {
-		case *pg_query.Node_AIndices:
+		case *pgparse.Node_AIndices:
 			if cur == catalog.JSONB {
 				continue // jsonb subscripting assigns a jsonb value at the path
 			}
@@ -2190,7 +2190,7 @@ func (a *analyzer) indirectTarget(col *schema.Column, ind []*pg_query.Node, at i
 			if !slice {
 				cur = a.baseType(t.Elem)
 			}
-		case *pg_query.Node_String_:
+		case *pgparse.Node_String_:
 			t := a.typ(cur)
 			if t == nil || t.Kind != 'c' {
 				return nil, errAt(codeDatatypeMismatch, at, "column notation .%s applied to type %s, which is not a composite type", v.String_.Sval, a.s.Types.Format(ref(cur)))
@@ -2247,7 +2247,7 @@ func (a *analyzer) outParamCols() []rteCol {
 
 // windowIn returns a window function call directly in the expression (not inside a
 // subquery), or nil.
-func windowIn(n *pg_query.Node) *pg_query.FuncCall {
+func windowIn(n *pgparse.Node) *pgparse.FuncCall {
 	if n == nil || n.GetSubLink() != nil {
 		return nil
 	}
@@ -2265,7 +2265,7 @@ func windowIn(n *pg_query.Node) *pg_query.FuncCall {
 // outerLevelAggregate reports whether an aggregate in a subquery belongs to an enclosing
 // query: none of its column references resolve at this level (they are all outer
 // references), so it is that query's aggregate and allowed here.
-func (a *analyzer) outerLevelAggregate(f *pg_query.FuncCall, sc *scope) bool {
+func (a *analyzer) outerLevelAggregate(f *pgparse.FuncCall, sc *scope) bool {
 	if sc.parent == nil {
 		return false
 	}
@@ -2273,7 +2273,7 @@ func (a *analyzer) outerLevelAggregate(f *pg_query.FuncCall, sc *scope) bool {
 	sawRef := false
 	here := &scope{items: sc.items, ctes: sc.ctes}
 	for _, arg := range f.Args {
-		schema.WalkNodes(arg, func(n *pg_query.Node) {
+		schema.WalkNodes(arg, func(n *pgparse.Node) {
 			if cr := n.GetColumnRef(); cr != nil {
 				sawRef = true
 				if _, err := a.columnRef(cr, here); err == nil {
@@ -2304,7 +2304,7 @@ func (a *analyzer) checkDuplicateBase(cols []*schema.Column) *Error {
 
 // checkCycleTypes is the CYCLE clause's typing: the mark value and default share a type,
 // which must have an equality operator.
-func (a *analyzer) checkCycleTypes(cy *pg_query.CTECycleClause, sc *scope) *Error {
+func (a *analyzer) checkCycleTypes(cy *pgparse.CTECycleClause, sc *scope) *Error {
 	mark := ref(catalog.Bool)
 	if cy.CycleMarkValue != nil {
 		me, err := a.analyzeExpr(cy.CycleMarkValue, newScope(sc))
@@ -2333,7 +2333,7 @@ func (a *analyzer) checkCycleTypes(cy *pg_query.CTECycleClause, sc *scope) *Erro
 }
 
 // checkCTEColumnList is the WITH column list arity check.
-func (a *analyzer) checkCTEColumnList(c *pg_query.CommonTableExpr, cols []rteCol) *Error {
+func (a *analyzer) checkCTEColumnList(c *pgparse.CommonTableExpr, cols []rteCol) *Error {
 	if len(c.Aliascolnames) > len(cols) {
 		return errAt(codeInvalidColumnRef, c.Location, "WITH query %q has %d columns available but %d columns specified", c.Ctename, len(cols), len(c.Aliascolnames))
 	}
@@ -2341,28 +2341,28 @@ func (a *analyzer) checkCTEColumnList(c *pg_query.CommonTableExpr, cols []rteCol
 }
 
 // hasReturning is whether a data-modifying statement has a RETURNING list.
-func hasReturning(n *pg_query.Node) bool {
+func hasReturning(n *pgparse.Node) bool {
 	switch v := n.Node.(type) {
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		return len(v.InsertStmt.ReturningList) > 0
-	case *pg_query.Node_UpdateStmt:
+	case *pgparse.Node_UpdateStmt:
 		return len(v.UpdateStmt.ReturningList) > 0
-	case *pg_query.Node_DeleteStmt:
+	case *pgparse.Node_DeleteStmt:
 		return len(v.DeleteStmt.ReturningList) > 0
-	case *pg_query.Node_MergeStmt:
+	case *pgparse.Node_MergeStmt:
 		return len(v.MergeStmt.ReturningList) > 0
 	}
 	return true
 }
 
 // lockStrength spells a locking clause the way PG's messages do.
-func lockStrength(lc *pg_query.Node) string {
+func lockStrength(lc *pgparse.Node) string {
 	switch lc.GetLockingClause().GetStrength() {
-	case pg_query.LockClauseStrength_LCS_FORKEYSHARE:
+	case pgparse.LockClauseStrength_LCS_FORKEYSHARE:
 		return "FOR KEY SHARE"
-	case pg_query.LockClauseStrength_LCS_FORSHARE:
+	case pgparse.LockClauseStrength_LCS_FORSHARE:
 		return "FOR SHARE"
-	case pg_query.LockClauseStrength_LCS_FORNOKEYUPDATE:
+	case pgparse.LockClauseStrength_LCS_FORNOKEYUPDATE:
 		return "FOR NO KEY UPDATE"
 	}
 	return "FOR UPDATE"
@@ -2370,7 +2370,7 @@ func lockStrength(lc *pg_query.Node) string {
 
 // checkLocking applies the FOR UPDATE / SHARE restrictions of a plain SELECT
 // (CheckSelectLocking) and resolves the locked relation names against the FROM list.
-func (a *analyzer) checkLocking(sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *Error {
+func (a *analyzer) checkLocking(sel *pgparse.SelectStmt, sc *scope, cols []rteCol) *Error {
 	if len(sel.LockingClause) == 0 {
 		return nil
 	}
@@ -2438,7 +2438,7 @@ func joinHasAlias(r *rte, name string) bool {
 }
 
 // windowInTargets / srfIn: syntactic presence checks on a target list / expression.
-func windowInTargets(list []*pg_query.Node) bool {
+func windowInTargets(list []*pgparse.Node) bool {
 	for _, tn := range list {
 		if windowIn(tn.GetResTarget().GetVal()) != nil {
 			return true
@@ -2449,7 +2449,7 @@ func windowInTargets(list []*pg_query.Node) bool {
 
 // srfIn is whether the expression syntactically calls a set-returning function (a
 // catalog function by name; user functions by their declaration).
-func (a *analyzer) srfIn(n *pg_query.Node) bool {
+func (a *analyzer) srfIn(n *pgparse.Node) bool {
 	if n == nil {
 		return false
 	}
@@ -2477,10 +2477,10 @@ func (a *analyzer) srfIn(n *pg_query.Node) bool {
 
 // positionalMatch is whether two ORDER BY / DISTINCT ON items name the same output
 // column, one by position or alias and the other by expression.
-func positionalMatch(x, y *pg_query.Node, cols []rteCol) bool {
-	idx := func(n *pg_query.Node) int {
+func positionalMatch(x, y *pgparse.Node, cols []rteCol) bool {
+	idx := func(n *pgparse.Node) int {
 		if c := n.GetAConst(); c != nil {
-			if iv, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+			if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
 				return int(iv.Ival.Ival) - 1
 			}
 		}

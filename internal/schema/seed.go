@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // Seed is the fixed content of a table: the rows the schema text itself gives it with
@@ -33,7 +33,7 @@ type Seed struct {
 
 // CheckStatement type-checks a data statement of the schema text against the schema as
 // it stands (the analyzer installs it); nil leaves the INSERTs unchecked.
-var CheckStatement func(s *Schema, stmt *pg_query.Node) error
+var CheckStatement func(s *Schema, stmt *pgparse.Node) error
 
 // KeyText renders the key of a row for identity comparison.
 func (sd *Seed) KeyText(row []Expr) string {
@@ -72,7 +72,7 @@ func (sd *Seed) index(col string) int {
 }
 
 // insert records the rows of an INSERT ... VALUES in the target table's Seed.
-func (s *Schema) insert(st *pg_query.InsertStmt, node *pg_query.Node, loc int32) {
+func (s *Schema) insert(st *pgparse.InsertStmt, node *pgparse.Node, loc int32) {
 	rel := s.findRelation(s.rangeVar(st.Relation))
 	if rel == nil {
 		sch, name := s.rangeVar(st.Relation)
@@ -220,22 +220,22 @@ func seedKey(rel *Relation, given map[string]bool) []string {
 // parameter, a subquery), or calls a function that is not IMMUTABLE. Empty when it is.
 func (s *Schema) notConstant(e Expr) string {
 	why := ""
-	WalkNodes(e, func(n *pg_query.Node) {
+	WalkNodes(e, func(n *pgparse.Node) {
 		if why != "" {
 			return
 		}
 		switch x := n.Node.(type) {
-		case *pg_query.Node_ColumnRef:
+		case *pgparse.Node_ColumnRef:
 			why = "it references a column"
-		case *pg_query.Node_ParamRef:
+		case *pgparse.Node_ParamRef:
 			why = "it references a parameter"
-		case *pg_query.Node_SubLink:
+		case *pgparse.Node_SubLink:
 			why = "it contains a subquery"
-		case *pg_query.Node_SetToDefault:
+		case *pgparse.Node_SetToDefault:
 			why = "DEFAULT: leave the column out of the INSERT instead"
-		case *pg_query.Node_SqlvalueFunction:
+		case *pgparse.Node_SqlvalueFunction:
 			why = "it reads the session (current_date and friends)"
-		case *pg_query.Node_FuncCall:
+		case *pgparse.Node_FuncCall:
 			if v := s.volatility(strs(x.FuncCall.Funcname)); v != 'i' {
 				why = fmt.Sprintf("%s() is not IMMUTABLE", strs(x.FuncCall.Funcname)[len(x.FuncCall.Funcname)-1])
 			}

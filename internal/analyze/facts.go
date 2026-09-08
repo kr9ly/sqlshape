@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/facts"
@@ -36,7 +35,7 @@ type factScope struct {
 // newProver builds the equality closure for one level: the leaves of sc, the ON / USING
 // conjuncts of its joins and the conjuncts of where, with known values propagated along
 // the equalities (no single-row reasoning: that is fixpoint's, for the One proof).
-func (a *analyzer) newProver(sc *scope, where *pg_query.Node) *prover {
+func (a *analyzer) newProver(sc *scope, where *pgparse.Node) *prover {
 	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
 	for _, it := range sc.items {
 		p.addItem(it)
@@ -241,14 +240,14 @@ func clearPositions(fs *facts.Scope) {
 // a policy's session-setting call was not analyzed by this analyzer, so its volatility is
 // not on record, but pinning by a policy has always meant exactly that (vet's former
 // pinsColumn).
-func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (facts.ColRef, bool), policy bool) facts.Pred {
-	known := func(x *pg_query.Node) bool {
+func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts.ColRef, bool), policy bool) facts.Pred {
+	known := func(x *pgparse.Node) bool {
 		if policy {
 			return !readsColumn(x)
 		}
 		return p.isKnown(x)
 	}
-	term := func(x *pg_query.Node) facts.Term {
+	term := func(x *pgparse.Node) facts.Term {
 		if o, ok := p.outerRef(x); ok {
 			return facts.Term{Kind: facts.Outer, Col: o}
 		}
@@ -301,7 +300,7 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 		if k, ok := p.resolve(nt.Arg); ok {
 			if r, ok := ref(k); ok {
 				op := facts.IsNull
-				if nt.Nulltesttype == pg_query.NullTestType_IS_NOT_NULL {
+				if nt.Nulltesttype == pgparse.NullTestType_IS_NOT_NULL {
 					op = facts.IsNotNull
 				}
 				return facts.Pred{Op: op, Col: r}
@@ -309,9 +308,9 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 		}
 	}
 	// opaque: the text with this level's column references reduced to bare names
-	clone := proto.Clone(n).(*pg_query.Node)
+	clone := proto.Clone(n).(*pgparse.Node)
 	var cols []facts.ColRef
-	schema.WalkNodes(clone, func(m *pg_query.Node) {
+	schema.WalkNodes(clone, func(m *pgparse.Node) {
 		cr := m.GetColumnRef()
 		if cr == nil || len(cr.Fields) < 2 {
 			if cr != nil && len(cr.Fields) == 1 {
@@ -336,19 +335,19 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 
 // alternatives reads `x IN (a, b, ...)` (two or more items) and `x = a OR x = b OR ...`
 // (every arm an equality with the same left operand, by text) as x and its alternatives.
-func (a *analyzer) alternatives(n *pg_query.Node) (*pg_query.Node, []*pg_query.Node, bool) {
-	if x := n.GetAExpr(); x != nil && x.Kind == pg_query.A_Expr_Kind_AEXPR_IN && x.Lexpr != nil {
+func (a *analyzer) alternatives(n *pgparse.Node) (*pgparse.Node, []*pgparse.Node, bool) {
+	if x := n.GetAExpr(); x != nil && x.Kind == pgparse.A_Expr_Kind_AEXPR_IN && x.Lexpr != nil {
 		if items := x.Rexpr.GetList().GetItems(); len(items) >= 2 {
 			return x.Lexpr, items, true
 		}
 		return nil, nil, false
 	}
 	b := n.GetBoolExpr()
-	if b == nil || b.Boolop != pg_query.BoolExprType_OR_EXPR || len(b.Args) < 2 {
+	if b == nil || b.Boolop != pgparse.BoolExprType_OR_EXPR || len(b.Args) < 2 {
 		return nil, nil, false
 	}
-	var col *pg_query.Node
-	var alts []*pg_query.Node
+	var col *pgparse.Node
+	var alts []*pgparse.Node
 	for _, arm := range b.Args {
 		l, r := equalitySides(arm)
 		if l == nil {
@@ -373,15 +372,15 @@ func (a *analyzer) alternatives(n *pg_query.Node) (*pg_query.Node, []*pg_query.N
 // existsFacts turns an EXISTS (or a single-column `x IN (SELECT y ...)`) conjunct into an
 // Exists predicate carrying the subquery's own facts; the body was recorded when the
 // subquery was analyzed (factBySel). Anything else stays opaque.
-func (a *analyzer) existsFacts(p *prover, sub *pg_query.SubLink, ref func(colKey) (facts.ColRef, bool)) (facts.Pred, bool) {
+func (a *analyzer) existsFacts(p *prover, sub *pgparse.SubLink, ref func(colKey) (facts.ColRef, bool)) (facts.Pred, bool) {
 	sel := sub.Subselect.GetSelectStmt()
 	body := a.factBySel[sel]
 	if body == nil {
 		return facts.Pred{}, false
 	}
 	switch sub.SubLinkType {
-	case pg_query.SubLinkType_EXISTS_SUBLINK:
-	case pg_query.SubLinkType_ANY_SUBLINK:
+	case pgparse.SubLinkType_EXISTS_SUBLINK:
+	case pgparse.SubLinkType_ANY_SUBLINK:
 		// x IN (SELECT y FROM ...) / x = ANY (SELECT y ...): a witness row with y = x
 		if names := strs(sub.OperName); len(names) > 0 && names[len(names)-1] != "=" {
 			return facts.Pred{}, false
@@ -414,7 +413,7 @@ func (a *analyzer) existsFacts(p *prover, sub *pg_query.SubLink, ref func(colKey
 
 // outerRef places a column reference of an enclosing level: the leaf index it has in the
 // parent level's facts and its name. False for anything that is not such a reference.
-func (p *prover) outerRef(n *pg_query.Node) (facts.ColRef, bool) {
+func (p *prover) outerRef(n *pgparse.Node) (facts.ColRef, bool) {
 	cr := n.GetColumnRef()
 	if cr == nil || p.sc == nil || p.sc.parent == nil {
 		return facts.ColRef{}, false
@@ -440,7 +439,7 @@ func (p *prover) outerRef(n *pg_query.Node) (facts.ColRef, bool) {
 }
 
 // termFacts classifies the known side of an equality.
-func termFacts(n *pg_query.Node) facts.Term {
+func termFacts(n *pgparse.Node) facts.Term {
 	inner := n
 	for {
 		tc := inner.GetTypeCast()
@@ -450,18 +449,18 @@ func termFacts(n *pg_query.Node) facts.Term {
 		inner = tc.Arg
 	}
 	switch v := inner.Node.(type) {
-	case *pg_query.Node_ParamRef:
+	case *pgparse.Node_ParamRef:
 		return facts.Term{Kind: facts.Param, Param: v.ParamRef.Number}
-	case *pg_query.Node_AConst:
+	case *pgparse.Node_AConst:
 		return facts.Term{Kind: facts.Const, Const: constText(v.AConst)}
 	}
 	return facts.Term{Kind: facts.Known, Text: strings.TrimPrefix(deparse(n), "SELECT ")}
 }
 
 // readsColumn reports whether an expression references any column.
-func readsColumn(n *pg_query.Node) bool {
+func readsColumn(n *pgparse.Node) bool {
 	found := false
-	schema.WalkNodes(n, func(m *pg_query.Node) {
+	schema.WalkNodes(n, func(m *pgparse.Node) {
 		if m.GetColumnRef() != nil {
 			found = true
 		}
@@ -480,20 +479,20 @@ func sortRefs(rs []facts.ColRef) {
 
 // buildFacts assembles the statement's facts: the top level, the nested levels under
 // their nearest recorded ancestor, and the write set.
-func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
+func (a *analyzer) buildFacts(stmt *pgparse.Node, top *scope) *facts.Facts {
 	f := &facts.Facts{}
 	switch stmt.Node.(type) {
-	case *pg_query.Node_SelectStmt:
+	case *pgparse.Node_SelectStmt:
 		f.Kind = facts.Select
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		f.Kind = facts.Insert
-	case *pg_query.Node_UpdateStmt:
+	case *pgparse.Node_UpdateStmt:
 		f.Kind = facts.Update
-	case *pg_query.Node_DeleteStmt:
+	case *pgparse.Node_DeleteStmt:
 		f.Kind = facts.Delete
-	case *pg_query.Node_MergeStmt:
+	case *pgparse.Node_MergeStmt:
 		f.Kind = facts.Merge
-	case *pg_query.Node_TruncateStmt:
+	case *pgparse.Node_TruncateStmt:
 		f.Kind = facts.Delete
 	default:
 		return nil
@@ -507,7 +506,7 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 		// INSERT (and a MERGE whose ON did not record): the target alone at the top;
 		// TRUNCATE: every table named
 		f.Top = &facts.Scope{At: -1}
-		if _, trunc := stmt.Node.(*pg_query.Node_TruncateStmt); trunc {
+		if _, trunc := stmt.Node.(*pgparse.Node_TruncateStmt); trunc {
 			for _, w := range a.writeRecs {
 				f.Top.Leaves = append(f.Top.Leaves, a.leafFacts(w.r, nil))
 			}

@@ -5,10 +5,9 @@ go 1.26.1
 require (
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/pganalyze/pg_query_go/v6 v6.2.2
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/tools v0.49.0
-	google.golang.org/protobuf v1.31.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (

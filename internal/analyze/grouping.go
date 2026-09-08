@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -19,11 +18,11 @@ import (
 // CUBE the check runs against the union of every set's expressions, as PG does.
 
 // checkGrouping reports an ungrouped column in a grouped SELECT level.
-func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *Error {
+func (a *analyzer) checkGrouping(sel *pgparse.SelectStmt, sc *scope, cols []rteCol) *Error {
 	if len(sel.GroupClause) == 0 && !sc.agg && sel.HavingClause == nil {
 		return nil // HAVING alone makes the query grouped (one group)
 	}
-	var groups []*pg_query.Node
+	var groups []*pgparse.Node
 	for _, g := range groupingLeaves(sel.GroupClause) {
 		resolved := a.groupExpr(g, sel, sc, cols)
 		if w := windowIn(resolved); w != nil {
@@ -70,7 +69,7 @@ func (a *analyzer) checkGrouping(sel *pg_query.SelectStmt, sc *scope, cols []rte
 // coercedUsingColumn reports whether n is an unqualified reference to a JOIN USING column
 // whose merged type differs from the left input's column (the merged column is then a
 // coercion of the input, not the input itself; flatten_join_alias_vars keeps them apart).
-func (a *analyzer) coercedUsingColumn(n *pg_query.Node, sc *scope) bool {
+func (a *analyzer) coercedUsingColumn(n *pgparse.Node, sc *scope) bool {
 	cr := n.GetColumnRef()
 	if cr == nil || len(cr.Fields) != 1 || cr.Fields[0].GetString_() == nil {
 		return false
@@ -100,7 +99,7 @@ func (a *analyzer) coercedUsingColumn(n *pg_query.Node, sc *scope) bool {
 
 // groupExpr resolves a GROUP BY item to the expression it groups by: an ordinal or an
 // output alias (when no input column has that name) stands for a target expression.
-func (a *analyzer) groupExpr(n *pg_query.Node, sel *pg_query.SelectStmt, sc *scope, cols []rteCol) *pg_query.Node {
+func (a *analyzer) groupExpr(n *pgparse.Node, sel *pgparse.SelectStmt, sc *scope, cols []rteCol) *pgparse.Node {
 	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
 		name := cr.Fields[0].GetString_().GetSval()
 		a.probing = true
@@ -118,9 +117,9 @@ func (a *analyzer) groupExpr(n *pg_query.Node, sel *pg_query.SelectStmt, sc *sco
 
 // outputRef returns the target expression an ORDER BY / GROUP BY item names by ordinal
 // or output alias, nil otherwise.
-func (a *analyzer) outputRef(n *pg_query.Node, sel *pg_query.SelectStmt, cols []rteCol) *pg_query.Node {
+func (a *analyzer) outputRef(n *pgparse.Node, sel *pgparse.SelectStmt, cols []rteCol) *pgparse.Node {
 	if c := n.GetAConst(); c != nil {
-		if v, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+		if v, ok := c.Val.(*pgparse.A_Const_Ival); ok {
 			i := int(v.Ival.GetIval()) - 1
 			if i >= 0 && i < len(sel.TargetList) {
 				return sel.TargetList[i].GetResTarget().GetVal()
@@ -151,7 +150,7 @@ type grouping struct {
 }
 
 // check walks an expression and reports the first ungrouped column reference.
-func (g *grouping) check(n *pg_query.Node) *Error {
+func (g *grouping) check(n *pgparse.Node) *Error {
 	if n == nil {
 		return nil
 	}
@@ -159,9 +158,9 @@ func (g *grouping) check(n *pg_query.Node) *Error {
 		return nil
 	}
 	switch v := n.Node.(type) {
-	case *pg_query.Node_AConst, *pg_query.Node_ParamRef, *pg_query.Node_SubLink, *pg_query.Node_SetToDefault:
+	case *pgparse.Node_AConst, *pgparse.Node_ParamRef, *pgparse.Node_SubLink, *pgparse.Node_SetToDefault:
 		return nil
-	case *pg_query.Node_ColumnRef:
+	case *pgparse.Node_ColumnRef:
 		if len(v.ColumnRef.Fields) == 1 && g.usingKeys[v.ColumnRef.Fields[0].GetString_().GetSval()] {
 			return nil
 		}
@@ -173,7 +172,7 @@ func (g *grouping) check(n *pg_query.Node) *Error {
 			return nil
 		}
 		return errAt(codeGroupingError, v.ColumnRef.Location, "column %q must appear in the GROUP BY clause or be used in an aggregate function", strings.Join(strs(v.ColumnRef.Fields), "."))
-	case *pg_query.Node_FuncCall:
+	case *pgparse.Node_FuncCall:
 		if v.FuncCall.Over == nil && g.a.isAggregateName(strs(v.FuncCall.Funcname)) {
 			if v.FuncCall.AggWithinGroup {
 				// an ordered-set aggregate's direct arguments are evaluated once per group
@@ -238,8 +237,8 @@ func (a *analyzer) isAggregateName(names []string) bool {
 }
 
 // children lists the direct child nodes of an expression node.
-func children(n *pg_query.Node) []*pg_query.Node {
-	var out []*pg_query.Node
+func children(n *pgparse.Node) []*pgparse.Node {
+	var out []*pgparse.Node
 	inner := n.ProtoReflect()
 	inner.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
 		if fd.Kind() != protoreflect.MessageKind {
@@ -253,13 +252,13 @@ func children(n *pg_query.Node) []*pg_query.Node {
 			if fd2.IsList() {
 				l := v2.List()
 				for i := 0; i < l.Len(); i++ {
-					if c, ok := l.Get(i).Message().Interface().(*pg_query.Node); ok {
+					if c, ok := l.Get(i).Message().Interface().(*pgparse.Node); ok {
 						out = append(out, c)
 					}
 				}
 				return true
 			}
-			if c, ok := v2.Message().Interface().(*pg_query.Node); ok {
+			if c, ok := v2.Message().Interface().(*pgparse.Node); ok {
 				out = append(out, c)
 			}
 			return true
@@ -270,9 +269,9 @@ func children(n *pg_query.Node) []*pg_query.Node {
 }
 
 // deparse renders an expression to SQL text for structural comparison.
-func deparse(n *pg_query.Node) string {
-	res := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: &pg_query.SelectStmt{
-		TargetList: []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: n}}}},
+func deparse(n *pgparse.Node) string {
+	res := &pgparse.ParseResult{Stmts: []*pgparse.RawStmt{{Stmt: &pgparse.Node{Node: &pgparse.Node_SelectStmt{SelectStmt: &pgparse.SelectStmt{
+		TargetList: []*pgparse.Node{{Node: &pgparse.Node_ResTarget{ResTarget: &pgparse.ResTarget{Val: n}}}},
 	}}}}}}
 	s, err := pgparse.Deparse(res)
 	if err != nil {
@@ -282,8 +281,8 @@ func deparse(n *pg_query.Node) string {
 }
 
 // groupingLeaves flattens GROUPING SETS / ROLLUP / CUBE into the expressions they group by.
-func groupingLeaves(items []*pg_query.Node) []*pg_query.Node {
-	var out []*pg_query.Node
+func groupingLeaves(items []*pgparse.Node) []*pgparse.Node {
+	var out []*pgparse.Node
 	for _, n := range items {
 		if gs := n.GetGroupingSet(); gs != nil {
 			out = append(out, groupingLeaves(gs.Content)...)
@@ -293,7 +292,7 @@ func groupingLeaves(items []*pg_query.Node) []*pg_query.Node {
 			out = append(out, groupingLeaves(l.Items)...)
 			continue
 		}
-		if re := n.GetRowExpr(); re != nil && re.RowFormat == pg_query.CoercionForm_COERCE_IMPLICIT_CAST {
+		if re := n.GetRowExpr(); re != nil && re.RowFormat == pgparse.CoercionForm_COERCE_IMPLICIT_CAST {
 			out = append(out, groupingLeaves(re.Args)...)
 			continue
 		}
@@ -303,7 +302,7 @@ func groupingLeaves(items []*pg_query.Node) []*pg_query.Node {
 }
 
 // hasGroupingSets reports whether GROUP BY uses GROUPING SETS / ROLLUP / CUBE.
-func hasGroupingSets(items []*pg_query.Node) bool {
+func hasGroupingSets(items []*pgparse.Node) bool {
 	for _, n := range items {
 		if n.GetGroupingSet() != nil {
 			return true
@@ -314,15 +313,15 @@ func hasGroupingSets(items []*pg_query.Node) bool {
 
 // key renders an expression for grouping comparison with every column reference
 // resolved, so GROUP BY t.a % 2 covers a % 2 and the other way round.
-func (g *grouping) key(n *pg_query.Node) string {
-	cp := proto.Clone(n).(*pg_query.Node)
+func (g *grouping) key(n *pgparse.Node) string {
+	cp := proto.Clone(n).(*pgparse.Node)
 	var walk func(m protoreflect.Message)
 	walk = func(m protoreflect.Message) {
-		if cr, ok := m.Interface().(*pg_query.ColumnRef); ok {
-			if k, ok := g.p.resolve(&pg_query.Node{Node: &pg_query.Node_ColumnRef{ColumnRef: cr}}); ok {
-				cr.Fields = []*pg_query.Node{
-					{Node: &pg_query.Node_String_{String_: &pg_query.String{Sval: fmt.Sprintf("rte%p", k.r)}}},
-					{Node: &pg_query.Node_String_{String_: &pg_query.String{Sval: fmt.Sprintf("c%d", k.i)}}},
+		if cr, ok := m.Interface().(*pgparse.ColumnRef); ok {
+			if k, ok := g.p.resolve(&pgparse.Node{Node: &pgparse.Node_ColumnRef{ColumnRef: cr}}); ok {
+				cr.Fields = []*pgparse.Node{
+					{Node: &pgparse.Node_String_{String_: &pgparse.String{Sval: fmt.Sprintf("rte%p", k.r)}}},
+					{Node: &pgparse.Node_String_{String_: &pgparse.String{Sval: fmt.Sprintf("c%d", k.i)}}},
 				}
 			}
 			return

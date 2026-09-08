@@ -3,9 +3,8 @@ package analyze
 import (
 	"fmt"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -18,7 +17,7 @@ import (
 // write; anything else is PG's 55000.
 
 // writeTarget is targetRTE for a statement that writes rv.
-func (a *analyzer) writeTarget(rv *pg_query.RangeVar, sc *scope, cmd string) (*schema.Relation, *rte, *Error) {
+func (a *analyzer) writeTarget(rv *pgparse.RangeVar, sc *scope, cmd string) (*schema.Relation, *rte, *Error) {
 	rel, r, err := a.targetRTE(rv, sc)
 	if err != nil {
 		return nil, nil, err
@@ -210,8 +209,8 @@ func (a *analyzer) hasInsteadOfTrigger(rel *schema.Relation, cmd string) bool {
 
 // autoUpdatableBase returns the one base relation of an automatically updatable view
 // query, nil when the query is not auto-updatable.
-func autoUpdatableBase(a *analyzer, sel *pg_query.SelectStmt) *pg_query.RangeVar {
-	if sel == nil || sel.Op != pg_query.SetOperation_SETOP_NONE || sel.WithClause != nil ||
+func autoUpdatableBase(a *analyzer, sel *pgparse.SelectStmt) *pgparse.RangeVar {
+	if sel == nil || sel.Op != pgparse.SetOperation_SETOP_NONE || sel.WithClause != nil ||
 		len(sel.DistinctClause) > 0 || len(sel.GroupClause) > 0 || sel.HavingClause != nil ||
 		len(sel.WindowClause) > 0 || sel.LimitCount != nil || sel.LimitOffset != nil ||
 		len(sel.ValuesLists) > 0 || len(sel.FromClause) != 1 {
@@ -231,7 +230,7 @@ func autoUpdatableBase(a *analyzer, sel *pg_query.SelectStmt) *pg_query.RangeVar
 
 // hasAggOrSRF reports whether an expression contains an aggregate, a window function
 // or a set-returning function call.
-func (a *analyzer) hasAggOrSRF(n *pg_query.Node) bool {
+func (a *analyzer) hasAggOrSRF(n *pgparse.Node) bool {
 	if n == nil {
 		return false
 	}

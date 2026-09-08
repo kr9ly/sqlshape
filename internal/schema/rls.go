@@ -3,7 +3,7 @@ package schema
 import (
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // Row-level security. A table's policies are part of its definition: the loader keeps
@@ -38,7 +38,7 @@ func (r *Relation) Policy(name string) *Policy {
 	return nil
 }
 
-func (s *Schema) createPolicy(st *pg_query.CreatePolicyStmt, loc int32) {
+func (s *Schema) createPolicy(st *pgparse.CreatePolicyStmt, loc int32) {
 	rel := s.findRelation(s.rangeVar(st.Table))
 	if rel == nil {
 		sch, name := s.rangeVar(st.Table)
@@ -59,7 +59,7 @@ func (s *Schema) createPolicy(st *pg_query.CreatePolicyStmt, loc int32) {
 	}
 	for _, r := range st.Roles {
 		if rs := r.GetRoleSpec(); rs != nil {
-			if rs.Roletype == pg_query.RoleSpecType_ROLESPEC_PUBLIC {
+			if rs.Roletype == pgparse.RoleSpecType_ROLESPEC_PUBLIC {
 				p.Roles = nil
 				break
 			}
@@ -69,7 +69,7 @@ func (s *Schema) createPolicy(st *pg_query.CreatePolicyStmt, loc int32) {
 	rel.Policies = append(rel.Policies, p)
 }
 
-func (s *Schema) alterPolicy(st *pg_query.AlterPolicyStmt, loc int32) {
+func (s *Schema) alterPolicy(st *pgparse.AlterPolicyStmt, loc int32) {
 	rel := s.findRelation(s.rangeVar(st.Table))
 	var p *Policy
 	if rel != nil {
@@ -88,7 +88,7 @@ func (s *Schema) alterPolicy(st *pg_query.AlterPolicyStmt, loc int32) {
 	if len(st.Roles) > 0 {
 		p.Roles = nil
 		for _, r := range st.Roles {
-			if rs := r.GetRoleSpec(); rs != nil && rs.Roletype != pg_query.RoleSpecType_ROLESPEC_PUBLIC {
+			if rs := r.GetRoleSpec(); rs != nil && rs.Roletype != pgparse.RoleSpecType_ROLESPEC_PUBLIC {
 				p.Roles = append(p.Roles, rs.Rolename)
 			}
 		}
@@ -121,7 +121,7 @@ func (s *Schema) dropPolicy(items []string, missingOk bool, loc int32) {
 }
 
 // renamePolicy handles ALTER POLICY ... ON table RENAME TO.
-func (s *Schema) renamePolicy(st *pg_query.RenameStmt, loc int32) {
+func (s *Schema) renamePolicy(st *pgparse.RenameStmt, loc int32) {
 	rel := s.findRelation(s.rangeVar(st.Relation))
 	if rel == nil || rel.Policy(st.Subname) == nil {
 		s.problem(loc, "ALTER POLICY %s RENAME: no such policy", st.Subname)

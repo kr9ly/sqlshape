@@ -4,10 +4,9 @@ import (
 	"sort"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/diff"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -182,8 +181,8 @@ func labels(joined string) []string {
 	return strings.Split(joined, ", ")
 }
 
-func ruleNode(rd schema.RuleDef) *pg_query.Node {
-	return &pg_query.Node{Node: &pg_query.Node_RuleStmt{RuleStmt: rd.Stmt}}
+func ruleNode(rd schema.RuleDef) *pgparse.Node {
+	return &pgparse.Node{Node: &pgparse.Node_RuleStmt{RuleStmt: rd.Stmt}}
 }
 
 // ownerRelation / ownerColumn split a sequence's OwnedBy ("schema.table.column").

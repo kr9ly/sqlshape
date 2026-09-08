@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/pgparse"
@@ -69,8 +67,8 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 	for i, st := range stmts {
 		if rs := st.GetReturnStmt(); rs != nil {
 			// BEGIN ATOMIC ... RETURN expr: analyze as SELECT expr
-			st = &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: &pg_query.SelectStmt{
-				TargetList: []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: rs.Returnval}}}},
+			st = &pgparse.Node{Node: &pgparse.Node_SelectStmt{SelectStmt: &pgparse.SelectStmt{
+				TargetList: []*pgparse.Node{{Node: &pgparse.Node_ResTarget{ResTarget: &pgparse.ResTarget{Val: rs.Returnval}}}},
 			}}}
 		}
 		r, err := analyzeStmt(s, st, fp, nil)
@@ -129,7 +127,7 @@ func checkReturnShape(s *schema.Schema, fn *schema.Function, cols []Column) *Err
 }
 
 // functionBody parses a SQL function's statements (nil for other languages).
-func functionBody(fn *schema.Function) ([]*pg_query.Node, error) {
+func functionBody(fn *schema.Function) ([]*pgparse.Node, error) {
 	switch {
 	case fn.SQLBody != nil:
 		return flattenLists(fn.SQLBody), nil
@@ -138,7 +136,7 @@ func functionBody(fn *schema.Function) ([]*pg_query.Node, error) {
 		if err != nil {
 			return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 		}
-		var stmts []*pg_query.Node
+		var stmts []*pgparse.Node
 		for _, raw := range tree.Stmts {
 			stmts = append(stmts, raw.Stmt)
 		}
@@ -160,7 +158,7 @@ func functionParams(fn *schema.Function) []funcParam {
 // calledFunc is a user function a statement calls, with the call's argument expressions.
 type calledFunc struct {
 	fn   *schema.Function
-	args []*pg_query.Node
+	args []*pgparse.Node
 }
 
 // functionViolations lists what a call to fn may violate: the SQLSTATEs it declares with
@@ -217,9 +215,9 @@ func functionViolations(s *schema.Schema, cf calledFunc, visited map[*schema.Fun
 			v.Param = 0
 			if positional && pos <= len(cf.args) {
 				switch arg := cf.args[pos-1].Node.(type) {
-				case *pg_query.Node_ParamRef:
+				case *pgparse.Node_ParamRef:
 					v.Param = arg.ParamRef.Number
-				case *pg_query.Node_AConst:
+				case *pgparse.Node_AConst:
 					if !arg.AConst.Isnull {
 						continue
 					}
@@ -241,12 +239,12 @@ func relByRowType(s *schema.Schema, oid catalog.OID) *schema.Relation {
 }
 
 // flattenLists unwraps the nested List nodes of a BEGIN ATOMIC body into statements.
-func flattenLists(n *pg_query.Node) []*pg_query.Node {
+func flattenLists(n *pgparse.Node) []*pgparse.Node {
 	l := n.GetList()
 	if l == nil {
-		return []*pg_query.Node{n}
+		return []*pgparse.Node{n}
 	}
-	var out []*pg_query.Node
+	var out []*pgparse.Node
 	for _, it := range l.Items {
 		out = append(out, flattenLists(it)...)
 	}

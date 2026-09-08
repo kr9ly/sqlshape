@@ -14,7 +14,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -23,7 +22,7 @@ import (
 )
 
 // Expr is an unanalyzed expression from the DDL (kept as libpg_query AST).
-type Expr = *pg_query.Node
+type Expr = *pgparse.Node
 
 // Schema is the loaded user schema.
 type Schema struct {
@@ -67,9 +66,9 @@ type Schema struct {
 	// depends on rel, transitively, in declaration order (DependentViews).
 	NotNullHook func(s *Schema, rel *Relation)
 
-	prepared      map[string]*pg_query.Node // PREPARE name AS query, for CREATE TABLE AS EXECUTE
-	xmlDocument   bool                      // SET xmloption = document
-	restrictViews bool                      // SET restrict_nonsystem_relation_kind includes view
+	prepared      map[string]*pgparse.Node // PREPARE name AS query, for CREATE TABLE AS EXECUTE
+	xmlDocument   bool                     // SET xmloption = document
+	restrictViews bool                     // SET restrict_nonsystem_relation_kind includes view
 }
 
 // Problem is a DDL statement (or part) that was skipped or rejected.
@@ -211,7 +210,7 @@ type Relation struct {
 	RuleNames map[string]string
 	// rules are the relation's rules by name; rulesOff the disabled ones. The Rule* maps
 	// are derived from them (rebuildRules).
-	rules    map[string]*pg_query.RuleStmt
+	rules    map[string]*pgparse.RuleStmt
 	rulesOff map[string]bool
 	// RuleEvents: the write commands ("insert" / "update" / "delete") that have any rule
 	// on the relation (MERGE refuses an action kind that has one).
@@ -511,7 +510,7 @@ func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook
 }
 
 // applyAll applies every statement of a parsed schema text in order.
-func (s *Schema) applyAll(tree *pg_query.ParseResult, schemaSQL string) {
+func (s *Schema) applyAll(tree *pgparse.ParseResult, schemaSQL string) {
 	prev := int32(0)
 	for _, raw := range tree.Stmts {
 		// `-- sqlshape: ...` comment lines in front of a statement annotate it (a statement's
@@ -652,51 +651,51 @@ func (s *Schema) problem(loc int32, format string, args ...any) {
 	s.Problems = append(s.Problems, Problem{Location: loc, Message: fmt.Sprintf(format, args...)})
 }
 
-func (s *Schema) apply(n *pg_query.Node, loc int32) {
+func (s *Schema) apply(n *pgparse.Node, loc int32) {
 	nFuncs, nTrigs, nTypes := len(s.Functions), len(s.Triggers), len(s.Types.user)
 	defer func() {
 		// remember the text that created what this statement added
 		switch n.Node.(type) {
-		case *pg_query.Node_CreateFunctionStmt:
+		case *pgparse.Node_CreateFunctionStmt:
 			if len(s.Functions) > nFuncs {
 				s.Functions[len(s.Functions)-1].Definition = s.stmtText
 			}
-		case *pg_query.Node_CreateTrigStmt:
+		case *pgparse.Node_CreateTrigStmt:
 			if len(s.Triggers) > nTrigs {
 				s.Triggers[len(s.Triggers)-1].Definition = s.stmtText
 			}
-		case *pg_query.Node_CreateEnumStmt, *pg_query.Node_CreateDomainStmt, *pg_query.Node_CompositeTypeStmt, *pg_query.Node_CreateRangeStmt:
+		case *pgparse.Node_CreateEnumStmt, *pgparse.Node_CreateDomainStmt, *pgparse.Node_CompositeTypeStmt, *pgparse.Node_CreateRangeStmt:
 			if len(s.Types.user) > nTypes {
 				s.TypeDefs[s.Types.user[nTypes].OID] = s.stmtText
 			}
 		}
 	}()
 	switch st := n.Node.(type) {
-	case *pg_query.Node_CreateEnumStmt:
+	case *pgparse.Node_CreateEnumStmt:
 		s.createEnum(st.CreateEnumStmt, loc)
-	case *pg_query.Node_CreateDomainStmt:
+	case *pgparse.Node_CreateDomainStmt:
 		s.createDomain(st.CreateDomainStmt, loc)
-	case *pg_query.Node_CompositeTypeStmt:
+	case *pgparse.Node_CompositeTypeStmt:
 		s.createComposite(st.CompositeTypeStmt, loc)
-	case *pg_query.Node_CreateStmt:
+	case *pgparse.Node_CreateStmt:
 		s.createTable(st.CreateStmt, loc)
-	case *pg_query.Node_CreateForeignTableStmt:
+	case *pgparse.Node_CreateForeignTableStmt:
 		s.createTable(st.CreateForeignTableStmt.BaseStmt, loc) // typed like a table; the server is not ours
-	case *pg_query.Node_PrepareStmt:
+	case *pgparse.Node_PrepareStmt:
 		if s.prepared == nil {
-			s.prepared = map[string]*pg_query.Node{}
+			s.prepared = map[string]*pgparse.Node{}
 		}
 		s.prepared[st.PrepareStmt.Name] = st.PrepareStmt.Query
-	case *pg_query.Node_DeallocateStmt:
+	case *pgparse.Node_DeallocateStmt:
 		if st.DeallocateStmt.Isall {
 			s.prepared = nil
 		} else {
 			delete(s.prepared, st.DeallocateStmt.Name)
 		}
-	case *pg_query.Node_TransactionStmt:
+	case *pgparse.Node_TransactionStmt:
 		switch st.TransactionStmt.Kind {
-		case pg_query.TransactionStmtKind_TRANS_STMT_COMMIT, pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK,
-			pg_query.TransactionStmtKind_TRANS_STMT_PREPARE:
+		case pgparse.TransactionStmtKind_TRANS_STMT_COMMIT, pgparse.TransactionStmtKind_TRANS_STMT_ROLLBACK,
+			pgparse.TransactionStmtKind_TRANS_STMT_PREPARE:
 			// ON COMMIT DROP tables go at transaction end (a rolled-back CREATE never was)
 			for _, r := range append([]*Relation{}, s.Relations...) {
 				if r.OnCommitDrop {
@@ -704,24 +703,24 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 				}
 			}
 		}
-	case *pg_query.Node_ViewStmt:
+	case *pgparse.Node_ViewStmt:
 		s.createView(st.ViewStmt, loc)
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		s.insert(st.InsertStmt, n, loc)
-	case *pg_query.Node_CreatePolicyStmt:
+	case *pgparse.Node_CreatePolicyStmt:
 		s.createPolicy(st.CreatePolicyStmt, loc)
-	case *pg_query.Node_AlterPolicyStmt:
+	case *pgparse.Node_AlterPolicyStmt:
 		s.alterPolicy(st.AlterPolicyStmt, loc)
-	case *pg_query.Node_SelectStmt:
+	case *pgparse.Node_SelectStmt:
 		if st.SelectStmt.IntoClause != nil {
 			s.createTableAs(st.SelectStmt.IntoClause, n, loc)
 		} else {
 			s.problem(loc, "unsupported statement %T", n.Node)
 		}
-	case *pg_query.Node_CreateTableAsStmt:
-		if st.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_MATVIEW {
+	case *pgparse.Node_CreateTableAsStmt:
+		if st.CreateTableAsStmt.Objtype == pgparse.ObjectType_OBJECT_MATVIEW {
 			s.createMatView(st.CreateTableAsStmt, loc)
-		} else if st.CreateTableAsStmt.Objtype == pg_query.ObjectType_OBJECT_TABLE {
+		} else if st.CreateTableAsStmt.Objtype == pgparse.ObjectType_OBJECT_TABLE {
 			query := st.CreateTableAsStmt.Query
 			if ex := query.GetExecuteStmt(); ex != nil {
 				// CREATE TABLE ... AS EXECUTE name: the prepared statement's query
@@ -741,35 +740,35 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 		} else {
 			s.problem(loc, "CREATE TABLE AS is not supported in schema.sql")
 		}
-	case *pg_query.Node_AlterTableStmt:
+	case *pgparse.Node_AlterTableStmt:
 		s.alterTable(st.AlterTableStmt, loc)
-	case *pg_query.Node_IndexStmt:
+	case *pgparse.Node_IndexStmt:
 		s.createIndex(st.IndexStmt, loc)
-	case *pg_query.Node_AlterObjectSchemaStmt:
+	case *pgparse.Node_AlterObjectSchemaStmt:
 		s.alterObjectSchema(st.AlterObjectSchemaStmt, loc)
-	case *pg_query.Node_CreateFunctionStmt:
+	case *pgparse.Node_CreateFunctionStmt:
 		s.createFunction(st.CreateFunctionStmt, loc)
-	case *pg_query.Node_CommentStmt:
+	case *pgparse.Node_CommentStmt:
 		s.comment(st.CommentStmt, loc)
-	case *pg_query.Node_CreateTrigStmt:
+	case *pgparse.Node_CreateTrigStmt:
 		s.createTrigger(st.CreateTrigStmt, loc)
-	case *pg_query.Node_RenameStmt:
+	case *pgparse.Node_RenameStmt:
 		s.rename(st.RenameStmt, loc)
-	case *pg_query.Node_DropStmt:
+	case *pgparse.Node_DropStmt:
 		s.drop(st.DropStmt, loc)
-	case *pg_query.Node_AlterEnumStmt:
+	case *pgparse.Node_AlterEnumStmt:
 		s.alterEnum(st.AlterEnumStmt, loc)
-	case *pg_query.Node_AlterDomainStmt:
+	case *pgparse.Node_AlterDomainStmt:
 		s.alterDomain(st.AlterDomainStmt, loc)
-	case *pg_query.Node_CreateRangeStmt:
+	case *pgparse.Node_CreateRangeStmt:
 		s.createRange(st.CreateRangeStmt, loc)
-	case *pg_query.Node_DefineStmt:
+	case *pgparse.Node_DefineStmt:
 		s.define(st.DefineStmt, loc)
-	case *pg_query.Node_CreateCastStmt:
+	case *pgparse.Node_CreateCastStmt:
 		s.createCast(st.CreateCastStmt, loc)
-	case *pg_query.Node_VariableSetStmt:
+	case *pgparse.Node_VariableSetStmt:
 		s.setVariable(st.VariableSetStmt)
-	case *pg_query.Node_CreateSchemaStmt:
+	case *pgparse.Node_CreateSchemaStmt:
 		if s.schemas == nil {
 			s.schemas = map[string]bool{}
 		}
@@ -782,29 +781,29 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 			s.apply(elt, loc)
 		}
 		s.searchPath, s.Types.searchPath = saved, savedT
-	case *pg_query.Node_RuleStmt:
+	case *pgparse.Node_RuleStmt:
 		// a DO INSTEAD rule on a view for INSERT / UPDATE / DELETE makes the view take that write
 		r := st.RuleStmt
 		if rel := s.findRelation(s.rangeVar(r.Relation)); rel != nil {
 			if rel.rules == nil {
-				rel.rules = map[string]*pg_query.RuleStmt{}
+				rel.rules = map[string]*pgparse.RuleStmt{}
 			}
 			rel.rules[r.Rulename] = r // CREATE OR REPLACE RULE: the name's rule is this one now
 			rel.rebuildRules()
 		}
-	case *pg_query.Node_CreateSeqStmt:
+	case *pgparse.Node_CreateSeqStmt:
 		s.createSequence(st.CreateSeqStmt.Sequence, loc)
-	case *pg_query.Node_AlterSeqStmt:
+	case *pgparse.Node_AlterSeqStmt:
 		s.alterSequence(st.AlterSeqStmt, loc)
-	case *pg_query.Node_CreateExtensionStmt,
-		*pg_query.Node_GrantStmt, *pg_query.Node_AlterOwnerStmt,
-		*pg_query.Node_CreateOpClassStmt, *pg_query.Node_CreateOpFamilyStmt, *pg_query.Node_AlterOpFamilyStmt,
-		*pg_query.Node_CreateStatsStmt, *pg_query.Node_AlterExtensionStmt,
-		*pg_query.Node_CreateEventTrigStmt, *pg_query.Node_AlterEventTrigStmt, *pg_query.Node_CreatePublicationStmt, *pg_query.Node_AlterPublicationStmt,
-		*pg_query.Node_CreateSubscriptionStmt, *pg_query.Node_CreateRoleStmt, *pg_query.Node_AlterRoleStmt, *pg_query.Node_GrantRoleStmt,
-		*pg_query.Node_CreateTableSpaceStmt, *pg_query.Node_SecLabelStmt, *pg_query.Node_ClusterStmt, *pg_query.Node_VacuumStmt,
-		*pg_query.Node_DoStmt, *pg_query.Node_AlterDefaultPrivilegesStmt, *pg_query.Node_CreateFdwStmt,
-		*pg_query.Node_CreateForeignServerStmt, *pg_query.Node_CreateUserMappingStmt, *pg_query.Node_AlterFunctionStmt, *pg_query.Node_AlterCollationStmt:
+	case *pgparse.Node_CreateExtensionStmt,
+		*pgparse.Node_GrantStmt, *pgparse.Node_AlterOwnerStmt,
+		*pgparse.Node_CreateOpClassStmt, *pgparse.Node_CreateOpFamilyStmt, *pgparse.Node_AlterOpFamilyStmt,
+		*pgparse.Node_CreateStatsStmt, *pgparse.Node_AlterExtensionStmt,
+		*pgparse.Node_CreateEventTrigStmt, *pgparse.Node_AlterEventTrigStmt, *pgparse.Node_CreatePublicationStmt, *pgparse.Node_AlterPublicationStmt,
+		*pgparse.Node_CreateSubscriptionStmt, *pgparse.Node_CreateRoleStmt, *pgparse.Node_AlterRoleStmt, *pgparse.Node_GrantRoleStmt,
+		*pgparse.Node_CreateTableSpaceStmt, *pgparse.Node_SecLabelStmt, *pgparse.Node_ClusterStmt, *pgparse.Node_VacuumStmt,
+		*pgparse.Node_DoStmt, *pgparse.Node_AlterDefaultPrivilegesStmt, *pgparse.Node_CreateFdwStmt,
+		*pgparse.Node_CreateForeignServerStmt, *pgparse.Node_CreateUserMappingStmt, *pgparse.Node_AlterFunctionStmt, *pgparse.Node_AlterCollationStmt:
 		// No effect on typing (CREATE EXTENSION was resolved up front in LoadWith).
 	default:
 		s.problem(loc, "unsupported statement %T", n.Node)
@@ -813,7 +812,7 @@ func (s *Schema) apply(n *pg_query.Node, loc int32) {
 
 // --- names -----------------------------------------------------------------
 
-func strs(nodes []*pg_query.Node) []string {
+func strs(nodes []*pgparse.Node) []string {
 	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, n.GetString_().GetSval())
@@ -831,7 +830,7 @@ func qualified(names []string) (schema, name string) {
 	return "", strings.Join(names, ".")
 }
 
-func (s *Schema) rangeVar(rv *pg_query.RangeVar) (schema, name string) {
+func (s *Schema) rangeVar(rv *pgparse.RangeVar) (schema, name string) {
 	schema = rv.GetSchemaname()
 	if schema == "" {
 		schema = s.creationSchema()
@@ -842,7 +841,7 @@ func (s *Schema) rangeVar(rv *pg_query.RangeVar) (schema, name string) {
 // lookupRangeVar is rangeVar for an existing relation: an unqualified name is searched
 // the way the search path does (pg_catalog first, then the path), so a user table moved
 // into pg_catalog is still found; nothing found falls back to the creation schema.
-func (s *Schema) lookupRangeVar(rv *pg_query.RangeVar) (schema, name string) {
+func (s *Schema) lookupRangeVar(rv *pgparse.RangeVar) (schema, name string) {
 	if rv.GetSchemaname() != "" {
 		return rv.GetSchemaname(), rv.GetRelname()
 	}
@@ -856,7 +855,7 @@ func (s *Schema) lookupRangeVar(rv *pg_query.RangeVar) (schema, name string) {
 }
 
 // resolveType turns a TypeName AST into a TypeRef (handles serial pseudo-types and arrays).
-func (s *Schema) resolveType(tn *pg_query.TypeName) (TypeRef, error) {
+func (s *Schema) resolveType(tn *pgparse.TypeName) (TypeRef, error) {
 	if tn == nil {
 		return TypeRef{}, fmt.Errorf("missing type")
 	}
@@ -915,7 +914,7 @@ func (s *Schema) resolveType(tn *pg_query.TypeName) (TypeRef, error) {
 	return TypeRef{OID: oid, Typmod: typmod}, nil
 }
 
-func isSerial(tn *pg_query.TypeName) bool {
+func isSerial(tn *pgparse.TypeName) bool {
 	_, name := qualified(strs(tn.GetNames()))
 	switch name {
 	case "serial", "serial4", "bigserial", "serial8", "smallserial", "serial2":
@@ -926,7 +925,7 @@ func isSerial(tn *pg_query.TypeName) bool {
 
 // --- types -----------------------------------------------------------------
 
-func (s *Schema) createEnum(st *pg_query.CreateEnumStmt, loc int32) {
+func (s *Schema) createEnum(st *pgparse.CreateEnumStmt, loc int32) {
 	schema, name := qualified(strs(st.TypeName))
 	if schema == "" {
 		schema = s.creationSchema()
@@ -935,7 +934,7 @@ func (s *Schema) createEnum(st *pg_query.CreateEnumStmt, loc int32) {
 	s.Types.Enums[t.OID] = strs(st.Vals)
 }
 
-func (s *Schema) createDomain(st *pg_query.CreateDomainStmt, loc int32) {
+func (s *Schema) createDomain(st *pgparse.CreateDomainStmt, loc int32) {
 	schema, name := qualified(strs(st.Domainname))
 	if schema == "" {
 		schema = s.creationSchema()
@@ -951,9 +950,9 @@ func (s *Schema) createDomain(st *pg_query.CreateDomainStmt, loc int32) {
 	for _, cn := range st.Constraints {
 		c := cn.GetConstraint()
 		switch c.GetContype() {
-		case pg_query.ConstrType_CONSTR_NOTNULL:
+		case pgparse.ConstrType_CONSTR_NOTNULL:
 			d.NotNull = true
-		case pg_query.ConstrType_CONSTR_CHECK:
+		case pgparse.ConstrType_CONSTR_CHECK:
 			cn := c.Conname
 			if cn == "" {
 				cn = uniqueName(name+"_check", func(n string) bool {
@@ -966,7 +965,7 @@ func (s *Schema) createDomain(st *pg_query.CreateDomainStmt, loc int32) {
 				})
 			}
 			d.Checks = append(d.Checks, &Constraint{Name: cn, Kind: Check, Expr: c.RawExpr})
-		case pg_query.ConstrType_CONSTR_DEFAULT, pg_query.ConstrType_CONSTR_NULL:
+		case pgparse.ConstrType_CONSTR_DEFAULT, pgparse.ConstrType_CONSTR_NULL:
 		default:
 			s.problem(c.GetLocation(), "domain %s: unsupported constraint %v", name, c.GetContype())
 		}
@@ -974,7 +973,7 @@ func (s *Schema) createDomain(st *pg_query.CreateDomainStmt, loc int32) {
 	s.Types.Domains[t.OID] = d
 }
 
-func (s *Schema) createComposite(st *pg_query.CompositeTypeStmt, loc int32) {
+func (s *Schema) createComposite(st *pgparse.CompositeTypeStmt, loc int32) {
 	schema, name := s.rangeVar(st.Typevar)
 	rel := &Relation{OID: s.nextOID, Schema: schema, Name: name, Kind: 'c', Definition: s.stmtText}
 	s.nextOID++
@@ -1005,7 +1004,7 @@ func (s *Schema) newRelation(schema, name string, kind RelKind) *Relation {
 	return rel
 }
 
-func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
+func (s *Schema) createTable(st *pgparse.CreateStmt, loc int32) {
 	schema, name := s.rangeVar(st.Relation)
 	if s.relByName[schema+"."+name] != nil {
 		if st.IfNotExists {
@@ -1020,7 +1019,7 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 	}
 	rel := s.newRelation(schema, name, Table)
 	rel.Temp = st.Relation.Relpersistence == "t"
-	rel.OnCommitDrop = st.Oncommit == pg_query.OnCommitAction_ONCOMMIT_DROP
+	rel.OnCommitDrop = st.Oncommit == pgparse.OnCommitAction_ONCOMMIT_DROP
 	// CREATE TABLE ... OF type: the composite type's attributes are the columns
 	if st.OfTypename != nil {
 		tr, err := s.resolveType(st.OfTypename)
@@ -1074,11 +1073,11 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 	}
 	for _, elt := range st.TableElts {
 		switch e := elt.Node.(type) {
-		case *pg_query.Node_ColumnDef:
+		case *pgparse.Node_ColumnDef:
 			s.addColumn(rel, e.ColumnDef)
-		case *pg_query.Node_Constraint:
+		case *pgparse.Node_Constraint:
 			s.addTableConstraint(rel, e.Constraint)
-		case *pg_query.Node_TableLikeClause:
+		case *pgparse.Node_TableLikeClause:
 			s.likeClause(rel, e.TableLikeClause, loc)
 		default:
 			s.problem(loc, "table %s: unsupported element %T", name, elt.Node)
@@ -1107,7 +1106,7 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 // funcNamesIn lists the (unqualified) names of the functions an expression calls.
 func funcNamesIn(e Expr) []string {
 	var out []string
-	WalkNodes(e, func(n *pg_query.Node) {
+	WalkNodes(e, func(n *pgparse.Node) {
 		if fc := n.GetFuncCall(); fc != nil && len(fc.Funcname) > 0 {
 			names := strs(fc.Funcname)
 			out = append(out, names[len(names)-1])
@@ -1119,11 +1118,11 @@ func funcNamesIn(e Expr) []string {
 // partitionSpecProblem is the part of DefineRelation / transformPartitionSpec that needs
 // no expression analysis: PARTITION BY does not combine with INHERITS, LIST takes one
 // key column, and a named key column must be a real (non-system) column of the table.
-func (s *Schema) partitionSpecProblem(rel *Relation, st *pg_query.CreateStmt, ps *pg_query.PartitionSpec) string {
+func (s *Schema) partitionSpecProblem(rel *Relation, st *pgparse.CreateStmt, ps *pgparse.PartitionSpec) string {
 	if len(st.InhRelations) > 0 && st.Partbound == nil {
 		return "cannot create partitioned table as inheritance child"
 	}
-	if ps.Strategy == pg_query.PartitionStrategy_PARTITION_STRATEGY_LIST && len(ps.PartParams) > 1 {
+	if ps.Strategy == pgparse.PartitionStrategy_PARTITION_STRATEGY_LIST && len(ps.PartParams) > 1 {
 		return "cannot use \"list\" partition strategy with more than one column"
 	}
 	for _, pn := range ps.PartParams {
@@ -1150,7 +1149,7 @@ func (s *Schema) partitionSpecProblem(rel *Relation, st *pg_query.CreateStmt, ps
 	return ""
 }
 
-func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
+func (s *Schema) addColumn(rel *Relation, cd *pgparse.ColumnDef) {
 	tr, err := s.resolveType(cd.TypeName)
 	if err != nil {
 		s.problem(cd.GetLocation(), "%s.%s: %v", rel.Name, cd.Colname, err)
@@ -1183,38 +1182,38 @@ func (s *Schema) addColumn(rel *Relation, cd *pg_query.ColumnDef) {
 	for _, cn := range cd.Constraints {
 		c := cn.GetConstraint()
 		switch c.GetContype() {
-		case pg_query.ConstrType_CONSTR_NOTNULL:
+		case pgparse.ConstrType_CONSTR_NOTNULL:
 			col.NotNull = true
-		case pg_query.ConstrType_CONSTR_NULL:
+		case pgparse.ConstrType_CONSTR_NULL:
 			col.NotNull = false
-		case pg_query.ConstrType_CONSTR_DEFAULT:
+		case pgparse.ConstrType_CONSTR_DEFAULT:
 			col.Default = c.RawExpr
-		case pg_query.ConstrType_CONSTR_IDENTITY:
+		case pgparse.ConstrType_CONSTR_IDENTITY:
 			col.NotNull = true
 			col.Identity = c.GeneratedWhen[0]
 			s.createOwnedSequence(rel, cd.Colname, cd.GetLocation())
-		case pg_query.ConstrType_CONSTR_GENERATED:
+		case pgparse.ConstrType_CONSTR_GENERATED:
 			col.Generated = c.RawExpr
-		case pg_query.ConstrType_CONSTR_PRIMARY:
+		case pgparse.ConstrType_CONSTR_PRIMARY:
 			col.NotNull = true
 			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: []string{col.Name}, Deferrable: c.Deferrable})
-		case pg_query.ConstrType_CONSTR_UNIQUE:
+		case pgparse.ConstrType_CONSTR_UNIQUE:
 			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: []string{col.Name}, NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable})
-		case pg_query.ConstrType_CONSTR_CHECK:
+		case pgparse.ConstrType_CONSTR_CHECK:
 			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Columns: []string{col.Name}, Expr: c.RawExpr})
-		case pg_query.ConstrType_CONSTR_FOREIGN:
+		case pgparse.ConstrType_CONSTR_FOREIGN:
 			fk := s.foreignKey(c)
 			fk.Columns = []string{col.Name}
 			s.addConstraint(rel, fk)
-		case pg_query.ConstrType_CONSTR_ATTR_DEFERRABLE, pg_query.ConstrType_CONSTR_ATTR_NOT_DEFERRABLE,
-			pg_query.ConstrType_CONSTR_ATTR_DEFERRED, pg_query.ConstrType_CONSTR_ATTR_IMMEDIATE:
+		case pgparse.ConstrType_CONSTR_ATTR_DEFERRABLE, pgparse.ConstrType_CONSTR_ATTR_NOT_DEFERRABLE,
+			pgparse.ConstrType_CONSTR_ATTR_DEFERRED, pgparse.ConstrType_CONSTR_ATTR_IMMEDIATE:
 		default:
 			s.problem(c.GetLocation(), "%s.%s: unsupported constraint %v", rel.Name, col.Name, c.GetContype())
 		}
 	}
 }
 
-func (s *Schema) foreignKey(c *pg_query.Constraint) *Constraint {
+func (s *Schema) foreignKey(c *pgparse.Constraint) *Constraint {
 	rs, rn := s.rangeVar(c.Pktable)
 	fk := &Constraint{Name: c.Conname, Kind: ForeignKey, RefColumns: strs(c.PkAttrs), Deferrable: c.Deferrable, OnDelete: 'a', OnUpdate: 'a'}
 	if c.FkDelAction != "" {
@@ -1238,9 +1237,9 @@ func (s *Schema) notifyNotNullChange(rel *Relation) {
 	}
 }
 
-func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
+func (s *Schema) addTableConstraint(rel *Relation, c *pgparse.Constraint) {
 	switch c.GetContype() {
-	case pg_query.ConstrType_CONSTR_PRIMARY:
+	case pgparse.ConstrType_CONSTR_PRIMARY:
 		cols := strs(c.Keys)
 		for _, n := range cols {
 			if col := rel.Column(n); col != nil {
@@ -1255,15 +1254,15 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 		// table's own inline/table-level constraints at CREATE TABLE time, since no view
 		// can depend on it yet.
 		s.notifyNotNullChange(rel)
-	case pg_query.ConstrType_CONSTR_UNIQUE:
+	case pgparse.ConstrType_CONSTR_UNIQUE:
 		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable})
-	case pg_query.ConstrType_CONSTR_CHECK:
+	case pgparse.ConstrType_CONSTR_CHECK:
 		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Expr: c.RawExpr})
-	case pg_query.ConstrType_CONSTR_FOREIGN:
+	case pgparse.ConstrType_CONSTR_FOREIGN:
 		fk := s.foreignKey(c)
 		fk.Columns = strs(c.FkAttrs)
 		s.addConstraint(rel, fk)
-	case pg_query.ConstrType_CONSTR_EXCLUSION:
+	case pgparse.ConstrType_CONSTR_EXCLUSION:
 		ex := &Constraint{Name: c.Conname, Kind: Exclude, AccessMethod: c.AccessMethod, Predicate: c.WhereClause, Deferrable: c.Deferrable}
 		for _, item := range c.Exclusions {
 			parts := item.GetList().GetItems()
@@ -1284,7 +1283,7 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pg_query.Constraint) {
 	}
 }
 
-func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
+func (s *Schema) createView(st *pgparse.ViewStmt, loc int32) {
 	schema, name := s.rangeVar(st.View)
 	var rel *Relation
 	if existing := s.relByName[schema+"."+name]; existing != nil {
@@ -1318,9 +1317,9 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 	}
 	rel.ColumnAliases = strs(st.Aliases)
 	switch st.WithCheckOption {
-	case pg_query.ViewCheckOption_LOCAL_CHECK_OPTION:
+	case pgparse.ViewCheckOption_LOCAL_CHECK_OPTION:
 		rel.CheckOption = 'l'
-	case pg_query.ViewCheckOption_CASCADED_CHECK_OPTION:
+	case pgparse.ViewCheckOption_CASCADED_CHECK_OPTION:
 		rel.CheckOption = 'c'
 	default:
 		rel.CheckOption = 0
@@ -1374,7 +1373,7 @@ func (s *Schema) viewDirectives(rel *Relation, loc int32) {
 	}
 }
 
-func (s *Schema) createMatView(st *pg_query.CreateTableAsStmt, loc int32) {
+func (s *Schema) createMatView(st *pgparse.CreateTableAsStmt, loc int32) {
 	schema, name := s.rangeVar(st.Into.Rel)
 	rel := s.newRelation(schema, name, MatView)
 	rel.Query = st.Query
@@ -1385,7 +1384,7 @@ func (s *Schema) createMatView(st *pg_query.CreateTableAsStmt, loc int32) {
 	}
 }
 
-func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
+func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
 	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
@@ -1396,7 +1395,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 	}
 	shaping := false
 	for _, cn := range st.Cmds {
-		if cmd := cn.GetAlterTableCmd(); cmd.GetSubtype() != pg_query.AlterTableType_AT_AddConstraint {
+		if cmd := cn.GetAlterTableCmd(); cmd.GetSubtype() != pgparse.AlterTableType_AT_AddConstraint {
 			shaping = true
 		}
 	}
@@ -1406,7 +1405,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 	for _, cn := range st.Cmds {
 		cmd := cn.GetAlterTableCmd()
 		switch cmd.GetSubtype() {
-		case pg_query.AlterTableType_AT_AddColumn:
+		case pgparse.AlterTableType_AT_AddColumn:
 			s.addColumn(rel, cmd.Def.GetColumnDef())
 			// children (INHERITS / partitions) gain the column too
 			for _, child := range s.Relations {
@@ -1414,23 +1413,23 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					s.addColumn(child, cmd.Def.GetColumnDef())
 				}
 			}
-		case pg_query.AlterTableType_AT_AddConstraint:
+		case pgparse.AlterTableType_AT_AddConstraint:
 			n := len(rel.Constraints)
 			s.addTableConstraint(rel, cmd.Def.GetConstraint())
 			if len(rel.Constraints) > n && len(st.Cmds) == 1 {
 				rel.Constraints[len(rel.Constraints)-1].Definition = s.stmtText
 			}
-		case pg_query.AlterTableType_AT_SetNotNull:
+		case pgparse.AlterTableType_AT_SetNotNull:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.NotNull = true
 				s.notifyNotNullChange(rel)
 			}
-		case pg_query.AlterTableType_AT_DropNotNull:
+		case pgparse.AlterTableType_AT_DropNotNull:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.NotNull = false
 				s.notifyNotNullChange(rel)
 			}
-		case pg_query.AlterTableType_AT_ColumnDefault:
+		case pgparse.AlterTableType_AT_ColumnDefault:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.Default = cmd.Def
 			} else if rel.Kind == View {
@@ -1443,7 +1442,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					rel.ViewDefaults[cmd.Name] = cmd.Def
 				}
 			}
-		case pg_query.AlterTableType_AT_AlterColumnType:
+		case pgparse.AlterTableType_AT_AlterColumnType:
 			if col := rel.Column(cmd.Name); col != nil {
 				if tr, err := s.resolveType(cmd.Def.GetColumnDef().GetTypeName()); err == nil {
 					col.Type = tr
@@ -1459,7 +1458,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					s.problem(loc, "%s.%s: %v", rel.Name, cmd.Name, err)
 				}
 			}
-		case pg_query.AlterTableType_AT_DropColumn:
+		case pgparse.AlterTableType_AT_DropColumn:
 			if col := rel.Column(cmd.Name); col != nil && col.Inherited {
 				s.problem(loc, "%s: cannot drop inherited column %q", rel.Name, cmd.Name)
 				continue
@@ -1480,13 +1479,13 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					}
 				}
 			}
-		case pg_query.AlterTableType_AT_DropConstraint:
+		case pgparse.AlterTableType_AT_DropConstraint:
 			n := len(rel.Constraints)
 			rel.Constraints = filterConstraints(rel.Constraints, func(c *Constraint) bool { return c.Name != cmd.Name })
 			if len(rel.Constraints) == n && !cmd.MissingOk {
 				s.problem(loc, "%s: constraint %q does not exist", rel.Name, cmd.Name)
 			}
-		case pg_query.AlterTableType_AT_AddIdentity:
+		case pgparse.AlterTableType_AT_AddIdentity:
 			if col := rel.Column(cmd.Name); col != nil && col.Identity == 0 {
 				col.NotNull = true
 				col.Identity = 'd'
@@ -1495,11 +1494,11 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				}
 				s.createOwnedSequence(rel, col.Name, loc)
 			}
-		case pg_query.AlterTableType_AT_EnableRule, pg_query.AlterTableType_AT_EnableAlwaysRule:
+		case pgparse.AlterTableType_AT_EnableRule, pgparse.AlterTableType_AT_EnableAlwaysRule:
 			rel.setRuleEnabled(cmd.Name, true)
-		case pg_query.AlterTableType_AT_DisableRule, pg_query.AlterTableType_AT_EnableReplicaRule:
+		case pgparse.AlterTableType_AT_DisableRule, pgparse.AlterTableType_AT_EnableReplicaRule:
 			rel.setRuleEnabled(cmd.Name, false)
-		case pg_query.AlterTableType_AT_AddInherit, pg_query.AlterTableType_AT_DropInherit:
+		case pgparse.AlterTableType_AT_AddInherit, pgparse.AlterTableType_AT_DropInherit:
 			// the child already has the parent's columns; only the link changes (a child
 			// goes with DROP TABLE parent CASCADE, ALTER TABLE parent reaches it)
 			pschema, pname := s.rangeVar(cmd.Def.GetRangeVar())
@@ -1508,7 +1507,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				s.problem(loc, "%s: relation %q does not exist", rel.Name, pname)
 				continue
 			}
-			if cmd.Subtype == pg_query.AlterTableType_AT_AddInherit {
+			if cmd.Subtype == pgparse.AlterTableType_AT_AddInherit {
 				rel.Parents = append(rel.Parents, parent)
 				for _, pc := range parent.Columns {
 					if c := rel.Column(pc.Name); c != nil {
@@ -1532,7 +1531,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					}
 				}
 			}
-		case pg_query.AlterTableType_AT_AttachPartition, pg_query.AlterTableType_AT_DetachPartition:
+		case pgparse.AlterTableType_AT_AttachPartition, pgparse.AlterTableType_AT_DetachPartition:
 			pc := cmd.Def.GetPartitionCmd()
 			pschema, pname := s.rangeVar(pc.GetName())
 			part := s.relByName[pschema+"."+pname]
@@ -1540,7 +1539,7 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 				s.problem(loc, "%s: partition %q does not exist", rel.Name, pname)
 				continue
 			}
-			if cmd.Subtype == pg_query.AlterTableType_AT_AttachPartition {
+			if cmd.Subtype == pgparse.AlterTableType_AT_AttachPartition {
 				part.Parents = append(part.Parents, rel)
 				part.IsPartition = true
 				// a partition's identity columns are the parent's
@@ -1564,12 +1563,12 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					}
 				}
 			}
-		case pg_query.AlterTableType_AT_DropIdentity:
+		case pgparse.AlterTableType_AT_DropIdentity:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.Identity = 0
 				s.dropOwnedSequences(rel, col.Name)
 			}
-		case pg_query.AlterTableType_AT_SetIdentity:
+		case pgparse.AlterTableType_AT_SetIdentity:
 			// ALTER COLUMN ... SET GENERATED { ALWAYS | BY DEFAULT } [SET ... sequence options]
 			if col := rel.Column(cmd.Name); col != nil && col.Identity != 0 {
 				for _, dn := range cmd.Def.GetList().GetItems() {
@@ -1587,38 +1586,38 @@ func (s *Schema) alterTable(st *pg_query.AlterTableStmt, loc int32) {
 					}
 				}
 			}
-		case pg_query.AlterTableType_AT_DropExpression:
+		case pgparse.AlterTableType_AT_DropExpression:
 			if col := rel.Column(cmd.Name); col != nil {
 				col.Generated = nil
 			}
-		case pg_query.AlterTableType_AT_EnableRowSecurity:
+		case pgparse.AlterTableType_AT_EnableRowSecurity:
 			rel.RowSecurity = true
-		case pg_query.AlterTableType_AT_DisableRowSecurity:
+		case pgparse.AlterTableType_AT_DisableRowSecurity:
 			rel.RowSecurity = false
-		case pg_query.AlterTableType_AT_ForceRowSecurity:
+		case pgparse.AlterTableType_AT_ForceRowSecurity:
 			rel.ForceRowSecurity = true
-		case pg_query.AlterTableType_AT_NoForceRowSecurity:
+		case pgparse.AlterTableType_AT_NoForceRowSecurity:
 			rel.ForceRowSecurity = false
-		case pg_query.AlterTableType_AT_ChangeOwner, pg_query.AlterTableType_AT_SetRelOptions,
-			pg_query.AlterTableType_AT_ClusterOn, pg_query.AlterTableType_AT_SetStatistics,
-			pg_query.AlterTableType_AT_EnableTrig, pg_query.AlterTableType_AT_DisableTrig, pg_query.AlterTableType_AT_EnableAlwaysTrig,
-			pg_query.AlterTableType_AT_EnableReplicaTrig, pg_query.AlterTableType_AT_EnableTrigAll, pg_query.AlterTableType_AT_DisableTrigAll,
-			pg_query.AlterTableType_AT_EnableTrigUser, pg_query.AlterTableType_AT_DisableTrigUser,
-			pg_query.AlterTableType_AT_DetachPartitionFinalize,
-			pg_query.AlterTableType_AT_ValidateConstraint, pg_query.AlterTableType_AT_ReplicaIdentity, pg_query.AlterTableType_AT_SetLogged,
-			pg_query.AlterTableType_AT_SetUnLogged, pg_query.AlterTableType_AT_SetTableSpace, pg_query.AlterTableType_AT_SetStorage,
-			pg_query.AlterTableType_AT_SetCompression, pg_query.AlterTableType_AT_AlterConstraint, pg_query.AlterTableType_AT_ResetRelOptions,
-			pg_query.AlterTableType_AT_SetAccessMethod,
-			pg_query.AlterTableType_AT_DropOids,
-			pg_query.AlterTableType_AT_SetOptions, pg_query.AlterTableType_AT_ResetOptions, pg_query.AlterTableType_AT_GenericOptions,
-			pg_query.AlterTableType_AT_AlterColumnGenericOptions, pg_query.AlterTableType_AT_SetExpression:
+		case pgparse.AlterTableType_AT_ChangeOwner, pgparse.AlterTableType_AT_SetRelOptions,
+			pgparse.AlterTableType_AT_ClusterOn, pgparse.AlterTableType_AT_SetStatistics,
+			pgparse.AlterTableType_AT_EnableTrig, pgparse.AlterTableType_AT_DisableTrig, pgparse.AlterTableType_AT_EnableAlwaysTrig,
+			pgparse.AlterTableType_AT_EnableReplicaTrig, pgparse.AlterTableType_AT_EnableTrigAll, pgparse.AlterTableType_AT_DisableTrigAll,
+			pgparse.AlterTableType_AT_EnableTrigUser, pgparse.AlterTableType_AT_DisableTrigUser,
+			pgparse.AlterTableType_AT_DetachPartitionFinalize,
+			pgparse.AlterTableType_AT_ValidateConstraint, pgparse.AlterTableType_AT_ReplicaIdentity, pgparse.AlterTableType_AT_SetLogged,
+			pgparse.AlterTableType_AT_SetUnLogged, pgparse.AlterTableType_AT_SetTableSpace, pgparse.AlterTableType_AT_SetStorage,
+			pgparse.AlterTableType_AT_SetCompression, pgparse.AlterTableType_AT_AlterConstraint, pgparse.AlterTableType_AT_ResetRelOptions,
+			pgparse.AlterTableType_AT_SetAccessMethod,
+			pgparse.AlterTableType_AT_DropOids,
+			pgparse.AlterTableType_AT_SetOptions, pgparse.AlterTableType_AT_ResetOptions, pgparse.AlterTableType_AT_GenericOptions,
+			pgparse.AlterTableType_AT_AlterColumnGenericOptions, pgparse.AlterTableType_AT_SetExpression:
 		default:
 			s.problem(loc, "ALTER TABLE %s: unsupported action %v", name, cmd.GetSubtype())
 		}
 	}
 }
 
-func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
+func (s *Schema) createIndex(st *pgparse.IndexStmt, loc int32) {
 	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
@@ -1650,7 +1649,7 @@ func (s *Schema) createIndex(st *pg_query.IndexStmt, loc int32) {
 
 // --- functions -------------------------------------------------------------
 
-func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
+func (s *Schema) createFunction(st *pgparse.CreateFunctionStmt, loc int32) {
 	schema, name := qualified(strs(st.Funcname))
 	if schema == "" {
 		schema = s.creationSchema()
@@ -1687,15 +1686,15 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 		}
 		a := FuncArg{Name: p.Name, Type: tr, HasDefault: p.Defexpr != nil}
 		switch p.Mode {
-		case pg_query.FunctionParameterMode_FUNC_PARAM_IN, pg_query.FunctionParameterMode_FUNC_PARAM_DEFAULT:
+		case pgparse.FunctionParameterMode_FUNC_PARAM_IN, pgparse.FunctionParameterMode_FUNC_PARAM_DEFAULT:
 			a.Mode = 'i'
-		case pg_query.FunctionParameterMode_FUNC_PARAM_OUT:
+		case pgparse.FunctionParameterMode_FUNC_PARAM_OUT:
 			a.Mode = 'o'
-		case pg_query.FunctionParameterMode_FUNC_PARAM_INOUT:
+		case pgparse.FunctionParameterMode_FUNC_PARAM_INOUT:
 			a.Mode = 'b'
-		case pg_query.FunctionParameterMode_FUNC_PARAM_VARIADIC:
+		case pgparse.FunctionParameterMode_FUNC_PARAM_VARIADIC:
 			a.Mode = 'v'
-		case pg_query.FunctionParameterMode_FUNC_PARAM_TABLE:
+		case pgparse.FunctionParameterMode_FUNC_PARAM_TABLE:
 			a.Mode = 't'
 			tableCols = append(tableCols, a)
 		}
@@ -1770,14 +1769,14 @@ func (s *Schema) createFunction(st *pg_query.CreateFunctionStmt, loc int32) {
 
 // --- comments --------------------------------------------------------------
 
-func (s *Schema) comment(st *pg_query.CommentStmt, loc int32) {
+func (s *Schema) comment(st *pgparse.CommentStmt, loc int32) {
 	var key string
 	switch st.Objtype {
-	case pg_query.ObjectType_OBJECT_TABLE, pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+	case pgparse.ObjectType_OBJECT_TABLE, pgparse.ObjectType_OBJECT_VIEW, pgparse.ObjectType_OBJECT_MATVIEW:
 		key = strings.Join(strs(st.Object.GetList().GetItems()), ".")
-	case pg_query.ObjectType_OBJECT_COLUMN:
+	case pgparse.ObjectType_OBJECT_COLUMN:
 		key = strings.Join(strs(st.Object.GetList().GetItems()), ".")
-	case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+	case pgparse.ObjectType_OBJECT_TYPE, pgparse.ObjectType_OBJECT_DOMAIN:
 		name := strings.TrimPrefix(strings.Join(strs(st.Object.GetTypeName().GetNames()), "."), "public.")
 		key = "type:" + name
 	default:
@@ -1793,7 +1792,7 @@ func (s *Schema) comment(st *pg_query.CommentStmt, loc int32) {
 }
 
 // ResolveType resolves a TypeName AST node against this schema (exported for the analyzer).
-func (s *Schema) ResolveType(tn *pg_query.TypeName) (TypeRef, error) { return s.resolveType(tn) }
+func (s *Schema) ResolveType(tn *pgparse.TypeName) (TypeRef, error) { return s.resolveType(tn) }
 
 // addConstraint records a table constraint, naming it the way PG does when the schema
 // does not: <table>_pkey, <table>_<cols>_key, <table>_<cols>_fkey, <table>_<cols>_check
@@ -1860,11 +1859,11 @@ func checkInValues(e Expr) (string, []string) {
 		return "", nil
 	}
 	col := cr.Fields[0].GetString_().GetSval()
-	var items []*pg_query.Node
+	var items []*pgparse.Node
 	switch x.Kind {
-	case pg_query.A_Expr_Kind_AEXPR_IN:
+	case pgparse.A_Expr_Kind_AEXPR_IN:
 		items = x.Rexpr.GetList().GetItems()
-	case pg_query.A_Expr_Kind_AEXPR_OP_ANY:
+	case pgparse.A_Expr_Kind_AEXPR_OP_ANY:
 		if strs(x.Name)[0] != "=" {
 			return "", nil
 		}
@@ -1888,7 +1887,7 @@ func checkInValues(e Expr) (string, []string) {
 		if c == nil {
 			return "", nil
 		}
-		sv, ok := c.Val.(*pg_query.A_Const_Sval)
+		sv, ok := c.Val.(*pgparse.A_Const_Sval)
 		if !ok {
 			return "", nil
 		}
@@ -1912,7 +1911,7 @@ func uniqueName(base string, taken func(string) bool) string {
 func ColumnRefs(e Expr) []string {
 	var out []string
 	seen := map[string]bool{}
-	WalkNodes(e, func(n *pg_query.Node) {
+	WalkNodes(e, func(n *pgparse.Node) {
 		cr := n.GetColumnRef()
 		if cr == nil || len(cr.Fields) == 0 {
 			return
@@ -1927,11 +1926,11 @@ func ColumnRefs(e Expr) []string {
 }
 
 // WalkNodes visits every Node in a protobuf tree.
-func WalkNodes(m proto.Message, f func(*pg_query.Node)) {
+func WalkNodes(m proto.Message, f func(*pgparse.Node)) {
 	if m == nil {
 		return
 	}
-	if n, ok := m.(*pg_query.Node); ok {
+	if n, ok := m.(*pgparse.Node); ok {
 		if n == nil {
 			return
 		}
@@ -1954,7 +1953,7 @@ func WalkNodes(m proto.Message, f func(*pg_query.Node)) {
 }
 
 // createTrigger records which events on which table run which function (trigger.h bits).
-func (s *Schema) createTrigger(st *pg_query.CreateTrigStmt, loc int32) {
+func (s *Schema) createTrigger(st *pgparse.CreateTrigStmt, loc int32) {
 	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
@@ -2029,16 +2028,16 @@ func sameInputs(a, b *Function) bool {
 
 // PartitionKeyProblem checks one PARTITION BY expression against the table (the analyzer
 // installs it): the message PG would give, or "" when the expression is acceptable.
-var PartitionKeyProblem func(s *Schema, rel *Relation, expr *pg_query.Node) string
+var PartitionKeyProblem func(s *Schema, rel *Relation, expr *pgparse.Node) string
 
 // QueryColumns types a query's result columns for CREATE TABLE AS / SELECT INTO. The
 // analyzer installs it (package analyze imports schema, not the reverse); nil leaves
 // such tables as problems.
-var QueryColumns func(s *Schema, query *pg_query.Node) ([]*Column, error)
+var QueryColumns func(s *Schema, query *pgparse.Node) ([]*Column, error)
 
 // createTableAs creates the table a CREATE TABLE AS / SELECT INTO fills, with the
 // query's columns (renamed by the INTO column list when given).
-func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, loc int32) {
+func (s *Schema) createTableAs(into *pgparse.IntoClause, query *pgparse.Node, loc int32) {
 	schema, name := s.rangeVar(into.Rel)
 	if s.relByName[schema+"."+name] != nil {
 		if into.Rel.Relpersistence != "t" {
@@ -2057,7 +2056,7 @@ func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, 
 	}
 	rel := s.newRelation(schema, name, Table)
 	rel.Temp = into.Rel.Relpersistence == "t"
-	rel.OnCommitDrop = into.OnCommit == pg_query.OnCommitAction_ONCOMMIT_DROP
+	rel.OnCommitDrop = into.OnCommit == pgparse.OnCommitAction_ONCOMMIT_DROP
 	for i, c := range cols {
 		c.Num = int16(i + 1)
 		c.NotNull = false // the created table has no constraints, whatever the query guaranteed
@@ -2070,7 +2069,7 @@ func (s *Schema) createTableAs(into *pg_query.IntoClause, query *pg_query.Node, 
 
 // createSequence registers a sequence as a relation with the three columns SELECT * FROM
 // seq yields; serial and identity columns create theirs implicitly.
-func (s *Schema) createSequence(rv *pg_query.RangeVar, loc int32) {
+func (s *Schema) createSequence(rv *pgparse.RangeVar, loc int32) {
 	schema, name := s.rangeVar(rv)
 	if s.relByName[schema+"."+name] != nil {
 		return
@@ -2103,8 +2102,8 @@ func (rel *Relation) rebuildRules() {
 }
 
 // applyRule records one enabled rule.
-func (rel *Relation) applyRule(r *pg_query.RuleStmt) {
-	event := map[pg_query.CmdType]string{pg_query.CmdType_CMD_INSERT: "insert", pg_query.CmdType_CMD_UPDATE: "update", pg_query.CmdType_CMD_DELETE: "delete"}[r.Event]
+func (rel *Relation) applyRule(r *pgparse.RuleStmt) {
+	event := map[pgparse.CmdType]string{pgparse.CmdType_CMD_INSERT: "insert", pgparse.CmdType_CMD_UPDATE: "update", pgparse.CmdType_CMD_DELETE: "delete"}[r.Event]
 	if event == "" {
 		return
 	}
@@ -2126,7 +2125,7 @@ func (rel *Relation) applyRule(r *pg_query.RuleStmt) {
 	var dml bool
 	if single {
 		switch act := r.Actions[0].Node.(type) {
-		case *pg_query.Node_InsertStmt:
+		case *pgparse.Node_InsertStmt:
 			dml = true
 			if q := act.InsertStmt.SelectStmt.GetSelectStmt(); q != nil && len(q.ValuesLists) == 0 {
 				set(&rel.RuleInsertSelect)
@@ -2134,12 +2133,12 @@ func (rel *Relation) applyRule(r *pg_query.RuleStmt) {
 			if len(act.InsertStmt.ReturningList) == 0 {
 				set(&rel.RuleNoReturning)
 			}
-		case *pg_query.Node_UpdateStmt:
+		case *pgparse.Node_UpdateStmt:
 			dml = true
 			if len(act.UpdateStmt.ReturningList) == 0 {
 				set(&rel.RuleNoReturning)
 			}
-		case *pg_query.Node_DeleteStmt:
+		case *pgparse.Node_DeleteStmt:
 			dml = true
 			if len(act.DeleteStmt.ReturningList) == 0 {
 				set(&rel.RuleNoReturning)
@@ -2183,7 +2182,7 @@ func (rel *Relation) setRuleEnabled(name string, enabled bool) {
 // createOwnedSequence is the implicit sequence of a serial / identity column.
 func (s *Schema) createOwnedSequence(rel *Relation, col string, loc int32) {
 	name := makeObjectName(rel.Name, col, "seq") // ChooseRelationName: truncated like every generated name
-	s.createSequence(&pg_query.RangeVar{Schemaname: rel.Schema, Relname: name}, loc)
+	s.createSequence(&pgparse.RangeVar{Schemaname: rel.Schema, Relname: name}, loc)
 	if seq := s.relByName[rel.Schema+"."+name]; seq != nil && seq.Kind == Sequence {
 		seq.OwnedBy = rel.Schema + "." + rel.Name + "." + col
 	}
@@ -2202,7 +2201,7 @@ func (s *Schema) dropOwnedSequences(rel *Relation, col string) {
 
 // alterSequence applies ALTER SEQUENCE ... OWNED BY { table.column | NONE }; the other
 // options do not affect typing.
-func (s *Schema) alterSequence(st *pg_query.AlterSeqStmt, loc int32) {
+func (s *Schema) alterSequence(st *pgparse.AlterSeqStmt, loc int32) {
 	schema, name := s.rangeVar(st.Sequence)
 	seq := s.relByName[schema+"."+name]
 	if seq == nil || seq.Kind != Sequence {
@@ -2271,7 +2270,7 @@ func (s *Schema) Schemas() []string {
 
 // RuleDef is one rule of a relation as declared, with whether it is enabled.
 type RuleDef struct {
-	Stmt    *pg_query.RuleStmt
+	Stmt    *pgparse.RuleStmt
 	Enabled bool
 }
 
@@ -2290,8 +2289,8 @@ func Deparse(e Expr) string {
 	if e == nil {
 		return ""
 	}
-	res := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: &pg_query.SelectStmt{
-		TargetList: []*pg_query.Node{{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Val: e}}}},
+	res := &pgparse.ParseResult{Stmts: []*pgparse.RawStmt{{Stmt: &pgparse.Node{Node: &pgparse.Node_SelectStmt{SelectStmt: &pgparse.SelectStmt{
+		TargetList: []*pgparse.Node{{Node: &pgparse.Node_ResTarget{ResTarget: &pgparse.ResTarget{Val: e}}}},
 	}}}}}}
 	s, err := pgparse.Deparse(res)
 	if err != nil {
@@ -2301,11 +2300,11 @@ func Deparse(e Expr) string {
 }
 
 // DeparseStmt renders a whole statement (a view's query, a rule) back to SQL text.
-func DeparseStmt(n *pg_query.Node) string {
+func DeparseStmt(n *pgparse.Node) string {
 	if n == nil {
 		return ""
 	}
-	s, err := pgparse.Deparse(&pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: n}}})
+	s, err := pgparse.Deparse(&pgparse.ParseResult{Stmts: []*pgparse.RawStmt{{Stmt: n}}})
 	if err != nil {
 		return ""
 	}

@@ -2,8 +2,8 @@ package analyze
 
 import (
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
 // AnalyzePolicy type-checks a row-level security policy's USING and WITH CHECK predicates
@@ -14,7 +14,7 @@ func AnalyzePolicy(s *schema.Schema, rel *schema.Relation, pol *schema.Policy) (
 	var notes []Note
 	for _, part := range []struct {
 		what string
-		expr *pg_query.Node
+		expr *pgparse.Node
 	}{{"USING", pol.Using}, {"WITH CHECK", pol.WithCheck}} {
 		if part.expr == nil {
 			continue
@@ -51,11 +51,11 @@ func AnalyzePolicy(s *schema.Schema, rel *schema.Relation, pol *schema.Policy) (
 // an error.
 func SettingReads(pol *schema.Policy) []string {
 	var out []string
-	for _, e := range []*pg_query.Node{pol.Using, pol.WithCheck} {
+	for _, e := range []*pgparse.Node{pol.Using, pol.WithCheck} {
 		if e == nil {
 			continue
 		}
-		schema.WalkNodes(e, func(n *pg_query.Node) {
+		schema.WalkNodes(e, func(n *pgparse.Node) {
 			f := n.GetFuncCall()
 			if f == nil {
 				return
@@ -68,7 +68,7 @@ func SettingReads(pol *schema.Policy) []string {
 				return
 			}
 			if c := f.Args[0].GetAConst(); c != nil {
-				if sv, ok := c.Val.(*pg_query.A_Const_Sval); ok {
+				if sv, ok := c.Val.(*pgparse.A_Const_Sval); ok {
 					out = append(out, sv.Sval.GetSval())
 				}
 			}

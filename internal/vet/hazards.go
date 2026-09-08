@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/expand"
 	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
@@ -158,7 +156,7 @@ func checkBareOrderBy(e *expand.Expansion, lit literal, report func(token.Pos, s
 	for i := range e.Params {
 		byN[int32(e.Params[i].N)] = &e.Params[i]
 	}
-	flag := func(kw string, target *pg_query.Node) {
+	flag := func(kw string, target *pgparse.Node) {
 		ref := target.GetParamRef()
 		if ref == nil {
 			return
@@ -169,15 +167,15 @@ func checkBareOrderBy(e *expand.Expansion, lit literal, report func(token.Pos, s
 		}
 		report(lit.pos(e.TemplatePos(int(ref.Location))), "%s BY {{%s}} sorts by a constant, not by the column the value names: branch on it instead ({{if eq %s \"total\"}} total {{else}} id {{end}})%s", kw, p.Path, p.Path, where)
 	}
-	schema.WalkNodes(tree, func(n *pg_query.Node) {
+	schema.WalkNodes(tree, func(n *pgparse.Node) {
 		switch v := n.Node.(type) {
-		case *pg_query.Node_SortBy:
+		case *pgparse.Node_SortBy:
 			flag("ORDER", v.SortBy.Node)
-		case *pg_query.Node_SelectStmt:
+		case *pgparse.Node_SelectStmt:
 			for _, g := range v.SelectStmt.GroupClause {
 				flag("GROUP", g)
 			}
-		case *pg_query.Node_WindowDef:
+		case *pgparse.Node_WindowDef:
 			for _, p := range v.WindowDef.PartitionClause {
 				flag("PARTITION", p)
 			}

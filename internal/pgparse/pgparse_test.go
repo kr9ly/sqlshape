@@ -4,57 +4,41 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-	"github.com/pganalyze/pg_query_go/v6/parser"
-	"google.golang.org/protobuf/proto"
 )
 
-var statements = []string{
-	"SELECT 1",
-	"SELECT a FROM t WHERE b = $1 AND c IN (1,2)",
-	"INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO UPDATE SET a = excluded.a RETURNING *",
-	"WITH d AS (DELETE FROM ledger WHERE id = $1 RETURNING amount) SELECT amount FROM d",
-	"MERGE INTO o USING s ON o.id = s.id WHEN MATCHED THEN UPDATE SET x = s.x WHEN NOT MATCHED THEN INSERT (id, x) VALUES (s.id, s.x)",
-	"SELECT * FROM json_table(j, '$[*]' COLUMNS (a int PATH '$.a')) AS jt",
-	"SELECT json_table(j) FROM t", // rejected by both
-	"CREATE TABLE t (id bigint PRIMARY KEY, s text NOT NULL CHECK (s IN ('a','b')), FOREIGN KEY (id) REFERENCES p (id))",
-	"SELECT * FROM t WHERE x = 'it''s' AND y = E'\\n' AND z = $$dollar$$",
-	"SELECT 'ünïcödé', 'あ' FROM t; SELECT 2",
-}
+// Equivalence with pg_query_go (cgo) was established when this package replaced it: the
+// protobuf bytes of a corpus, error messages and cursor positions, deparse output and
+// PL/pgSQL JSON were identical. From here the regress probe and the golden tests guard the
+// parser; these tests cover the wasm boundary itself.
 
-// TestParseMatchesCgo: the wasm parser's protobuf bytes are the cgo parser's.
-func TestParseMatchesCgo(t *testing.T) {
-	for _, sql := range statements {
-		want, cgoErr := parser.ParseToProtobuf(sql)
-		got, err := pg17.parseProtobuf(sql)
-		if cgoErr != nil || err != nil {
-			if err == nil || cgoErr == nil || err.Error() != cgoErr.Error() {
-				t.Errorf("%q: wasm %v, cgo %v", sql, err, cgoErr)
-			}
-			continue
-		}
-		if string(got) != string(want) {
-			t.Errorf("%q: protobuf differs (%d vs %d bytes)", sql, len(got), len(want))
-		}
+func TestParse(t *testing.T) {
+	tree, err := Parse("SELECT a FROM t WHERE b = $1 AND c IN (1,2); SELECT 'あ'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree.Stmts) != 2 {
+		t.Fatalf("got %d statements, want 2", len(tree.Stmts))
+	}
+	sel := tree.Stmts[0].Stmt.GetSelectStmt()
+	if sel == nil || len(sel.TargetList) != 1 || sel.WhereClause == nil {
+		t.Errorf("unexpected tree: %v", tree.Stmts[0])
+	}
+	if got := tree.Stmts[1].StmtLocation; got != 44 {
+		t.Errorf("second statement location %d, want 44", got)
 	}
 }
 
-// TestParseError: a syntax error (the longjmp path) is reported with cgo's message and
-// position, and the instance keeps working afterwards.
+// TestParseError: a syntax error (the longjmp path) is reported with PostgreSQL's message
+// and position, and the instance keeps working afterwards.
 func TestParseError(t *testing.T) {
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := Parse("SELECT id FROM WHERE")
 		e, ok := err.(*Error)
 		if !ok {
 			t.Fatalf("got %v, want *Error", err)
 		}
-		_, cgoErr := pg_query.Parse("SELECT id FROM WHERE")
-		if e.Message != cgoErr.Error() {
-			t.Errorf("message %q, cgo %q", e.Message, cgoErr)
-		}
-		if e.Cursorpos != cgoErr.(*parser.Error).Cursorpos {
-			t.Errorf("cursor %d, cgo %d", e.Cursorpos, cgoErr.(*parser.Error).Cursorpos)
+		if e.Message != `syntax error at or near "WHERE"` || e.Cursorpos != 16 {
+			t.Errorf("got %q at %d", e.Message, e.Cursorpos)
 		}
 		if _, err := Parse("SELECT 1"); err != nil {
 			t.Fatalf("after an error: %v", err)
@@ -63,7 +47,7 @@ func TestParseError(t *testing.T) {
 }
 
 func TestDeparse(t *testing.T) {
-	tree, err := Parse("SELECT a, b FROM t WHERE c = 1 ORDER BY a")
+	tree, err := Parse("select a,b from t where c=1 order by a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,38 +55,40 @@ func TestDeparse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := pg_query.Deparse(tree)
-	if got != want {
+	if want := "SELECT a, b FROM t WHERE c = 1 ORDER BY a"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+	if _, err := Deparse(&ParseResult{Stmts: []*RawStmt{{Stmt: &Node{}}}}); err == nil {
+		t.Error("want an error for an empty node")
 	}
 }
 
 func TestParsePlPgSqlToJSON(t *testing.T) {
-	src := "CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ DECLARE x int := 1; BEGIN RETURN x + 1; END $$"
-	got, err := ParsePlPgSqlToJSON(src)
+	got, err := ParsePlPgSqlToJSON("CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ DECLARE x int := 1; BEGIN RETURN x + 1; END $$")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := pg_query.ParsePlPgSqlToJSON(src)
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if !strings.Contains(got, `"PLpgSQL_stmt_return"`) || !strings.Contains(got, `"x"`) {
+		t.Errorf("unexpected JSON: %s", got)
 	}
-	if _, err := ParsePlPgSqlToJSON("CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETRUN 1; END $$"); err == nil {
-		t.Error("want an error for a PL/pgSQL syntax error")
+	_, err = ParsePlPgSqlToJSON("CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETRUN 1; END $$")
+	if e, ok := err.(*Error); !ok || !strings.HasPrefix(e.Message, "syntax error") {
+		t.Errorf("got %v, want a syntax error", err)
 	}
 }
 
 func TestSplitWithScanner(t *testing.T) {
 	src := "SELECT 1;\n-- c\nSELECT FROM WHERE 'あ;';\n\nSELECT 3"
-	for _, trim := range []bool{false, true} {
-		got, err := SplitWithScanner(src, trim)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want, _ := pg_query.SplitWithScanner(src, trim)
-		if strings.Join(got, "|") != strings.Join(want, "|") {
-			t.Errorf("trim=%v: got %q, want %q", trim, got, want)
-		}
+	got, err := SplitWithScanner(src, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "SELECT 1|\n-- c\nSELECT FROM WHERE 'あ;'|\n\nSELECT 3"; strings.Join(got, "|") != want {
+		t.Errorf("got %q", got)
+	}
+	got, _ = SplitWithScanner(src, true)
+	if want := "SELECT 1|-- c\nSELECT FROM WHERE 'あ;'|SELECT 3"; strings.Join(got, "|") != want {
+		t.Errorf("trimmed: got %q", got)
 	}
 	if _, err := SplitWithScanner("SELECT 'unterminated", false); err == nil {
 		t.Error("want an error for an unterminated literal")
@@ -111,14 +97,18 @@ func TestSplitWithScanner(t *testing.T) {
 
 // TestConcurrent: parallel callers each get a working instance.
 func TestConcurrent(t *testing.T) {
-	want, _ := parser.ParseToProtobuf(statements[4])
+	const sql = "MERGE INTO o USING s ON o.id = s.id WHEN MATCHED THEN UPDATE SET x = s.x WHEN NOT MATCHED THEN INSERT (id, x) VALUES (s.id, s.x)"
+	want, err := pg17.parseProtobuf(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
-	for g := 0; g < 16; g++ {
+	for range 16 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 50; i++ {
-				got, err := pg17.parseProtobuf(statements[4])
+			for range 50 {
+				got, err := pg17.parseProtobuf(sql)
 				if err != nil || string(got) != string(want) {
 					t.Errorf("concurrent parse: err=%v same=%v", err, string(got) == string(want))
 					return
@@ -133,15 +123,7 @@ func TestConcurrent(t *testing.T) {
 }
 
 func BenchmarkParse(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		pg17.parseProtobuf(statements[4])
+	for range b.N {
+		pg17.parseProtobuf("SELECT o.id, o.total, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.tenant_id = $1 AND o.status IN ('open','paid') ORDER BY o.created_at DESC LIMIT 20")
 	}
 }
-
-func BenchmarkParseCgo(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		parser.ParseToProtobuf(statements[4])
-	}
-}
-
-var _ = proto.Marshal

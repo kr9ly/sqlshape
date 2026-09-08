@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -30,7 +29,7 @@ import (
 // subquery is the defining query of a FROM leaf that is not a table.
 type subquery struct {
 	what string // "subquery" / "view" / "CTE"
-	sel  *pg_query.SelectStmt
+	sel  *pgparse.SelectStmt
 	sc   *scope
 }
 
@@ -42,7 +41,7 @@ type colKey struct {
 type edge struct{ from, to colKey }
 
 type conjunct struct {
-	n     *pg_query.Node
+	n     *pgparse.Node
 	allow map[*rte]bool // leaves this predicate restricts (nil: all)
 }
 
@@ -59,30 +58,30 @@ type prover struct {
 }
 
 // cardinality decides whether the analyzed statement returns at most one row.
-func (a *analyzer) cardinality(stmt *pg_query.Node, sc *scope) (bool, string) {
+func (a *analyzer) cardinality(stmt *pgparse.Node, sc *scope) (bool, string) {
 	switch st := stmt.Node.(type) {
-	case *pg_query.Node_SelectStmt:
+	case *pgparse.Node_SelectStmt:
 		return a.selectSingle(st.SelectStmt, sc, nil)
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		ins := st.InsertStmt
 		if ins.SelectStmt == nil {
 			return true, ""
 		}
 		sel := ins.SelectStmt.GetSelectStmt()
-		if len(sel.ValuesLists) > 0 && sel.Op == pg_query.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
+		if len(sel.ValuesLists) > 0 && sel.Op == pgparse.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
 			if len(sel.ValuesLists) == 1 {
 				return true, ""
 			}
 			return false, fmt.Sprintf("VALUES has %d rows", len(sel.ValuesLists))
 		}
 		return a.selectSingle(sel, a.insertSelScope, nil)
-	case *pg_query.Node_UpdateStmt:
+	case *pgparse.Node_UpdateStmt:
 		return a.fromSingle(sc, st.UpdateStmt.WhereClause, nil, nil, nil)
-	case *pg_query.Node_DeleteStmt:
+	case *pgparse.Node_DeleteStmt:
 		return a.fromSingle(sc, st.DeleteStmt.WhereClause, nil, nil, nil)
-	case *pg_query.Node_CallStmt:
+	case *pgparse.Node_CallStmt:
 		return true, ""
-	case *pg_query.Node_MergeStmt:
+	case *pgparse.Node_MergeStmt:
 		if a.mergeScope != nil {
 			return a.fromSingle(a.mergeScope, st.MergeStmt.JoinCondition, nil, nil, nil)
 		}
@@ -91,8 +90,8 @@ func (a *analyzer) cardinality(stmt *pg_query.Node, sc *scope) (bool, string) {
 }
 
 // selectSingle proves one SELECT level; knownOut are output columns fixed from outside.
-func (a *analyzer) selectSingle(sel *pg_query.SelectStmt, sc *scope, knownOut []int) (bool, string) {
-	if sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Op != pg_query.SetOperation_SET_OPERATION_UNDEFINED {
+func (a *analyzer) selectSingle(sel *pgparse.SelectStmt, sc *scope, knownOut []int) (bool, string) {
+	if sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED {
 		return false, setOpName(sel.Op) + " may combine rows"
 	}
 	if len(sel.ValuesLists) > 0 {
@@ -120,7 +119,7 @@ func (a *analyzer) selectSingle(sel *pg_query.SelectStmt, sc *scope, knownOut []
 // fromSingle runs the functional-dependency argument over sc.items. With groups (a GROUP
 // BY list) the question becomes whether every grouping expression is pinned, i.e. there
 // is at most one group.
-func (a *analyzer) fromSingle(sc *scope, where *pg_query.Node, targets []*pg_query.Node, knownOut []int, groups []*pg_query.Node) (bool, string) {
+func (a *analyzer) fromSingle(sc *scope, where *pgparse.Node, targets []*pgparse.Node, knownOut []int, groups []*pgparse.Node) (bool, string) {
 	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
 	for _, it := range sc.items {
 		p.addItem(it)
@@ -179,12 +178,12 @@ func (p *prover) addItem(r *rte) {
 	p.addItem(j.right)
 	var allow map[*rte]bool
 	switch j.jointype {
-	case pg_query.JoinType_JOIN_FULL:
+	case pgparse.JoinType_JOIN_FULL:
 		p.fail = "FULL JOIN may keep unmatched rows of both sides"
 		return
-	case pg_query.JoinType_JOIN_LEFT:
+	case pgparse.JoinType_JOIN_LEFT:
 		allow = leavesOf(j.right)
-	case pg_query.JoinType_JOIN_RIGHT:
+	case pgparse.JoinType_JOIN_RIGHT:
 		allow = leavesOf(j.left)
 	}
 	p.addQuals(j.quals, allow)
@@ -198,7 +197,7 @@ func (p *prover) addItem(r *rte) {
 
 // addQuals records the equality conjuncts of a predicate; allow limits which leaves it
 // may restrict (an outer join's ON clause restricts only its nullable side).
-func (p *prover) addQuals(n *pg_query.Node, allow map[*rte]bool) {
+func (p *prover) addQuals(n *pgparse.Node, allow map[*rte]bool) {
 	for _, c := range conjuncts(n) {
 		p.conjuncts = append(p.conjuncts, conjunct{n: c, allow: allow})
 		l, r := equalitySides(c)
@@ -233,32 +232,32 @@ func (p *prover) equate(x, y colKey, allow map[*rte]bool) {
 	}
 }
 
-func conjuncts(n *pg_query.Node) []*pg_query.Node {
+func conjuncts(n *pgparse.Node) []*pgparse.Node {
 	if n == nil {
 		return nil
 	}
-	if b := n.GetBoolExpr(); b != nil && b.Boolop == pg_query.BoolExprType_AND_EXPR {
-		var out []*pg_query.Node
+	if b := n.GetBoolExpr(); b != nil && b.Boolop == pgparse.BoolExprType_AND_EXPR {
+		var out []*pgparse.Node
 		for _, arg := range b.Args {
 			out = append(out, conjuncts(arg)...)
 		}
 		return out
 	}
-	return []*pg_query.Node{n}
+	return []*pgparse.Node{n}
 }
 
 // equalitySides returns the operands of `x = y` (also `x IN (y)` with a single item).
-func equalitySides(n *pg_query.Node) (*pg_query.Node, *pg_query.Node) {
+func equalitySides(n *pgparse.Node) (*pgparse.Node, *pgparse.Node) {
 	x := n.GetAExpr()
 	if x == nil || x.Lexpr == nil {
 		return nil, nil
 	}
 	switch x.Kind {
-	case pg_query.A_Expr_Kind_AEXPR_OP:
+	case pgparse.A_Expr_Kind_AEXPR_OP:
 		if parts := strs(x.Name); len(parts) > 0 && parts[len(parts)-1] == "=" {
 			return x.Lexpr, x.Rexpr
 		}
-	case pg_query.A_Expr_Kind_AEXPR_IN:
+	case pgparse.A_Expr_Kind_AEXPR_IN:
 		if items := x.Rexpr.GetList().GetItems(); len(items) == 1 {
 			return x.Lexpr, items[0]
 		}
@@ -268,7 +267,7 @@ func equalitySides(n *pg_query.Node) (*pg_query.Node, *pg_query.Node) {
 
 // resolve maps a column reference to a leaf column of this level; col is false for
 // anything else (a known value, an outer reference, an expression).
-func (p *prover) resolve(n *pg_query.Node) (colKey, bool) {
+func (p *prover) resolve(n *pgparse.Node) (colKey, bool) {
 	cr := n.GetColumnRef()
 	if cr == nil {
 		return colKey{}, false
@@ -323,7 +322,7 @@ func (p *prover) resolveIn(r *rte, name string) []colKey {
 
 // outputKeys maps each output column of a target list to the leaf column it is a plain
 // reference to (nil otherwise), expanding stars like the analyzer does.
-func (p *prover) outputKeys(targets []*pg_query.Node) []*colKey {
+func (p *prover) outputKeys(targets []*pgparse.Node) []*colKey {
 	var out []*colKey
 	var expand func(r *rte)
 	expand = func(r *rte) {
@@ -385,31 +384,31 @@ func (p *prover) outputKeys(targets []*pg_query.Node) []*colKey {
 }
 
 // isKnown reports whether n has one value for the whole query (or per outer row).
-func (p *prover) isKnown(n *pg_query.Node) bool {
+func (p *prover) isKnown(n *pgparse.Node) bool {
 	switch v := n.Node.(type) {
-	case *pg_query.Node_AConst, *pg_query.Node_ParamRef:
+	case *pgparse.Node_AConst, *pgparse.Node_ParamRef:
 		return true
-	case *pg_query.Node_TypeCast:
+	case *pgparse.Node_TypeCast:
 		return p.isKnown(v.TypeCast.Arg)
-	case *pg_query.Node_ColumnRef:
+	case *pgparse.Node_ColumnRef:
 		if _, ok := p.resolve(n); ok {
 			return false
 		}
 		// an outer reference is a constant for this level
 		return p.sc.parent != nil && p.resolvesOutside(v.ColumnRef)
-	case *pg_query.Node_SubLink:
-		return v.SubLink.SubLinkType == pg_query.SubLinkType_EXPR_SUBLINK && !p.correlated(v.SubLink.Subselect)
-	case *pg_query.Node_AExpr:
+	case *pgparse.Node_SubLink:
+		return v.SubLink.SubLinkType == pgparse.SubLinkType_EXPR_SUBLINK && !p.correlated(v.SubLink.Subselect)
+	case *pgparse.Node_AExpr:
 		x := v.AExpr
-		return x.Kind == pg_query.A_Expr_Kind_AEXPR_OP && (x.Lexpr == nil || p.isKnown(x.Lexpr)) && p.isKnown(x.Rexpr)
-	case *pg_query.Node_CoalesceExpr:
+		return x.Kind == pgparse.A_Expr_Kind_AEXPR_OP && (x.Lexpr == nil || p.isKnown(x.Lexpr)) && p.isKnown(x.Rexpr)
+	case *pgparse.Node_CoalesceExpr:
 		for _, arg := range v.CoalesceExpr.Args {
 			if !p.isKnown(arg) {
 				return false
 			}
 		}
 		return true
-	case *pg_query.Node_FuncCall:
+	case *pgparse.Node_FuncCall:
 		// a stable / immutable function of known values has one value per query;
 		// volatile ones (random(), nextval()) are evaluated per row
 		f := v.FuncCall
@@ -427,7 +426,7 @@ func (p *prover) isKnown(n *pg_query.Node) bool {
 	return false
 }
 
-func (p *prover) resolvesOutside(cr *pg_query.ColumnRef) bool {
+func (p *prover) resolvesOutside(cr *pgparse.ColumnRef) bool {
 	var names []string
 	for _, f := range cr.Fields {
 		names = append(names, f.GetString_().GetSval())
@@ -443,10 +442,10 @@ func (p *prover) resolvesOutside(cr *pg_query.ColumnRef) bool {
 // correlated reports whether a subquery may refer to this level's leaves (conservatively:
 // any qualified reference to one of our aliases, or an unqualified name one of our leaves
 // has that the subquery's own FROM tables do not provide).
-func (p *prover) correlated(sub *pg_query.Node) bool {
+func (p *prover) correlated(sub *pgparse.Node) bool {
 	found := false
 	inner := p.a.fromColumns(sub.GetSelectStmt())
-	schema.WalkNodes(sub, func(n *pg_query.Node) {
+	schema.WalkNodes(sub, func(n *pgparse.Node) {
 		cr := n.GetColumnRef()
 		if cr == nil || found {
 			return
@@ -477,15 +476,15 @@ func (p *prover) correlated(sub *pg_query.Node) bool {
 }
 
 // fromColumns is the set of column names the tables named directly in sel's FROM provide.
-func (a *analyzer) fromColumns(sel *pg_query.SelectStmt) map[string]bool {
+func (a *analyzer) fromColumns(sel *pgparse.SelectStmt) map[string]bool {
 	out := map[string]bool{}
 	if sel == nil {
 		return out
 	}
-	var walk func(n *pg_query.Node)
-	walk = func(n *pg_query.Node) {
+	var walk func(n *pgparse.Node)
+	walk = func(n *pgparse.Node) {
 		switch v := n.Node.(type) {
-		case *pg_query.Node_RangeVar:
+		case *pgparse.Node_RangeVar:
 			if rel := a.s.Relation(v.RangeVar.Schemaname, v.RangeVar.Relname); rel != nil {
 				for _, c := range rel.Columns {
 					out[c.Name] = true
@@ -496,7 +495,7 @@ func (a *analyzer) fromColumns(sel *pg_query.SelectStmt) map[string]bool {
 					}
 				}
 			}
-		case *pg_query.Node_JoinExpr:
+		case *pgparse.Node_JoinExpr:
 			walk(v.JoinExpr.Larg)
 			walk(v.JoinExpr.Rarg)
 		}
@@ -606,12 +605,12 @@ func (p *prover) keyFixed(r *rte, con *schema.Constraint) bool {
 
 // sameExpr compares an index predicate (unqualified column names) with a query
 // predicate whose columns may be qualified with the leaf's alias.
-func sameExpr(pred, q *pg_query.Node, r *rte) bool {
+func sameExpr(pred, q *pgparse.Node, r *rte) bool {
 	if pred == nil || q == nil {
 		return pred == nil && q == nil
 	}
 	switch pv := pred.Node.(type) {
-	case *pg_query.Node_ColumnRef:
+	case *pgparse.Node_ColumnRef:
 		qc := q.GetColumnRef()
 		if qc == nil {
 			return false
@@ -621,14 +620,14 @@ func sameExpr(pred, q *pg_query.Node, r *rte) bool {
 			return false
 		}
 		return len(pn) > 0 && len(qn) > 0 && pn[len(pn)-1] == qn[len(qn)-1]
-	case *pg_query.Node_AConst:
+	case *pgparse.Node_AConst:
 		qc := q.GetAConst()
 		return qc != nil && constText(pv.AConst) == constText(qc)
-	case *pg_query.Node_AExpr:
+	case *pgparse.Node_AExpr:
 		qx := q.GetAExpr()
 		return qx != nil && qx.Kind == pv.AExpr.Kind && strings.Join(strs(qx.Name), ".") == strings.Join(strs(pv.AExpr.Name), ".") &&
 			sameExpr(pv.AExpr.Lexpr, qx.Lexpr, r) && sameExpr(pv.AExpr.Rexpr, qx.Rexpr, r)
-	case *pg_query.Node_BoolExpr:
+	case *pgparse.Node_BoolExpr:
 		qb := q.GetBoolExpr()
 		if qb == nil || qb.Boolop != pv.BoolExpr.Boolop || len(qb.Args) != len(pv.BoolExpr.Args) {
 			return false
@@ -639,45 +638,45 @@ func sameExpr(pred, q *pg_query.Node, r *rte) bool {
 			}
 		}
 		return true
-	case *pg_query.Node_NullTest:
+	case *pgparse.Node_NullTest:
 		qn := q.GetNullTest()
 		return qn != nil && qn.Nulltesttype == pv.NullTest.Nulltesttype && sameExpr(pv.NullTest.Arg, qn.Arg, r)
-	case *pg_query.Node_BooleanTest:
+	case *pgparse.Node_BooleanTest:
 		qb := q.GetBooleanTest()
 		return qb != nil && qb.Booltesttype == pv.BooleanTest.Booltesttype && sameExpr(pv.BooleanTest.Arg, qb.Arg, r)
-	case *pg_query.Node_TypeCast:
+	case *pgparse.Node_TypeCast:
 		qt := q.GetTypeCast()
 		return qt != nil && strings.Join(strs(qt.TypeName.Names), ".") == strings.Join(strs(pv.TypeCast.TypeName.Names), ".") && sameExpr(pv.TypeCast.Arg, qt.Arg, r)
 	}
 	return false
 }
 
-func constText(c *pg_query.A_Const) string {
+func constText(c *pgparse.A_Const) string {
 	if c.Isnull {
 		return "NULL"
 	}
 	switch v := c.Val.(type) {
-	case *pg_query.A_Const_Ival:
+	case *pgparse.A_Const_Ival:
 		return fmt.Sprint("i", v.Ival.GetIval())
-	case *pg_query.A_Const_Fval:
+	case *pgparse.A_Const_Fval:
 		return "f" + v.Fval.GetFval()
-	case *pg_query.A_Const_Sval:
+	case *pgparse.A_Const_Sval:
 		return "s" + v.Sval.GetSval()
-	case *pg_query.A_Const_Boolval:
+	case *pgparse.A_Const_Boolval:
 		return fmt.Sprint("b", v.Boolval.GetBoolval())
-	case *pg_query.A_Const_Bsval:
+	case *pgparse.A_Const_Bsval:
 		return "x" + v.Bsval.GetBsval()
 	}
 	return "?"
 }
 
 // constInt returns the value of an integer constant node.
-func constInt(n *pg_query.Node) (int32, bool) {
+func constInt(n *pgparse.Node) (int32, bool) {
 	c := n.GetAConst()
 	if c == nil {
 		return 0, false
 	}
-	if v, ok := c.Val.(*pg_query.A_Const_Ival); ok {
+	if v, ok := c.Val.(*pgparse.A_Const_Ival); ok {
 		return v.Ival.GetIval(), true
 	}
 	return 0, false
@@ -718,7 +717,7 @@ func (p *prover) describe(r *rte) string {
 // WHERE; the fixed columns and the policies are the reader's concern). A RETURNING list
 // sees the rows just written: the policies were checked on the statement's own WHERE, or
 // do not apply to an INSERT.
-func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
+func (a *analyzer) recordFixed(sc *scope, where *pgparse.Node) {
 	if len(sc.items) == 0 {
 		return
 	}
@@ -761,21 +760,21 @@ func (a *analyzer) nullRejected(p *prover) []colKey {
 		if c.allow != nil {
 			continue
 		}
-		var operands []*pg_query.Node
+		var operands []*pgparse.Node
 		switch v := c.n.Node.(type) {
-		case *pg_query.Node_NullTest:
-			if v.NullTest.Nulltesttype == pg_query.NullTestType_IS_NOT_NULL {
-				operands = []*pg_query.Node{v.NullTest.Arg}
+		case *pgparse.Node_NullTest:
+			if v.NullTest.Nulltesttype == pgparse.NullTestType_IS_NOT_NULL {
+				operands = []*pgparse.Node{v.NullTest.Arg}
 			}
-		case *pg_query.Node_AExpr:
+		case *pgparse.Node_AExpr:
 			switch v.AExpr.Kind {
-			case pg_query.A_Expr_Kind_AEXPR_OP, pg_query.A_Expr_Kind_AEXPR_LIKE, pg_query.A_Expr_Kind_AEXPR_ILIKE,
-				pg_query.A_Expr_Kind_AEXPR_BETWEEN, pg_query.A_Expr_Kind_AEXPR_IN, pg_query.A_Expr_Kind_AEXPR_OP_ANY:
+			case pgparse.A_Expr_Kind_AEXPR_OP, pgparse.A_Expr_Kind_AEXPR_LIKE, pgparse.A_Expr_Kind_AEXPR_ILIKE,
+				pgparse.A_Expr_Kind_AEXPR_BETWEEN, pgparse.A_Expr_Kind_AEXPR_IN, pgparse.A_Expr_Kind_AEXPR_OP_ANY:
 				// strict operators: NULL operands yield NULL, which WHERE rejects (IS DISTINCT FROM is not strict)
 				if v.AExpr.Lexpr != nil {
 					operands = append(operands, v.AExpr.Lexpr)
 				}
-				if v.AExpr.Kind == pg_query.A_Expr_Kind_AEXPR_OP {
+				if v.AExpr.Kind == pgparse.A_Expr_Kind_AEXPR_OP {
 					operands = append(operands, v.AExpr.Rexpr)
 				}
 			}
@@ -791,7 +790,7 @@ func (a *analyzer) nullRejected(p *prover) []colKey {
 
 // underCondition analyzes n as if cond held: the columns cond proves non-NULL are not
 // nullable while n is typed (CASE WHEN x IS NOT NULL THEN x ...).
-func (a *analyzer) underCondition(cond, n *pg_query.Node, sc *scope) (*expr, *Error) {
+func (a *analyzer) underCondition(cond, n *pgparse.Node, sc *scope) (*expr, *Error) {
 	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
 	for _, it := range sc.items {
 		p.addItem(it)
@@ -842,14 +841,14 @@ func (p *prover) predicateColumns(l *rte) []string {
 		if c.allow != nil && !c.allow[l] {
 			continue
 		}
-		var sides []*pg_query.Node
+		var sides []*pgparse.Node
 		switch v := c.n.Node.(type) {
-		case *pg_query.Node_AExpr:
-			sides = []*pg_query.Node{v.AExpr.Lexpr, v.AExpr.Rexpr}
-		case *pg_query.Node_NullTest:
-			sides = []*pg_query.Node{v.NullTest.Arg}
-		case *pg_query.Node_BooleanTest:
-			sides = []*pg_query.Node{v.BooleanTest.Arg}
+		case *pgparse.Node_AExpr:
+			sides = []*pgparse.Node{v.AExpr.Lexpr, v.AExpr.Rexpr}
+		case *pgparse.Node_NullTest:
+			sides = []*pgparse.Node{v.NullTest.Arg}
+		case *pgparse.Node_BooleanTest:
+			sides = []*pgparse.Node{v.BooleanTest.Arg}
 		}
 		for _, sd := range sides {
 			if sd == nil {
@@ -898,14 +897,14 @@ func (a *analyzer) indexLeads(rel *schema.Relation, cols []string) bool {
 func (a *analyzer) pushdownBlocker(l *rte, cols []string) string {
 	sel := l.sub.sel
 	switch {
-	case sel.Op != pg_query.SetOperation_SETOP_NONE && sel.Op != pg_query.SetOperation_SET_OPERATION_UNDEFINED:
+	case sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED:
 		return "the view is a set operation"
 	case sel.LimitCount != nil || sel.LimitOffset != nil:
 		return "the view has LIMIT / OFFSET"
 	}
 	for _, tn := range sel.TargetList {
 		hasWindow := false
-		schema.WalkNodes(tn, func(n *pg_query.Node) {
+		schema.WalkNodes(tn, func(n *pgparse.Node) {
 			if f := n.GetFuncCall(); f != nil && f.Over != nil {
 				hasWindow = true
 			}

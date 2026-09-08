@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Builds pg_query_<major>.wasm from a libpg_query checkout with emscripten.
+# Builds pg_query_<major>.wasm from a libpg_query checkout with emscripten, and regenerates
+# the Go node types (../pg_query.pb.go) from that checkout's pg_query.proto.
 #
 #   build.sh <libpg_query tag>            e.g. build.sh 17-6.2.2
 #
 # The tag is cloned (shallow) into $LIBPG_QUERY_CACHE (default ~/.cache/sqlshape/libpg_query)
-# unless already present. Needs emcc on PATH: `nix-shell -p emscripten --run "./build.sh 17-6.2.2"`.
+# unless already present. Needs emcc, protoc and protoc-gen-go on PATH:
+#   nix-shell -p emscripten protobuf protoc-gen-go --run "./build.sh 17-6.2.2"
 #
 # Why these flags:
 #   -sSUPPORT_LONGJMP=emscripten  PostgreSQL reports a syntax error by longjmp (ereport ->
@@ -42,3 +44,7 @@ emcc -O2 -std=gnu99 -fwrapv -fno-strict-aliasing \
 	-sERROR_ON_UNDEFINED_SYMBOLS=0 --no-entry \
 	-o "$out" $srcs "$here/shim.c"
 ls -la "$out"
+protoc --proto_path="$src/protobuf" --go_out="$here/.." \
+	--go_opt=Mpg_query.proto=github.com/kr9ly/sqlshape/internal/pgparse --go_opt=paths=source_relative \
+	"$src/protobuf/pg_query.proto"
+gofmt -w "$here/../pg_query.pb.go"

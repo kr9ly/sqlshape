@@ -3,10 +3,9 @@
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# The binary links libpg_query through cgo, so every platform is built on its own runner
-# rather than cross-compiled. Windows is not built here (libpg_query does not build reliably
-# with the toolchains on the Windows runners); `go install` still works there with a C
-# compiler installed.
+# The binary is a plain Go build (libpg_query runs as WebAssembly, no cgo), so it could be
+# cross-compiled from one runner; each platform still builds on its own runner so the smoke
+# test runs on the platform it ships for.
 #
 # `go install github.com/kr9ly/sqlshape/cmd/sqlshape@<tag>` needs nothing from this
 # workflow: it reads the tag straight from the module proxy.
@@ -36,7 +35,7 @@ jobs:
 
       - name: Build
         env:
-          CGO_ENABLED: "1"
+          CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |

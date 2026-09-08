@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
 // Interpretation sharing: a Go named type that meets a DB nominal type — an enum, a
@@ -137,9 +137,9 @@ func seedIndex(sd *schema.Seed, col string) int {
 func constText(e schema.Expr) string {
 	if ac := e.GetAConst(); ac != nil {
 		switch v := ac.Val.(type) {
-		case *pg_query.A_Const_Sval:
+		case *pgparse.A_Const_Sval:
 			return v.Sval.GetSval()
-		case *pg_query.A_Const_Ival:
+		case *pgparse.A_Const_Ival:
 			return strconv.Itoa(int(v.Ival.GetIval()))
 		}
 	}

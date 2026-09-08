@@ -3,8 +3,7 @@ package analyze
 import (
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -68,25 +67,25 @@ type assignment struct {
 }
 
 // violations enumerates the constraints the analyzed statement may violate.
-func (a *analyzer) violations(stmt *pg_query.Node) []Violation {
+func (a *analyzer) violations(stmt *pgparse.Node) []Violation {
 	switch st := stmt.Node.(type) {
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		rel := a.s.Relation(st.InsertStmt.Relation.Schemaname, st.InsertStmt.Relation.Relname)
 		return append(a.insertViolations(st.InsertStmt), a.triggerViolations(rel, 'i', nil)...)
-	case *pg_query.Node_UpdateStmt:
+	case *pgparse.Node_UpdateStmt:
 		rel := a.s.Relation(st.UpdateStmt.Relation.Schemaname, st.UpdateStmt.Relation.Relname)
 		return append(a.updateViolations(rel, a.assignedColumns(rel), nil), a.triggerViolations(rel, 'u', a.assignedColumns(rel))...)
-	case *pg_query.Node_DeleteStmt:
+	case *pgparse.Node_DeleteStmt:
 		rel := a.s.Relation(st.DeleteStmt.Relation.Schemaname, st.DeleteStmt.Relation.Relname)
 		return append(a.referencingViolations(rel, nil, true), a.triggerViolations(rel, 'd', nil)...)
-	case *pg_query.Node_MergeStmt:
+	case *pgparse.Node_MergeStmt:
 		// the union of what its actions may violate
 		rel := a.s.Relation(st.MergeStmt.Relation.Schemaname, st.MergeStmt.Relation.Relname)
 		var out []Violation
 		if a.mergeActions&mergeInsert != 0 {
-			ins := &pg_query.InsertStmt{Relation: st.MergeStmt.Relation, SelectStmt: &pg_query.Node{}}
+			ins := &pgparse.InsertStmt{Relation: st.MergeStmt.Relation, SelectStmt: &pgparse.Node{}}
 			for _, c := range a.mergeInserted {
-				ins.Cols = append(ins.Cols, &pg_query.Node{Node: &pg_query.Node_ResTarget{ResTarget: &pg_query.ResTarget{Name: c}}})
+				ins.Cols = append(ins.Cols, &pgparse.Node{Node: &pgparse.Node_ResTarget{ResTarget: &pgparse.ResTarget{Name: c}}})
 			}
 			out = append(out, a.insertViolations(ins)...)
 			out = append(out, a.triggerViolations(rel, 'i', nil)...)
@@ -136,7 +135,7 @@ func (a *analyzer) triggerViolations(rel *schema.Relation, event byte, assigned 
 	return dedupe(out)
 }
 
-func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
+func (a *analyzer) insertViolations(ins *pgparse.InsertStmt) []Violation {
 	rel := a.s.Relation(ins.Relation.Schemaname, ins.Relation.Relname)
 	if rel == nil {
 		return nil
@@ -180,7 +179,7 @@ func (a *analyzer) insertViolations(ins *pg_query.InsertStmt) []Violation {
 				}
 			}
 		}
-		if oc.Action == pg_query.OnConflictAction_ONCONFLICT_UPDATE {
+		if oc.Action == pgparse.OnConflictAction_ONCONFLICT_UPDATE {
 			conflictSet = map[string]bool{}
 			for _, tn := range oc.TargetList {
 				conflictSet[tn.GetResTarget().GetName()] = true

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
@@ -107,9 +106,9 @@ type analyzer struct {
 	// funcParams: when analyzing a SQL function body, its parameters (by name and position)
 	funcParams []funcParam
 	// funcVolatility remembers the volatility of each resolved function call (card.go)
-	funcVolatility map[*pg_query.FuncCall]byte
+	funcVolatility map[*pgparse.FuncCall]byte
 	// dmlCTEs are the data-modifying statements inside WITH (their failure modes count)
-	dmlCTEs []*pg_query.Node
+	dmlCTEs []*pgparse.Node
 	// waived are the obligations the statement opts out of, by table (`-- sqlshape:
 	// unfiltered t1, t2` and `-- sqlshape: waive t1 pinned(x), t2` in the SQL text; see
 	// schema.Relation.Waived for the spec strings). Carried on the facts, judged by
@@ -125,9 +124,9 @@ type analyzer struct {
 	// factBySel / factOutBySel are the facts of that level and the leaf columns its target
 	// list projects plainly, so a parent level can attach an EXISTS / IN subquery's body
 	// to its own predicate; claimed marks the bodies so attached
-	scopeSel     map[*scope]*pg_query.SelectStmt
-	factBySel    map[*pg_query.SelectStmt]*facts.Scope
-	factOutBySel map[*pg_query.SelectStmt][]*facts.ColRef
+	scopeSel     map[*scope]*pgparse.SelectStmt
+	factBySel    map[*pgparse.SelectStmt]*facts.Scope
+	factOutBySel map[*pgparse.SelectStmt][]*facts.ColRef
 	claimed      map[*facts.Scope]bool
 }
 
@@ -290,12 +289,12 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, waived map[string][]string) *
 		viewScopes:     map[*schema.Relation]*subquery{},
 		viewBusy:       map[*schema.Relation]bool{},
 		viewFactScopes: map[*schema.Relation]*facts.Scope{},
-		scopeSel:       map[*scope]*pg_query.SelectStmt{},
-		factBySel:      map[*pg_query.SelectStmt]*facts.Scope{},
-		factOutBySel:   map[*pg_query.SelectStmt][]*facts.ColRef{},
+		scopeSel:       map[*scope]*pgparse.SelectStmt{},
+		factBySel:      map[*pgparse.SelectStmt]*facts.Scope{},
+		factOutBySel:   map[*pgparse.SelectStmt][]*facts.ColRef{},
 		claimed:        map[*facts.Scope]bool{},
 		funcParams:     fp,
-		funcVolatility: map[*pg_query.FuncCall]byte{},
+		funcVolatility: map[*pgparse.FuncCall]byte{},
 		waived:         waived,
 	}
 	for i, p := range fp {
@@ -307,35 +306,35 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, waived map[string][]string) *
 }
 
 // analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
-func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived map[string][]string) (*Result, error) {
+func analyzeStmt(s *schema.Schema, stmt *pgparse.Node, fp []funcParam, waived map[string][]string) (*Result, error) {
 	return analyzeStmtIn(s, stmt, fp, waived, map[*schema.Function]bool{})
 }
 
 // analyzeStmtIn is analyzeStmt inside a function body: visited holds the functions on
 // the call chain so a recursive SQL function terminates.
-func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived map[string][]string, visited map[*schema.Function]bool) (*Result, error) {
-	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
+func analyzeStmtIn(s *schema.Schema, stmt *pgparse.Node, fp []funcParam, waived map[string][]string, visited map[*schema.Function]bool) (*Result, error) {
+	tree := &pgparse.ParseResult{Stmts: []*pgparse.RawStmt{{Stmt: stmt}}}
 	a := newAnalyzer(s, fp, waived)
 	sc := newScope(nil)
 	var cols []rteCol
 	var aerr *Error
 	switch st := tree.Stmts[0].Stmt.Node.(type) {
-	case *pg_query.Node_SelectStmt:
+	case *pgparse.Node_SelectStmt:
 		cols, aerr = a.selectStmt(st.SelectStmt, sc)
 		if st.SelectStmt.IntoClause != nil {
 			cols = nil // SELECT INTO creates a table and returns no rows
 		}
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		cols, aerr = a.insertStmt(st.InsertStmt, sc)
-	case *pg_query.Node_UpdateStmt:
+	case *pgparse.Node_UpdateStmt:
 		cols, aerr = a.updateStmt(st.UpdateStmt, sc)
-	case *pg_query.Node_DeleteStmt:
+	case *pgparse.Node_DeleteStmt:
 		cols, aerr = a.deleteStmt(st.DeleteStmt, sc)
-	case *pg_query.Node_CallStmt:
+	case *pgparse.Node_CallStmt:
 		cols, aerr = a.callStmt(st.CallStmt, sc)
-	case *pg_query.Node_MergeStmt:
+	case *pgparse.Node_MergeStmt:
 		cols, aerr = a.mergeStmt(st.MergeStmt, sc)
-	case *pg_query.Node_TruncateStmt:
+	case *pgparse.Node_TruncateStmt:
 		for _, rv := range st.TruncateStmt.Relations {
 			rel, r, err := a.targetRTE(rv.GetRangeVar(), sc)
 			if err != nil {
@@ -344,13 +343,13 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived
 			// every row goes: a delete of the whole table, for the obligations
 			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: r, cmd: "delete from"})
 		}
-	case *pg_query.Node_LockStmt:
+	case *pgparse.Node_LockStmt:
 		for _, rv := range st.LockStmt.Relations {
 			if _, _, err := a.targetRTE(rv.GetRangeVar(), sc); err != nil {
 				return nil, err
 			}
 		}
-	case *pg_query.Node_RefreshMatViewStmt:
+	case *pgparse.Node_RefreshMatViewStmt:
 		rel, _, err := a.targetRTE(st.RefreshMatViewStmt.Relation, sc)
 		if err != nil {
 			return nil, err
@@ -358,14 +357,14 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived
 		if rel.Kind != schema.MatView {
 			return nil, errAt(codeWrongObjectType, st.RefreshMatViewStmt.Relation.Location, "%q is not a materialized view", rel.Name)
 		}
-	case *pg_query.Node_NotifyStmt, *pg_query.Node_ListenStmt, *pg_query.Node_UnlistenStmt,
-		*pg_query.Node_VariableSetStmt, *pg_query.Node_DiscardStmt:
+	case *pgparse.Node_NotifyStmt, *pgparse.Node_ListenStmt, *pgparse.Node_UnlistenStmt,
+		*pgparse.Node_VariableSetStmt, *pgparse.Node_DiscardStmt:
 		// no parameters, no result
-	case *pg_query.Node_VariableShowStmt:
+	case *pgparse.Node_VariableShowStmt:
 		cols = []rteCol{{name: st.VariableShowStmt.Name, typ: ref(catalog.Text)}}
-	case *pg_query.Node_TransactionStmt, *pg_query.Node_DoStmt, *pg_query.Node_ClosePortalStmt, *pg_query.Node_CheckPointStmt:
+	case *pgparse.Node_TransactionStmt, *pgparse.Node_DoStmt, *pgparse.Node_ClosePortalStmt, *pgparse.Node_CheckPointStmt:
 		// no parameters, no result
-	case *pg_query.Node_VacuumStmt:
+	case *pgparse.Node_VacuumStmt:
 		for _, rn := range st.VacuumStmt.Rels {
 			vr := rn.GetVacuumRelation()
 			rel, _, err := a.targetRTE(vr.Relation, sc)
@@ -378,7 +377,7 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived
 				}
 			}
 		}
-	case *pg_query.Node_CopyStmt:
+	case *pgparse.Node_CopyStmt:
 		cp := st.CopyStmt
 		if cp.Relation != nil {
 			rel, _, err := a.targetRTE(cp.Relation, sc)
@@ -406,18 +405,18 @@ func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived
 				return nil, err
 			}
 		}
-	case *pg_query.Node_DeclareCursorStmt:
+	case *pgparse.Node_DeclareCursorStmt:
 		if _, err := a.subStatement(st.DeclareCursorStmt.Query, sc); err != nil {
 			return nil, err
 		}
-	case *pg_query.Node_CreateTableAsStmt:
+	case *pgparse.Node_CreateTableAsStmt:
 		if _, err := a.subStatement(st.CreateTableAsStmt.Query, sc); err != nil {
 			return nil, err
 		}
-	case *pg_query.Node_CreateStmt:
+	case *pgparse.Node_CreateStmt:
 		// CREATE [TEMP] TABLE from application code: nothing to type; the checker cannot see
 		// the table in later statements (declare it in schema.sql for that)
-	case *pg_query.Node_FetchStmt:
+	case *pgparse.Node_FetchStmt:
 		return nil, &Error{Code: codeFeatureNotSupported, Message: "FETCH: a cursor's columns are not known statically; read the DECLARE CURSOR query directly"}
 	default:
 		return nil, &Error{Code: codeFeatureNotSupported, Message: fmt.Sprintf("unsupported statement %T", tree.Stmts[0].Stmt.Node)}
@@ -520,15 +519,15 @@ func (a *analyzer) column(c rteCol) Column {
 
 // subStatement analyzes a statement nested in another (COPY (query), DECLARE CURSOR ...,
 // CREATE TABLE AS ...) and returns its columns.
-func (a *analyzer) subStatement(n *pg_query.Node, sc *scope) ([]rteCol, *Error) {
+func (a *analyzer) subStatement(n *pgparse.Node, sc *scope) ([]rteCol, *Error) {
 	switch st := n.Node.(type) {
-	case *pg_query.Node_SelectStmt:
+	case *pgparse.Node_SelectStmt:
 		return a.selectStmt(st.SelectStmt, newScope(sc))
-	case *pg_query.Node_InsertStmt:
+	case *pgparse.Node_InsertStmt:
 		return a.insertStmt(st.InsertStmt, newScope(sc))
-	case *pg_query.Node_UpdateStmt:
+	case *pgparse.Node_UpdateStmt:
 		return a.updateStmt(st.UpdateStmt, newScope(sc))
-	case *pg_query.Node_DeleteStmt:
+	case *pgparse.Node_DeleteStmt:
 		return a.deleteStmt(st.DeleteStmt, newScope(sc))
 	}
 	return nil, errAt(codeFeatureNotSupported, -1, "unsupported nested statement %T", n.Node)
@@ -538,7 +537,7 @@ func init() {
 	// INSERT in schema.sql (seed rows): typed like any statement against the schema so far
 	// so, and its certain failures (a NOT NULL column left out) and domain / policy
 	// findings are problems too
-	schema.CheckStatement = func(s *schema.Schema, stmt *pg_query.Node) error {
+	schema.CheckStatement = func(s *schema.Schema, stmt *pgparse.Node) error {
 		r, err := analyzeStmt(s, stmt, nil, nil)
 		if err != nil {
 			return err
@@ -552,7 +551,7 @@ func init() {
 		return nil
 	}
 	// PARTITION BY (expr): ComputePartitionAttrs' rules on the key expression
-	schema.PartitionKeyProblem = func(s *schema.Schema, rel *schema.Relation, expr *pg_query.Node) string {
+	schema.PartitionKeyProblem = func(s *schema.Schema, rel *schema.Relation, expr *pgparse.Node) string {
 		a := newAnalyzer(s, nil, nil)
 		switch {
 		case a.aggregateIn(expr) != nil:
@@ -586,11 +585,11 @@ func init() {
 	}
 	// CREATE TABLE AS / SELECT INTO in schema.sql: the loader asks the analyzer for the
 	// query's columns
-	schema.QueryColumns = func(s *schema.Schema, query *pg_query.Node) ([]*schema.Column, error) {
+	schema.QueryColumns = func(s *schema.Schema, query *pgparse.Node) ([]*schema.Column, error) {
 		if sel := query.GetSelectStmt(); sel != nil && sel.IntoClause != nil {
-			cp := proto.Clone(sel).(*pg_query.SelectStmt)
+			cp := proto.Clone(sel).(*pgparse.SelectStmt)
 			cp.IntoClause = nil
-			query = &pg_query.Node{Node: &pg_query.Node_SelectStmt{SelectStmt: cp}}
+			query = &pgparse.Node{Node: &pgparse.Node_SelectStmt{SelectStmt: cp}}
 		}
 		r, err := analyzeStmt(s, query, nil, nil)
 		if err != nil {

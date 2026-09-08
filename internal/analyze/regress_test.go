@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/oracle"
 	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
@@ -485,7 +483,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 					hits = append(hits, regressHit{test: name, n: i + 1, class: class, key: key, sql: sql, oracle: want, analyzer: got})
 				}
 			}
-			if _, isSel := node.Node.(*pg_query.Node_SelectStmt); !isSel || node.GetSelectStmt().IntoClause != nil {
+			if _, isSel := node.Node.(*pgparse.Node_SelectStmt); !isSel || node.GetSelectStmt().IntoClause != nil {
 				err := exec(sql) // keep data / SELECT INTO state moving; failures mirror psql
 				if err == nil && node.GetSelectStmt().GetIntoClause() != nil {
 					// SELECT INTO made a table: the analyzer's schema gets it too
@@ -501,7 +499,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		}
 		err = exec(sql)
 		switch st := node.Node.(type) {
-		case *pg_query.Node_DiscardStmt:
+		case *pgparse.Node_DiscardStmt:
 			// DISCARD ALL (a \c too) / TEMP: the temp relations made so far are gone, and
 			// pgx must forget the statements the server deallocated
 			if err == nil {
@@ -510,7 +508,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 					s = loadRegressSchema(&ddl)
 				}
 				drops := dropTemps(stmts[:i])
-				if st.DiscardStmt.Target == pg_query.DiscardMode_DISCARD_ALL {
+				if st.DiscardStmt.Target == pgparse.DiscardMode_DISCARD_ALL {
 					drops = append(drops, sessionResets...)
 				}
 				for _, d := range drops {
@@ -520,26 +518,26 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 				}
 			}
 			continue
-		case *pg_query.Node_DeallocateStmt:
+		case *pgparse.Node_DeallocateStmt:
 			if err == nil && st.DeallocateStmt.Isall {
 				conn.DeallocateAll(ctx)
 			}
 		}
-		if ts, ok := node.Node.(*pg_query.Node_TransactionStmt); ok {
+		if ts, ok := node.Node.(*pgparse.Node_TransactionStmt); ok {
 			switch ts.TransactionStmt.Kind {
-			case pg_query.TransactionStmtKind_TRANS_STMT_BEGIN, pg_query.TransactionStmtKind_TRANS_STMT_START:
+			case pgparse.TransactionStmtKind_TRANS_STMT_BEGIN, pgparse.TransactionStmtKind_TRANS_STMT_START:
 				txSnap = len(ddl)
 				saves = nil
-			case pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK, pg_query.TransactionStmtKind_TRANS_STMT_PREPARE:
+			case pgparse.TransactionStmtKind_TRANS_STMT_ROLLBACK, pgparse.TransactionStmtKind_TRANS_STMT_PREPARE:
 				if txSnap >= 0 && len(ddl) > txSnap {
 					ddl = ddl[:txSnap]
 					s = nil
 				}
 				txSnap = -1
 				saves = nil
-			case pg_query.TransactionStmtKind_TRANS_STMT_SAVEPOINT:
+			case pgparse.TransactionStmtKind_TRANS_STMT_SAVEPOINT:
 				saves = append(saves, savepoint{ts.TransactionStmt.SavepointName, len(ddl)})
-			case pg_query.TransactionStmtKind_TRANS_STMT_ROLLBACK_TO:
+			case pgparse.TransactionStmtKind_TRANS_STMT_ROLLBACK_TO:
 				for i := len(saves) - 1; i >= 0; i-- {
 					if saves[i].name == ts.TransactionStmt.SavepointName {
 						if len(ddl) > saves[i].n {
@@ -550,7 +548,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 						break
 					}
 				}
-			case pg_query.TransactionStmtKind_TRANS_STMT_RELEASE:
+			case pgparse.TransactionStmtKind_TRANS_STMT_RELEASE:
 				for i := len(saves) - 1; i >= 0; i-- {
 					if saves[i].name == ts.TransactionStmt.SavepointName {
 						saves = saves[:i]
@@ -667,10 +665,10 @@ func loadRegressSchema(ddl *[]string) *schema.Schema {
 	}
 }
 
-func isRegressQuery(n *pg_query.Node) bool {
+func isRegressQuery(n *pgparse.Node) bool {
 	switch n.Node.(type) {
-	case *pg_query.Node_SelectStmt, *pg_query.Node_InsertStmt, *pg_query.Node_UpdateStmt,
-		*pg_query.Node_DeleteStmt, *pg_query.Node_MergeStmt:
+	case *pgparse.Node_SelectStmt, *pgparse.Node_InsertStmt, *pgparse.Node_UpdateStmt,
+		*pgparse.Node_DeleteStmt, *pgparse.Node_MergeStmt:
 		return true
 	}
 	return false

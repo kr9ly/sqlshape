@@ -4,9 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -17,7 +16,7 @@ type expr struct {
 	src      *Source
 	// rowOf is the FROM item this expression is the whole row of (a bare table alias)
 	rowOf *rte
-	node  *pg_query.Node
+	node  *pgparse.Node
 	// param is the parameter number when the expression is a bare $n
 	param int32
 	// fparam is the 1-based position of the SQL function parameter this expression is,
@@ -55,7 +54,7 @@ func (a *analyzer) bindTypmod(e *expr, target schema.TypeRef, loc int32) *Error 
 			return err
 		}
 	} else if c := e.node.GetAConst(); c != nil {
-		if sv, ok := c.Val.(*pg_query.A_Const_Sval); ok {
+		if sv, ok := c.Val.(*pgparse.A_Const_Sval); ok {
 			if err := a.validateLiteralTypmod(sv.Sval.GetSval(), to, target.Typmod, c.Location); err != nil {
 				return err
 			}
@@ -201,19 +200,19 @@ func (a *analyzer) typeNames(oids []catalog.OID) string {
 	return strings.Join(parts, ", ")
 }
 
-func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
+func (a *analyzer) analyzeExpr(n *pgparse.Node, sc *scope) (*expr, *Error) {
 	if n == nil {
 		return nil, errAt(codeSyntaxError, -1, "missing expression")
 	}
 	switch v := n.Node.(type) {
-	case *pg_query.Node_AConst:
+	case *pgparse.Node_AConst:
 		if bs := v.AConst.GetBsval(); bs != nil {
 			if err := validateBitConst(bs.GetBsval(), v.AConst.Location); err != nil {
 				return nil, err
 			}
 		}
 		return a.constExpr(v.AConst, n), nil
-	case *pg_query.Node_ParamRef:
+	case *pgparse.Node_ParamRef:
 		num := v.ParamRef.Number
 		if num > a.maxParam {
 			a.maxParam = num
@@ -226,15 +225,15 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			a.params[num] = catalog.Unknown
 		}
 		return e, nil
-	case *pg_query.Node_ColumnRef:
+	case *pgparse.Node_ColumnRef:
 		return a.columnRef(v.ColumnRef, sc)
-	case *pg_query.Node_TypeCast:
+	case *pgparse.Node_TypeCast:
 		return a.typeCast(v.TypeCast, sc)
-	case *pg_query.Node_AExpr:
+	case *pgparse.Node_AExpr:
 		return a.aExpr(v.AExpr, sc)
-	case *pg_query.Node_FuncCall:
+	case *pgparse.Node_FuncCall:
 		return a.funcCall(v.FuncCall, sc)
-	case *pg_query.Node_BoolExpr:
+	case *pgparse.Node_BoolExpr:
 		nullable := false
 		for _, arg := range v.BoolExpr.Args {
 			e, err := a.analyzeExpr(arg, sc)
@@ -250,12 +249,12 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			nullable = nullable || e.nullable
 		}
 		return &expr{typ: ref(catalog.Bool), nullable: nullable, node: n}, nil
-	case *pg_query.Node_NullTest:
+	case *pgparse.Node_NullTest:
 		if _, err := a.analyzeExpr(v.NullTest.Arg, sc); err != nil {
 			return nil, err
 		}
 		return &expr{typ: ref(catalog.Bool), node: n}, nil
-	case *pg_query.Node_BooleanTest:
+	case *pgparse.Node_BooleanTest:
 		e, err := a.analyzeExpr(v.BooleanTest.Arg, sc)
 		if err != nil {
 			return nil, err
@@ -264,9 +263,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 		return &expr{typ: ref(catalog.Bool), node: n}, nil
-	case *pg_query.Node_CaseExpr:
+	case *pgparse.Node_CaseExpr:
 		return a.caseExpr(v.CaseExpr, sc)
-	case *pg_query.Node_CoalesceExpr:
+	case *pgparse.Node_CoalesceExpr:
 		savedBan := a.srfBan
 		a.srfBan = "COALESCE"
 		defer func() { a.srfBan = savedBan }()
@@ -285,13 +284,13 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			}
 		}
 		return &expr{typ: t, nullable: nullable, node: n, coll: coll}, nil
-	case *pg_query.Node_MinMaxExpr:
+	case *pgparse.Node_MinMaxExpr:
 		es, err := a.analyzeList(v.MinMaxExpr.Args, sc)
 		if err != nil {
 			return nil, err
 		}
 		name := "GREATEST"
-		if v.MinMaxExpr.Op == pg_query.MinMaxOp_IS_LEAST {
+		if v.MinMaxExpr.Op == pgparse.MinMaxOp_IS_LEAST {
 			name = "LEAST"
 		}
 		t, coll, err := a.unify(es, v.MinMaxExpr.Location, name)
@@ -306,7 +305,7 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			}
 		}
 		return &expr{typ: t, nullable: nullable, node: n, coll: coll}, nil
-	case *pg_query.Node_AArrayExpr:
+	case *pgparse.Node_AArrayExpr:
 		es, err := a.analyzeList(v.AArrayExpr.Elements, sc)
 		if err != nil {
 			return nil, err
@@ -336,7 +335,7 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, errAt(codeUndefinedObject, v.AArrayExpr.Location, "could not find array type for data type %s", a.s.Types.Format(t))
 		}
 		return &expr{typ: ref(arr), node: n, coll: coll}, nil
-	case *pg_query.Node_RowExpr:
+	case *pgparse.Node_RowExpr:
 		args, err := a.analyzeList(v.RowExpr.Args, sc)
 		if err != nil {
 			return nil, err
@@ -355,13 +354,13 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			fields = append(fields, rteCol{name: "f" + strconv.Itoa(i+1), typ: e.typ, nullable: e.nullable, src: e.src, fields: e.fields, lit: lit})
 		}
 		return &expr{typ: ref(catalog.Record), node: n, fields: fields}, nil
-	case *pg_query.Node_SubLink:
+	case *pgparse.Node_SubLink:
 		return a.subLink(v.SubLink, sc)
-	case *pg_query.Node_AIndirection:
+	case *pgparse.Node_AIndirection:
 		return a.indirection(v.AIndirection, sc)
-	case *pg_query.Node_SqlvalueFunction:
+	case *pgparse.Node_SqlvalueFunction:
 		return &expr{typ: ref(sqlValueType(v.SqlvalueFunction.Op)), node: n}, nil
-	case *pg_query.Node_CollateClause:
+	case *pgparse.Node_CollateClause:
 		e, err := a.analyzeExpr(v.CollateClause.Arg, sc)
 		if err != nil {
 			return nil, err
@@ -371,9 +370,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 		}
 		e.node = n
 		return e, nil
-	case *pg_query.Node_NamedArgExpr:
+	case *pgparse.Node_NamedArgExpr:
 		return a.analyzeExpr(v.NamedArgExpr.Arg, sc)
-	case *pg_query.Node_GroupingFunc:
+	case *pgparse.Node_GroupingFunc:
 		// the arguments' level (the nearest one their columns resolve to) is the grouped
 		// query the GROUPING belongs to
 		fr := &aggFrame{sc: sc}
@@ -391,11 +390,11 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, errAt(codeGroupingError, v.GroupingFunc.Location, "arguments to GROUPING must be grouping expressions of the associated query level")
 		}
 		return &expr{typ: ref(catalog.Int4), node: n}, nil
-	case *pg_query.Node_JsonObjectConstructor:
+	case *pgparse.Node_JsonObjectConstructor:
 		return a.jsonConstructorList(v.JsonObjectConstructor.Exprs, v.JsonObjectConstructor.Output, sc, n)
-	case *pg_query.Node_JsonArrayConstructor:
+	case *pgparse.Node_JsonArrayConstructor:
 		return a.jsonConstructorList(v.JsonArrayConstructor.Exprs, v.JsonArrayConstructor.Output, sc, n)
-	case *pg_query.Node_JsonArrayQueryConstructor:
+	case *pgparse.Node_JsonArrayQueryConstructor:
 		q := v.JsonArrayQueryConstructor
 		if sel := q.Query.GetSelectStmt(); sel != nil {
 			cols, err := a.selectStmt(sel, newScope(sc))
@@ -411,10 +410,10 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 		return &expr{typ: t, node: n}, nil
-	case *pg_query.Node_JsonArrayAgg:
+	case *pgparse.Node_JsonArrayAgg:
 		ag := v.JsonArrayAgg
 		return a.jsonAgg(ag.Constructor, sc, n, func() *Error { _, err := a.jsonValue(ag.Arg, sc); return err })
-	case *pg_query.Node_JsonObjectAgg:
+	case *pgparse.Node_JsonObjectAgg:
 		ag := v.JsonObjectAgg
 		return a.jsonAgg(ag.Constructor, sc, n, func() *Error {
 			k, err := a.analyzeExpr(ag.Arg.Key, sc)
@@ -427,9 +426,9 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			_, err = a.jsonValue(ag.Arg.Value, sc)
 			return err
 		})
-	case *pg_query.Node_JsonFuncExpr:
+	case *pgparse.Node_JsonFuncExpr:
 		return a.jsonFuncExpr(v.JsonFuncExpr, sc, n)
-	case *pg_query.Node_JsonParseExpr:
+	case *pgparse.Node_JsonParseExpr:
 		je, err := a.jsonValue(v.JsonParseExpr.Expr, sc)
 		if err != nil {
 			return nil, err
@@ -450,7 +449,7 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 		return &expr{typ: t, nullable: true, node: n}, nil
-	case *pg_query.Node_JsonScalarExpr:
+	case *pgparse.Node_JsonScalarExpr:
 		if _, err := a.analyzeExpr(v.JsonScalarExpr.Expr, sc); err != nil {
 			return nil, err
 		}
@@ -459,7 +458,7 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 		return &expr{typ: t, nullable: true, node: n}, nil
-	case *pg_query.Node_JsonSerializeExpr:
+	case *pgparse.Node_JsonSerializeExpr:
 		if _, err := a.jsonValue(v.JsonSerializeExpr.Expr, sc); err != nil {
 			return nil, err
 		}
@@ -471,19 +470,19 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			return nil, errAt(codeDatatypeMismatch, v.JsonSerializeExpr.Location, "cannot use type %s in RETURNING clause of JSON_SERIALIZE()", a.s.Types.Format(t))
 		}
 		return &expr{typ: t, nullable: true, node: n}, nil
-	case *pg_query.Node_XmlExpr:
+	case *pgparse.Node_XmlExpr:
 		return a.xmlExpr(v.XmlExpr, sc, n)
-	case *pg_query.Node_XmlSerialize:
+	case *pgparse.Node_XmlSerialize:
 		return a.xmlSerialize(v.XmlSerialize, sc, n)
-	case *pg_query.Node_CurrentOfExpr:
+	case *pgparse.Node_CurrentOfExpr:
 		return &expr{typ: ref(catalog.Bool), node: n}, nil
-	case *pg_query.Node_MergeSupportFunc:
+	case *pgparse.Node_MergeSupportFunc:
 		// merge_action() in MERGE ... RETURNING (PG 17)
 		if !a.inMerge {
 			return nil, errAt(codeSyntaxError, v.MergeSupportFunc.Location, "MERGE_ACTION() can only be used in the RETURNING list of a MERGE command")
 		}
 		return &expr{typ: ref(catalog.Text), node: n}, nil
-	case *pg_query.Node_JsonIsPredicate:
+	case *pgparse.Node_JsonIsPredicate:
 		e, err := a.analyzeExpr(v.JsonIsPredicate.Expr, sc)
 		if err != nil {
 			return nil, err
@@ -499,15 +498,15 @@ func (a *analyzer) analyzeExpr(n *pg_query.Node, sc *scope) (*expr, *Error) {
 			}
 		}
 		return &expr{typ: ref(catalog.Bool), nullable: e.nullable, node: n}, nil
-	case *pg_query.Node_SetToDefault:
+	case *pgparse.Node_SetToDefault:
 		return &expr{typ: unknownRef(), nullable: true, node: n}, nil
-	case *pg_query.Node_List:
+	case *pgparse.Node_List:
 		return nil, errAt(codeSyntaxError, -1, "unexpected list expression")
 	}
 	return nil, errAt(codeFeatureNotSupported, loc(n), "unsupported expression %T", n.Node)
 }
 
-func (a *analyzer) analyzeList(nodes []*pg_query.Node, sc *scope) ([]*expr, *Error) {
+func (a *analyzer) analyzeList(nodes []*pgparse.Node, sc *scope) ([]*expr, *Error) {
 	out := make([]*expr, 0, len(nodes))
 	for _, n := range nodes {
 		e, err := a.analyzeExpr(n, sc)
@@ -556,14 +555,14 @@ func (a *analyzer) unify(es []*expr, at int32, context string) (schema.TypeRef, 
 	return schema.TypeRef{OID: t, Typmod: typmod}, a.resultColl(c, t), nil
 }
 
-func (a *analyzer) constExpr(c *pg_query.A_Const, n *pg_query.Node) *expr {
+func (a *analyzer) constExpr(c *pgparse.A_Const, n *pgparse.Node) *expr {
 	if c.Isnull {
 		return &expr{typ: unknownRef(), nullable: true, node: n, lit: true}
 	}
 	switch v := c.Val.(type) {
-	case *pg_query.A_Const_Ival:
+	case *pgparse.A_Const_Ival:
 		return &expr{typ: ref(catalog.Int4), node: n, lit: true}
-	case *pg_query.A_Const_Fval:
+	case *pgparse.A_Const_Fval:
 		s := v.Fval.GetFval()
 		if !strings.ContainsAny(s, ".eE") {
 			if _, err := strconv.ParseInt(s, 10, 32); err == nil {
@@ -574,16 +573,16 @@ func (a *analyzer) constExpr(c *pg_query.A_Const, n *pg_query.Node) *expr {
 			}
 		}
 		return &expr{typ: ref(catalog.Numeric), node: n, lit: true}
-	case *pg_query.A_Const_Boolval:
+	case *pgparse.A_Const_Boolval:
 		return &expr{typ: ref(catalog.Bool), node: n, lit: true}
-	case *pg_query.A_Const_Bsval:
+	case *pgparse.A_Const_Bsval:
 		return &expr{typ: ref(a.s.Types.Lookup("pg_catalog", "bit").OID), node: n, lit: true}
 	default: // string
 		return &expr{typ: unknownRef(), node: n, lit: true}
 	}
 }
 
-func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
+func (a *analyzer) columnRef(c *pgparse.ColumnRef, sc *scope) (*expr, *Error) {
 	var names []string
 	star := false
 	for _, f := range c.Fields {
@@ -678,7 +677,7 @@ func (a *analyzer) columnRef(c *pg_query.ColumnRef, sc *scope) (*expr, *Error) {
 	return e, nil
 }
 
-func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
+func (a *analyzer) typeCast(tc *pgparse.TypeCast, sc *scope) (*expr, *Error) {
 	target, rerr := a.s.ResolveType(tc.TypeName)
 	if rerr != nil {
 		return nil, errAt(codeUndefinedObject, tc.TypeName.Location, "%v", rerr)
@@ -758,15 +757,15 @@ func (a *analyzer) typeCast(tc *pg_query.TypeCast, sc *scope) (*expr, *Error) {
 	return &expr{typ: target, nullable: e.nullable, node: nodeOf(tc), lit: isLit(e) && a.domainType(target.OID) == nil, src: src}, nil
 }
 
-func (a *analyzer) opName(nodes []*pg_query.Node) string {
+func (a *analyzer) opName(nodes []*pgparse.Node) string {
 	parts := strs(nodes)
 	return parts[len(parts)-1]
 }
 
-func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
+func (a *analyzer) aExpr(x *pgparse.A_Expr, sc *scope) (*expr, *Error) {
 	self := nodeOf(x)
 	switch x.Kind {
-	case pg_query.A_Expr_Kind_AEXPR_OP, pg_query.A_Expr_Kind_AEXPR_LIKE, pg_query.A_Expr_Kind_AEXPR_ILIKE, pg_query.A_Expr_Kind_AEXPR_SIMILAR:
+	case pgparse.A_Expr_Kind_AEXPR_OP, pgparse.A_Expr_Kind_AEXPR_LIKE, pgparse.A_Expr_Kind_AEXPR_ILIKE, pgparse.A_Expr_Kind_AEXPR_SIMILAR:
 		name := a.opName(x.Name)
 		var l *expr
 		var err *Error
@@ -788,7 +787,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && len(lr.Args) == 0 && len(rr.Args) == 0 {
 			return nil, errAt(codeFeatureNotSupported, x.Location, "cannot compare rows of zero length")
 		}
-		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && !rowCompareOps[name] && !rowPatternOps[name] && x.Kind == pg_query.A_Expr_Kind_AEXPR_OP {
+		if lr, rr := x.Lexpr.GetRowExpr(), x.Rexpr.GetRowExpr(); lr != nil && rr != nil && !rowCompareOps[name] && !rowPatternOps[name] && x.Kind == pgparse.A_Expr_Kind_AEXPR_OP {
 			// make_row_comparison_op: the operator must exist per column, and then have a
 			// btree interpretation, which ~~ and friends have not
 			if len(lr.Args) != len(rr.Args) {
@@ -831,7 +830,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			}
 			return &expr{typ: ref(catalog.Bool), nullable: l.nullable || r.nullable, node: self}, nil
 		}
-		if x.Kind == pg_query.A_Expr_Kind_AEXPR_SIMILAR {
+		if x.Kind == pgparse.A_Expr_Kind_AEXPR_SIMILAR {
 			// x SIMILAR TO y is  x ~ similar_to_escape(y)
 			if err := a.bind(r, catalog.Text, x.Location); err != nil {
 				return nil, err
@@ -840,7 +839,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			name = "~"
 		}
 		return a.applyOperator(name, l, r, x.Location, self)
-	case pg_query.A_Expr_Kind_AEXPR_OP_ANY, pg_query.A_Expr_Kind_AEXPR_OP_ALL:
+	case pgparse.A_Expr_Kind_AEXPR_OP_ANY, pgparse.A_Expr_Kind_AEXPR_OP_ALL:
 		name := a.opName(x.Name)
 		l, err := a.analyzeExpr(x.Lexpr, sc)
 		if err != nil {
@@ -873,7 +872,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			}
 		}
 		return &expr{typ: ref(catalog.Bool), nullable: l.nullable || r.nullable, node: self}, nil
-	case pg_query.A_Expr_Kind_AEXPR_IN:
+	case pgparse.A_Expr_Kind_AEXPR_IN:
 		l, err := a.analyzeExpr(x.Lexpr, sc)
 		if err != nil {
 			return nil, err
@@ -895,8 +894,8 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			}
 		}
 		return &expr{typ: ref(catalog.Bool), nullable: true, node: self}, nil
-	case pg_query.A_Expr_Kind_AEXPR_BETWEEN, pg_query.A_Expr_Kind_AEXPR_NOT_BETWEEN,
-		pg_query.A_Expr_Kind_AEXPR_BETWEEN_SYM, pg_query.A_Expr_Kind_AEXPR_NOT_BETWEEN_SYM:
+	case pgparse.A_Expr_Kind_AEXPR_BETWEEN, pgparse.A_Expr_Kind_AEXPR_NOT_BETWEEN,
+		pgparse.A_Expr_Kind_AEXPR_BETWEEN_SYM, pgparse.A_Expr_Kind_AEXPR_NOT_BETWEEN_SYM:
 		l, err := a.analyzeExpr(x.Lexpr, sc)
 		if err != nil {
 			return nil, err
@@ -912,7 +911,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 		return &expr{typ: ref(catalog.Bool), nullable: true, node: self}, nil
-	case pg_query.A_Expr_Kind_AEXPR_DISTINCT, pg_query.A_Expr_Kind_AEXPR_NOT_DISTINCT:
+	case pgparse.A_Expr_Kind_AEXPR_DISTINCT, pgparse.A_Expr_Kind_AEXPR_NOT_DISTINCT:
 		l, err := a.analyzeExpr(x.Lexpr, sc)
 		if err != nil {
 			return nil, err
@@ -925,7 +924,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 			return nil, err
 		}
 		return &expr{typ: ref(catalog.Bool), node: self}, nil
-	case pg_query.A_Expr_Kind_AEXPR_NULLIF:
+	case pgparse.A_Expr_Kind_AEXPR_NULLIF:
 		l, err := a.analyzeExpr(x.Lexpr, sc)
 		if err != nil {
 			return nil, err
@@ -943,7 +942,7 @@ func (a *analyzer) aExpr(x *pg_query.A_Expr, sc *scope) (*expr, *Error) {
 }
 
 // applyOperator resolves name(l, r) (l nil for prefix), binds unknowns, returns the result expr.
-func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pg_query.Node) (*expr, *Error) {
+func (a *analyzer) applyOperator(name string, l, r *expr, at int32, self *pgparse.Node) (*expr, *Error) {
 	var left catalog.OID
 	if l != nil {
 		left = l.oid()
@@ -1033,7 +1032,7 @@ func firstParam(es ...*expr) int32 {
 	return 1
 }
 
-func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
+func (a *analyzer) funcCall(f *pgparse.FuncCall, sc *scope) (*expr, *Error) {
 	self := nodeOf(f)
 	names := strs(f.Funcname)
 	schemaName, name := "", names[len(names)-1]
@@ -1097,7 +1096,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 		if err := a.checkWindowDef(f.Over, sc); err != nil {
 			return nil, err
 		}
-		for _, n := range append(append([]*pg_query.Node{}, f.Over.PartitionClause...), f.Over.OrderClause...) {
+		for _, n := range append(append([]*pgparse.Node{}, f.Over.PartitionClause...), f.Over.OrderClause...) {
 			if sb := n.GetSortBy(); sb != nil {
 				n = sb.Node
 			}
@@ -1369,7 +1368,7 @@ func (a *analyzer) funcCall(f *pg_query.FuncCall, sc *scope) (*expr, *Error) {
 	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields, coll: a.resultColl(coll, res)}, nil
 }
 
-func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {
+func (a *analyzer) caseExpr(c *pgparse.CaseExpr, sc *scope) (*expr, *Error) {
 	a.inCase++
 	defer func() { a.inCase-- }()
 	var arg *expr
@@ -1427,7 +1426,7 @@ func (a *analyzer) caseExpr(c *pg_query.CaseExpr, sc *scope) (*expr, *Error) {
 	return &expr{typ: t, nullable: nullable, node: nodeOf(c), coll: coll}, nil
 }
 
-func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
+func (a *analyzer) subLink(s *pgparse.SubLink, sc *scope) (*expr, *Error) {
 	sel := s.Subselect.GetSelectStmt()
 	if sel == nil {
 		return nil, errAt(codeFeatureNotSupported, s.Location, "unsupported subquery")
@@ -1441,9 +1440,9 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 	}
 	self := nodeOf(s)
 	switch s.SubLinkType {
-	case pg_query.SubLinkType_EXISTS_SUBLINK:
+	case pgparse.SubLinkType_EXISTS_SUBLINK:
 		return &expr{typ: ref(catalog.Bool), node: self}, nil
-	case pg_query.SubLinkType_EXPR_SUBLINK:
+	case pgparse.SubLinkType_EXPR_SUBLINK:
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
 		}
@@ -1451,7 +1450,7 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 		// always yields one, so its column's own nullability stands (coalesce(max(x), 0))
 		nullable := cols[0].nullable || !a.plainAggregate(sel)
 		return &expr{typ: cols[0].typ, nullable: nullable, node: self, coll: cols[0].coll.asVar()}, nil
-	case pg_query.SubLinkType_ARRAY_SUBLINK:
+	case pgparse.SubLinkType_ARRAY_SUBLINK:
 		if len(cols) != 1 {
 			return nil, errAt(codeSyntaxError, s.Location, "subquery must return only one column")
 		}
@@ -1466,7 +1465,7 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 			return nil, errAt(codeUndefinedObject, s.Location, "could not find array type for data type %s", a.s.Types.Format(cols[0].typ))
 		}
 		return &expr{typ: ref(arr), nullable: false, node: self}, nil
-	case pg_query.SubLinkType_ANY_SUBLINK, pg_query.SubLinkType_ALL_SUBLINK:
+	case pgparse.SubLinkType_ANY_SUBLINK, pgparse.SubLinkType_ALL_SUBLINK:
 		name := "="
 		if len(s.OperName) > 0 {
 			name = a.opName(s.OperName)
@@ -1509,7 +1508,7 @@ func (a *analyzer) subLink(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
 	return nil, errAt(codeFeatureNotSupported, s.Location, "unsupported sublink type %v", s.SubLinkType)
 }
 
-func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Error) {
+func (a *analyzer) indirection(x *pgparse.A_Indirection, sc *scope) (*expr, *Error) {
 	// (t).field / t.field where t is a whole-row var: pg_query gives ColumnRef with 2 fields
 	// for the latter, so here we mostly see array subscripts and (rowexpr).field
 	e, err := a.analyzeExpr(x.Arg, sc)
@@ -1520,7 +1519,7 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 	for i := 0; i < len(x.Indirection); i++ {
 		ind := x.Indirection[i]
 		switch v := ind.Node.(type) {
-		case *pg_query.Node_AIndices:
+		case *pgparse.Node_AIndices:
 			t := a.typ(a.baseType(cur.OID))
 			switch {
 			case t != nil && t.OID == catalog.JSONB:
@@ -1529,7 +1528,7 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 				if v.AIndices.IsSlice {
 					return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "jsonb subscript does not support slices")
 				}
-				for _, idx := range []*pg_query.Node{v.AIndices.Lidx, v.AIndices.Uidx} {
+				for _, idx := range []*pgparse.Node{v.AIndices.Lidx, v.AIndices.Uidx} {
 					if idx == nil {
 						continue
 					}
@@ -1560,7 +1559,7 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 						return nil, errAt("54000", -1, "number of array dimensions (%d) exceeds the maximum allowed (%d)", dims, maxArrayDim)
 					}
 					slice = slice || ai.IsSlice
-					for _, idx := range []*pg_query.Node{ai.Lidx, ai.Uidx} {
+					for _, idx := range []*pgparse.Node{ai.Lidx, ai.Uidx} {
 						if idx == nil {
 							continue
 						}
@@ -1581,7 +1580,7 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 				// raw_array_subscript_handler: a fixed-length type over elements (point, box,
 				// name) subscripts to one element; no slices
 				ai := v.AIndices
-				for _, idx := range []*pg_query.Node{ai.Lidx, ai.Uidx} {
+				for _, idx := range []*pgparse.Node{ai.Lidx, ai.Uidx} {
 					if idx == nil {
 						continue
 					}
@@ -1599,7 +1598,7 @@ func (a *analyzer) indirection(x *pg_query.A_Indirection, sc *scope) (*expr, *Er
 			default:
 				return nil, errAt(codeDatatypeMismatch, loc(x.Arg), "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(cur))
 			}
-		case *pg_query.Node_String_:
+		case *pgparse.Node_String_:
 			t := a.typ(a.baseType(cur.OID))
 			if t != nil && t.OID == catalog.Record {
 				// (f(x)).name on a function returning record through OUT parameters, or on a
@@ -1655,33 +1654,33 @@ func (a *analyzer) relByRowType(oid catalog.OID) *schema.Relation {
 	return nil
 }
 
-func sqlValueType(op pg_query.SQLValueFunctionOp) catalog.OID {
+func sqlValueType(op pgparse.SQLValueFunctionOp) catalog.OID {
 	switch op {
-	case pg_query.SQLValueFunctionOp_SVFOP_CURRENT_DATE:
+	case pgparse.SQLValueFunctionOp_SVFOP_CURRENT_DATE:
 		return catalog.Date
-	case pg_query.SQLValueFunctionOp_SVFOP_CURRENT_TIME, pg_query.SQLValueFunctionOp_SVFOP_CURRENT_TIME_N:
+	case pgparse.SQLValueFunctionOp_SVFOP_CURRENT_TIME, pgparse.SQLValueFunctionOp_SVFOP_CURRENT_TIME_N:
 		return catalog.TimeTZ
-	case pg_query.SQLValueFunctionOp_SVFOP_CURRENT_TIMESTAMP, pg_query.SQLValueFunctionOp_SVFOP_CURRENT_TIMESTAMP_N:
+	case pgparse.SQLValueFunctionOp_SVFOP_CURRENT_TIMESTAMP, pgparse.SQLValueFunctionOp_SVFOP_CURRENT_TIMESTAMP_N:
 		return catalog.TimestampTZ
-	case pg_query.SQLValueFunctionOp_SVFOP_LOCALTIME, pg_query.SQLValueFunctionOp_SVFOP_LOCALTIME_N:
+	case pgparse.SQLValueFunctionOp_SVFOP_LOCALTIME, pgparse.SQLValueFunctionOp_SVFOP_LOCALTIME_N:
 		return catalog.Time
-	case pg_query.SQLValueFunctionOp_SVFOP_LOCALTIMESTAMP, pg_query.SQLValueFunctionOp_SVFOP_LOCALTIMESTAMP_N:
+	case pgparse.SQLValueFunctionOp_SVFOP_LOCALTIMESTAMP, pgparse.SQLValueFunctionOp_SVFOP_LOCALTIMESTAMP_N:
 		return catalog.Timestamp
 	}
 	return catalog.Name
 }
 
-func boolOpName(op pg_query.BoolExprType) string {
+func boolOpName(op pgparse.BoolExprType) string {
 	switch op {
-	case pg_query.BoolExprType_AND_EXPR:
+	case pgparse.BoolExprType_AND_EXPR:
 		return "AND"
-	case pg_query.BoolExprType_OR_EXPR:
+	case pgparse.BoolExprType_OR_EXPR:
 		return "OR"
 	}
 	return "NOT"
 }
 
-func strs(nodes []*pg_query.Node) []string {
+func strs(nodes []*pgparse.Node) []string {
 	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, n.GetString_().GetSval())
@@ -1690,62 +1689,62 @@ func strs(nodes []*pg_query.Node) []string {
 }
 
 // loc returns the 0-based location of a node, or -1.
-func loc(n *pg_query.Node) int32 {
+func loc(n *pgparse.Node) int32 {
 	if n == nil {
 		return -1
 	}
 	switch v := n.Node.(type) {
-	case *pg_query.Node_AConst:
+	case *pgparse.Node_AConst:
 		return v.AConst.Location
-	case *pg_query.Node_ParamRef:
+	case *pgparse.Node_ParamRef:
 		return v.ParamRef.Location
-	case *pg_query.Node_ColumnRef:
+	case *pgparse.Node_ColumnRef:
 		return v.ColumnRef.Location
-	case *pg_query.Node_TypeCast:
+	case *pgparse.Node_TypeCast:
 		return v.TypeCast.Location
-	case *pg_query.Node_AExpr:
+	case *pgparse.Node_AExpr:
 		return v.AExpr.Location
-	case *pg_query.Node_FuncCall:
+	case *pgparse.Node_FuncCall:
 		return v.FuncCall.Location
-	case *pg_query.Node_BoolExpr:
+	case *pgparse.Node_BoolExpr:
 		return v.BoolExpr.Location
-	case *pg_query.Node_CaseExpr:
+	case *pgparse.Node_CaseExpr:
 		return v.CaseExpr.Location
-	case *pg_query.Node_SubLink:
+	case *pgparse.Node_SubLink:
 		return v.SubLink.Location
-	case *pg_query.Node_AArrayExpr:
+	case *pgparse.Node_AArrayExpr:
 		return v.AArrayExpr.Location
-	case *pg_query.Node_ResTarget:
+	case *pgparse.Node_ResTarget:
 		return v.ResTarget.Location
-	case *pg_query.Node_RangeVar:
+	case *pgparse.Node_RangeVar:
 		return v.RangeVar.Location
-	case *pg_query.Node_CoalesceExpr:
+	case *pgparse.Node_CoalesceExpr:
 		return v.CoalesceExpr.Location
-	case *pg_query.Node_NullTest:
+	case *pgparse.Node_NullTest:
 		return v.NullTest.Location
-	case *pg_query.Node_BooleanTest:
+	case *pgparse.Node_BooleanTest:
 		return v.BooleanTest.Location
 	}
 	return -1
 }
 
 // nodeOf wraps a concrete AST message back into a Node (for name figuring).
-func nodeOf(m any) *pg_query.Node {
+func nodeOf(m any) *pgparse.Node {
 	switch v := m.(type) {
-	case *pg_query.ColumnRef:
-		return &pg_query.Node{Node: &pg_query.Node_ColumnRef{ColumnRef: v}}
-	case *pg_query.TypeCast:
-		return &pg_query.Node{Node: &pg_query.Node_TypeCast{TypeCast: v}}
-	case *pg_query.A_Expr:
-		return &pg_query.Node{Node: &pg_query.Node_AExpr{AExpr: v}}
-	case *pg_query.FuncCall:
-		return &pg_query.Node{Node: &pg_query.Node_FuncCall{FuncCall: v}}
-	case *pg_query.CaseExpr:
-		return &pg_query.Node{Node: &pg_query.Node_CaseExpr{CaseExpr: v}}
-	case *pg_query.SubLink:
-		return &pg_query.Node{Node: &pg_query.Node_SubLink{SubLink: v}}
-	case *pg_query.A_Indirection:
-		return &pg_query.Node{Node: &pg_query.Node_AIndirection{AIndirection: v}}
+	case *pgparse.ColumnRef:
+		return &pgparse.Node{Node: &pgparse.Node_ColumnRef{ColumnRef: v}}
+	case *pgparse.TypeCast:
+		return &pgparse.Node{Node: &pgparse.Node_TypeCast{TypeCast: v}}
+	case *pgparse.A_Expr:
+		return &pgparse.Node{Node: &pgparse.Node_AExpr{AExpr: v}}
+	case *pgparse.FuncCall:
+		return &pgparse.Node{Node: &pgparse.Node_FuncCall{FuncCall: v}}
+	case *pgparse.CaseExpr:
+		return &pgparse.Node{Node: &pgparse.Node_CaseExpr{CaseExpr: v}}
+	case *pgparse.SubLink:
+		return &pgparse.Node{Node: &pgparse.Node_SubLink{SubLink: v}}
+	case *pgparse.A_Indirection:
+		return &pgparse.Node{Node: &pgparse.Node_AIndirection{AIndirection: v}}
 	}
 	return nil
 }
@@ -1815,14 +1814,14 @@ var zeroArgNullable = map[string]bool{
 
 // plainAggregate reports whether sel is a single aggregate query without GROUP BY / HAVING /
 // LIMIT / set operations: it returns exactly one row.
-func (a *analyzer) plainAggregate(sel *pg_query.SelectStmt) bool {
-	if sel.Op != pg_query.SetOperation_SETOP_NONE || len(sel.GroupClause) > 0 || sel.HavingClause != nil ||
+func (a *analyzer) plainAggregate(sel *pgparse.SelectStmt) bool {
+	if sel.Op != pgparse.SetOperation_SETOP_NONE || len(sel.GroupClause) > 0 || sel.HavingClause != nil ||
 		sel.LimitCount != nil || sel.LimitOffset != nil || len(sel.ValuesLists) > 0 || len(sel.DistinctClause) > 0 {
 		return false
 	}
 	agg := false
 	for _, tn := range sel.TargetList {
-		schema.WalkNodes(tn, func(n *pg_query.Node) {
+		schema.WalkNodes(tn, func(n *pgparse.Node) {
 			if f := n.GetFuncCall(); f != nil && f.Over == nil && a.isAggregateName(funcNames(f)) {
 				agg = true
 			}
@@ -1831,7 +1830,7 @@ func (a *analyzer) plainAggregate(sel *pg_query.SelectStmt) bool {
 	return agg
 }
 
-func funcNames(f *pg_query.FuncCall) []string {
+func funcNames(f *pgparse.FuncCall) []string {
 	var names []string
 	for _, n := range f.Funcname {
 		names = append(names, n.GetString_().GetSval())
@@ -1862,9 +1861,9 @@ func (a *analyzer) fieldOf(e *expr, name string) *expr {
 
 // rowSubquery analyzes a scalar subquery used as one side of a row comparison: its
 // columns form an anonymous record (ROWCOMPARE_SUBLINK).
-func (a *analyzer) rowSubquery(s *pg_query.SubLink, sc *scope) (*expr, *Error) {
+func (a *analyzer) rowSubquery(s *pgparse.SubLink, sc *scope) (*expr, *Error) {
 	sel := s.Subselect.GetSelectStmt()
-	if s.SubLinkType != pg_query.SubLinkType_EXPR_SUBLINK || sel == nil {
+	if s.SubLinkType != pgparse.SubLinkType_EXPR_SUBLINK || sel == nil {
 		return a.subLink(s, sc)
 	}
 	cols, err := a.selectStmt(sel, newScope(sc))
@@ -1891,8 +1890,8 @@ const (
 // checkWindowDef resolves a named window and applies transformWindowDefinitions' frame
 // rules: an offset RANGE frame needs exactly one ORDER BY column, GROUPS mode needs an
 // ORDER BY at all.
-func (a *analyzer) checkWindowDef(def *pg_query.WindowDef, sc *scope) *Error {
-	lookup := func(name string) *pg_query.WindowDef {
+func (a *analyzer) checkWindowDef(def *pgparse.WindowDef, sc *scope) *Error {
+	lookup := func(name string) *pgparse.WindowDef {
 		for s := sc; s != nil; s = s.parent {
 			if w, ok := s.windows[name]; ok {
 				return w
@@ -1933,7 +1932,7 @@ func (a *analyzer) checkWindowDef(def *pg_query.WindowDef, sc *scope) *Error {
 		case fo&frameOptionGroups != 0:
 			mode = "GROUPS"
 		}
-		for _, off := range []*pg_query.Node{def.StartOffset, def.EndOffset} {
+		for _, off := range []*pgparse.Node{def.StartOffset, def.EndOffset} {
 			if off == nil {
 				continue
 			}
@@ -2051,7 +2050,7 @@ func (a *analyzer) noteVarScope(s *scope) {
 // of the same level inside the arguments is a nested aggregate, and an aggregate may not
 // sit in a FROM item of the level it belongs to. It returns the level the aggregate
 // belongs to (nil for the level it is written in).
-func (a *analyzer) settleAggFrame(fr *aggFrame, f *pg_query.FuncCall) (*scope, *Error) {
+func (a *analyzer) settleAggFrame(fr *aggFrame, f *pgparse.FuncCall) (*scope, *Error) {
 	owner, depth := fr.owner, fr.ownerDepth
 	if owner == nil {
 		owner, depth = fr.sc.queryScope(), 0
@@ -2087,7 +2086,7 @@ const maxArrayDim = 6
 
 // hasVarClause is contain_var_clause on a raw expression: a column reference outside any
 // subquery (a SubLink's own columns are not this level's variables).
-func hasVarClause(n *pg_query.Node) bool {
+func hasVarClause(n *pgparse.Node) bool {
 	if n == nil || n.GetSubLink() != nil {
 		return false
 	}
@@ -2102,7 +2101,7 @@ func hasVarClause(n *pg_query.Node) bool {
 	return false
 }
 
-func hasColumnRef(n *pg_query.Node) bool {
+func hasColumnRef(n *pgparse.Node) bool {
 	if n == nil {
 		return false
 	}

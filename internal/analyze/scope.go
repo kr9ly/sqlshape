@@ -1,9 +1,8 @@
 package analyze
 
 import (
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -71,8 +70,8 @@ type joinInfo struct {
 	left, right *rte
 	using       []string
 	usingCols   []rteCol
-	jointype    pg_query.JoinType
-	quals       *pg_query.Node
+	jointype    pgparse.JoinType
+	quals       *pgparse.Node
 	colAliases  []string // (a JOIN b) AS x (c1, c2, ...): the output columns renamed in order
 	usingAlias  *rte     // JOIN USING (...) AS x: x exposes the merged USING columns
 }
@@ -187,7 +186,7 @@ type scope struct {
 	items  []*rte
 	ctes   map[string]*cte
 	// windows are this level's WINDOW clause definitions by name
-	windows map[string]*pg_query.WindowDef
+	windows map[string]*pgparse.WindowDef
 	// agg: this level's target list / HAVING has an aggregate (one row without GROUP BY)
 	agg bool
 	// grouped: this level has a GROUP BY clause
@@ -463,7 +462,7 @@ func (sc *scope) wholeRow(name string, loc int32) (*rte, *Error) {
 }
 
 // relationRTE builds a leaf rte for a table / view.
-func (a *analyzer) relationRTE(rel *schema.Relation, alias *pg_query.Alias, loc int32) (*rte, *Error) {
+func (a *analyzer) relationRTE(rel *schema.Relation, alias *pgparse.Alias, loc int32) (*rte, *Error) {
 	if a.inView == 0 && rel.Kind != 'c' {
 		dup := false
 		for _, ref := range a.refs {
