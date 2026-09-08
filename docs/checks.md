@@ -521,13 +521,19 @@ build does not know. A seeded lookup table is the recommended home for a value s
 #### Do not pass another table's ID
 
 A named type used with a primary key column, or a column derived from one through a foreign key,
-is treated as that table's ID.
-
-Rejected
+is treated as that table's ID. The binding comes from use, as with value sets: `UserID` below stands
+for `users.id` because some statement passed it where `users.id` (or a foreign key to it) was expected.
 
 ```go
 type UserID int64
 type OrderID int64
+
+var User = sqlshape.One[User, struct{ ID UserID }](`SELECT id, email FROM users WHERE id = {{.ID}}`)
+```
+
+Rejected
+
+```go
 
 type Params struct {
 	ID UserID // sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id

@@ -464,13 +464,18 @@ const (
 
 #### 別のテーブルのIDを渡さない
 
-主キーの列、または外部キーで主キーから派生した列に使われたnamed typeは、そのテーブルのIDとして扱われる。
-
-NG
+主キーの列、または外部キーで主キーから派生した列に使われたnamed typeは、そのテーブルのIDとして扱われる。束縛は値集合と同じく使用箇所から来る。下の`UserID`が`users.id`を表すのは、どこかの文が`users.id`（かそこへの外部キー）の位置にそれを渡したから。
 
 ```go
 type UserID int64
 type OrderID int64
+
+var User = sqlshape.One[User, struct{ ID UserID }](`SELECT id, email FROM users WHERE id = {{.ID}}`)
+```
+
+NG
+
+```go
 
 type Params struct {
 	ID UserID // sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id
