@@ -89,15 +89,19 @@ require pinned(tenant_id) FAIL order_items.tenant_id is not pinned: every statem
 require pinned(tenant_id) statement`},
 		{`INSERT INTO orders (id, status) VALUES ($1, 'new')`, `
 require pinned(tenant_id) FAIL orders.tenant_id is not pinned: every statement on orders must fix tenant_id by equality (or assign it)`},
-		{`UPDATE orders SET status = $1 WHERE id = $2 AND tenant_id = $3 AND version = $4`, `
+		{`UPDATE orders SET status = $1 WHERE id = $2 AND tenant_id = $3 AND version = $4 AND deleted_at IS NULL`, `
+visible where deleted_at IS NULL statement
 require pinned(tenant_id) statement
 require immutable(tenant_id) statement
 require pinned(version) on update, delete statement`},
+		// the target of an UPDATE is read too: the visibility predicate is owed there as well
 		{`UPDATE orders SET status = $1, tenant_id = $2 WHERE id = $3`, `
+visible where deleted_at IS NULL FAIL rows of orders are visible where deleted_at IS NULL: add that predicate for orders, or opt out with ` + "`-- sqlshape: unfiltered orders`" + `
 require pinned(tenant_id) statement
 require immutable(tenant_id) FAIL orders.tenant_id is immutable: the statement must not assign it
 require pinned(version) on update, delete FAIL orders.version is not pinned: every statement on orders must fix version by equality (or assign it)`},
-		{`DELETE FROM orders WHERE id = $1 AND tenant_id = $2 AND version = $3`, `
+		{`DELETE FROM orders WHERE id = $1 AND tenant_id = $2 AND version = $3 AND deleted_at IS NULL`, `
+visible where deleted_at IS NULL statement
 require pinned(tenant_id) statement
 require pinned(version) on update, delete statement`},
 		// a subquery is its own level: the outer pin does not reach the inner leaf

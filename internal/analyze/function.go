@@ -7,6 +7,7 @@ import (
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -25,6 +26,15 @@ type FunctionResult struct {
 	// Violations the body's writes may cause (PL/pgSQL bodies; SQL bodies are walked
 	// per call in functionViolations).
 	Violations []Violation
+	// Statements are the body's statements as facts, for the obligations the schema
+	// declares (internal/obligation); Line is the PL/pgSQL line, 0 for a SQL body.
+	Statements []FunctionStatement
+}
+
+// FunctionStatement is one statement of a function body, as facts.
+type FunctionStatement struct {
+	Line  int
+	Facts *facts.Facts
 }
 
 const codeInvalidFunctionDefinition = "42P13"
@@ -41,6 +51,7 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 		for _, r := range c.results {
 			out.Relations = append(out.Relations, r.Relations...)
 			out.Notes = append(out.Notes, r.Notes...)
+			out.Statements = append(out.Statements, r.Statements...)
 		}
 		return out, nil
 	}
@@ -67,6 +78,9 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 		}
 		out.Relations = append(out.Relations, r.Relations...)
 		out.Notes = append(out.Notes, r.Notes...)
+		if r.Facts != nil {
+			out.Statements = append(out.Statements, FunctionStatement{Facts: r.Facts})
+		}
 		if i == len(stmts)-1 {
 			last = r
 		}

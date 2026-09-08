@@ -983,6 +983,9 @@ func (b *plBody) sql(query string, line int) (*Result, error) {
 		return nil, b.errf(line, codeSyntaxError, "%v", aerr)
 	}
 	b.out.Relations = append(b.out.Relations, r.Relations...)
+	if r.Facts != nil {
+		b.out.Statements = append(b.out.Statements, FunctionStatement{Line: line, Facts: r.Facts})
+	}
 	for _, n := range r.Notes {
 		n.Message = fmt.Sprintf("line %d: %s", line, n.Message)
 		n.Position = 0

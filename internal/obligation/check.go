@@ -53,7 +53,9 @@ func (c *checker) scope(sc *facts.Scope, bySubject map[string][]*Obligation) {
 	}
 }
 
-// kindAt is the statement class a leaf sees: what the statement does to it.
+// kindAt is the statement class a leaf sees: what the statement does to it. The target
+// of an UPDATE / DELETE / MERGE is read as well as written (its WHERE scans the rows), so
+// `on read` obligations apply there too; only an INSERT target is not read.
 func (c *checker) kindAt(leaf facts.Leaf) Kinds {
 	if leaf.Role != facts.Target {
 		return OnSelect
@@ -62,11 +64,11 @@ func (c *checker) kindAt(leaf facts.Leaf) Kinds {
 	case facts.Insert:
 		return OnInsert
 	case facts.Update:
-		return OnUpdate
+		return OnSelect | OnUpdate
 	case facts.Delete:
-		return OnDelete
+		return OnSelect | OnDelete
 	case facts.Merge:
-		return OnWrite
+		return OnSelect | OnWrite
 	}
 	return OnSelect
 }

@@ -1,6 +1,6 @@
 # 義務（obligation）— 境界の規則を一つの仕組みにする
 
-状態: 検討中の設計。実装はまだない。[design.md](design.md)の「検討中」から参照される。決まったら本文を「決めたこと・理由・棄てた案」の形に書き換え、design.mdの核となる裁定に昇格する。
+状態: 実装中。段3（既存3規則の載せ替え）まで完了し、判定は`internal/obligation`に一本化されている。[design.md](design.md)の「検討中」から参照される。段4以降が落ち着いたら本文を「決めたこと・理由・棄てた案」の形に書き換え、design.mdの核となる裁定に昇格する。
 
 ## 動機
 
@@ -253,7 +253,7 @@ flowchart LR
 0. 契約の型だけ切る: `internal/facts`、`internal/obligation`（`Check`は未実装）。済
 1. analyzeがFactsを出す。判定は従来のまま。Factsのスナップショットテストを足す。既存テストは無変更で緑。済（`internal/analyze/facts.go`、`TestFacts`）。MERGEのONも一つのスコープとして出る（今の`checkVisibility`はMERGEを見ていないので、段3で載せ替えるとMERGEにも`visible where`が効くようになる。意図した拡張として受け入れる）
 2. obligationの中身: `require`文法、`Pinned` / `Immutable` / `ViaView`、含意エンジン、FK閉包、ビュー・ポリシー継承。schemaと手書きFactsだけで回る単体テスト
-3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**
+3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**。済。`internal/vet/testdata`は無変更で緑。`policy_test.go`は`obligation/visible_test.go`に移した。載せ替えで変わった振る舞い（意図した拡張）: (a) MERGEのONにも`visible where`と`pinned`が効く、(b) 判定が表単位から葉単位になった（自己結合・サブクエリの各出現がそれぞれ義務を負う。`-require-columns`は以前、文中のどこかで固定されていれば同じ表の他の出現も通していた）、(c) `visible where`をRLSポリシーのUSINGが履行できる（経路3。所有者への注記は`-strict`で出る）、(d) 複合FKで結合先の固定が伝播する（経路4）。schemaのseed文（`schema.CheckStatement`）からは`visible where`の判定が外れた — seedはINSERT VALUESに限られ読みを持たない
 4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形
 5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない
 6. `sqlshape check`と文脈。判定は共有し、入口とスコープの写像だけを足す

@@ -26,6 +26,8 @@ import (
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/consumers"
 	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/internal/obligation"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -81,6 +83,32 @@ type loadedSchema struct {
 	// fnAdvice are the advisory notes of function bodies (a PL/pgSQL EXECUTE of a string
 	// built at run time), reported with -strict
 	fnAdvice map[*schema.Function][]analyze.Note
+	// decls are the obligations schema.sql declares (`visible where`, `require ...`);
+	// the flags' obligations are added per run, since flags change between runs
+	decls []obligation.Obligation
+	// caveats are the advisory discharges of view and function bodies (a row-security
+	// policy discharging without FORCE), reported with -strict
+	caveats []string
+}
+
+// lowerer is internal/obligation's view of the PostgreSQL analyzer.
+type lowerer struct{ s *schema.Schema }
+
+func (l lowerer) Lower(expr string, rel *schema.Relation) ([]facts.Pred, error) {
+	return analyze.Lower(l.s, expr, rel)
+}
+
+// judge runs the schema's own obligations over one statement of the schema (a view or
+// function body) and files the failures as problems, the caveats for -strict.
+func (ls *loadedSchema) judge(what string, f *facts.Facts) {
+	for _, d := range obligation.Check(ls.s, ls.decls, f, lowerer{ls.s}) {
+		switch {
+		case d.Failed():
+			ls.problems = append(ls.problems, what+": "+d.Message)
+		case d.Message != "":
+			ls.caveats = append(ls.caveats, what+": "+d.Message)
+		}
+	}
 }
 
 func loadSchema(path string) (*loadedSchema, error) {
@@ -101,6 +129,11 @@ func loadSchema(path string) (*loadedSchema, error) {
 	for _, p := range s.Problems {
 		ls.problems = append(ls.problems, p.String())
 	}
+	var oblProblems []obligation.Problem
+	ls.decls, oblProblems = obligation.Declarations(s)
+	for _, p := range oblProblems {
+		ls.problems = append(ls.problems, fmt.Sprintf("%s: directive %q: %s", p.Subject, p.Source, p.Message))
+	}
 	// function bodies (LANGUAGE sql and plpgsql) are checked like PG does at CREATE time
 	for _, fn := range s.Functions {
 		fr, err := analyze.AnalyzeFunction(s, fn)
@@ -109,6 +142,13 @@ func loadSchema(path string) (*loadedSchema, error) {
 			continue
 		}
 		ls.fnRefs[fn] = fr.Relations
+		for _, st := range fr.Statements {
+			what := "function " + fn.Name
+			if st.Line > 0 {
+				what = fmt.Sprintf("%s: line %d", what, st.Line)
+			}
+			ls.judge(what, st.Facts)
+		}
 		for _, n := range fr.Notes {
 			if n.Advisory() {
 				ls.fnAdvice[fn] = append(ls.fnAdvice[fn], n)
@@ -150,6 +190,7 @@ func loadSchema(path string) (*loadedSchema, error) {
 				ls.problems = append(ls.problems, fmt.Sprintf("view %s: %s", rel.Name, n.Message))
 			}
 		}
+		ls.judge("view "+rel.Name, r.Facts)
 	}
 	schemaCache[path] = ls
 	return ls, nil
@@ -195,6 +236,8 @@ type checker struct {
 	// analyzer's result); owners names the declaration each call sits in
 	index  *consumers.Index
 	owners map[*ast.CallExpr]string
+	// decls are the obligations in force: the schema's declarations plus the flags'
+	decls []obligation.Obligation
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -248,8 +291,12 @@ func run(pass *analysis.Pass) (any, error) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
 	if strictFlag {
+		for _, p := range ls.caveats {
+			pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
+		}
 		c.adviseSchema(calls[0].Pos())
 	}
+	c.decls = append(append([]obligation.Obligation{}, ls.decls...), obligation.FromFlags(s, requireCols, noTables, noTableReads)...)
 	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
 	}
@@ -929,7 +976,9 @@ func (c *checker) resolvePath(t types.Type, p expand.Path) (types.Type, error) {
 	return cur, nil
 }
 
-// checkReferences enforces the reference policy flags on the relations an expansion reads or writes.
+// checkReferences enforces the boundary rules on the relations an expansion touches:
+// -schemas (a package-level scope, judged here), and the obligations the schema declares
+// or the flags imply (judged by internal/obligation over the statement's facts).
 func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit literal, report func(token.Pos, string, ...any), where string) {
 	var allowed map[string]bool
 	if schemasFlag != "" {
@@ -946,50 +995,21 @@ func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit li
 		if ref.Schema != "public" {
 			name = ref.Schema + "." + name
 		}
-		if noTables && ref.Kind == 'r' {
-			report(at, "table %s is referenced directly; with -no-tables application code reads views and calls functions only%s", name, where)
-		}
-		if noTableReads && !noTables && ref.Kind == 'r' && !ref.Target {
-			report(at, "table %s is read directly; with -no-table-reads application code reads views (tables are written, not read)%s", name, where)
-		}
 		if allowed != nil && !allowed[ref.Schema] {
 			report(at, "%s is outside the schemas this code may reference (%s)%s", name, schemasFlag, where)
 		}
-		if requireCols != "" && ref.Kind == 'r' {
-			c.checkRequiredColumns(ref, r, at, report, where)
-		}
 	}
-}
-
-// checkRequiredColumns enforces -require-columns on one referenced table.
-func (c *checker) checkRequiredColumns(ref analyze.RelationRef, r *analyze.Result, at token.Pos, report func(token.Pos, string, ...any), where string) {
-	rel := c.s.Relation(ref.Schema, ref.Name)
-	if rel == nil {
-		return
-	}
-	for _, col := range strings.Split(requireCols, ",") {
-		col = strings.TrimSpace(col)
-		if col == "" || rel.Column(col) == nil {
+	seen := map[string]bool{}
+	for _, d := range obligation.Check(c.s, c.decls, r.Facts, lowerer{c.s}) {
+		if d.Message == "" || (!d.Failed() && !c.strict) || seen[d.Message] {
 			continue
 		}
-		fixed := false
-		for _, f := range r.Fixed {
-			if f.Table == rel.FullName() && f.Column == col {
-				fixed = true
-			}
+		seen[d.Message] = true
+		tp := 0
+		if d.Position >= 0 {
+			tp = e.TemplatePos(int(d.Position))
 		}
-		if fixed {
-			continue
-		}
-		// a row-level security policy that fixes the column pins it for every statement;
-		// unless forced, though, not for the table's owner
-		if pol := policyPins(rel, col); pol != nil {
-			if c.strict && !rel.ForceRowSecurity {
-				report(at, "%s.%s is pinned by policy %s for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner%s", rel.Name, col, pol.Name, where)
-			}
-			continue
-		}
-		report(at, "%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name, col, rel.Name, col, where)
+		report(lit.pos(tp), "%s%s", d.Message, where)
 	}
 }
 

@@ -511,7 +511,7 @@ func init() {
 		}
 		for _, n := range r.Notes {
 			switch n.Code {
-			case noteAlwaysFails, noteDomainMismatch, notePolicy:
+			case noteAlwaysFails, noteDomainMismatch:
 				return errors.New(n.Message)
 			}
 		}

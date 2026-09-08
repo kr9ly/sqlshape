@@ -109,8 +109,10 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 | `internal/expand` | テンプレートの全展開。`{{.X}}` → `$n`と`P`上のパス |
 | `internal/schema` | libpg_queryでschema.sqlをカタログの上に載せる。テーブル・ビュー・enum・ドメイン・複合型・関数・制約・ポリシー・seed |
 | `internal/catalog` | 埋め込みのpg_catalog（PG 17の型・関数・演算子・キャスト・集約）と拡張のdump |
-| `internal/analyze` | アナライザー本体。10章の型変換、スコープ、DML、`$n`推論、nullability、カーディナリティ、違反の列挙、PG互換のエラー |
-| `internal/vet` | `go/analysis`アナライザー。結果列 ↔ `R`、`$n` ↔ `P`、束縛、expect行、境界、SuggestedFix |
+| `internal/analyze` | アナライザー本体。10章の型変換、スコープ、DML、`$n`推論、nullability、カーディナリティ、違反の列挙、PG互換のエラー。文の事実（`facts.Facts`）の生産と、義務の述語を事実の言語に落とす`Lower` |
+| `internal/facts` | アナライザーと義務検査の間のデータ契約。文種・スコープの木・葉・正規化述語・等値の辺・固定列・代入集合。パーサのノードを含まず、方言を知らない |
+| `internal/obligation` | 境界の規則。schema.sqlの`require` / `visible where`とvetのフラグを義務に読み、事実に対して履行を判定する（[obligations.md](obligations.md)）。`analyze`にも`vet`にも依存しない |
+| `internal/vet` | `go/analysis`アナライザー。結果列 ↔ `R`、`$n` ↔ `P`、束縛、expect行、SuggestedFix。境界の規則は`obligation`に委ね、フラグを義務に展開して渡す |
 | `internal/oracle` | 差分テストのオラクルとしての本物のPG（embedded-postgres）。検査時には使わない |
 | `internal/dump` / `diff` / `migrate` / `consumers` / `cli` | マイグレーション側。pg_dumpによる正準形、オブジェクト単位のdiff、DDL生成と終点検証、消費者索引、サブコマンド |
 
