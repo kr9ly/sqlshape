@@ -921,7 +921,7 @@ UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND 
 CREATE TABLE orders (...);
 ```
 
-その列をある状態にSETするUPDATEは、WHEREで現在の状態をその状態の前状態のいずれかに固定していなければならない。compare-and-setなので、2人の書き手が同じ行を同時に動かせない。
+ステータス列は小さな状態機械で、注文はdraftからsubmittedへ、そこからpaidかcancelledへ進み、draftからいきなりpaidにはならず、戻りもしない。この宣言はその機械を書き下したもの。検査は、その列をある状態にSETするUPDATEが、WHEREで現在の状態をその状態の前状態のいずれかに固定していること。これはcompare-and-setで、2つのリクエストが同じ注文を同時にpaidにしようとしても、後の方は`WHERE status = 'submitted'`がもう当たらず何も更新しない。黙って二重に支払うことがない。`One`のUPDATEならそれは`ErrNoRows`として返る。
 
 OK
 
@@ -952,7 +952,7 @@ CREATE TABLE orders (...);
 
 `never`は、そういう文が存在しないことを求める。`ledger`へのUPDATE / DELETEは、単独でも`WITH`の中でもNG（`ledger is declared \`require never on update, delete\`: no statement may do this to it`）。
 
-`paired(outbox)`は、`orders`へのINSERTが同じ文で`outbox`にも書くことを求める。outboxの行がそれの告げる書き込みと一緒に動くので、トランザクション層は要らない。
+`paired(outbox)`はoutboxパターンのためのもの。書き込みと一緒に外の世界（メッセージキュー、webhook、別サービス）にも知らせたいとき、通知を直接送ると二つがずれる。行は書けたのにメッセージが消える、メッセージは出たのに書き込みがロールバックする。outboxパターンは、メッセージを変更と同じトランザクションでテーブルに書き、別プロセスがそこから配送する。`paired`はその対を規則にする。`orders`へのINSERTは同じ文で`outbox`にも書かなければならないので、1行書き忘れただけで二つが離れることはなく、トランザクション層も要らない。
 
 ```sql
 WITH o AS (INSERT INTO orders (...) VALUES (...) RETURNING id)

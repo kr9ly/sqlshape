@@ -1084,8 +1084,12 @@ triggers if they must bump it); a `One` write that matched nothing returns `ErrN
 CREATE TABLE orders (...);
 ```
 
-An UPDATE that sets the column to a state must fix the current state in its WHERE to one of that
-state's predecessors: compare-and-set, so two writers cannot both move the same row.
+A status column is a small state machine: an order goes from draft to submitted, then to paid or
+cancelled, never from draft straight to paid and never back. The declaration writes the machine down.
+The check is that an UPDATE setting the column to a state fixes the current state in its WHERE to
+one of that state's predecessors. This is compare-and-set: if two requests both try to mark the same
+order paid, the second one's `WHERE status = 'submitted'` no longer matches and it updates nothing,
+instead of silently paying twice. A `One` UPDATE reports that as `ErrNoRows`.
 
 Passes
 
@@ -1121,8 +1125,13 @@ CREATE TABLE orders (...);
 (`ledger is declared \`require never on update, delete\`: no statement may do this to it`), inside
 a `WITH` as much as on its own.
 
-`paired(outbox)` says an INSERT into `orders` must write `outbox` in the same statement, so the
-outbox row travels with the write it announces and no transaction layer is needed:
+`paired(outbox)` is for the outbox pattern. When a write must also notify the outside world (a
+message queue, a webhook, another service), sending the notification directly risks the two getting
+out of step: the row is written but the message is lost, or the message goes out and the write
+rolls back. The outbox pattern writes the message into a table in the same transaction as the
+change, and a separate process delivers it from there. `paired` makes the pairing a rule: an INSERT
+into `orders` must write `outbox` in the same statement, so the two cannot be separated even by a
+forgotten line, and no transaction layer is needed:
 
 ```sql
 WITH o AS (INSERT INTO orders (...) VALUES (...) RETURNING id)
