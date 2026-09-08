@@ -1,0 +1,69 @@
+# Changelog
+
+Notable changes to sqlshape, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+versions follow [Semantic Versioning](https://semver.org/). Behaviour of the checker that makes a
+statement pass or fail is listed under Changed even when the old behaviour was a bug, since a
+passing program may start to fail. A release candidate (`v1.1.0-rc.1`) carries the section of the
+release it is a candidate for.
+
+## [Unreleased]
+
+## [1.1.0] - 2026-09-08
+
+### Added
+
+- Obligations: `schema.sql` declares, above a `CREATE TABLE` or `CREATE VIEW`, what every statement
+  touching the relation must do, and vet judges each statement against it
+  ([checks.md, Part 2](docs/checks.md#part-2--rules-the-schema-declares)). The general form is
+  `-- sqlshape: require <what> [on <kinds>]`, where `<what>` is an SQL predicate, `pinned(col)`,
+  `immutable(col)`, `via view`, `never`, `paired(table)` or `single`.
+- `aggregate root (child, ...) [lock version]`: the tables form one aggregate; children are reached
+  through the root's key, one statement touches one aggregate, and with `lock` every write names
+  the root's version.
+- `transitions col: a -> b, b -> c | d`: a status column is a state machine; an UPDATE setting it
+  must compare-and-set from a declared predecessor.
+- `sensitive label: col, col` and `context name: may read label`: labelled columns are readable
+  only in a context that allows the label.
+- `context name: require ...; waive ...`: obligations that differ per caller, selected by a
+  package's `// sqlshape: context name` comment, vet's `-context`, or `check -context`.
+- `-- sqlshape: waive table [obligation]` in a statement or a view definition: an opt-out,
+  reported with `-strict`.
+- Cross-table predicates: `require EXISTS (SELECT 1 FROM parent p WHERE p.id = parent_id AND ...)`
+  is discharged by a join or subquery that witnesses it.
+- `sqlshape check`: the same judgments for SQL outside Go (files or stdin), every judgment printed
+  as an audit line, exit code 1 on a failure.
+- The `internal/facts` package: what a statement provably does, in a form that does not depend on
+  the SQL dialect, so that the obligation checker can be shared with other dialects later.
+
+### Changed
+
+- `visible where`, `-require-columns`, `-no-table-reads` and `-no-tables` are now obligations
+  (`require <expr> on read`, `require pinned(col)`, `require via view`, `require via view on all`)
+  and are judged by the same checker. Judgment is per occurrence of a table: a self join or a
+  subquery reading the table again owes the obligation again; `-require-columns` used to accept a
+  statement that pinned the column anywhere in it. A row-level security policy or a composite
+  foreign key can discharge a pin. MERGE's ON is judged like a WHERE.
+- Writes are counted by what the statement does to the table: each MERGE branch is a write of its
+  own kind, an `INSERT ... ON CONFLICT DO UPDATE` is an insert and an update, `TRUNCATE` is a
+  delete, and a write through an automatically updatable view is a write to the base table.
+- `pinned` on an UPDATE is satisfied by the WHERE only; assigning the column in SET is not a pin.
+- A `-- sqlshape:` directive above a statement that takes none (`ALTER TABLE`, `COMMENT ON`) is a
+  schema problem instead of being ignored.
+- The docs are split: the README is an overview; [docs/](docs/) has checks, templates, runtime,
+  migrations and flags, in English and Japanese.
+
+### Fixed
+
+- A vet failure shared by every branch of a template is reported once without the branch tag.
+- A diagnostic on a column referenced only in GROUP BY had no position.
+
+## [1.0.0] - 2026-09-07
+
+First release: `sqlshape.Query[R, P]` / `One[R, P]` templates checked by `go vet` against
+`schema.sql` (a pure Go analyzer of PostgreSQL 17 syntax and types, with PostgreSQL itself as the
+test oracle), the runtime on pgx, and `sqlshape diff` / `apply` / `verify-schema` for migrations
+from a declared schema.
+
+[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/kr9ly/sqlshape/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/kr9ly/sqlshape/releases/tag/v1.0.0

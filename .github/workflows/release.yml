@@ -63,6 +63,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -77,7 +78,13 @@ jobs:
         run: |
           pre=""
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac  # v1.0.0-rc.1
+          # the release notes are the tag's section of CHANGELOG.md (a candidate v1.1.0-rc.1 reads
+          # the 1.1.0 section); generated notes when it has none
+          v="${GITHUB_REF_NAME#v}"; v="${v%%-*}"
+          awk -v v="$v" '/^## \[/ { on = index($0, "[" v "]") > 0; next } on' CHANGELOG.md > notes.md
+          notes="--generate-notes"
+          if grep -q . notes.md; then notes="--notes-file notes.md"; fi
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes $pre
+            $notes $pre
