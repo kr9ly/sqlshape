@@ -832,7 +832,7 @@ and the flags are shorthands; the general form is a directive above `CREATE TABL
 
 | `<what>` | the statement must | default `on` |
 |---|---|---|
-| an SQL boolean expression (`deleted_at IS NULL`, `status <> 'closed' AND amount > 0`) | carry it for the table's rows: each conjunct is implied by the WHERE / ON (equalities, IS NULL, IS NOT NULL) or appears verbatim | `read` |
+| an SQL boolean expression (`deleted_at IS NULL`, `status <> 'closed' AND amount > 0`, `EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)`) | carry it for the table's rows: each conjunct is implied by the WHERE / ON (equalities, IS NULL, IS NOT NULL) or appears verbatim; an `EXISTS` needs a witness (below). A `$n` in the declaration stands for any value known before the row is examined: a parameter, a literal, an outer reference | `read` |
 | `pinned(tenant_id)` | fix the column to one value (`= {{.X}}`, a literal, an outer reference) when reading, updating or deleting; assign it when inserting | `all` |
 | `immutable(tenant_id)` | not assign the column in an UPDATE | `update` |
 | `via view` | not reference the table directly (a write target is allowed unless `on` includes writes) | `read` |
@@ -873,6 +873,18 @@ An obligation is discharged one of five ways, and `-strict` reports the ones tha
 Each occurrence of a table is judged on its own: a self-join or a subquery that reads the table
 again owes the obligation again. `RETURNING` lists are not judged.
 
+A predicate that reaches across tables is written as `EXISTS`, and the statement must have a
+**witness** for it: a table of the same level joined so that the body holds (an inner join; an outer
+join's ON does not restrict the subject's rows), or an unnegated `EXISTS` / `IN (SELECT ...)` of its
+own whose body holds. For `require EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)`
+on `shipments`, all three pass:
+
+```sql
+SELECT s.carrier FROM shipments s JOIN orders o ON o.id = s.order_id WHERE o.tenant_id = {{.T}}
+SELECT carrier FROM shipments s WHERE EXISTS (SELECT 1 FROM orders x WHERE x.id = s.order_id AND x.tenant_id = {{.T}})
+SELECT carrier FROM shipments WHERE order_id IN (SELECT id FROM orders WHERE tenant_id = {{.T}})
+```
+
 An aggregate (DDD's consistency unit) is a bundle of these obligations, declared once above its root:
 
 ```sql
@@ -892,6 +904,18 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 
 A grandchild (a table whose foreign key points at a child, not the root) is listed the same way and
 pins its key to the parent it hangs off; a join up the chain discharges it link by link.
+
+`lock <column>` makes the root's version the lock of the whole aggregate:
+
+```sql
+-- sqlshape: aggregate orders (order_items, order_item_tags) lock version
+```
+
+The root owes `pinned(version) on update, delete` (name the version you saw), and every child owes,
+on UPDATE / DELETE, an `EXISTS` witnessing the root row at that version through its foreign key
+(through its parent's, for a grandchild): `UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND o.version = {{.V}} AND i.id = {{.ID}}`.
+Incrementing the version stays the database's job (a trigger on the root, fired by the children's
+triggers if they must bump it); a `One` write that matched nothing returns `ErrNoRows`.
 
 Different callers need different rules: an operator's script may run without a tenant, an analyst
 may only read views. A **context** declares the difference per table, and a package or a `check`

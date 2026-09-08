@@ -56,7 +56,7 @@ SELECT id FROM products
 |---|---|---|
 | `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE`の直上 | このテーブルを読む文はすべてこの条件を持たなければならない（`require deleted_at IS NULL on read`の略記） |
 | `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW`の直上 | そのリレーションに触る文すべてへの義務。述語、`pinned(列)`、`immutable(列)`、`via view`のいずれかに、任意で`on select, insert, update, delete`を付ける（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)） |
-| `-- sqlshape: aggregate orders (order_items, order_notes)` | ルートの`CREATE TABLE`の直上 | これらの表で1つの集約を成す。子表はルートの鍵で固定し、1文は1集約にしか触らない（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)） |
+| `-- sqlshape: aggregate orders (order_items, order_notes) [lock version]` | ルートの`CREATE TABLE`の直上 | これらの表で1つの集約を成す。子表はルートの鍵で固定し、1文は1集約にしか触らない。`lock`を付ければ書き込みはルートの版を名指しする（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)） |
 | `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | `CREATE TABLE` / `CREATE VIEW`の直上 | 名前つき文脈での義務の差分。パッケージコメントの`// sqlshape: context ops`、vetの`-context`、`check -context`のいずれかで選ぶ（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)） |
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW`の直上 | ビュー定義自身が文としてopt-outする |
 | `-- sqlshape: not null` | `CREATE FUNCTION`の直上 | この関数の戻り値はNULLにならない |

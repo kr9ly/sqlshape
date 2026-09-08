@@ -77,6 +77,7 @@ func (a *analyzer) selectStmt(sel *pg_query.SelectStmt, sc *scope) ([]rteCol, *E
 	if err := a.boolClause(sel.WhereClause, sc, "WHERE"); err != nil {
 		return nil, err
 	}
+	a.scopeSel[sc] = sel
 	a.recordFixed(sc, sel.WhereClause)
 	// target list
 	var cols []rteCol

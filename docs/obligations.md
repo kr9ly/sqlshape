@@ -204,6 +204,15 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - 含意判定の強さは、等値・NULL性・FK閉包の可決定な断片に限る。それ以上は構文一致にフォールバックし、それでも証明できなければopt-outを要求する
 - 宣言はschema.sqlに置き、フラグは互換のために残す（`-require-columns=tenant_id`は「`tenant_id`列を持つ全表に`require pinned(tenant_id)`」の糖衣）
 
+## サブクエリの裁定
+
+表をまたぐ`EXISTS`を含意で判定するために決めたこと。
+
+- **証人（witness）**: 宣言の`EXISTS (SELECT 1 FROM T WHERE ...)`は「対象の各行に、本体を満たす`T`の行がある」。文がそれを立てる形は2つ。(a) 同じレベルで`T`の葉が結合されていて、本体の各conjunctがそのレベルの述語から含意される（外部結合のONは対象側を絞らないので、`Restricts`がそのまま除外する）。(b) そのレベルのWHERE / ONのトップレベルANDにある否定なしの`EXISTS` / `IN (SELECT ...)`で、その本体の述語から含意される。本体の葉が複数なら、表ごとの単射な割り当てを全部試す（孫のロックは親経由の2葉）
+- **相関の表現**: `facts.Term`に`Outer{親スコープの葉, 列}`、`facts.Pred`に`Exists{Sub: 子スコープ}`を足した。`x IN (SELECT y ...)`は本体に`y = x`を足した`Exists`。`NOT EXISTS`・ORの下・`ALL`はOpaqueのまま
+- **宣言中の`$n`**: 特定の番号ではなく「行を見る前に決まっている何かの値」（パラメータ・リテラル・外側の参照・安定な式）。述語型の義務全般に効く（`require id = $1 on delete`は`$2`で書かれた文にも成り立つ）
+- **集約のロック**: `aggregate <root> (...) lock <列>`と明示する（列名の慣習で暗黙に有効化しない）。ルートに`pinned(<列>) on update, delete`、各子に`EXISTS (SELECT 1 FROM <親の鎖> WHERE ... AND <root>.<列> = $1) on update, delete`。孫は親を経由した鎖を本体に持つ。版を上げるのはトリガ（DBが守れるものはDBに）
+
 ## 裁定（もと「未決」）
 
 - **opt-outの名前と粒度** → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）。`unfiltered`は述語型だけを外す別名として残す
@@ -257,8 +266,8 @@ flowchart LR
 1. analyzeがFactsを出す。判定は従来のまま。Factsのスナップショットテストを足す。既存テストは無変更で緑。済（`internal/analyze/facts.go`、`TestFacts`）。MERGEのONも一つのスコープとして出る（今の`checkVisibility`はMERGEを見ていないので、段3で載せ替えるとMERGEにも`visible where`が効くようになる。意図した拡張として受け入れる）
 2. obligationの中身: `require`文法、`Pinned` / `Immutable` / `ViaView`、含意エンジン、FK閉包、ビュー・ポリシー継承。schemaと手書きFactsだけで回る単体テスト
 3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**。済。`internal/vet/testdata`は無変更で緑。`policy_test.go`は`obligation/visible_test.go`に移した。載せ替えで変わった振る舞い（意図した拡張）: (a) MERGEのONにも`visible where`と`pinned`が効く、(b) 判定が表単位から葉単位になった（自己結合・サブクエリの各出現がそれぞれ義務を負う。`-require-columns`は以前、文中のどこかで固定されていれば同じ表の他の出現も通していた）、(c) `visible where`をRLSポリシーのUSINGが履行できる（経路3。所有者への注記は`-strict`で出る）、(d) 複合FKで結合先の固定が伝播する（経路4）。schemaのseed文（`schema.CheckStatement`）からは`visible where`の判定が外れた — seedはINSERT VALUESに限られ読みを持たない
-4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形。済。`on` / `immutable` / `via view`の表単位は段2の実装で動いており、docs（checks / templates / flags）に書いた。`waive <table> [<body>]`を文側とビュー定義側に足した（bodyは宣言どおりの綴り、省略で全部、`unfiltered`は述語型だけの別名）。opt-outは`Discharge`に`Waived`として残り、vetは`-strict`で報告する。表をまたぐ`EXISTS`は構文一致（Opaque）で判定できる段階で、含意（サブクエリの事実）は未対応
-5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない。済（`alone`だけは判定側に構造述語として足した: 文が触る表集合を集約の分割で見る）。展開は子表への`pinned(FK列)`と全表への`alone`。ルート`version`の`EXISTS`義務（ロックをルート単位にする）は入れていない — サブクエリの含意が要るので、表をまたぐ`EXISTS`の判定と一緒に
+4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形。済（`EXISTS`の含意は「サブクエリの裁定」で後追い）。`on` / `immutable` / `via view`の表単位は段2の実装で動いており、docs（checks / templates / flags）に書いた。`waive <table> [<body>]`を文側とビュー定義側に足した（bodyは宣言どおりの綴り、省略で全部、`unfiltered`は述語型だけの別名）。opt-outは`Discharge`に`Waived`として残り、vetは`-strict`で報告する。表をまたぐ`EXISTS`は構文一致（Opaque）で判定できる段階で、含意（サブクエリの事実）は未対応
+5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない。済（`alone`だけは判定側に構造述語として足した: 文が触る表集合を集約の分割で見る）。展開は子表への`pinned(FK列)`と全表への`alone`。`lock <列>`でルート`version`の`EXISTS`義務も展開する（下記「サブクエリの裁定」）
 6. `sqlshape check`と文脈。判定は共有し、入口とスコープの写像だけを足す。`check`は済（`internal/cli/check.go`: ファイルかstdinの複数文を分割し、各文の直上の`-- sqlshape:`行を文に帰属させ、全判定を経路つきで出力、失敗と解析エラーで終了コード1）。**文脈（`context ops: ...`、`-context`）は未着手** — 使い方が固まってから
 
 段3までユーザーに見える振る舞いは変わらない。以降はobligationパッケージの中で閉じる。

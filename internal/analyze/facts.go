@@ -56,6 +56,26 @@ func (a *analyzer) recordFacts(p *prover, as *scope, at int32) {
 	fs := a.scopeFacts(p, nil)
 	fs.At = at
 	a.factScopes = append(a.factScopes, factScope{sc: as, fs: fs})
+	if sel := a.scopeSel[as]; sel != nil {
+		a.factBySel[sel] = fs
+		idx := map[*rte]int{}
+		for i, l := range p.leaves {
+			idx[l] = i
+		}
+		var out []*facts.ColRef
+		for _, k := range p.outputKeys(sel.TargetList) {
+			if k == nil {
+				out = append(out, nil)
+				continue
+			}
+			if i, ok := idx[k.r]; ok && k.i < len(k.r.cols) {
+				out = append(out, &facts.ColRef{Leaf: i, Column: k.r.cols[k.i].name})
+			} else {
+				out = append(out, nil)
+			}
+		}
+		a.factOutBySel[sel] = out
+	}
 }
 
 // scopeFacts writes one level down. waived are the enclosing definition's opt-outs (a
@@ -215,6 +235,12 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 		}
 		return p.isKnown(x)
 	}
+	term := func(x *pg_query.Node) facts.Term {
+		if o, ok := p.outerRef(x); ok {
+			return facts.Term{Kind: facts.Outer, Col: o}
+		}
+		return termFacts(x)
+	}
 	if l, r := equalitySides(n); l != nil {
 		lk, lcol := p.resolve(l)
 		rk, rcol := p.resolve(r)
@@ -230,9 +256,14 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 		case lok && rok:
 			return facts.Pred{Op: facts.Eq, Col: lr, Term: facts.Term{Kind: facts.Column, Col: rr}}
 		case lok && !rcol && known(r):
-			return facts.Pred{Op: facts.Eq, Col: lr, Term: termFacts(r)}
+			return facts.Pred{Op: facts.Eq, Col: lr, Term: term(r)}
 		case rok && !lcol && known(l):
-			return facts.Pred{Op: facts.Eq, Col: rr, Term: termFacts(l)}
+			return facts.Pred{Op: facts.Eq, Col: rr, Term: term(l)}
+		}
+	}
+	if sub := n.GetSubLink(); sub != nil && !policy {
+		if pr, ok := a.existsFacts(p, sub, ref); ok {
+			return pr
 		}
 	}
 	if nt := n.GetNullTest(); nt != nil {
@@ -270,6 +301,75 @@ func (a *analyzer) predFacts(p *prover, n *pg_query.Node, ref func(colKey) (fact
 	})
 	sortRefs(cols)
 	return facts.Pred{Op: facts.Opaque, Text: strings.TrimPrefix(deparse(clone), "SELECT "), Cols: cols}
+}
+
+// existsFacts turns an EXISTS (or a single-column `x IN (SELECT y ...)`) conjunct into an
+// Exists predicate carrying the subquery's own facts; the body was recorded when the
+// subquery was analyzed (factBySel). Anything else stays opaque.
+func (a *analyzer) existsFacts(p *prover, sub *pg_query.SubLink, ref func(colKey) (facts.ColRef, bool)) (facts.Pred, bool) {
+	sel := sub.Subselect.GetSelectStmt()
+	body := a.factBySel[sel]
+	if body == nil {
+		return facts.Pred{}, false
+	}
+	switch sub.SubLinkType {
+	case pg_query.SubLinkType_EXISTS_SUBLINK:
+	case pg_query.SubLinkType_ANY_SUBLINK:
+		// x IN (SELECT y FROM ...) / x = ANY (SELECT y ...): a witness row with y = x
+		if names := strs(sub.OperName); len(names) > 0 && names[len(names)-1] != "=" {
+			return facts.Pred{}, false
+		}
+		outs := a.factOutBySel[sel]
+		if sub.Testexpr == nil || sub.Testexpr.GetRowExpr() != nil || len(outs) != 1 || outs[0] == nil {
+			return facts.Pred{}, false
+		}
+		var t facts.Term
+		if k, ok := p.resolve(sub.Testexpr); ok {
+			r, ok := ref(k)
+			if !ok {
+				return facts.Pred{}, false
+			}
+			t = facts.Term{Kind: facts.Outer, Col: r}
+		} else if p.isKnown(sub.Testexpr) {
+			t = termFacts(sub.Testexpr)
+		} else {
+			return facts.Pred{}, false
+		}
+		with := *body
+		with.Preds = append(append([]facts.Pred{}, body.Preds...), facts.Pred{Op: facts.Eq, Col: *outs[0], Term: t, Origin: facts.FromStatement})
+		body = &with
+	default:
+		return facts.Pred{}, false
+	}
+	a.claimed[a.factBySel[sel]] = true
+	return facts.Pred{Op: facts.Exists, Sub: body}, true
+}
+
+// outerRef places a column reference of an enclosing level: the leaf index it has in the
+// parent level's facts and its name. False for anything that is not such a reference.
+func (p *prover) outerRef(n *pg_query.Node) (facts.ColRef, bool) {
+	cr := n.GetColumnRef()
+	if cr == nil || p.sc == nil || p.sc.parent == nil {
+		return facts.ColRef{}, false
+	}
+	if _, here := p.resolve(n); here {
+		return facts.ColRef{}, false
+	}
+	parent := p.sc.parent.queryScope()
+	pp := &prover{a: p.a, sc: parent, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+	for _, it := range parent.items {
+		pp.addItem(it)
+	}
+	k, ok := pp.resolve(n)
+	if !ok || k.i >= len(k.r.cols) {
+		return facts.ColRef{}, false
+	}
+	for i, l := range pp.leaves {
+		if l == k.r {
+			return facts.ColRef{Leaf: i, Column: k.r.cols[k.i].name}, true
+		}
+	}
+	return facts.ColRef{}, false
 }
 
 // termFacts classifies the known side of an equality.
@@ -343,8 +443,8 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 		byScope[top] = f.Top
 	}
 	for _, r := range a.factScopes {
-		if r.fs == f.Top {
-			continue
+		if r.fs == f.Top || a.claimed[r.fs] {
+			continue // a subquery body hangs off its EXISTS / IN predicate instead
 		}
 		parent := f.Top
 		for s := r.sc.parent; s != nil; s = s.parent {

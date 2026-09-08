@@ -74,12 +74,12 @@ select
 SELECT id FROM orders WHERE id IN (SELECT order_id FROM order_items WHERE qty > $1)`, `
 select
   leaf 0 table orders waived unfiltered @46
-  pred opaque "id IN (SELECT order_id FROM order_items WHERE qty > $1)" cols 0.id
+  pred exists
+      leaf 0 table order_items @87
+      pred opaque "qty > $1" cols 0.qty
+      pred 0.order_id = outer 0.id
+      notnull 0.qty
   pred 0.tenant_id = known "current_setting('app.tenant', true)::bigint" restricts [0] from policy
-  scope
-    leaf 0 table order_items @87
-    pred opaque "qty > $1" cols 0.qty
-    notnull 0.qty
 `},
 		{`SELECT v.id FROM live_orders v WHERE v.tenant_id = $1`, `
 select

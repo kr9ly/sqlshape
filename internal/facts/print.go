@@ -58,6 +58,9 @@ func (s *Scope) write(b *strings.Builder, ind string) {
 			fmt.Fprintf(b, " from %s", p.Origin)
 		}
 		b.WriteString("\n")
+		if p.Op == Exists && p.Sub != nil {
+			p.Sub.write(b, ind+"    ")
+		}
 	}
 	if len(s.Fixed) > 0 {
 		fmt.Fprintf(b, "%sfixed %s\n", ind, refs(s.Fixed))
@@ -92,6 +95,8 @@ func (p Pred) String() string {
 		return p.Col.String() + " IS NULL"
 	case IsNotNull:
 		return p.Col.String() + " IS NOT NULL"
+	case Exists:
+		return "exists"
 	}
 	return fmt.Sprintf("opaque %q cols %s", p.Text, refs(p.Cols))
 }
@@ -104,6 +109,8 @@ func (t Term) String() string {
 		return "const " + t.Const
 	case Column:
 		return t.Col.String()
+	case Outer:
+		return "outer " + t.Col.String()
 	}
 	return fmt.Sprintf("known %q", t.Text)
 }

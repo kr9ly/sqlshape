@@ -48,6 +48,11 @@ func (c *checker) collectTables(sc *facts.Scope) {
 			c.tables = append(c.tables, l.Table)
 		}
 	}
+	for _, p := range sc.Preds {
+		if p.Op == facts.Exists && p.Sub != nil {
+			c.collectTables(p.Sub)
+		}
+	}
 	for _, ch := range sc.Children {
 		c.collectTables(ch)
 	}
@@ -74,6 +79,11 @@ func (c *checker) scope(sc *facts.Scope, bySubject map[string][]*Obligation) {
 				}
 				c.judge(sc, i, o)
 			}
+		}
+	}
+	for _, p := range sc.Preds {
+		if p.Op == facts.Exists && p.Sub != nil {
+			c.scope(p.Sub, bySubject)
 		}
 	}
 	for _, ch := range sc.Children {
@@ -166,21 +176,9 @@ func (c *checker) predicate(sc *facts.Scope, i int, o *Obligation, rel *schema.R
 	path := ByStatement
 	for _, q := range want {
 		q = rebind(q, i)
-		found := false
-		for _, p := range sc.Preds {
-			if !applies(p, i) || !implies(p, q) {
-				continue
-			}
-			found = true
-			if p.Origin == facts.FromPolicy && path == ByStatement {
-				path = ByPolicy
-			}
-			if p.Origin == facts.FromStatement {
-				break
-			}
-		}
-		if !found && q.Op == facts.IsNotNull && containsRef(sc.NotNull, q.Col) {
-			found = true
+		found, byPolicy := satisfied(sc, i, q)
+		if byPolicy && path == ByStatement {
+			path = ByPolicy
 		}
 		if !found {
 			alias := leaf.Alias
@@ -381,6 +379,126 @@ func waived(leaf facts.Leaf, o *Obligation) bool {
 	return false
 }
 
+// satisfied: the level's facts establish the declared conjunct q (already rebound onto
+// leaf i). byPolicy says the only establishing predicate came from a row-security policy.
+func satisfied(sc *facts.Scope, i int, q facts.Pred) (found, byPolicy bool) {
+	if q.Op == facts.Exists {
+		return witness(sc, i, q), false
+	}
+	for _, p := range sc.Preds {
+		if !applies(p, i) || !implies(p, q) {
+			continue
+		}
+		if p.Origin == facts.FromStatement {
+			return true, false
+		}
+		found, byPolicy = true, p.Origin == facts.FromPolicy
+	}
+	if found {
+		return true, byPolicy
+	}
+	switch {
+	case q.Op == facts.IsNotNull && containsRef(sc.NotNull, q.Col):
+		return true, false
+	case q.Op == facts.Eq && q.Term.Kind == facts.Param && containsRef(sc.Fixed, q.Col):
+		// pinned through the equality closure (a = b AND b = $1)
+		return true, false
+	}
+	return false, false
+}
+
+// witness: the rows of leaf i have a witness row for the declared EXISTS q -- either a
+// leaf of the same level joined so that q's body holds (an inner join; an outer join's
+// ON does not restrict i), or an EXISTS / IN subquery of the level whose body holds.
+// q.Sub's leaves are matched to candidate leaves by table, in every injective way.
+func witness(sc *facts.Scope, i int, q facts.Pred) bool {
+	// (a) the same level: q's Outer terms name leaf i's columns as plain columns
+	if assign(q.Sub.Leaves, sc.Leaves, func(j int) bool { return j != i }, func(m []int) bool {
+		for _, qp := range q.Sub.Preds {
+			r := rebindInner(qp, m, func(o facts.ColRef) facts.Term {
+				return facts.Term{Kind: facts.Column, Col: facts.ColRef{Leaf: i, Column: o.Column}}
+			})
+			if ok, _ := satisfied(sc, i, r); !ok {
+				return false
+			}
+		}
+		return true
+	}) {
+		return true
+	}
+	// (b) a subquery of the level: Outer terms stay Outer, pointing at leaf i
+	for _, p := range sc.Preds {
+		if p.Op != facts.Exists || p.Sub == nil || !applies(p, i) {
+			continue
+		}
+		if assign(q.Sub.Leaves, p.Sub.Leaves, func(int) bool { return true }, func(m []int) bool {
+			for _, qp := range q.Sub.Preds {
+				r := rebindInner(qp, m, func(o facts.ColRef) facts.Term {
+					return facts.Term{Kind: facts.Outer, Col: facts.ColRef{Leaf: i, Column: o.Column}}
+				})
+				at := r.Col.Leaf
+				if ok, _ := satisfied(p.Sub, at, r); !ok {
+					return false
+				}
+			}
+			return true
+		}) {
+			return true
+		}
+	}
+	return false
+}
+
+// assign tries every injective mapping of want's leaves onto have's leaves of the same
+// table that pass allow, and reports whether ok accepts one. m[k] is the index in have
+// of want's k-th leaf.
+func assign(want, have []facts.Leaf, allow func(int) bool, ok func(m []int) bool) bool {
+	m := make([]int, len(want))
+	used := map[int]bool{}
+	var rec func(k int) bool
+	rec = func(k int) bool {
+		if k == len(want) {
+			return ok(m)
+		}
+		for j, h := range have {
+			if used[j] || !allow(j) || h.Table != want[k].Table || h.Table == "" {
+				continue
+			}
+			used[j], m[k] = true, j
+			if rec(k + 1) {
+				return true
+			}
+			delete(used, j)
+		}
+		return false
+	}
+	return rec(0)
+}
+
+// rebindInner moves a declared body predicate onto the candidate leaves (m) and turns its
+// Outer terms (about the subject, leaf 0 of the declaration) into what outer gives.
+func rebindInner(q facts.Pred, m []int, outer func(facts.ColRef) facts.Term) facts.Pred {
+	place := func(r facts.ColRef) facts.ColRef {
+		if r.Leaf < len(m) {
+			r.Leaf = m[r.Leaf]
+		}
+		return r
+	}
+	q.Col = place(q.Col)
+	switch q.Term.Kind {
+	case facts.Column:
+		q.Term.Col = place(q.Term.Col)
+	case facts.Outer:
+		q.Term = outer(q.Term.Col)
+	}
+	cols := make([]facts.ColRef, len(q.Cols))
+	for k, r := range q.Cols {
+		cols[k] = place(r)
+	}
+	q.Cols = cols
+	return q
+}
+
 // applies: the predicate restricts leaf i (an outer join's ON restricts only one side).
 func applies(p facts.Pred, i int) bool {
 	if p.Restricts == nil {
@@ -437,19 +555,23 @@ func implies(p, q facts.Pred) bool {
 	return false
 }
 
-func sameTerm(a, b facts.Term) bool {
-	if a.Kind != b.Kind {
+// sameTerm: the statement's term p establishes the declared term q. A `$n` in a
+// declaration stands for any value known before the row is examined (a parameter, a
+// literal, an outer reference, a stable expression), not for that parameter number.
+func sameTerm(p, q facts.Term) bool {
+	if q.Kind == facts.Param {
+		return p.Kind != facts.Column
+	}
+	if p.Kind != q.Kind {
 		return false
 	}
-	switch a.Kind {
-	case facts.Param:
-		return a.Param == b.Param
+	switch p.Kind {
 	case facts.Const:
-		return a.Const == b.Const
-	case facts.Column:
-		return a.Col == b.Col
+		return p.Const == q.Const
+	case facts.Column, facts.Outer:
+		return p.Col == q.Col
 	}
-	return a.Text == b.Text
+	return p.Text == q.Text
 }
 
 func containsRef(rs []facts.ColRef, r facts.ColRef) bool {

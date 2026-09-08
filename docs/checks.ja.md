@@ -722,7 +722,7 @@ SELECT id, customer_name FROM order_summary
 
 | `<what>` | 文に求めること | `on`の既定 |
 |---|---|---|
-| SQLのboolean式（`deleted_at IS NULL`、`status <> 'closed' AND amount > 0`） | その表の行についてこれを持つこと。各conjunctがWHERE / ONから含意される（等値、IS NULL、IS NOT NULL）か、字面どおり現れる | `read` |
+| SQLのboolean式（`deleted_at IS NULL`、`status <> 'closed' AND amount > 0`、`EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)`） | その表の行についてこれを持つこと。各conjunctがWHERE / ONから含意される（等値、IS NULL、IS NOT NULL）か、字面どおり現れる。`EXISTS`は証人が要る（下記）。宣言中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 | `read` |
 | `pinned(tenant_id)` | 読み・UPDATE・DELETEではその列を一つの値に固定する（`= {{.X}}`、リテラル、外側の参照）。INSERTでは値を入れる | `all` |
 | `immutable(tenant_id)` | UPDATEでその列に代入しない | `update` |
 | `via view` | その表を直接参照しない（`on`に書き込みを含めない限り、書き込みの対象にはできる） | `read` |
@@ -755,6 +755,14 @@ UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}} AND version = {{.Versi
 
 表の出現ごとに判定する。自己結合やサブクエリでもう一度その表を読めば、そこでも義務を負う。`RETURNING`は判定しない。
 
+表をまたぐ述語は`EXISTS`で書き、文はその**証人（witness）**を持たなければならない。同じレベルで本体が成り立つように結合した表（内部結合。外部結合のONは対象の行を絞らない）か、文自身の否定なし`EXISTS` / `IN (SELECT ...)`で本体が成り立つもの。`shipments`に`require EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)`があれば、次の3つはどれも通る。
+
+```sql
+SELECT s.carrier FROM shipments s JOIN orders o ON o.id = s.order_id WHERE o.tenant_id = {{.T}}
+SELECT carrier FROM shipments s WHERE EXISTS (SELECT 1 FROM orders x WHERE x.id = s.order_id AND x.tenant_id = {{.T}})
+SELECT carrier FROM shipments WHERE order_id IN (SELECT id FROM orders WHERE tenant_id = {{.T}})
+```
+
 集約（DDDの一貫性の単位）は、これらの義務の束をルートの直上に1行で宣言する。
 
 ```sql
@@ -770,6 +778,14 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 ```
 
 孫（ルートではなく子表を参照する外部キーを持つ表）も同じ列挙に並べる。孫はぶら下がる親の鍵を固定し、ルートまでの結合は1リンクずつ判定される。
+
+`lock <列>`を付けると、ルートのバージョンが集約全体のロックになる。
+
+```sql
+-- sqlshape: aggregate orders (order_items, order_item_tags) lock version
+```
+
+ルートは`pinned(version) on update, delete`（見た版を名指しする）を負い、各子表はUPDATE / DELETEで、外部キーをたどった先（孫なら親を経由して）のルート行がその版であることの`EXISTS`を負う: `UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND o.version = {{.V}} AND i.id = {{.ID}}`。版を上げるのはDBの仕事のまま（ルートのトリガ。子から上げるなら子のトリガがルートを更新する）。何も当たらなかった`One`の書き込みは`ErrNoRows`を返す。
 
 呼び出し元が違えば規約も違う。運用スクリプトはテナントなしで走り、分析者はビューしか読まない。**文脈（context）**はその差分を表ごとに宣言し、パッケージや`check`の実行が一つを選ぶ。
 

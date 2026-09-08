@@ -135,6 +135,10 @@ type Pred struct {
 	Col ColRef
 	// Term is the other side of an Eq.
 	Term Term
+	// Sub is the body of an Exists predicate: a scope of its own (its leaves, what holds
+	// for their rows), correlated to this scope through Outer terms. `x IN (SELECT y
+	// ...)` is recorded as Exists with the equality y = x added to the body.
+	Sub *Scope
 	// Text is the canonical rendering of a predicate the language cannot decompose
 	// (`amount > 0`, `status IN ('a','b')`), with every column reference that resolves
 	// to a leaf of the scope reduced to its bare column name; Cols lists those columns.
@@ -157,6 +161,9 @@ const (
 	Eq PredOp = iota + 1
 	IsNull
 	IsNotNull
+	// Exists: an unnegated EXISTS / IN subquery conjunct; Sub is its body. The rows of
+	// this scope have a witness row in Sub's leaves satisfying Sub's predicates.
+	Exists
 	Opaque
 )
 
@@ -169,9 +176,9 @@ type Term struct {
 	Const string
 	// Col is the other column for a Column term.
 	Col ColRef
-	// Text is the canonical rendering for a Known term (an outer reference, an
-	// uncorrelated scalar subquery, a stable function of the session): a value fixed
-	// before the row is examined, so it pins the column like a parameter would.
+	// Text is the canonical rendering for a Known term (an uncorrelated scalar subquery,
+	// a stable function of the session, an outer reference the producer could not place):
+	// a value fixed before the row is examined, so it pins the column like a parameter.
 	Text string
 }
 
@@ -183,6 +190,10 @@ const (
 	Const
 	Column
 	Known
+	// Outer: a column of the enclosing scope (Col indexes the parent's leaves), from a
+	// correlated subquery's predicate. Known to the inner row, and the link by which the
+	// inner scope witnesses something about the outer row.
+	Outer
 )
 
 // Origin says where a Pred came from; the checker reports the discharge path with it.

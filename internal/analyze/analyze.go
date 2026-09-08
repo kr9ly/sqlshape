@@ -113,6 +113,14 @@ type analyzer struct {
 	factScopes     []factScope
 	writeLeaf      *rte
 	viewFactScopes map[*schema.Relation]*facts.Scope
+	// scopeSel is the SELECT a query level analyzes (set before its facts are recorded);
+	// factBySel / factOutBySel are the facts of that level and the leaf columns its target
+	// list projects plainly, so a parent level can attach an EXISTS / IN subquery's body
+	// to its own predicate; claimed marks the bodies so attached
+	scopeSel     map[*scope]*pg_query.SelectStmt
+	factBySel    map[*pg_query.SelectStmt]*facts.Scope
+	factOutBySel map[*pg_query.SelectStmt][]*facts.ColRef
+	claimed      map[*facts.Scope]bool
 }
 
 // Analyze analyzes exactly one SQL statement against s.
@@ -274,6 +282,10 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, waived map[string][]string) *
 		viewScopes:     map[*schema.Relation]*subquery{},
 		viewBusy:       map[*schema.Relation]bool{},
 		viewFactScopes: map[*schema.Relation]*facts.Scope{},
+		scopeSel:       map[*scope]*pg_query.SelectStmt{},
+		factBySel:      map[*pg_query.SelectStmt]*facts.Scope{},
+		factOutBySel:   map[*pg_query.SelectStmt][]*facts.ColRef{},
+		claimed:        map[*facts.Scope]bool{},
 		funcParams:     fp,
 		funcVolatility: map[*pg_query.FuncCall]byte{},
 		waived:         waived,

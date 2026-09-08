@@ -226,8 +226,20 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 	norm := strings.Join(strings.Fields(directive), " ")
 	rest := strings.TrimSpace(norm[len("aggregate "):])
 	name, list, ok := strings.Cut(rest, "(")
-	if !ok || !strings.HasSuffix(list, ")") {
-		return nil, fmt.Errorf("%s: expected `aggregate <root> (<child>, ...)`", norm)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected `aggregate <root> (<child>, ...) [lock <column>]`", norm)
+	}
+	list, tail, _ := strings.Cut(list, ")")
+	lock := ""
+	if tail = strings.TrimSpace(tail); tail != "" {
+		col, ok := strings.CutPrefix(strings.ToLower(tail), "lock ")
+		if !ok || strings.ContainsAny(strings.TrimSpace(col), " \t") {
+			return nil, fmt.Errorf("%s: expected `lock <column>` after the children", norm)
+		}
+		lock = strings.TrimSpace(tail[len("lock "):])
+		if root.Column(lock) == nil {
+			return nil, fmt.Errorf("%s: %s has no column %s", norm, root.FullName(), lock)
+		}
 	}
 	name = strings.TrimSpace(name)
 	if name != root.Name && name != root.FullName() {
@@ -235,6 +247,10 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 	}
 	src := "aggregate " + root.FullName()
 	out := []Obligation{{Subject: root.FullName(), Kinds: OnAll, Body: Body{Alone: root.FullName()}, Source: src}}
+	if lock != "" {
+		// the version is named in every write to the root ...
+		out = append(out, Obligation{Subject: root.FullName(), Kinds: OnUpdate | OnDelete, Body: Body{Pinned: lock}, Source: src})
+	}
 	var children []*schema.Relation
 	for _, c := range strings.Split(strings.TrimSuffix(list, ")"), ",") {
 		c = strings.TrimSpace(c)
@@ -281,8 +297,62 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 			out = append(out, Obligation{Subject: child.FullName(), Kinds: OnAll, Body: Body{Pinned: col}, Source: src})
 		}
 		out = append(out, Obligation{Subject: child.FullName(), Kinds: OnAll, Body: Body{Alone: root.FullName()}, Source: src})
+		if lock != "" {
+			// ... and in every write to a child: the row of the root this child hangs off
+			// (through its parent, for a grandchild) must be the version the writer saw
+			out = append(out, Obligation{Subject: child.FullName(), Kinds: OnUpdate | OnDelete, Body: Body{Predicate: lockPredicate(s, root, child, lock)}, Source: src})
+		}
 	}
 	return out, nil
+}
+
+// lockPredicate spells the EXISTS a child of a locked aggregate owes on UPDATE / DELETE:
+// a root row at the version the writer saw, reached through the child's foreign key and,
+// for a grandchild, its parent's.
+func lockPredicate(s *schema.Schema, root, child *schema.Relation, lock string) string {
+	var from []string
+	var where []string
+	cur := child
+	prev := ""
+	for depth := 0; depth < 8; depth++ {
+		var fk *schema.Constraint
+		for _, con := range cur.Constraints {
+			if con.Kind == schema.ForeignKey && (con.RefTable == root.FullName() || con.RefTable == root.Name) {
+				fk = con
+				break
+			}
+		}
+		if fk == nil {
+			for _, con := range cur.Constraints {
+				if con.Kind == schema.ForeignKey && con.RefTable != cur.FullName() && con.RefTable != cur.Name {
+					if r := relByFullName(s, con.RefTable); r != nil && r != cur {
+						fk = con
+						break
+					}
+				}
+			}
+		}
+		if fk == nil {
+			break
+		}
+		parent := relByFullName(s, fk.RefTable)
+		alias := fmt.Sprintf("a%d", depth)
+		from = append(from, parent.FullName()+" "+alias)
+		for k := range fk.Columns {
+			lhs := alias + "." + fk.RefColumns[k]
+			rhs := fk.Columns[k]
+			if prev != "" {
+				rhs = prev + "." + fk.Columns[k]
+			}
+			where = append(where, lhs+" = "+rhs)
+		}
+		if parent == root {
+			where = append(where, alias+"."+lock+" = $1")
+			return "EXISTS (SELECT 1 FROM " + strings.Join(from, ", ") + " WHERE " + strings.Join(where, " AND ") + ")"
+		}
+		prev, cur = alias, parent
+	}
+	return "false"
 }
 
 // context reads `-- sqlshape: context <name>: <item>; <item>...` above a CREATE TABLE /
