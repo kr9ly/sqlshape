@@ -820,6 +820,63 @@ SELECT id, customer_name FROM order_summary
 `-schemas=a_api,b_private` restricts the schemas a package may reference
 (`c_private.orders is outside the schemas this code may reference (a_api,b_private)`).
 
+### Declaring the rules in schema.sql (`require`)
+
+The three rules above are instances of one mechanism: a table declares an obligation, and every
+statement that touches it must discharge the obligation with what it provably does. `visible where`
+and the flags are shorthands; the general form is a directive above `CREATE TABLE` (or `CREATE VIEW`):
+
+```sql
+-- sqlshape: require <what> [on <kinds>]
+```
+
+| `<what>` | the statement must | default `on` |
+|---|---|---|
+| an SQL boolean expression (`deleted_at IS NULL`, `status <> 'closed' AND amount > 0`) | carry it for the table's rows: each conjunct is implied by the WHERE / ON (equalities, IS NULL, IS NOT NULL) or appears verbatim | `read` |
+| `pinned(tenant_id)` | fix the column to one value (`= {{.X}}`, a literal, an outer reference) when reading, updating or deleting; assign it when inserting | `all` |
+| `immutable(tenant_id)` | not assign the column in an UPDATE | `update` |
+| `via view` | not reference the table directly (a write target is allowed unless `on` includes writes) | `read` |
+
+`<kinds>` is a comma-separated list of `select`, `insert`, `update`, `delete`, or the groups `read`
+(SELECT, and the target of an UPDATE / DELETE / MERGE, whose WHERE reads it), `write` and `all`.
+
+Optimistic locking is one declaration and no new machinery:
+
+```sql
+-- sqlshape: require pinned(version) on update, delete
+CREATE TABLE orders (..., version int NOT NULL DEFAULT 1);
+CREATE TRIGGER orders_bump_version BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION bump_version();
+```
+
+```sql
+UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}} AND version = {{.Version}}
+-- passes; without `AND version = ...`:
+-- orders.version is not pinned: every statement on orders must fix version by equality (or assign it)
+```
+
+The database increments `version` (the trigger); the statement must name the version it saw
+(`pinned`); a `One` UPDATE that matched nothing returns `ErrNoRows` (someone got there first).
+
+An obligation is discharged one of five ways, and `-strict` reports the ones that deserve a look:
+
+1. by the statement's own WHERE / ON / SET;
+2. by a view: a view's definition is judged on its own when the schema loads, and readers of the
+   view are not judged again for the tables inside it;
+3. by a row-level security policy whose USING establishes it, for roles subject to row security
+   (`-strict` notes the owner caveat unless the table has `FORCE ROW LEVEL SECURITY`);
+4. across a composite foreign key: with `FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`,
+   a join on `order_id = orders.id` where `orders.tenant_id` is pinned pins `order_items.tenant_id` too;
+5. by an opt-out in the statement: `-- sqlshape: unfiltered orders` (the predicate obligations) or
+   `-- sqlshape: waive orders pinned(tenant_id)` (one obligation, spelled as declared; `waive orders`
+   alone waives every obligation on the table). Opt-outs are reported with `-strict`.
+
+Each occurrence of a table is judged on its own: a self-join or a subquery that reads the table
+again owes the obligation again. `RETURNING` lists are not judged.
+
+The flags remain as shorthands: `-require-columns=tenant_id` is `require pinned(tenant_id)` on every
+table that has the column, `-no-table-reads` is `require via view` on every table, `-no-tables` is
+`require via view on all`.
+
 ### Do not run SQL that bypasses sqlshape (`-raw-sql`)
 
 Calling pgx's or `database/sql`'s `Query` / `Exec` with a string built at run time is the hole the

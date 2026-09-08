@@ -712,6 +712,51 @@ SELECT id, customer_name FROM order_summary
 
 補足。`-no-table-reads`はINSERT / UPDATE / DELETE / MERGEの対象としてテーブルを使うことは許す。`-no-tables`は書き込みも含めてテーブルへの参照を一切禁じる（`table orders is referenced directly; with -no-tables application code reads views and calls functions only`）。`-schemas=a_api,b_private`は、そのパッケージが参照してよいスキーマを限定する（`c_private.orders is outside the schemas this code may reference (a_api,b_private)`）。
 
+### 規約をschema.sqlに宣言する（`require`）
+
+上の3つの規則は一つの仕組みの実例で、表が義務を宣言し、その表に触る文はすべて、自分が証明できることでその義務を履行しなければならない。`visible where`とフラグは略記で、一般形は`CREATE TABLE`（または`CREATE VIEW`）の直上のディレクティブ。
+
+```sql
+-- sqlshape: require <what> [on <kinds>]
+```
+
+| `<what>` | 文に求めること | `on`の既定 |
+|---|---|---|
+| SQLのboolean式（`deleted_at IS NULL`、`status <> 'closed' AND amount > 0`） | その表の行についてこれを持つこと。各conjunctがWHERE / ONから含意される（等値、IS NULL、IS NOT NULL）か、字面どおり現れる | `read` |
+| `pinned(tenant_id)` | 読み・UPDATE・DELETEではその列を一つの値に固定する（`= {{.X}}`、リテラル、外側の参照）。INSERTでは値を入れる | `all` |
+| `immutable(tenant_id)` | UPDATEでその列に代入しない | `update` |
+| `via view` | その表を直接参照しない（`on`に書き込みを含めない限り、書き込みの対象にはできる） | `read` |
+
+`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切り、またはまとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。
+
+楽観ロックは宣言1行で、新しい仕組みは要らない。
+
+```sql
+-- sqlshape: require pinned(version) on update, delete
+CREATE TABLE orders (..., version int NOT NULL DEFAULT 1);
+CREATE TRIGGER orders_bump_version BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION bump_version();
+```
+
+```sql
+UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}} AND version = {{.Version}}
+-- OK。`AND version = ...`が無いと:
+-- orders.version is not pinned: every statement on orders must fix version by equality (or assign it)
+```
+
+`version`を上げるのはDB（トリガ）、見た版を名指しするのは文（`pinned`）、何も当たらなかった`One`のUPDATEは`ErrNoRows`を返す（先を越された）。
+
+義務の履行経路は5つで、見ておくべきものは`-strict`が報告する。
+
+1. 文自身のWHERE / ON / SET
+2. ビュー経由: ビュー定義はスキーマ読み込み時にそれ自身が判定され、ビューの読み手はその中の表について再度判定されない
+3. 行レベルセキュリティのポリシー: USINGがそれを成り立たせていれば、行セキュリティの対象ロールについて履行される（表が`FORCE ROW LEVEL SECURITY`でなければ`-strict`が所有者への注記を出す）
+4. 複合外部キーをまたいで: `FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`があれば、`order_id = orders.id`で結合し`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている
+5. 文側のopt-out: `-- sqlshape: unfiltered orders`（述語型の義務）または`-- sqlshape: waive orders pinned(tenant_id)`（宣言どおりの綴りで1つ。`waive orders`だけならその表の義務を全部）。opt-outは`-strict`で報告される
+
+表の出現ごとに判定する。自己結合やサブクエリでもう一度その表を読めば、そこでも義務を負う。`RETURNING`は判定しない。
+
+フラグは略記として残る。`-require-columns=tenant_id`はその列を持つ全表への`require pinned(tenant_id)`、`-no-table-reads`は全表への`require via view`、`-no-tables`は`require via view on all`。
+
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 
 実行時に組み立てた文字列でpgxや`database/sql`の`Query` / `Exec`を呼ぶことは、テンプレートの保証が届かない穴になる。

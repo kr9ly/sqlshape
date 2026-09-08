@@ -72,7 +72,7 @@ require pinned(tenant_id) statement`},
 visible where deleted_at IS NULL statement
 require pinned(tenant_id) FAIL orders.tenant_id is not pinned: every statement on orders must fix tenant_id by equality (or assign it)`},
 		{"-- sqlshape: unfiltered orders\nSELECT id FROM orders", `
-visible where deleted_at IS NULL waived
+visible where deleted_at IS NULL waived orders: ` + "`visible where deleted_at IS NULL`" + ` is waived by this statement
 require pinned(tenant_id) FAIL orders.tenant_id is not pinned: every statement on orders must fix tenant_id by equality (or assign it)`},
 		// the pin of orders.tenant_id reaches order_items through the composite foreign key
 		{`SELECT i.qty FROM orders o JOIN order_items i ON i.order_id = o.id WHERE o.tenant_id = $1 AND o.deleted_at IS NULL`, `
@@ -109,6 +109,13 @@ require pinned(version) on update, delete statement`},
 visible where deleted_at IS NULL statement
 require pinned(tenant_id) statement
 require pinned(tenant_id) FAIL order_items.tenant_id is not pinned: every statement on order_items must fix tenant_id by equality (or assign it)`},
+		// waive: one named obligation, or every obligation, of a table; the opt-out is a recorded judgment
+		{"-- sqlshape: waive orders pinned(tenant_id)\nSELECT id FROM orders WHERE deleted_at IS NULL", `
+visible where deleted_at IS NULL statement
+require pinned(tenant_id) waived orders: ` + "`require pinned(tenant_id)`" + ` is waived by this statement`},
+		{"-- sqlshape: waive orders\nSELECT id FROM orders", `
+visible where deleted_at IS NULL waived orders: ` + "`visible where deleted_at IS NULL`" + ` is waived by this statement
+require pinned(tenant_id) waived orders: ` + "`require pinned(tenant_id)`" + ` is waived by this statement`},
 		// via view: reading the table is the violation, reading the view is not, writing the table is allowed
 		{`SELECT body FROM secrets WHERE id = $1`, `
 require via view FAIL table secrets is referenced directly: it is declared ` + "`require via view`" + `, read it through a view`},

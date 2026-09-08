@@ -18,6 +18,11 @@ The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flag
 | `-no-tables` | off | no direct table reference at all: application code reads views and calls functions |
 | `-schemas=a_api,b_private` | all | the PostgreSQL schemas this code may reference (a service boundary over one database) |
 | `-require-columns=tenant_id` | none | every statement must pin these columns by equality on each table that has them; INSERTs must assign them (a row-level security policy fixing the column also satisfies it) |
+
+`-no-table-reads`, `-no-tables` and `-require-columns` are shorthands for obligations declared per
+table in `schema.sql` (`require via view`, `require via view on all`, `require pinned(col)`); the
+declaration form also gives `on` kinds, `immutable(col)` and arbitrary predicates
+([checks.md](checks.md#declaring-the-rules-in-schemasql-require)).
 | `-raw-sql=constant` | `constant` | driver calls outside sqlshape (pgx / `database/sql` `Query`, `Exec`, ...): `constant` requires their SQL to be a constant string, `forbid` rejects them, `allow` ignores them |
 | `-raw-sql-allow=pkg/...` | none | packages (or prefixes ending in `/...`) where `-raw-sql=forbid` does not apply |
 | `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |

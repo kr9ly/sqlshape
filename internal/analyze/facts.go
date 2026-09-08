@@ -58,10 +58,9 @@ func (a *analyzer) recordFacts(p *prover, as *scope, at int32) {
 	a.factScopes = append(a.factScopes, factScope{sc: as, fs: fs})
 }
 
-// scopeFacts writes one level down. waived names the tables the enclosing definition
-// opted out for (a view's own `unfiltered` directive); the statement's directives are on
-// the analyzer.
-func (a *analyzer) scopeFacts(p *prover, waived map[string]bool) *facts.Scope {
+// scopeFacts writes one level down. waived are the enclosing definition's opt-outs (a
+// view's own directives); nil means the statement's, which are on the analyzer.
+func (a *analyzer) scopeFacts(p *prover, waived map[string][]string) *facts.Scope {
 	fs := &facts.Scope{}
 	idx := map[*rte]int{}
 	for i, l := range p.leaves {
@@ -142,7 +141,7 @@ func (a *analyzer) scopeFacts(p *prover, waived map[string]bool) *facts.Scope {
 }
 
 // leafFacts describes one FROM leaf.
-func (a *analyzer) leafFacts(l *rte, waived map[string]bool) facts.Leaf {
+func (a *analyzer) leafFacts(l *rte, waived map[string][]string) facts.Leaf {
 	lf := facts.Leaf{Alias: l.alias, Kind: facts.Derived, Role: facts.Read, Position: l.pos}
 	if l.target {
 		lf.Role = facts.Target
@@ -164,16 +163,17 @@ func (a *analyzer) leafFacts(l *rte, waived map[string]bool) facts.Leaf {
 	}
 	lf.Table = rel.FullName()
 	if waived == nil {
-		waived = a.unfiltered
+		waived = a.waived
 	}
-	if waived[rel.Name] || waived[rel.FullName()] {
-		lf.Waived = []string{"unfiltered"}
+	lf.Waived = append([]string{}, waived[rel.Name]...)
+	if rel.FullName() != rel.Name {
+		lf.Waived = append(lf.Waived, waived[rel.FullName()]...)
 	}
 	return lf
 }
 
 // viewFacts converts a view's defining query once per analysis; nil when the body did not
-// analyze. The view's own `unfiltered` directive is the waiver inside it.
+// analyze. The view's own directives are the waivers inside it.
 func (a *analyzer) viewFacts(rel *schema.Relation) *facts.Scope {
 	if fs, ok := a.viewFactScopes[rel]; ok {
 		return fs
@@ -184,7 +184,11 @@ func (a *analyzer) viewFacts(rel *schema.Relation) *facts.Scope {
 		return nil
 	}
 	p := a.newProver(sub.sc, sub.sel.WhereClause)
-	fs := a.scopeFacts(p, rel.Unfiltered)
+	waived := rel.Waived
+	if waived == nil {
+		waived = map[string][]string{} // not the reading statement's
+	}
+	fs := a.scopeFacts(p, waived)
 	fs.At = -1
 	clearPositions(fs) // offsets into the view's definition mean nothing to the statement
 	a.viewFactScopes[rel] = fs

@@ -77,6 +77,12 @@ func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 	leaf := sc.Leaves[i]
 	d := Discharge{Obligation: o, Leaf: leaf, Position: leaf.Position}
 	rel := relByFullName(c.s, leaf.Table)
+	if waived(leaf, o) {
+		d.Path = Waived
+		d.Message = fmt.Sprintf("%s: `%s` is waived by this statement", rel.Name, o.Source)
+		c.out = append(c.out, d)
+		return
+	}
 	switch {
 	case o.Body.Predicate != "":
 		d.Position = sc.At
@@ -110,12 +116,6 @@ func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 // predicates about this leaf.
 func (c *checker) predicate(sc *facts.Scope, i int, o *Obligation, rel *schema.Relation, d *Discharge) {
 	leaf := sc.Leaves[i]
-	for _, w := range leaf.Waived {
-		if w == "unfiltered" {
-			d.Path = Waived
-			return
-		}
-	}
 	want, err := c.lowerPredicate(o, rel)
 	if err != nil {
 		d.Message = fmt.Sprintf("%s: `%s` does not parse against %s: %v", leaf.Table, o.Body.Predicate, leaf.Table, err)
@@ -279,6 +279,24 @@ func (c *checker) assigned(table, col string) bool {
 			if a == col {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// waived: the statement (or the view definition the leaf sits in) opted out of o at this
+// leaf: "*" waives everything on the table, "unfiltered" the predicate obligations, and
+// a body spelled as declared waives that one.
+func waived(leaf facts.Leaf, o *Obligation) bool {
+	spec := o.Body.Spec()
+	for _, w := range leaf.Waived {
+		switch {
+		case w == "*":
+			return true
+		case w == "unfiltered" && o.Body.Predicate != "":
+			return true
+		case strings.EqualFold(strings.Join(strings.Fields(w), " "), spec):
+			return true
 		}
 	}
 	return false

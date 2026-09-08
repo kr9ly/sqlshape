@@ -14,6 +14,8 @@
 | `-no-tables` | off | テーブルへの参照を一切禁じる。アプリケーションはビューを読み、関数を呼ぶ |
 | `-schemas=a_api,b_private` | 全部 | このコードが参照してよいPostgreSQLのスキーマ。1つのデータベースを複数サービスで使うときの境界 |
 | `-require-columns=tenant_id` | なし | すべての文が、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTは値を入れなければならない。その列を固定する行レベルセキュリティのポリシーがあれば満たしたことになる |
+
+`-no-table-reads`・`-no-tables`・`-require-columns`は、`schema.sql`で表ごとに宣言する義務（`require via view`、`require via view on all`、`require pinned(列)`）の略記。宣言形なら`on`による文種の指定、`immutable(列)`、任意の述語も書ける（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)）。
 | `-raw-sql=constant` | `constant` | sqlshapeを通さないドライバ呼び出し（pgx / `database/sql`の`Query`、`Exec`など）の扱い。`constant`はSQL引数が定数であることを要求し、`forbid`は拒否し、`allow`は無視する |
 | `-raw-sql-allow=pkg/...` | なし | `-raw-sql=forbid`を適用しないパッケージ（`/...`で終わる接頭辞も可） |
 | `-coverage` | off | パッケージごとに、検査した`Query` / `One`の数と、検査できなかった数（テンプレートが定数でないもの）を報告する |

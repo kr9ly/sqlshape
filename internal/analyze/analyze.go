@@ -103,9 +103,11 @@ type analyzer struct {
 	funcVolatility map[*pg_query.FuncCall]byte
 	// dmlCTEs are the data-modifying statements inside WITH (their failure modes count)
 	dmlCTEs []*pg_query.Node
-	// unfiltered are tables the template exempts from their visibility policy
-	// (`-- sqlshape: unfiltered t1, t2` in the SQL text)
-	unfiltered map[string]bool
+	// waived are the obligations the statement opts out of, by table (`-- sqlshape:
+	// unfiltered t1, t2` and `-- sqlshape: waive t1 pinned(x), t2` in the SQL text; see
+	// schema.Relation.Waived for the spec strings). Carried on the facts, judged by
+	// internal/obligation
+	waived map[string][]string
 	// facts.go: the levels recorded for internal/obligation, the last DML target, and the
 	// view bodies already converted
 	factScopes     []factScope
@@ -217,22 +219,28 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if len(tree.Stmts) != 1 {
 		return nil, fmt.Errorf("expected exactly one statement, got %d", len(tree.Stmts))
 	}
-	r, aerr := analyzeStmt(s, tree.Stmts[0].Stmt, nil, sqlDirectives(sql, "unfiltered"))
+	r, aerr := analyzeStmt(s, tree.Stmts[0].Stmt, nil, waivers(sql))
 	return r, aerr
 }
 
 var sqlDirective = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*([a-z ]+?)[ \t]+(.+?)[ \t]*$`)
 
-// sqlDirectives reads the comma-separated items of `-- sqlshape: <verb> a, b` lines in a statement.
-func sqlDirectives(sql, verb string) map[string]bool {
-	out := map[string]bool{}
+// waivers reads the statement's opt-outs: `-- sqlshape: unfiltered a, b` (the predicate
+// obligations of a and b) and `-- sqlshape: waive a pinned(x), b` (one named obligation,
+// or every obligation, of a table).
+func waivers(sql string) map[string][]string {
+	out := map[string][]string{}
 	for _, m := range sqlDirective.FindAllStringSubmatch(sql, -1) {
-		if m[1] != verb {
-			continue
-		}
-		for _, it := range strings.Split(m[2], ",") {
-			if it = strings.TrimSpace(it); it != "" {
-				out[it] = true
+		switch m[1] {
+		case "unfiltered":
+			for _, it := range strings.Split(m[2], ",") {
+				if it = strings.TrimSpace(it); it != "" {
+					out = schema.AddWaiver(out, it, "unfiltered")
+				}
+			}
+		case "waive":
+			for table, spec := range schema.Waivers(m[2]) {
+				out = schema.AddWaiver(out, table, spec...)
 			}
 		}
 	}
@@ -253,7 +261,7 @@ type funcParam struct {
 }
 
 // newAnalyzer is a fresh analyzer over s; fp are the enclosing function's parameters.
-func newAnalyzer(s *schema.Schema, fp []funcParam, unfiltered map[string]bool) *analyzer {
+func newAnalyzer(s *schema.Schema, fp []funcParam, waived map[string][]string) *analyzer {
 	a := &analyzer{
 		s:              s,
 		params:         map[int32]catalog.OID{},
@@ -268,7 +276,7 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, unfiltered map[string]bool) *
 		viewFactScopes: map[*schema.Relation]*facts.Scope{},
 		funcParams:     fp,
 		funcVolatility: map[*pg_query.FuncCall]byte{},
-		unfiltered:     unfiltered,
+		waived:         waived,
 	}
 	for i, p := range fp {
 		if !p.plVar {
@@ -279,15 +287,15 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, unfiltered map[string]bool) *
 }
 
 // analyzeStmt analyzes one parsed statement; fp are the enclosing function's parameters.
-func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool) (*Result, error) {
-	return analyzeStmtIn(s, stmt, fp, unfiltered, map[*schema.Function]bool{})
+func analyzeStmt(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived map[string][]string) (*Result, error) {
+	return analyzeStmtIn(s, stmt, fp, waived, map[*schema.Function]bool{})
 }
 
 // analyzeStmtIn is analyzeStmt inside a function body: visited holds the functions on
 // the call chain so a recursive SQL function terminates.
-func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, unfiltered map[string]bool, visited map[*schema.Function]bool) (*Result, error) {
+func analyzeStmtIn(s *schema.Schema, stmt *pg_query.Node, fp []funcParam, waived map[string][]string, visited map[*schema.Function]bool) (*Result, error) {
 	tree := &pg_query.ParseResult{Stmts: []*pg_query.RawStmt{{Stmt: stmt}}}
-	a := newAnalyzer(s, fp, unfiltered)
+	a := newAnalyzer(s, fp, waived)
 	sc := newScope(nil)
 	var cols []rteCol
 	var aerr *Error
@@ -505,7 +513,7 @@ func init() {
 	// so, and its certain failures (a NOT NULL column left out) and domain / policy
 	// findings are problems too
 	schema.CheckStatement = func(s *schema.Schema, stmt *pg_query.Node) error {
-		r, err := analyzeStmt(s, stmt, nil, map[string]bool{})
+		r, err := analyzeStmt(s, stmt, nil, nil)
 		if err != nil {
 			return err
 		}

@@ -153,6 +153,11 @@ type Relation struct {
 	// Unfiltered (views): tables a `-- sqlshape: unfiltered t1, t2` directive before the
 	// CREATE VIEW exempts from their visibility policy inside this view's query.
 	Unfiltered map[string]bool
+	// Waived (views): the obligations the view's definition opts out of, by table, from
+	// `-- sqlshape: waive t1, t2 pinned(x)` and `unfiltered` directives before the CREATE:
+	// "*" waives every obligation on the table, "unfiltered" the predicate ones, anything
+	// else names one obligation's body (internal/obligation).
+	Waived map[string][]string
 	// Directives are the `-- sqlshape: ...` lines written before the CREATE, verbatim
 	// (normalized whitespace), for the packages whose grammar they belong to
 	// (internal/obligation reads `require ...`). The loader keeps them all, whether or
@@ -556,6 +561,50 @@ func leadingComments(text string) string {
 }
 
 var directiveLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[ \t]*$`)
+
+// Waivers reads the list of a `waive` directive: comma-separated (outside parentheses)
+// entries of `<table> [<obligation>]`, where the obligation is the body as declared
+// (`pinned(tenant_id)`, `via view`, a predicate) and its absence waives every obligation
+// on the table ("*").
+func Waivers(list string) map[string][]string {
+	out := map[string][]string{}
+	depth, start := 0, 0
+	items := []string{}
+	for i := 0; i <= len(list); i++ {
+		if i == len(list) || (list[i] == ',' && depth == 0) {
+			items = append(items, strings.TrimSpace(list[start:i]))
+			start = i + 1
+			continue
+		}
+		switch list[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		}
+	}
+	for _, it := range items {
+		if it == "" {
+			continue
+		}
+		table, spec, _ := strings.Cut(it, " ")
+		spec = strings.Join(strings.Fields(spec), " ")
+		if spec == "" {
+			spec = "*"
+		}
+		out = AddWaiver(out, table, spec)
+	}
+	return out
+}
+
+// AddWaiver appends specs to the table's waivers.
+func AddWaiver(m map[string][]string, table string, specs ...string) map[string][]string {
+	if m == nil {
+		m = map[string][]string{}
+	}
+	m[table] = append(m[table], specs...)
+	return m
+}
 
 // directives extracts the `-- sqlshape: <text>` comment lines of a text.
 func directives(text string) []string {
@@ -1230,7 +1279,7 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 			// CREATE OR REPLACE VIEW keeps the relation (its rules, triggers and the views
 			// built on it) and redefines the query
 			rel = existing
-			rel.Frozen, rel.Unfiltered, rel.Directives = nil, nil, nil
+			rel.Frozen, rel.Unfiltered, rel.Waived, rel.Directives = nil, nil, nil, nil
 			// the redefinition is the definition (pg_dump writes a view a later object needs
 			// as a dummy first and CREATE OR REPLACEs it once the object exists)
 			rel.Definition = s.stmtText
@@ -1295,7 +1344,12 @@ func (s *Schema) viewDirectives(rel *Relation, loc int32) {
 			for _, t := range strings.Split(norm[11:], ",") {
 				if t = strings.TrimSpace(t); t != "" {
 					rel.Unfiltered[t] = true
+					rel.Waived = AddWaiver(rel.Waived, t, "unfiltered")
 				}
+			}
+		case len(norm) > 6 && strings.EqualFold(norm[:6], "waive "):
+			for table, spec := range Waivers(norm[6:]) {
+				rel.Waived = AddWaiver(rel.Waived, table, spec...)
 			}
 		default:
 			s.problem(loc, "view %s: unknown directive %q", rel.Name, d)

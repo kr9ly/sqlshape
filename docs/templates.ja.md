@@ -47,13 +47,16 @@ SELECT id FROM products
 |---|---|
 | `-- sqlshape: expect users_email_key, orders.total, P0401` | この書き込みが違反しうる制約、NOT NULL列、SQLSTATEの一覧。検査器はこの一覧が正確であることを保つ（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)） |
 | `-- sqlshape: not null total, note` | これらの結果列はNULLにならない、と検査器の判定を上書きする（`col:",notnull"`タグのSQL側版） |
-| `-- sqlshape: unfiltered memos` | この文は意図的に`memos`を`visible where`の条件なしで読む |
+| `-- sqlshape: unfiltered memos` | この文は意図的に`memos`を`visible where`の条件なしで読む（述語型の義務だけを外す） |
+| `-- sqlshape: waive orders pinned(tenant_id), audit` | この文は`orders`の義務を1つ（宣言どおりの綴りで名指し）、`audit`の義務を全部外す。外したことは`-strict`で報告される（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)） |
 
 `schema.sql`の中で使うもの:
 
 | ディレクティブ | 置く場所 | 意味 |
 |---|---|---|
-| `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE`の直上 | このテーブルを読む文はすべてこの条件を持たなければならない |
+| `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE`の直上 | このテーブルを読む文はすべてこの条件を持たなければならない（`require deleted_at IS NULL on read`の略記） |
+| `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW`の直上 | そのリレーションに触る文すべてへの義務。述語、`pinned(列)`、`immutable(列)`、`via view`のいずれかに、任意で`on select, insert, update, delete`を付ける（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)） |
+| `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW`の直上 | ビュー定義自身が文としてopt-outする |
 | `-- sqlshape: not null` | `CREATE FUNCTION`の直上 | この関数の戻り値はNULLにならない |
 | `-- sqlshape: error P0401 = OrderTooLarge` | 関数の`CREATE FUNCTION`の直上 | この関数が送出するSQLSTATEに名前を付け、expect行と`Violates`でその名前を使えるようにする。PL/pgSQL本体の`RAISE`は注釈なしでもコードで検出される |
 | `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | このseedは追加のみ。宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブル)） |

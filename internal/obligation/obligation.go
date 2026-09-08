@@ -13,6 +13,8 @@
 package obligation
 
 import (
+	"strings"
+
 	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -62,6 +64,20 @@ type Body struct {
 	// IncludeWrites, not even as a write target. -no-table-reads / -no-tables, per table.
 	ViaView       bool
 	IncludeWrites bool
+}
+
+// Spec spells the body the way a `require` directive does, whitespace-normalized: the
+// form a `waive` directive names it by.
+func (b Body) Spec() string {
+	switch {
+	case b.Pinned != "":
+		return "pinned(" + b.Pinned + ")"
+	case b.Immutable != "":
+		return "immutable(" + b.Immutable + ")"
+	case b.ViaView:
+		return "via view"
+	}
+	return strings.Join(strings.Fields(b.Predicate), " ")
 }
 
 // Lowerer reads a declared predicate in the facts language. Implemented by the dialect's

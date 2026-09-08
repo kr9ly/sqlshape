@@ -204,7 +204,7 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 
 ## 未決
 
-- opt-out行の名前と粒度（表単位か義務単位か。`unfiltered memos`は表単位で述語だけを外している）
+- ~~opt-out行の名前と粒度~~ → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）の両方。`unfiltered`は述語型だけを外す別名として残す
 - 関数本体（PL/pgSQL）の中の文に義務を課すか。関数を`via view`の履行経路に数えるか（「ビューと関数だけを読む」の`-no-tables`は関数を許している）
 - ビューに義務を付けたとき、ビューの定義文自身に課すのか、ビューの読み手に課すのか。両方ありうる（`require pinned(tenant_id)`をビューに付けたら読み手への義務、`require via view`を表に付けたらビュー定義が履行経路）
 - 文をまたぐ規則（「accountsをUPDATEしたら同一トランザクションでledgerにINSERT」）を扱う層を持つか。持つならGo側で`pgx.Tx`上の呼び出し集合を`go/analysis`で集める別層で、「核はSQLしか見ない」と緊張する。ここでは扱わない
@@ -254,7 +254,7 @@ flowchart LR
 1. analyzeがFactsを出す。判定は従来のまま。Factsのスナップショットテストを足す。既存テストは無変更で緑。済（`internal/analyze/facts.go`、`TestFacts`）。MERGEのONも一つのスコープとして出る（今の`checkVisibility`はMERGEを見ていないので、段3で載せ替えるとMERGEにも`visible where`が効くようになる。意図した拡張として受け入れる）
 2. obligationの中身: `require`文法、`Pinned` / `Immutable` / `ViaView`、含意エンジン、FK閉包、ビュー・ポリシー継承。schemaと手書きFactsだけで回る単体テスト
 3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**。済。`internal/vet/testdata`は無変更で緑。`policy_test.go`は`obligation/visible_test.go`に移した。載せ替えで変わった振る舞い（意図した拡張）: (a) MERGEのONにも`visible where`と`pinned`が効く、(b) 判定が表単位から葉単位になった（自己結合・サブクエリの各出現がそれぞれ義務を負う。`-require-columns`は以前、文中のどこかで固定されていれば同じ表の他の出現も通していた）、(c) `visible where`をRLSポリシーのUSINGが履行できる（経路3。所有者への注記は`-strict`で出る）、(d) 複合FKで結合先の固定が伝播する（経路4）。schemaのseed文（`schema.CheckStatement`）からは`visible where`の判定が外れた — seedはINSERT VALUESに限られ読みを持たない
-4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形
+4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形。済。`on` / `immutable` / `via view`の表単位は段2の実装で動いており、docs（checks / templates / flags）に書いた。`waive <table> [<body>]`を文側とビュー定義側に足した（bodyは宣言どおりの綴り、省略で全部、`unfiltered`は述語型だけの別名）。opt-outは`Discharge`に`Waived`として残り、vetは`-strict`で報告する。表をまたぐ`EXISTS`は構文一致（Opaque）で判定できる段階で、含意（サブクエリの事実）は未対応
 5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない
 6. `sqlshape check`と文脈。判定は共有し、入口とスコープの写像だけを足す
 
