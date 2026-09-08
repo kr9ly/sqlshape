@@ -26,7 +26,7 @@
 
 ## `sqlshape check`のフラグ
 
-`sqlshape check [flags] [FILE.sql...]`はSQLファイル（または標準入力）を`schema.sql`の規約と照合する（[checks.ja.md](checks.ja.md#goの外のsqlにも同じ規約が効くsqlshape-check)）。
+`sqlshape check [flags] [FILE.sql...]`はSQLファイル（または標準入力）を`schema.sql`の規約と照合する（[checks.ja.md](checks.ja.md#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
 
 | フラグ | 既定 | 意味 |
 |---|---|---|

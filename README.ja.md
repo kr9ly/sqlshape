@@ -126,7 +126,7 @@ ops.sql:8: FAIL orders: visible where deleted_at IS NULL: rows of orders are vis
 sqlshape: 2 finding(s)
 ```
 
-文脈（`-context ops`）で、その呼び出し元に適用する規約を選ぶ。詳細は[docs/checks.ja.md](docs/checks.ja.md#goの外のsqlにも同じ規約が効くsqlshape-check)。
+文脈（`-context ops`）で、その呼び出し元に適用する規約を選ぶ。詳細は[docs/checks.ja.md](docs/checks.ja.md#goの外のsqlにも同じ規約を適用するsqlshape-check)。
 
 ## マイグレーション
 
