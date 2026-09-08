@@ -127,12 +127,22 @@ func parseKinds(list string) (Kinds, error) {
 }
 
 // Declarations collects the obligations written in schema.sql: every relation's
-// `require ...` and `visible where ...` directives. Malformed ones come back as Problems.
+// `require ...` and `visible where ...` directives, and the expansion of each
+// `aggregate` declaration. Malformed ones come back as Problems.
 func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 	var out []Obligation
 	var problems []Problem
 	for _, rel := range s.Relations {
 		for _, d := range rel.Directives {
+			if strings.HasPrefix(strings.ToLower(d), "aggregate ") {
+				ob, err := aggregate(s, rel, d)
+				if err != nil {
+					problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: err.Error()})
+					continue
+				}
+				out = append(out, ob...)
+				continue
+			}
 			o, ok, err := Parse(rel.FullName(), d)
 			if !ok {
 				continue
@@ -179,4 +189,58 @@ func FromFlags(s *schema.Schema, requireColumns string, noTables, noTableReads b
 		}
 	}
 	return out
+}
+
+// aggregate expands `-- sqlshape: aggregate <root> (<child>, <child>...)`, written above
+// the root's CREATE TABLE, into the obligations DDD's aggregate rules amount to in the
+// shape of a statement:
+//
+//   - a child is reached through its root: `require pinned(<fk column to root>) on all`
+//     on each child (a join on the root's key pins it by foreign-key propagation);
+//   - one statement touches one aggregate: `alone` on the root and every child (read
+//     across aggregates through a view).
+//
+// A child must have a foreign key to the root; its columns are what gets pinned.
+func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obligation, error) {
+	norm := strings.Join(strings.Fields(directive), " ")
+	rest := strings.TrimSpace(norm[len("aggregate "):])
+	name, list, ok := strings.Cut(rest, "(")
+	if !ok || !strings.HasSuffix(list, ")") {
+		return nil, fmt.Errorf("%s: expected `aggregate <root> (<child>, ...)`", norm)
+	}
+	name = strings.TrimSpace(name)
+	if name != root.Name && name != root.FullName() {
+		return nil, fmt.Errorf("%s: the declaration sits above %s, not %s", norm, root.FullName(), name)
+	}
+	src := "aggregate " + root.FullName()
+	out := []Obligation{{Subject: root.FullName(), Kinds: OnAll, Body: Body{Alone: root.FullName()}, Source: src}}
+	for _, c := range strings.Split(strings.TrimSuffix(list, ")"), ",") {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		sch, n, _ := strings.Cut(c, ".")
+		if n == "" {
+			sch, n = "", sch
+		}
+		child := s.Relation(sch, n)
+		if child == nil {
+			return nil, fmt.Errorf("%s: child %s does not exist", norm, c)
+		}
+		var fk *schema.Constraint
+		for _, con := range child.Constraints {
+			if con.Kind == schema.ForeignKey && (con.RefTable == root.FullName() || con.RefTable == root.Name) {
+				fk = con
+				break
+			}
+		}
+		if fk == nil {
+			return nil, fmt.Errorf("%s: %s has no foreign key to %s", norm, child.FullName(), root.FullName())
+		}
+		for _, col := range fk.Columns {
+			out = append(out, Obligation{Subject: child.FullName(), Kinds: OnAll, Body: Body{Pinned: col}, Source: src})
+		}
+		out = append(out, Obligation{Subject: child.FullName(), Kinds: OnAll, Body: Body{Alone: root.FullName()}, Source: src})
+	}
+	return out, nil
 }

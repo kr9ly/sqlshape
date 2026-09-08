@@ -211,7 +211,7 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - FK伝播をNULL性と`One`の証明にも使うか（RLSの項の「未対応」と同じ話）
 - 「掘り先」の各述語の優先順位。状態機械とoutboxを先に
 - 文脈の宣言構文と、vetでpackageを文脈に写す方法（フラグか命名規則か）。`check`でのパラメータの扱い（`$n`なしのリテラル文をそのまま受けるか、2-way SQLを要求するか）
-- 集約から共通に参照してよいlookup表（通貨・ステータス）の印。`alone`の分割から外す宣言が要る
+- ~~集約から共通に参照してよいlookup表の印~~ → どの集約にも属さない表は`alone`の対象外（宣言不要）
 - 集約の入れ子（子の子）への伝播。`pinned(order_id)`を孫にもFK経由で要求するか、直接の親の鍵で足りるとするか
 
 ## 境界: コアから切り離す
@@ -255,7 +255,7 @@ flowchart LR
 2. obligationの中身: `require`文法、`Pinned` / `Immutable` / `ViaView`、含意エンジン、FK閉包、ビュー・ポリシー継承。schemaと手書きFactsだけで回る単体テスト
 3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**。済。`internal/vet/testdata`は無変更で緑。`policy_test.go`は`obligation/visible_test.go`に移した。載せ替えで変わった振る舞い（意図した拡張）: (a) MERGEのONにも`visible where`と`pinned`が効く、(b) 判定が表単位から葉単位になった（自己結合・サブクエリの各出現がそれぞれ義務を負う。`-require-columns`は以前、文中のどこかで固定されていれば同じ表の他の出現も通していた）、(c) `visible where`をRLSポリシーのUSINGが履行できる（経路3。所有者への注記は`-strict`で出る）、(d) 複合FKで結合先の固定が伝播する（経路4）。schemaのseed文（`schema.CheckStatement`）からは`visible where`の判定が外れた — seedはINSERT VALUESに限られ読みを持たない
 4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形。済。`on` / `immutable` / `via view`の表単位は段2の実装で動いており、docs（checks / templates / flags）に書いた。`waive <table> [<body>]`を文側とビュー定義側に足した（bodyは宣言どおりの綴り、省略で全部、`unfiltered`は述語型だけの別名）。opt-outは`Discharge`に`Waived`として残り、vetは`-strict`で報告する。表をまたぐ`EXISTS`は構文一致（Opaque）で判定できる段階で、含意（サブクエリの事実）は未対応
-5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない
+5. `aggregate`宣言と`alone`。義務への展開だけで、判定側には手を入れない。済（`alone`だけは判定側に構造述語として足した: 文が触る表集合を集約の分割で見る）。展開は子表への`pinned(FK列)`と全表への`alone`。ルート`version`の`EXISTS`義務（ロックをルート単位にする）は入れていない — サブクエリの含意が要るので、表をまたぐ`EXISTS`の判定と一緒に
 6. `sqlshape check`と文脈。判定は共有し、入口とスコープの写像だけを足す
 
 段3までユーザーに見える振る舞いは変わらない。以降はobligationパッケージの中で閉じる。

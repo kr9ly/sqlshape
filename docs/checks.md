@@ -873,6 +873,23 @@ An obligation is discharged one of five ways, and `-strict` reports the ones tha
 Each occurrence of a table is judged on its own: a self-join or a subquery that reads the table
 again owes the obligation again. `RETURNING` lists are not judged.
 
+An aggregate (DDD's consistency unit) is a bundle of these obligations, declared once above its root:
+
+```sql
+-- sqlshape: aggregate orders (order_items, order_notes)
+CREATE TABLE orders (...);
+```
+
+It expands to `require pinned(<foreign key to orders>) on all` on each child (a child is reached
+through its root: pin the key, or join on the root's key) and to `alone` on every table of the
+aggregate: one statement touches one aggregate. Reading across aggregates is what a view is for;
+tables in no aggregate (lookups) are free to join. A child must have a foreign key to the root.
+
+```sql
+SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o.id = {{.ID}}
+-- orders belongs to aggregate orders and this statement also touches invoices of aggregate invoices: one statement, one aggregate (read across aggregates through a view)
+```
+
 The flags remain as shorthands: `-require-columns=tenant_id` is `require pinned(tenant_id)` on every
 table that has the column, `-no-table-reads` is `require via view` on every table, `-no-tables` is
 `require via view on all`.

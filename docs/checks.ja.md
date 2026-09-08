@@ -755,6 +755,20 @@ UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}} AND version = {{.Versi
 
 表の出現ごとに判定する。自己結合やサブクエリでもう一度その表を読めば、そこでも義務を負う。`RETURNING`は判定しない。
 
+集約（DDDの一貫性の単位）は、これらの義務の束をルートの直上に1行で宣言する。
+
+```sql
+-- sqlshape: aggregate orders (order_items, order_notes)
+CREATE TABLE orders (...);
+```
+
+各子表に`require pinned(<ordersへの外部キー列>) on all`（子はルート経由で触る: 鍵を固定するか、ルートの鍵で結合する）、集約の全表に`alone`（1文は1集約にしか触らない）に展開される。集約をまたぐ読みはビューの仕事で、どの集約にも属さない表（lookup）は自由に結合できる。子表はルートへの外部キーを持っていなければならない。
+
+```sql
+SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o.id = {{.ID}}
+-- orders belongs to aggregate orders and this statement also touches invoices of aggregate invoices: one statement, one aggregate (read across aggregates through a view)
+```
+
 フラグは略記として残る。`-require-columns=tenant_id`はその列を持つ全表への`require pinned(tenant_id)`、`-no-table-reads`は全表への`require via view`、`-no-tables`は`require via view on all`。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）

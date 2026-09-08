@@ -72,6 +72,7 @@ In `schema.sql`:
 |---|---|---|
 | `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE` | every statement reading the table must carry this predicate (short for `require deleted_at IS NULL on read`) |
 | `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW` | an obligation on every statement that touches the relation: a predicate, `pinned(col)`, `immutable(col)` or `via view`, optionally `on select, insert, update, delete` ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
+| `-- sqlshape: aggregate orders (order_items, order_notes)` | the root's `CREATE TABLE` | the tables form one aggregate: children are pinned to the root's key, and a statement touches one aggregate only ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW` | the view's own definition opts out, as a statement would |
 | `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
 | `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |

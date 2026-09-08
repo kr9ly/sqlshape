@@ -64,6 +64,9 @@ type Body struct {
 	// IncludeWrites, not even as a write target. -no-table-reads / -no-tables, per table.
 	ViaView       bool
 	IncludeWrites bool
+	// Alone: the statement may not touch a table of another aggregate; the value is the
+	// aggregate's root. Produced by an `aggregate` declaration, never written by hand.
+	Alone string
 }
 
 // Spec spells the body the way a `require` directive does, whitespace-normalized: the
@@ -76,6 +79,8 @@ func (b Body) Spec() string {
 		return "immutable(" + b.Immutable + ")"
 	case b.ViaView:
 		return "via view"
+	case b.Alone != "":
+		return "alone"
 	}
 	return strings.Join(strings.Fields(b.Predicate), " ")
 }

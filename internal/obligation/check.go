@@ -15,12 +15,16 @@ func Check(s *schema.Schema, decls []Obligation, f *facts.Facts, l Lowerer) []Di
 	if f == nil || f.Top == nil {
 		return nil
 	}
-	c := &checker{s: s, f: f, lower: l, lowered: map[string][]facts.Pred{}, lowerErr: map[string]error{}}
+	c := &checker{s: s, f: f, lower: l, lowered: map[string][]facts.Pred{}, lowerErr: map[string]error{}, aggregate: map[string]string{}}
 	bySubject := map[string][]*Obligation{}
 	for i := range decls {
 		o := &decls[i]
 		bySubject[o.Subject] = append(bySubject[o.Subject], o)
+		if o.Body.Alone != "" {
+			c.aggregate[o.Subject] = o.Body.Alone
+		}
 	}
+	c.collectTables(f.Top)
 	c.scope(f.Top, bySubject)
 	return c.out
 }
@@ -32,6 +36,30 @@ type checker struct {
 	lowered  map[string][]facts.Pred
 	lowerErr map[string]error
 	out      []Discharge
+	// aggregate maps a table to the root of its aggregate (from the alone obligations);
+	// tables are every table the statement touches at any depth, in order
+	aggregate map[string]string
+	tables    []string
+}
+
+func (c *checker) collectTables(sc *facts.Scope) {
+	for _, l := range sc.Leaves {
+		if l.Table != "" && l.Kind == facts.Table && !contains(c.tables, l.Table) {
+			c.tables = append(c.tables, l.Table)
+		}
+	}
+	for _, ch := range sc.Children {
+		c.collectTables(ch)
+	}
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *checker) scope(sc *facts.Scope, bySubject map[string][]*Obligation) {
@@ -91,6 +119,18 @@ func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 		c.pinned(sc, i, o, rel, &d)
 	case o.Body.Immutable != "":
 		c.immutable(o, rel, &d)
+	case o.Body.Alone != "":
+		if leaf.Kind != facts.Table {
+			return
+		}
+		d.Path = ByStatement
+		for _, t := range c.tables {
+			if other := c.aggregate[t]; other != "" && other != o.Body.Alone {
+				d.Path = 0
+				d.Message = fmt.Sprintf("%s belongs to aggregate %s and this statement also touches %s of aggregate %s: one statement, one aggregate (read across aggregates through a view)", leaf.Table, o.Body.Alone, t, other)
+				break
+			}
+		}
 	case o.Body.ViaView:
 		if leaf.Kind != facts.Table {
 			return
@@ -203,6 +243,9 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Rela
 		}
 	}
 	d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)", rel.Name, col, rel.Name, col)
+	if root, ok := strings.CutPrefix(o.Source, "aggregate "); ok {
+		d.Message = fmt.Sprintf("%s is a child of aggregate %s: reach it through %s (fix %s.%s by equality, or join on %s's key)", rel.Name, root, root, rel.Name, col, root)
+	}
 }
 
 // viaForeignKey: a composite foreign key from this table whose other columns are joined
