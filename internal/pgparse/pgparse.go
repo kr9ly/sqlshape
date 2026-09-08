@@ -85,9 +85,6 @@ var modules = map[Version]*module{
 	PG18: {wasm: wasm18},
 }
 
-// Supported lists the versions with an embedded parser, oldest first.
-func Supported() []Version { return []Version{PG17, PG18} }
-
 func (v Version) module() *module {
 	m := modules[v]
 	if m == nil {
