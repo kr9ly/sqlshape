@@ -218,13 +218,17 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 
 義務はアドオンで、PostgreSQL / MySQLのどちらにも属さない。核（アナライザー・スキーマ・vet）との接点を3つの契約に固定し、義務の実装はその上で閉じる。
 
-```
-schema.sql ──schema──▶ Relation.Directives []string（生テキスト。文法は知らない）
-                              │
-Goの文 ──analyze──▶ facts.Facts ───┐
-                                  ├──▶ obligation.Check(schema, decls, facts, lowerer, opts) ──▶ []Discharge
-                    Lowerer ──────┘         ▲
-                 （analyzeが実装）       vet / cli check（入口: フラグの糖衣化・opt-outの読み取り・位置の写像）
+```mermaid
+flowchart LR
+  sql[schema.sql] -->|schema| dir["Relation.Directives []string<br/>（生テキスト。文法は知らない）"]
+  stmt[Goの文] -->|analyze| facts[facts.Facts]
+  analyze[analyze] -.implements.-> lowerer[Lowerer]
+  dir --> check["obligation.Check(schema, decls, facts, lowerer, opts)"]
+  facts --> check
+  lowerer --> check
+  check --> dis["[]Discharge"]
+  entry["vet / cli check<br/>フラグの糖衣化・opt-outの読み取り・位置の写像"] --> check
+  dis --> entry
 ```
 
 | package | 依存 | 役割 |
