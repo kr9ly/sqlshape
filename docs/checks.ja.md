@@ -769,6 +769,26 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 -- orders belongs to aggregate orders and this statement also touches invoices of aggregate invoices: one statement, one aggregate (read across aggregates through a view)
 ```
 
+孫（ルートではなく子表を参照する外部キーを持つ表）も同じ列挙に並べる。孫はぶら下がる親の鍵を固定し、ルートまでの結合は1リンクずつ判定される。
+
+呼び出し元が違えば規約も違う。運用スクリプトはテナントなしで走り、分析者はビューしか読まない。**文脈（context）**はその差分を表ごとに宣言し、パッケージや`check`の実行が一つを選ぶ。
+
+```sql
+-- sqlshape: require pinned(tenant_id)
+-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete
+-- sqlshape: context analyst: require via view
+CREATE TABLE orders (...);
+```
+
+```go
+// Package ops は運用スクリプトを実行する。
+//
+// sqlshape: context ops
+package ops
+```
+
+`waive <body>`はその文脈の中で基底の義務を外し（宣言どおりの綴りで名指し）、`require ...`はその文脈だけの義務を足す。パッケージはパッケージコメントで文脈を名乗る。無ければvetの`-context`フラグ、`sqlshape check -context ops`はファイルに対して選ぶ。文脈を選ばなければ基底の義務だけが効く。ディレクティブの述語のパラメータは`$1`で書く。Goテンプレートの`{{.ID}}`と同じもの。
+
 同じ判定はGoコードの外のSQL（運用のUPDATE、backfill、エージェントがこれから流すクエリ）にも使える。
 
 ```

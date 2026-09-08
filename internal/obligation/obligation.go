@@ -45,6 +45,12 @@ type Obligation struct {
 	// Source is where it was declared: the schema.sql directive text, or the vet flag
 	// that expands to it. Used in diagnostics only.
 	Source string
+	// Context is the named context the obligation belongs to; "" is the base set that
+	// applies everywhere. A context adds obligations and waives base ones (Waiver).
+	Context string
+	// Waiver marks a context's `waive <body>`: it removes the base obligation with the
+	// same subject and body while that context is selected. Never judged itself.
+	Waiver bool
 }
 
 // Body is the requirement proper. Predicate obligations are SQL boolean expressions

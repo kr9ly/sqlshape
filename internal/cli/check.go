@@ -25,6 +25,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs.SetOutput(stderr)
 	getSchema := schemaFlag(fs)
 	quiet := fs.Bool("quiet", false, "print failures only, not every judgment")
+	ctxName := fs.String("context", "", "the obligation context to judge under (schema.sql's `context <name>: ...` declarations)")
 	requireCols := fs.String("require-columns", "", "as vet's flag: pin these columns on every table that has them")
 	noTables := fs.Bool("no-tables", false, "as vet's flag: no direct table reference")
 	noTableReads := fs.Bool("no-table-reads", false, "as vet's flag: tables are written, not read")
@@ -54,7 +55,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		return fmt.Errorf("%s: %s", schemaPath, strings.Join(lines, "\n  "))
 	}
-	decls = append(decls, obligation.FromFlags(s, *requireCols, *noTables, *noTableReads)...)
+	decls = append(obligation.InContext(decls, *ctxName), obligation.FromFlags(s, *requireCols, *noTables, *noTableReads)...)
 
 	inputs := fs.Args()
 	if len(inputs) == 0 {

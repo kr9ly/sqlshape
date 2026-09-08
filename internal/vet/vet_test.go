@@ -196,3 +196,11 @@ func TestPLpgSQL(t *testing.T) {
 	defer Analyzer.Flags.Set("strict", "false")
 	analysistest.Run(t, td, Analyzer, "plpgsql")
 }
+
+func TestContext(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "ctx_schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, td, Analyzer, "ctx")
+}

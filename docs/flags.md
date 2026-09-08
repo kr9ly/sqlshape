@@ -5,7 +5,7 @@
 `cmd/sqlshape` is a `go vet -vettool`-compatible checker. Run it as `sqlshape ./...`,
 `sqlshape vet ./...` or `go vet -vettool=$(which sqlshape) ./...`; the flags below are passed the
 same way in each case.
-`sqlshape check` takes `-schema`, `-quiet` and the three boundary flags below
+`sqlshape check` takes `-schema`, `-quiet`, `-context` and the three boundary flags below
 ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)). The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
 [migrations.md](migrations.md).
 
@@ -18,6 +18,7 @@ same way in each case.
 | `-no-table-reads` | off | SELECTs, and the reading parts of writes, must go through views; a table may still be the target of INSERT / UPDATE / DELETE / MERGE |
 | `-no-tables` | off | no direct table reference at all: application code reads views and calls functions |
 | `-schemas=a_api,b_private` | all | the PostgreSQL schemas this code may reference (a service boundary over one database) |
+| `-context=ops` | none | the obligation context packages are judged under, unless a package names its own with `// sqlshape: context <name>` in its package comment |
 | `-require-columns=tenant_id` | none | every statement must pin these columns by equality on each table that has them; INSERTs must assign them (a row-level security policy fixing the column also satisfies it) |
 
 `-no-table-reads`, `-no-tables` and `-require-columns` are shorthands for obligations declared per

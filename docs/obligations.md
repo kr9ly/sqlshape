@@ -1,6 +1,6 @@
 # 義務（obligation）— 境界の規則を一つの仕組みにする
 
-状態: 実装中。段3（既存3規則の載せ替え）まで完了し、判定は`internal/obligation`に一本化されている。[design.md](design.md)の「検討中」から参照される。段4以降が落ち着いたら本文を「決めたこと・理由・棄てた案」の形に書き換え、design.mdの核となる裁定に昇格する。
+状態: 実装済み（1.1.0）。判定は`internal/obligation`に一本化され、既存3規則・`require`・`aggregate`・`context`・`sqlshape check`まで入っている。[design.md](design.md)の核となる裁定「境界の規則は義務として宣言し、文の事実で判定する」がこの文書の要約で、ここには動機・設計・裁定の経緯・ロードマップを残す。
 
 ## 動機
 
@@ -123,9 +123,9 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 - **書き込みは1文1集約**が`alone`で機械的に守られる。ただしこれは文単位の射影で、「1トランザクションで2集約を書く」は文が分かれていれば通る。集約の本来の意味はトランザクション境界なので、守れるのは文の形に映る分だけ。文をまたぐ層は未決のまま
 - `aggregate`宣言を残す価値は意図の保存にある。義務を個別に書くと「なぜこの5行が揃っているか」が消える。展開結果は診断文に使う（`order_items は集約 orders の子: order_id を固定してください`）
 
-## 掘り先: 文の形に映るアプリケーションの意味
+## ロードマップ（1.2以降）: 文の形に映るアプリケーションの意味
 
-義務の枠組みに乗り、facts に文の形（SETの定数、選択列集合、LIMITの有無、CTEの書き込み集合）を足すだけで書けるもの。含意判定は変わらない。
+1.1.0には入れていない。義務の枠組みに乗り、facts に文の形（SETの定数、選択列集合、LIMITの有無、CTEの書き込み集合）を足すだけで書けるもの。含意判定は変わらない。順序は状態機械 → outbox（`paired`）→ その他。
 
 ### 値のライフサイクル
 
@@ -173,14 +173,16 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 今の`-schemas`や「掘り先」の`-may-read`はパッケージ単位のフラグだが、かき捨ての文にはpackageがない。代わりに実行ロール（`SET ROLE`）や呼び出し元（ops / agent / analyst）が単位になる。両者を「文脈（context）」で揃える。
 
 ```sql
--- sqlshape: context ops: waive bounded; require single on delete
--- sqlshape: context analyst: require via view; may read pii = false
+-- sqlshape: require pinned(tenant_id)
+-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete
+-- sqlshape: context analyst: require via view
+CREATE TABLE orders (...);
 ```
 
-- schema.sqlに文脈ごとの義務の差分を宣言する（基底の義務は表に付いたまま）
-- vetはpackageを文脈に写す（`-context=ops`、または命名規則）
+- schema.sqlに、表ごとに文脈の差分を宣言する（基底の義務は表に付いたまま）。`waive <body>`は基底の義務を外し、`require ...`は文脈だけの義務を足す
+- vetはpackageを文脈に写す。パッケージコメントの`// sqlshape: context ops`が最優先、無ければ`-context`フラグ、どちらも無ければ基底のみ。命名規則は採らない（暗黙の写像は読めない）
 - `check`は`-context`で選ぶ
-- opt-out（`waive`）はかき捨てでは「誰が外したか」が要る。`check`の出力（どの文がどの義務をどの経路で履行し、何を外したか）をそのまま監査ログにする
+- 文脈で外した義務は判定に現れない（宣言された方針であって、文ごとのopt-outではない）。文ごとの`waive`は`Discharge`に残り、`check`の出力が監査ログになる
 
 2-way SQL（`/*{{.X}}*/'lit'`、design.mdの検討中）はここに繋がる。psqlでそのまま流せるテンプレートなら、Goのテンプレートとかき捨ての文が同じ文法になり、`check`の入力にそのまま使える。
 
@@ -202,17 +204,18 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - 含意判定の強さは、等値・NULL性・FK閉包の可決定な断片に限る。それ以上は構文一致にフォールバックし、それでも証明できなければopt-outを要求する
 - 宣言はschema.sqlに置き、フラグは互換のために残す（`-require-columns=tenant_id`は「`tenant_id`列を持つ全表に`require pinned(tenant_id)`」の糖衣）
 
-## 未決
+## 裁定（もと「未決」）
 
-- ~~opt-out行の名前と粒度~~ → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）の両方。`unfiltered`は述語型だけを外す別名として残す
-- 関数本体（PL/pgSQL）の中の文に義務を課すか。関数を`via view`の履行経路に数えるか（「ビューと関数だけを読む」の`-no-tables`は関数を許している）
-- ビューに義務を付けたとき、ビューの定義文自身に課すのか、ビューの読み手に課すのか。両方ありうる（`require pinned(tenant_id)`をビューに付けたら読み手への義務、`require via view`を表に付けたらビュー定義が履行経路）
-- 文をまたぐ規則（「accountsをUPDATEしたら同一トランザクションでledgerにINSERT」）を扱う層を持つか。持つならGo側で`pgx.Tx`上の呼び出し集合を`go/analysis`で集める別層で、「核はSQLしか見ない」と緊張する。ここでは扱わない
-- FK伝播をNULL性と`One`の証明にも使うか（RLSの項の「未対応」と同じ話）
-- 「掘り先」の各述語の優先順位。状態機械とoutboxを先に
-- 文脈の宣言構文と、vetでpackageを文脈に写す方法（フラグか命名規則か）。`check`のパラメータは今は`$n`もリテラルもそのまま受ける（アナライザーがどちらも扱う）。2-way SQLは別件
-- ~~集約から共通に参照してよいlookup表の印~~ → どの集約にも属さない表は`alone`の対象外（宣言不要）
-- 集約の入れ子（子の子）への伝播。`pinned(order_id)`を孫にもFK経由で要求するか、直接の親の鍵で足りるとするか
+- **opt-outの名前と粒度** → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）。`unfiltered`は述語型だけを外す別名として残す
+- **関数本体の中の文** → ビューと同じ扱い。本体はschema読み込み時に自身が判定され（PL/pgSQLは行番号つき）、呼び出し側はその関数の中の表について判定されない。`via view`は関数呼び出しを直接参照と数えない（`-no-tables`が関数を許してきたのと同じ線。「DBがAPIを出す」路線ではビューと関数が出口）
+- **ビューに付けた義務** → ビューの**読み手**への義務。ビューの定義文は、中の表の義務を自分で履行する側。`require pinned(tenant_id)`をビューに付ければ読み手が固定し、`require via view`を表に付ければビューの定義文が履行経路になる。両方が同時に成り立つ
+- **文をまたぐ規則** → 持たない。分析の単位は文で、これは核の裁定（「核はSQLしか見ない」）と同じ根。トランザクション内の対（accountsのUPDATEとledgerのINSERT）は、書き込みCTEで1文にまとめる形に変換できるものだけ扱う（ロードマップの`paired`）。Go側で`pgx.Tx`上の呼び出し集合を集める層は作らない
+- **FK伝播をNULL性と`One`の証明に使うか** → 義務の外。`prover`の話で、design.mdのRLSの項「未対応」に残す。義務側は複合FKで`pinned`を運ぶところまで
+- **「掘り先」の優先順位** → 1.1.0には入れない。次は状態機械とoutbox（`paired`）。下記ロードマップ
+- **文脈** → 上記「文脈」の節のとおり実装。パッケージコメント > `-context` > 基底
+- **`check`のパラメータ** → `$n`もリテラルもそのまま受ける（アナライザーがどちらも扱う）。2-way SQLは別件のまま
+- **lookup表の印** → 不要。どの集約にも属さない表は`alone`の対象外
+- **集約の入れ子** → 子の列挙は平坦のまま、各子はルートへのFKを、無ければ他のメンバーへのFKを固定する。孫は親の鍵に等値で結合していれば履行（親は親で自分の義務を負うので、鎖はリンクごとに判定される）
 
 ## 境界: コアから切り離す
 
@@ -235,14 +238,14 @@ flowchart LR
 |---|---|---|
 | `internal/facts` | なし | データ契約。文種・スコープの木・葉（表・別名・役割・位置）・正規化述語・等値類・固定列・NULL拒否列・代入集合。パーサのノードを含まない |
 | `internal/obligation` | `facts` `schema` | 宣言の文法、フラグからの展開、含意判定、FK閉包、履行経路の記録。`analyze`にも`vet`にも依存しない |
-| `internal/analyze` | `facts` | 判定の代わりにFactsを出す。`recordFixed`が`checkVisibility`を呼んでいる場所が生産点。ビュー本体とポリシーのUSINGも同じ形で葉に付ける（`Origin`で区別） |
+| `internal/analyze` | `facts` | 判定の代わりにFactsを出す。`recordFixed`（各クエリレベルの等値閉包）とMERGEのONが生産点。ビュー本体とポリシーのUSINGも同じ形で葉に付ける（`Origin`で区別）。`Lower`が宣言の述語を事実の言語に落とす |
 | `internal/vet` / `internal/cli` | `obligation` | 入口。`-require-columns=tenant_id`を`Pinned("tenant_id")`の宣言列に、`-no-table-reads`を`ViaView`に展開して渡す。文の`waive`行を読んで葉に付ける。`Discharge`を診断に写す |
 
 **正規化述語（`facts.Pred`）が共通言語。** `Eq(col, Param | Const | Column | Known)` / `IsNull` / `IsNotNull` / `Opaque(正準テキスト)`。文のconjunctも、ビューの述語も、RLSのUSINGも、宣言のSQL式も、全部これに落ちる。落とすのは方言側の仕事（`obligation.Lowerer`インターフェースをanalyzeが実装する）で、obligationは含意しか判定しない。`Opaque`同士のテキスト一致が、今の`sameExpr`にあたる構文フォールバック。
 
 方言を足すときに要るのは「Factsを出すアナライザー」と「Lowerer」の2つで、宣言の文法・判定・診断はそのまま使える。
 
-**schemaは文法を知らない。** 今は`schema.go`が`visible where`をExprに、ビューの`unfiltered`をmapに解釈し、未知の指示行をProblemにしている。これをやめ、`-- sqlshape:`行を`Relation.Directives`に生で溜める。未知の文法の報告はobligation側の`Problem`に移る。`Relation.Visible`の読み手は`checkVisibility`だけ（diff / applyは見ていない）なので、移すのに障害はない。ビューの`unfiltered`は「ビュー定義文のopt-out」で、文側の`waive`と同じもの。Factsのビュー葉に`Waived`として載る。
+**schemaは文法を知らない。** `schema.go`は`-- sqlshape:`行を`Relation.Directives`に生で溜め、`require` / `aggregate` / `context`は素通しする（`visible where`と`unfiltered`は互換のため従来どおりも解釈する）。文法の誤りはobligation側の`Problem`として報告される。ビューの`unfiltered` / `waive`は「ビュー定義文のopt-out」で、文側の`waive`と同じもの。Factsのビュー葉に`Waived`として載る。
 
 **Factsはスコープ単位。** `visible where`は今もサブクエリの各レベルで葉ごとに判定している。フラットにすると「外側のWHEREは内側の葉を絞らない」の区別が消えるので、スコープの木をそのまま持つ。外部結合のONがnull側しか絞らない制約は`Pred.Restricts`で運ぶ（proverの`allow`と同じ）。
 

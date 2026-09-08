@@ -134,6 +134,15 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 	var problems []Problem
 	for _, rel := range s.Relations {
 		for _, d := range rel.Directives {
+			if strings.HasPrefix(strings.ToLower(d), "context ") {
+				ob, err := context(rel, d)
+				if err != nil {
+					problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: err.Error()})
+					continue
+				}
+				out = append(out, ob...)
+				continue
+			}
 			if strings.HasPrefix(strings.ToLower(d), "aggregate ") {
 				ob, err := aggregate(s, rel, d)
 				if err != nil {
@@ -151,7 +160,7 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: err.Error()})
 				continue
 			}
-			if col := o.Body.Pinned + o.Body.Immutable; col != "" && rel.Column(col) == nil {
+			if col := o.Body.Pinned + o.Body.Immutable; col != "" && !hasColumn(rel, col) {
 				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: fmt.Sprintf("%s has no column %s", rel.Name, col)})
 				continue
 			}
@@ -159,6 +168,19 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 		}
 	}
 	return out, problems
+}
+
+// hasColumn: the relation has the column (a view's are its frozen output columns).
+func hasColumn(rel *schema.Relation, col string) bool {
+	if rel.Column(col) != nil {
+		return true
+	}
+	for _, vc := range rel.Frozen {
+		if vc.Name == col {
+			return true
+		}
+	}
+	return false
 }
 
 // FromFlags expands vet's table-wide flags into per-table obligations, the sugar they
@@ -195,12 +217,11 @@ func FromFlags(s *schema.Schema, requireColumns string, noTables, noTableReads b
 // the root's CREATE TABLE, into the obligations DDD's aggregate rules amount to in the
 // shape of a statement:
 //
-//   - a child is reached through its root: `require pinned(<fk column to root>) on all`
-//     on each child (a join on the root's key pins it by foreign-key propagation);
+//   - a child is reached through its parent in the aggregate: `require pinned(<fk
+//     column>) on all` on each child, the foreign key being the one to the root or, for
+//     a grandchild, to the member it hangs off (a join on the parent's key pins it);
 //   - one statement touches one aggregate: `alone` on the root and every child (read
 //     across aggregates through a view).
-//
-// A child must have a foreign key to the root; its columns are what gets pinned.
 func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obligation, error) {
 	norm := strings.Join(strings.Fields(directive), " ")
 	rest := strings.TrimSpace(norm[len("aggregate "):])
@@ -214,6 +235,7 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 	}
 	src := "aggregate " + root.FullName()
 	out := []Obligation{{Subject: root.FullName(), Kinds: OnAll, Body: Body{Alone: root.FullName()}, Source: src}}
+	var children []*schema.Relation
 	for _, c := range strings.Split(strings.TrimSuffix(list, ")"), ",") {
 		c = strings.TrimSpace(c)
 		if c == "" {
@@ -227,15 +249,33 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 		if child == nil {
 			return nil, fmt.Errorf("%s: child %s does not exist", norm, c)
 		}
+		children = append(children, child)
+	}
+	// a child hangs off the root or off another member (a grandchild off its parent): the
+	// foreign key it must pin is the one into the aggregate, the root's first
+	isRoot := func(t string) bool { return t == root.FullName() || t == root.Name }
+	members := map[string]bool{}
+	for _, ch := range children {
+		members[ch.FullName()], members[ch.Name] = true, true
+	}
+	for _, child := range children {
 		var fk *schema.Constraint
 		for _, con := range child.Constraints {
-			if con.Kind == schema.ForeignKey && (con.RefTable == root.FullName() || con.RefTable == root.Name) {
+			if con.Kind == schema.ForeignKey && isRoot(con.RefTable) {
 				fk = con
 				break
 			}
 		}
 		if fk == nil {
-			return nil, fmt.Errorf("%s: %s has no foreign key to %s", norm, child.FullName(), root.FullName())
+			for _, con := range child.Constraints {
+				if con.Kind == schema.ForeignKey && members[con.RefTable] && con.RefTable != child.FullName() && con.RefTable != child.Name {
+					fk = con
+					break
+				}
+			}
+		}
+		if fk == nil {
+			return nil, fmt.Errorf("%s: %s has no foreign key to %s or to another member of the aggregate", norm, child.FullName(), root.FullName())
 		}
 		for _, col := range fk.Columns {
 			out = append(out, Obligation{Subject: child.FullName(), Kinds: OnAll, Body: Body{Pinned: col}, Source: src})
@@ -243,4 +283,71 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 		out = append(out, Obligation{Subject: child.FullName(), Kinds: OnAll, Body: Body{Alone: root.FullName()}, Source: src})
 	}
 	return out, nil
+}
+
+// context reads `-- sqlshape: context <name>: <item>; <item>...` above a CREATE TABLE /
+// VIEW: the obligations that hold on this relation only in the named context (`require
+// ...`) and the base obligations the context lifts (`waive <body>`). An entry point
+// selects one context (vet: the package's `// sqlshape: context <name>` or -context;
+// check: -context); InContext applies the selection.
+func context(rel *schema.Relation, directive string) ([]Obligation, error) {
+	norm := strings.Join(strings.Fields(directive), " ")
+	rest := strings.TrimSpace(norm[len("context "):])
+	name, items, ok := strings.Cut(rest, ":")
+	name = strings.TrimSpace(name)
+	if !ok || name == "" || strings.ContainsAny(name, " \t") {
+		return nil, fmt.Errorf("%s: expected `context <name>: require ...; waive ...`", norm)
+	}
+	var out []Obligation
+	for _, it := range strings.Split(items, ";") {
+		it = strings.TrimSpace(it)
+		if it == "" {
+			continue
+		}
+		lower := strings.ToLower(it)
+		switch {
+		case strings.HasPrefix(lower, "waive "):
+			o, _, err := Parse(rel.FullName(), "require "+strings.TrimSpace(it[len("waive "):]))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %v", norm, err)
+			}
+			o.Context, o.Waiver, o.Source = name, true, norm
+			out = append(out, o)
+		case strings.HasPrefix(lower, "require "):
+			o, _, err := Parse(rel.FullName(), it)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %v", norm, err)
+			}
+			o.Context, o.Source = name, norm
+			out = append(out, o)
+		default:
+			return nil, fmt.Errorf("%s: %q is neither `require ...` nor `waive ...`", norm, it)
+		}
+	}
+	return out, nil
+}
+
+// InContext is the set of obligations in force under the named context ("" for none):
+// the base obligations minus those the context waives, plus the context's own. The
+// result carries no waivers and no other context's obligations, so it can be judged.
+func InContext(decls []Obligation, name string) []Obligation {
+	waived := map[string]bool{}
+	for _, o := range decls {
+		if o.Waiver && o.Context == name {
+			waived[o.Subject+"\x00"+o.Body.Spec()] = true
+		}
+	}
+	var out []Obligation
+	for _, o := range decls {
+		switch {
+		case o.Waiver:
+		case o.Context == "":
+			if !waived[o.Subject+"\x00"+o.Body.Spec()] {
+				out = append(out, o)
+			}
+		case o.Context == name:
+			out = append(out, o)
+		}
+	}
+	return out
 }

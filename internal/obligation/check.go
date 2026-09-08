@@ -235,6 +235,10 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Rela
 		d.Path = ByForeignKey
 		return
 	}
+	if strings.HasPrefix(o.Source, "aggregate ") && c.viaParent(sc, i, rel, col) {
+		d.Path = ByForeignKey
+		return
+	}
 	for _, p := range sc.Preds {
 		if p.Origin == facts.FromPolicy && applies(p, i) && p.Op == facts.Eq && p.Col == ref && p.Term.Kind != facts.Column {
 			d.Path = ByPolicy
@@ -286,6 +290,36 @@ func (c *checker) viaForeignKey(sc *facts.Scope, i int, rel *schema.Relation, co
 				}
 			}
 			if joined && containsRef(sc.Fixed, facts.ColRef{Leaf: j, Column: con.RefColumns[at]}) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// viaParent: an aggregate member's foreign-key column is joined by equality to the
+// referenced column of a leaf of its parent table. The parent leaf owes the aggregate's
+// obligations itself, so the chain up to the root is judged link by link.
+func (c *checker) viaParent(sc *facts.Scope, i int, rel *schema.Relation, col string) bool {
+	for _, con := range rel.Constraints {
+		if con.Kind != schema.ForeignKey {
+			continue
+		}
+		at := -1
+		for k, cc := range con.Columns {
+			if cc == col {
+				at = k
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		parent := relByFullName(c.s, con.RefTable)
+		if parent == nil {
+			continue
+		}
+		for j, other := range sc.Leaves {
+			if j != i && other.Table == parent.FullName() && equalIn(sc, i, facts.ColRef{Leaf: i, Column: col}, facts.ColRef{Leaf: j, Column: con.RefColumns[at]}) {
 				return true
 			}
 		}

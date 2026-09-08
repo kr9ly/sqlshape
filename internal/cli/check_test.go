@@ -14,6 +14,7 @@ func TestCheck(t *testing.T) {
 	schema := `
 -- sqlshape: visible where deleted_at IS NULL
 -- sqlshape: require pinned(tenant_id)
+-- sqlshape: context ops: waive pinned(tenant_id)
 CREATE TABLE orders (id bigint PRIMARY KEY, tenant_id bigint NOT NULL, status text NOT NULL, deleted_at timestamptz);
 CREATE TABLE audit (id bigint PRIMARY KEY, note text);
 `
@@ -62,6 +63,10 @@ INSERT INTO audit (id, note) VALUES (1, 'done');
 	os.WriteFile(clean, []byte("SELECT id FROM orders WHERE tenant_id = 1 AND deleted_at IS NULL"), 0o644)
 	if code, out, _ = run(t, "check", "-schema", filepath.Join(dir, "schema.sql"), "-quiet", clean); code != 0 || out != "" {
 		t.Errorf("clean: exit %d\n%s", code, out)
+	}
+	// -context selects a declared context: ops lifts the tenant pin
+	if code, out, _ = run(t, "check", "-schema", filepath.Join(dir, "schema.sql"), "-context", "ops", "-quiet", sqlPath); code != 1 || strings.Count(out, "\n") != 1 || !strings.Contains(out, "visible where") {
+		t.Errorf("context ops: exit %d\n%s", code, out)
 	}
 	// a statement that does not analyze is a failure too
 	bad := filepath.Join(dir, "bad.sql")

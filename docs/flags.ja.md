@@ -2,7 +2,7 @@
 
 [English](flags.md)
 
-`cmd/sqlshape`は`go vet -vettool`互換の検査器である。`sqlshape ./...`、`sqlshape vet ./...`、`go vet -vettool=$(which sqlshape) ./...`のどれでも実行でき、以下のフラグはどの形でも同じように渡せる。`sqlshape check`は`-schema`、`-quiet`と下記の境界フラグ3つを取る（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)）。マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。
+`cmd/sqlshape`は`go vet -vettool`互換の検査器である。`sqlshape ./...`、`sqlshape vet ./...`、`go vet -vettool=$(which sqlshape) ./...`のどれでも実行でき、以下のフラグはどの形でも同じように渡せる。`sqlshape check`は`-schema`、`-quiet`、`-context`と下記の境界フラグ3つを取る（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)）。マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。
 
 ## 検査器のフラグ
 
@@ -13,6 +13,7 @@
 | `-no-table-reads` | off | テーブルの読み取りを禁じる。SELECTも書き込み中の読み取り部分もビューを通す。INSERT / UPDATE / DELETE / MERGEの対象にはテーブルを使える |
 | `-no-tables` | off | テーブルへの参照を一切禁じる。アプリケーションはビューを読み、関数を呼ぶ |
 | `-schemas=a_api,b_private` | 全部 | このコードが参照してよいPostgreSQLのスキーマ。1つのデータベースを複数サービスで使うときの境界 |
+| `-context=ops` | なし | パッケージを判定する義務の文脈。パッケージコメントに`// sqlshape: context <name>`があればそちらが優先 |
 | `-require-columns=tenant_id` | なし | すべての文が、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTは値を入れなければならない。その列を固定する行レベルセキュリティのポリシーがあれば満たしたことになる |
 
 `-no-table-reads`・`-no-tables`・`-require-columns`は、`schema.sql`で表ごとに宣言する義務（`require via view`、`require via view on all`、`require pinned(列)`）の略記。宣言形なら`on`による文種の指定、`immutable(列)`、任意の述語も書ける（[checks.ja.md](checks.ja.md#規約をschemasqlに宣言するrequire)）。

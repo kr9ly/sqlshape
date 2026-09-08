@@ -1046,7 +1046,8 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 		rel.Directives = append(rel.Directives, norm)
 		switch {
 		case len(norm) > 8 && strings.EqualFold(norm[:8], "require "),
-			len(norm) > 10 && strings.EqualFold(norm[:10], "aggregate "):
+			len(norm) > 10 && strings.EqualFold(norm[:10], "aggregate "),
+			len(norm) > 8 && strings.EqualFold(norm[:8], "context "):
 			// an obligation (internal/obligation parses it)
 		case len(norm) > 14 && strings.EqualFold(norm[:14], "visible where "):
 			pred, err := parseExpr(norm[14:])
@@ -1336,7 +1337,8 @@ func (s *Schema) viewDirectives(rel *Relation, loc int32) {
 		norm := strings.Join(strings.Fields(d), " ")
 		rel.Directives = append(rel.Directives, norm)
 		switch {
-		case len(norm) > 8 && strings.EqualFold(norm[:8], "require "):
+		case len(norm) > 8 && strings.EqualFold(norm[:8], "require "),
+			len(norm) > 8 && strings.EqualFold(norm[:8], "context "):
 			// an obligation (internal/obligation parses it)
 		case len(norm) > 11 && strings.EqualFold(norm[:11], "unfiltered "):
 			if rel.Unfiltered == nil {

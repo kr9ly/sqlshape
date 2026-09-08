@@ -73,6 +73,7 @@ In `schema.sql`:
 | `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE` | every statement reading the table must carry this predicate (short for `require deleted_at IS NULL on read`) |
 | `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW` | an obligation on every statement that touches the relation: a predicate, `pinned(col)`, `immutable(col)` or `via view`, optionally `on select, insert, update, delete` ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
 | `-- sqlshape: aggregate orders (order_items, order_notes)` | the root's `CREATE TABLE` | the tables form one aggregate: children are pinned to the root's key, and a statement touches one aggregate only ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
+| `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | `CREATE TABLE` / `CREATE VIEW` | the obligations that differ under the named context, selected by a package's `// sqlshape: context ops` comment, vet's `-context`, or `check -context` ([checks.md](checks.md#declaring-the-rules-in-schemasql-require)) |
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW` | the view's own definition opts out, as a statement would |
 | `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
 | `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |
@@ -80,7 +81,8 @@ In `schema.sql`:
 | `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 
 In Go, `// sqlshape: type money_amount` in a type's doc comment binds the type to that PostgreSQL
-type ([checks.md](checks.md#the-go-type-table)).
+type ([checks.md](checks.md#the-go-type-table)), and `// sqlshape: context ops` in a package comment
+selects the obligation context the package is judged under.
 
 ## Sharing SQL
 

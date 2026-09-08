@@ -890,6 +890,33 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 -- orders belongs to aggregate orders and this statement also touches invoices of aggregate invoices: one statement, one aggregate (read across aggregates through a view)
 ```
 
+A grandchild (a table whose foreign key points at a child, not the root) is listed the same way and
+pins its key to the parent it hangs off; a join up the chain discharges it link by link.
+
+Different callers need different rules: an operator's script may run without a tenant, an analyst
+may only read views. A **context** declares the difference per table, and a package or a `check`
+run selects one:
+
+```sql
+-- sqlshape: require pinned(tenant_id)
+-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete
+-- sqlshape: context analyst: require via view
+CREATE TABLE orders (...);
+```
+
+```go
+// Package ops runs the operator's scripts.
+//
+// sqlshape: context ops
+package ops
+```
+
+`waive <body>` lifts a base obligation (spelled as declared) inside the context; `require ...` adds
+one that holds there only. A package names its context in its package comment; otherwise vet's
+`-context` flag applies; `sqlshape check -context ops` selects one for a file. Without a context,
+the base obligations alone apply. A predicate in a directive names parameters as `$1`; a Go
+template's `{{.ID}}` is the same parameter.
+
 The same judgment is available for SQL that is not in Go code (an operator's UPDATE, a backfill, a
 query an agent is about to run):
 

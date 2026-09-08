@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,10 +54,12 @@ var (
 	requireCols  string
 	coverageFlag bool
 	syncComments bool
+	contextFlag  string
 )
 
 func init() {
 	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql, or to a directory whose *.sql files apply in name order (default: the nearest schema.sql or schema/ above the package directory)")
+	Analyzer.Flags.StringVar(&contextFlag, "context", "", "the obligation context packages are judged under, unless a package names its own with `// sqlshape: context <name>` in its package comment")
 	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
 	Analyzer.Flags.BoolVar(&noTableReads, "no-table-reads", false, "forbid reading tables: SELECTs (and the reading parts of writes) go through views; a table may still be the target of INSERT / UPDATE / DELETE / MERGE")
 	Analyzer.Flags.StringVar(&rawSQLFlag, "raw-sql", "constant", "driver calls (pgx / database/sql Query, Exec, ...) outside sqlshape: constant requires their SQL to be a constant string, forbid rejects them, allow ignores them")
@@ -296,7 +299,7 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 		c.adviseSchema(calls[0].Pos())
 	}
-	c.decls = append(append([]obligation.Obligation{}, ls.decls...), obligation.FromFlags(s, requireCols, noTables, noTableReads)...)
+	c.decls = append(obligation.InContext(ls.decls, packageContext(pass)), obligation.FromFlags(s, requireCols, noTables, noTableReads)...)
 	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
 	}
@@ -1157,4 +1160,20 @@ func (c *checker) reportUnusedParams(pType types.Type, res *expand.Result, at to
 		}
 	}
 	walk(st)
+}
+
+var contextDirective = regexp.MustCompile(`(?m)^\s*sqlshape:\s*context\s+([a-z][a-z0-9_-]*)\s*$`)
+
+// packageContext is the obligation context this package is judged under: the
+// `// sqlshape: context <name>` line of its package comment, else -context.
+func packageContext(pass *analysis.Pass) string {
+	for _, f := range pass.Files {
+		if f.Doc == nil {
+			continue
+		}
+		if m := contextDirective.FindStringSubmatch(f.Doc.Text()); m != nil {
+			return m[1]
+		}
+	}
+	return contextFlag
 }
