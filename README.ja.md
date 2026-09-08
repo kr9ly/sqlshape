@@ -116,7 +116,7 @@ $ go vet -vettool="$(which sqlshape)" ./...
 
 ## Goの外のSQL
 
-`schema.sql`に宣言した規約はGoコードの中だけのものではない。`sqlshape check`はどんなSQLでもそれに照らす。本番で流す前の運用のUPDATE、マイグレーションに混ぜたbackfill、LLMエージェントがこれから実行するクエリ。判定は全部、履行経路つきで出るので、出力はそのスクリプトに何が許されたかの記録にもなる。
+`schema.sql`に宣言した規約はGoコードの中だけのものではない。`sqlshape check`はどんなSQLでもその規約と照合する。本番で流す前の運用のUPDATE、マイグレーションに混ぜたbackfill、LLMエージェントがこれから実行するクエリ。判定は全部、履行経路つきで出るので、出力はそのスクリプトに何が許されたかの記録にもなる。
 
 ```
 $ sqlshape check ops.sql
