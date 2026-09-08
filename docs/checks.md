@@ -9,6 +9,11 @@ combination of its branches ([templates.md](templates.md)), analyzes each expans
 situation by situation, and shows what is rejected and what passes, together with the diagnostic
 you will see.
 
+The checker has two entry points. `go vet -vettool=sqlshape` (or `sqlshape ./...`) runs it over Go
+packages, where the SQL lives in `Query` / `One` templates and is compared with the Go types.
+`sqlshape check file.sql` runs the same analyzer and the same schema rules over SQL that is not in Go
+at all ([Part 2](#the-same-rules-for-sql-outside-go-sqlshape-check)).
+
 It has three parts. **Part 1** is what every statement gets, with no declaration: the shape of the
 result and the parameters, the meaning of the types, the failure modes, the `One` proof. **Part 2**
 is what `schema.sql` can additionally demand of the statements that touch a table: predicates, pinned
@@ -35,7 +40,7 @@ statement: the Go code around it, and the schema itself.
   - [Append-only tables, paired writes, single-row deletes (`never`, `paired`, `single`)](#append-only-tables-paired-writes-single-row-deletes-never-paired-single)
   - [Labelled columns are read only where allowed (`sensitive`, `may read`)](#labelled-columns-are-read-only-where-allowed-sensitive-may-read)
   - [Different callers, different rules (`context`)](#different-callers-different-rules-context)
-  - [SQL outside Go is judged the same way (`sqlshape check`)](#sql-outside-go-is-judged-the-same-way-sqlshape-check)
+  - [The same rules for SQL outside Go (`sqlshape check`)](#the-same-rules-for-sql-outside-go-sqlshape-check)
 - [Part 3 — Outside the statement](#part-3--outside-the-statement)
   - [Do not run SQL that bypasses sqlshape (`-raw-sql`)](#do-not-run-sql-that-bypasses-sqlshape--raw-sql)
   - [A package references only its schemas (`-schemas`)](#a-package-references-only-its-schemas--schemas)
@@ -1195,7 +1200,7 @@ one that holds there only; `may read <label>` permits a label. A package names i
 package comment; otherwise vet's `-context` flag applies; `sqlshape check -context ops` selects one
 for a file. Without a context, the base obligations alone apply.
 
-### SQL outside Go is judged the same way (`sqlshape check`)
+### The same rules for SQL outside Go (`sqlshape check`)
 
 The same judgment is available for SQL that is not in Go code: an operator's UPDATE, a backfill, a
 query an agent is about to run.

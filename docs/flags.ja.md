@@ -2,7 +2,7 @@
 
 [English](flags.md)
 
-`cmd/sqlshape`は`go vet -vettool`互換の検査器である。`sqlshape ./...`、`sqlshape vet ./...`、`go vet -vettool=$(which sqlshape) ./...`のどれでも実行でき、以下のフラグはどの形でも同じように渡せる。`sqlshape check`は`-schema`、`-quiet`、`-context`と下記の境界フラグ3つを取る（[checks.ja.md](checks.ja.md#宣言の仕組み)）。マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。
+`cmd/sqlshape`は`go vet -vettool`互換の検査器である。`sqlshape ./...`、`sqlshape vet ./...`、`go vet -vettool=$(which sqlshape) ./...`のどれでも実行でき、以下のフラグはどの形でも同じように渡せる。マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。`sqlshape check`のフラグは[下記](#sqlshape-checkのフラグ)。
 
 ## 検査器のフラグ
 
@@ -22,6 +22,20 @@
 | `-coverage` | off | パッケージごとに、検査した`Query` / `One`の数と、検査できなかった数（テンプレートが定数でないもの）を報告する |
 | `-sync-comments` | off | スキーマの`COMMENT ON`から、結果の構造体のフィールドと型にdocコメントを提案する（`-fix`で適用） |
 | `-fix` | off | 提案された修正（構造体の書き換え、docコメント）をソースに適用する |
+
+
+## `sqlshape check`のフラグ
+
+`sqlshape check [flags] [FILE.sql...]`はSQLファイル（または標準入力）を`schema.sql`の規約に照らす（[checks.ja.md](checks.ja.md#goの外のsqlにも同じ規約が効くsqlshape-check)）。
+
+| フラグ | 既定 | 意味 |
+|---|---|---|
+| `-schema PATH` | 作業ディレクトリから上に辿って最初に見つかる`schema.sql`か`schema/` | 照らすスキーマ |
+| `-context NAME` | なし | 判定に使う義務の文脈（`schema.sql`の`context NAME: ...`宣言） |
+| `-quiet` | off | 全判定ではなく失敗だけを出す |
+| `-require-columns`、`-no-tables`、`-no-table-reads` | vetと同じ | 表ごとの義務の略記。vetと同じ意味 |
+
+義務を履行できない文か解析に失敗する文があれば終了コード1、使い方の誤りは2。
 
 ## `-strict`
 

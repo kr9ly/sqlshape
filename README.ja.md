@@ -114,6 +114,20 @@ $ go vet -vettool="$(which sqlshape)" ./...
 - 境界 — 論理削除の条件を必ず付ける、テナント列で必ず絞る、テーブルを直接読まずビューを通す、といったチームの規約を検査器に強制させられる
 - スキーマ自体 — `schema.sql`の関数（SQLもPL/pgSQLも本体まで）・ビュー・ポリシーも型検査される。`-strict`を付けると、インデックスが効かない条件やlookupテーブルで済むenumなどの助言も出る
 
+## Goの外のSQL
+
+`schema.sql`に宣言した規約はGoコードの中だけのものではない。`sqlshape check`はどんなSQLでもそれに照らす。本番で流す前の運用のUPDATE、マイグレーションに混ぜたbackfill、LLMエージェントがこれから実行するクエリ。判定は全部、履行経路つきで出るので、出力はそのスクリプトに何が許されたかの記録にもなる。
+
+```
+$ sqlshape check ops.sql
+ops.sql:2: ok orders: require pinned(tenant_id)
+ops.sql:6: waived orders: require pinned(tenant_id): orders: `require pinned(tenant_id)` is waived by this statement
+ops.sql:8: FAIL orders: visible where deleted_at IS NULL: rows of orders are visible where ...
+sqlshape: 2 finding(s)
+```
+
+文脈（`-context ops`）で、その呼び出し元に効く規約を選ぶ。詳細は[docs/checks.ja.md](docs/checks.ja.md#goの外のsqlにも同じ規約が効くsqlshape-check)。
+
 ## マイグレーション
 
 マイグレーションファイルは書かない。`schema.sql`を直すと、`sqlshape`がデータベースとの差分からDDLを生成する:
@@ -123,7 +137,6 @@ $ sqlshape diff -db "$DSN" > up.sql         # データベースの状態から 
 $ $EDITOR up.sql                            # 並べ替え、分割、USING の追加、backfill の差し込み
 $ sqlshape apply -db "$DSN" -packages ./... up.sql
 $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベースが schema.sql と違う箇所
-$ sqlshape check ops.sql                    # Goの外のSQLを schema.sql の義務に照らす
 ```
 
 生成されたDDLは手で直してよい。`apply`は、そのDDLを当てた結果が本当に`schema.sql`と一致するかを実行前に確認し、一致しなければ実行しない。`-packages`を付けると、DDLで消える列や型が変わる列をまだ使っているGoのコードがあれば、それも実行前に止まる。リネームやenumのラベル削除のように差分だけでは意図が決められない変更は、`schema.sql`に`-- @migrate`行で書き添える。詳細は[docs/migrations.ja.md](docs/migrations.ja.md)。

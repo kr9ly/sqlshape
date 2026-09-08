@@ -5,9 +5,8 @@
 `cmd/sqlshape` is a `go vet -vettool`-compatible checker. Run it as `sqlshape ./...`,
 `sqlshape vet ./...` or `go vet -vettool=$(which sqlshape) ./...`; the flags below are passed the
 same way in each case.
-`sqlshape check` takes `-schema`, `-quiet`, `-context` and the three boundary flags below
-([checks.md](checks.md#how-a-declaration-works)). The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
-[migrations.md](migrations.md).
+The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
+[migrations.md](migrations.md); `sqlshape check`'s are [below](#sqlshape-check-flags).
 
 ## Checker flags
 
@@ -30,6 +29,21 @@ declaration form also gives `on` kinds, `immutable(col)` and arbitrary predicate
 | `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |
 | `-sync-comments` | off | propose doc comments for result struct fields and types from the schema's `COMMENT ON` (applied with `-fix`) |
 | `-fix` | off | apply the suggested fixes (struct rewrites, doc comments) to the source |
+
+
+## `sqlshape check` flags
+
+`sqlshape check [flags] [FILE.sql...]` judges SQL files (or stdin) against `schema.sql`'s rules
+([checks.md](checks.md#the-same-rules-for-sql-outside-go-sqlshape-check)).
+
+| flag | default | meaning |
+|---|---|---|
+| `-schema PATH` | nearest `schema.sql` or `schema/` from the working directory up | the schema to check against |
+| `-context NAME` | none | the obligation context to judge under (`schema.sql`'s `context NAME: ...` declarations) |
+| `-quiet` | off | print failures only, not every judgment |
+| `-require-columns`, `-no-tables`, `-no-table-reads` | as in vet | the same shorthands for per-table obligations |
+
+Exit code 1 when a statement fails an obligation or does not analyze, 2 for a usage error.
 
 ## `-strict`
 

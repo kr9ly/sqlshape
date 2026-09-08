@@ -4,6 +4,8 @@
 
 検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
 
+検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージに対して走り、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を走らせる（[第2部](#goの外のsqlにも同じ規約が効くsqlshape-check)）。
+
 三部に分かれる。**第1部**は何も宣言しなくても全部の文にかかる検査。結果とパラメータの形、型の意味、失敗モード、`One`の証明。**第2部**は`schema.sql`に宣言して初めてかかる規約。読み取り条件、列の固定、集約、状態機械、ラベル付きの列。**第3部**は文の外側の検査。文を囲むGoコードと、スキーマ自体。
 ## 目次
 
@@ -25,7 +27,7 @@
   - [追記専用、対になる書き込み、1行だけの削除（`never`、`paired`、`single`）](#追記専用対になる書き込み1行だけの削除neverpairedsingle)
   - [ラベル付きの列は許された文脈でしか読まない（`sensitive`、`may read`）](#ラベル付きの列は許された文脈でしか読まないsensitivemay-read)
   - [呼び出し元ごとに規約を変える（`context`）](#呼び出し元ごとに規約を変えるcontext)
-  - [Goの外のSQLも同じ判定を受ける（`sqlshape check`）](#goの外のsqlも同じ判定を受けるsqlshape-check)
+  - [Goの外のSQLにも同じ規約が効く（`sqlshape check`）](#goの外のsqlにも同じ規約が効くsqlshape-check)
 - [第3部 — 文の外側](#第3部--文の外側)
   - [sqlshapeを通さないSQLを書かない（`-raw-sql`）](#sqlshapeを通さないsqlを書かない-raw-sql)
   - [パッケージは自分のスキーマだけを参照する（`-schemas`）](#パッケージは自分のスキーマだけを参照する-schemas)
@@ -1008,7 +1010,7 @@ package ops
 
 `waive <body>`はその文脈の中で基底の義務を外す（宣言どおりの綴りで名指し）。`require ...`はその文脈だけの義務を足す。`may read <label>`はラベルの読み取りを許す。パッケージはパッケージコメントで文脈を名乗る。無ければvetの`-context`フラグ、`sqlshape check -context ops`はファイルに対して選ぶ。文脈を選ばなければ基底の義務だけが効く。
 
-### Goの外のSQLも同じ判定を受ける（`sqlshape check`）
+### Goの外のSQLにも同じ規約が効く（`sqlshape check`）
 
 同じ判定は、Goコードの外のSQLにも使える。運用のUPDATE、backfill、エージェントがこれから流すクエリ。
 

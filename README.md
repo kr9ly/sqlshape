@@ -148,6 +148,24 @@ The full list is in [docs/checks.md](docs/checks.md). Broadly:
   `-strict` adds advice such as a predicate no index serves or an enum a lookup table would serve
   better.
 
+## SQL outside Go
+
+The rules `schema.sql` declares are not limited to Go code. `sqlshape check` judges any SQL against
+them -- an operator's UPDATE before it runs in production, a backfill mixed into a migration, a
+query an LLM agent is about to execute -- and prints every judgment with the path that discharged
+it, so the output is also the record of what a script was allowed to do:
+
+```
+$ sqlshape check ops.sql
+ops.sql:2: ok orders: require pinned(tenant_id)
+ops.sql:6: waived orders: require pinned(tenant_id): orders: `require pinned(tenant_id)` is waived by this statement
+ops.sql:8: FAIL orders: visible where deleted_at IS NULL: rows of orders are visible where ...
+sqlshape: 2 finding(s)
+```
+
+A context (`-context ops`) selects the rules that apply to that caller. Details in
+[docs/checks.md](docs/checks.md#the-same-rules-for-sql-outside-go-sqlshape-check).
+
 ## Migrations
 
 There are no migration files. Edit `schema.sql`, and `sqlshape` derives the DDL from the
@@ -158,7 +176,6 @@ $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to s
 $ $EDITOR up.sql                            # reorder, split, add USING, interleave a backfill
 $ sqlshape apply -db "$DSN" -packages ./... up.sql
 $ sqlshape verify-schema -db "$DSN"         # drift: where a database differs from schema.sql
-$ sqlshape check ops.sql                    # SQL outside Go, judged against schema.sql's obligations
 ```
 
 The generated DDL may be edited by hand. `apply` checks, before running anything, that applying the
