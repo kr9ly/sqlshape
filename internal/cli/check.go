@@ -132,10 +132,10 @@ func checkSchemaBodies(s *schema.Schema, decls []obligation.Obligation, name str
 // starting right after the previous statement's semicolon (so the `-- sqlshape:` lines
 // written above a statement belong to it). A text the parser rejects as a whole is split
 // by the scanner instead, so that one bad statement leaves the others judged.
-func statementSpans(text string) ([][2]int, error) {
+func statementSpans(v pgparse.Version, text string) ([][2]int, error) {
 	var spans [][2]int
 	prevEnd := 0
-	if tree, err := pgparse.Parse(text); err == nil {
+	if tree, err := v.Parse(text); err == nil {
 		for _, raw := range tree.Stmts {
 			end := int(raw.StmtLocation) + int(raw.StmtLen)
 			if raw.StmtLen == 0 {
@@ -146,7 +146,7 @@ func statementSpans(text string) ([][2]int, error) {
 		}
 		return spans, nil
 	}
-	parts, err := pgparse.SplitWithScanner(text, false)
+	parts, err := v.SplitWithScanner(text, false)
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "syntax error "))
 	}
@@ -165,7 +165,7 @@ func statementSpans(text string) ([][2]int, error) {
 // checkText judges each statement of text and returns how many failed.
 func checkText(s *schema.Schema, decls []obligation.Obligation, name, text string, quiet bool, w io.Writer) (int, error) {
 	text = strings.TrimPrefix(text, "\ufeff") // a byte order mark is not part of the SQL
-	spans, err := statementSpans(text)
+	spans, err := statementSpans(s.Version, text)
 	if err != nil {
 		return 0, err
 	}

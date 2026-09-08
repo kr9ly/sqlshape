@@ -63,7 +63,8 @@ type module struct {
 	pool     sync.Pool // *instance
 }
 
-// Version is a PostgreSQL major version with an embedded parser.
+// Version is a PostgreSQL major version with an embedded parser. The zero Version stands
+// for Default.
 type Version int
 
 const (
@@ -85,8 +86,19 @@ var modules = map[Version]*module{
 	PG18: {wasm: wasm18},
 }
 
+// Supported lists the versions with an embedded parser, oldest first.
+func Supported() []Version { return []Version{PG17, PG18} }
+
+// Or returns v, or Default when v is the zero Version (a Schema that declared none).
+func (v Version) Or() Version {
+	if v == 0 {
+		return Default
+	}
+	return v
+}
+
 func (v Version) module() *module {
-	m := modules[v]
+	m := modules[v.Or()]
 	if m == nil {
 		panic(fmt.Sprintf("pgparse: no parser for PostgreSQL %d", int(v)))
 	}

@@ -28,6 +28,10 @@ type Expr = *pgparse.Node
 type Schema struct {
 	Catalog *catalog.Catalog
 	Types   *Types
+	// Version is the PostgreSQL major version the schema declared with
+	// `-- sqlshape: postgres <N>` (pgparse.Default when it declared none): every statement,
+	// the schema's own and the application's, is parsed with that version's grammar.
+	Version pgparse.Version
 
 	Relations []*Relation
 	Functions []*Function
@@ -469,7 +473,11 @@ func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Re
 // LoadWithHooks is LoadWithHook with a NotNullHook installed too, before the first
 // statement applies.
 func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook func(*Schema, *Relation)) (*Schema, error) {
-	tree, err := pgparse.Parse(schemaSQL)
+	version, err := declaredVersion(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := version.Parse(schemaSQL)
 	if err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
 	}
@@ -497,6 +505,7 @@ func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook
 	s := &Schema{
 		Catalog:     cat,
 		Types:       newTypes(cat),
+		Version:     version,
 		Comments:    map[string]string{},
 		TypeDefs:    map[catalog.OID]string{},
 		relByName:   map[string]*Relation{},
@@ -539,7 +548,10 @@ func (s *Schema) applyAll(tree *pgparse.ParseResult, schemaSQL string) {
 // Load saw. CREATE EXTENSION cannot be added after the fact (the catalog is fixed at
 // Load): it returns ErrNeedsReload and leaves the schema untouched.
 func (s *Schema) Apply(schemaSQL string) error {
-	tree, err := pgparse.Parse(schemaSQL)
+	if versionLine.MatchString(schemaSQL) {
+		return errors.New("schema: `-- sqlshape: postgres` is declared in the schema text Load reads, not in DDL applied later")
+	}
+	tree, err := s.Version.Parse(schemaSQL)
 	if err != nil {
 		return fmt.Errorf("parse schema: %w", err)
 	}
@@ -569,6 +581,42 @@ func leadingComments(text string) string {
 }
 
 var directiveLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[ \t]*$`)
+
+// versionLine is the `-- sqlshape: postgres <N>` declaration: the one directive that
+// belongs to the file rather than to the statement below it, read before anything is parsed.
+var versionLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*postgres[ \t]+(\S+)[ \t]*$`)
+
+// declaredVersion reads the schema's `-- sqlshape: postgres <N>` declaration, anywhere in
+// the text; pgparse.Default when there is none. Two declarations that disagree, or a
+// version without an embedded parser, are errors: nothing can be judged until it is fixed.
+func declaredVersion(schemaSQL string) (pgparse.Version, error) {
+	var v pgparse.Version
+	for _, m := range versionLine.FindAllStringSubmatch(schemaSQL, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0, fmt.Errorf("schema: `-- sqlshape: postgres %s`: want a major version number", m[1])
+		}
+		if !slices.Contains(pgparse.Supported(), pgparse.Version(n)) {
+			return 0, fmt.Errorf("schema: `-- sqlshape: postgres %d`: sqlshape supports PostgreSQL %s", n, supportedVersions())
+		}
+		if v != 0 && v != pgparse.Version(n) {
+			return 0, fmt.Errorf("schema: `-- sqlshape: postgres` is declared twice, as %d and %d", int(v), n)
+		}
+		v = pgparse.Version(n)
+	}
+	if v == 0 {
+		v = pgparse.Default
+	}
+	return v, nil
+}
+
+func supportedVersions() string {
+	var parts []string
+	for _, v := range pgparse.Supported() {
+		parts = append(parts, strconv.Itoa(int(v)))
+	}
+	return strings.Join(parts, ", ")
+}
 
 // Waivers reads the list of a `waive` directive: comma-separated (outside parentheses)
 // entries of `<table> [<obligation>]`, where the obligation is the body as declared
@@ -618,6 +666,9 @@ func AddWaiver(m map[string][]string, table string, specs ...string) map[string]
 func directives(text string) []string {
 	var out []string
 	for _, m := range directiveLine.FindAllStringSubmatch(text, -1) {
+		if versionLine.MatchString(m[0]) {
+			continue // the file's declaration, read by Load, not the statement's
+		}
 		out = append(out, m[1])
 	}
 	return out
@@ -1061,7 +1112,7 @@ func (s *Schema) createTable(st *pgparse.CreateStmt, loc int32) {
 			len(norm) > 12 && strings.EqualFold(norm[:12], "transitions "):
 			// an obligation (internal/obligation parses it)
 		case len(norm) > 14 && strings.EqualFold(norm[:14], "visible where "):
-			pred, err := parseExpr(norm[14:])
+			pred, err := parseExpr(s.Version, norm[14:])
 			if err != nil {
 				s.problem(loc, "table %s: directive %q: %v", name, d, err)
 				continue
@@ -1988,8 +2039,8 @@ func (s *Schema) Function(schema, name string) *Function {
 }
 
 // parseExpr parses a standalone SQL expression.
-func parseExpr(text string) (Expr, error) {
-	tree, err := pgparse.Parse("SELECT " + text)
+func parseExpr(v pgparse.Version, text string) (Expr, error) {
+	tree, err := v.Parse("SELECT " + text)
 	if err != nil {
 		return nil, err
 	}

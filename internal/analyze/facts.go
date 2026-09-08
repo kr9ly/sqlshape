@@ -588,7 +588,7 @@ func (a *analyzer) buildFacts(stmt *pgparse.Node, top *scope) *facts.Facts {
 // each conjunct becomes a facts.Pred whose ColRef.Leaf is 0, standing for the subject.
 // This is internal/obligation's Lowerer for PostgreSQL.
 func Lower(s *schema.Schema, expr string, rel *schema.Relation) ([]facts.Pred, error) {
-	tree, err := pgparse.Parse("SELECT " + expr)
+	tree, err := s.Version.Parse("SELECT " + expr)
 	if err != nil {
 		return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 	}

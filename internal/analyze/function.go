@@ -54,7 +54,7 @@ func AnalyzeFunction(s *schema.Schema, fn *schema.Function) (*FunctionResult, er
 		}
 		return out, nil
 	}
-	stmts, err := functionBody(fn)
+	stmts, err := functionBody(s.Version, fn)
 	if err != nil {
 		return nil, err
 	}
@@ -127,12 +127,12 @@ func checkReturnShape(s *schema.Schema, fn *schema.Function, cols []Column) *Err
 }
 
 // functionBody parses a SQL function's statements (nil for other languages).
-func functionBody(fn *schema.Function) ([]*pgparse.Node, error) {
+func functionBody(v pgparse.Version, fn *schema.Function) ([]*pgparse.Node, error) {
 	switch {
 	case fn.SQLBody != nil:
 		return flattenLists(fn.SQLBody), nil
 	case fn.Body != "" && strings.EqualFold(fn.Language, "sql"):
-		tree, err := pgparse.Parse(fn.Body)
+		tree, err := v.Parse(fn.Body)
 		if err != nil {
 			return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 		}
@@ -181,7 +181,7 @@ func functionViolations(s *schema.Schema, cf calledFunc, visited map[*schema.Fun
 	if isPLpgSQL(fn) {
 		bodyViolations = analyzePLpgSQL(s, fn).violations
 	} else {
-		stmts, err := functionBody(fn)
+		stmts, err := functionBody(s.Version, fn)
 		if err != nil {
 			return out
 		}

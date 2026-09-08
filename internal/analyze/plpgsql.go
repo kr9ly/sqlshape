@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
-	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -198,7 +197,7 @@ func (b *plBody) run() (*FunctionResult, error) {
 		kind = "PROCEDURE"
 	}
 	text := "CREATE " + kind + " " + plSignature(b.fn) + " LANGUAGE plpgsql AS $sqlshape$" + b.fn.Body + "$sqlshape$"
-	js, err := pgparse.ParsePlPgSqlToJSON(text)
+	js, err := b.s.Version.ParsePlPgSqlToJSON(text)
 	if err != nil {
 		return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 	}
@@ -442,7 +441,7 @@ func (b *plBody) resolveTypeName(tn string, line int) (schema.TypeRef, []rteCol,
 	if rest, ok := strings.CutPrefix(tn, "pg_catalog."); ok && strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`) && strings.Count(rest, `"`) == 2 {
 		tn = rest[1 : len(rest)-1]
 	}
-	tree, err := pgparse.Parse("SELECT NULL::" + tn)
+	tree, err := b.s.Version.Parse("SELECT NULL::" + tn)
 	if err != nil {
 		return schema.TypeRef{}, nil, b.errf(line, codeUndefinedObject, "type %q does not exist", tn)
 	}
@@ -967,7 +966,7 @@ func (b *plBody) sql(query string, line int) (*Result, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
-	tree, err := pgparse.Parse(query)
+	tree, err := b.s.Version.Parse(query)
 	if err != nil {
 		return nil, b.errf(line, codeSyntaxError, "%s", strings.TrimPrefix(err.Error(), "syntax error "))
 	}

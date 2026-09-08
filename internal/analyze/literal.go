@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
-	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -542,7 +541,7 @@ func (a *analyzer) validateRegtypeLiteral(s string, loc int32) *Error {
 	if _, err := parsePGInt(v, 64); err == nil {
 		return nil
 	}
-	res, err := pgparse.Parse("SELECT NULL::" + v)
+	res, err := a.s.Version.Parse("SELECT NULL::" + v)
 	if err != nil || len(res.Stmts) != 1 {
 		return errAt("42601", loc, "syntax error at or near %q", v)
 	}

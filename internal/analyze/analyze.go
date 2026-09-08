@@ -227,7 +227,7 @@ func refreezeDependentNullability(s *schema.Schema, rel *schema.Relation) {
 }
 
 func Analyze(s *schema.Schema, sql string) (*Result, error) {
-	tree, err := pgparse.Parse(sql)
+	tree, err := s.Version.Parse(sql)
 	if err != nil {
 		return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
 	}

@@ -147,8 +147,8 @@ func isIdentByte(c byte) bool {
 // bare parameter is caught in any position of the list, decorated with ASC/DESC/NULLS
 // FIRST/LAST or not, inside a window definition's PARTITION BY or ORDER BY too — not only
 // when it is the leading item of a plain ORDER BY / GROUP BY.
-func checkBareOrderBy(e *expand.Expansion, lit literal, report func(token.Pos, string, ...any), where string) {
-	tree, err := pgparse.Parse(e.SQL)
+func checkBareOrderBy(v pgparse.Version, e *expand.Expansion, lit literal, report func(token.Pos, string, ...any), where string) {
+	tree, err := v.Parse(e.SQL)
 	if err != nil {
 		return // analyze.Analyze reports the parse failure itself
 	}

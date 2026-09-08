@@ -672,7 +672,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
 		}
 		c.checkParams(e, r, pType, lit, reportP, where)
-		checkBareOrderBy(e, lit, report, where)
+		checkBareOrderBy(c.s.Version, e, lit, report, where)
 		d.addParams(e, r)
 		d.addResult(r)
 		for name, t := range c.checkResult(call.Pos(), r, rType, lit, reportR, where) {
