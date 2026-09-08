@@ -7,8 +7,14 @@
 // module per PostgreSQL version, so a schema declaring a version is judged by that
 // version's own grammar.
 //
+// One parser module is embedded per supported PostgreSQL major version. The Go node types
+// are generated from the newest version's pg_query.proto; every version's tree is read from
+// the parser's JSON output, which names fields and node types (the protobuf numbers them,
+// and libpg_query renumbers between versions), and an older version's few renamed fields
+// are rewritten to the newest shape on the way in (see upgrade).
+//
 // A wasm instance is not safe for concurrent use; instances are pooled and one is taken
-// per call. The module is compiled once per process on first use.
+// per call. A module is compiled once per process on first use.
 package pgparse
 
 import (
@@ -24,6 +30,7 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/emscripten"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -31,6 +38,11 @@ import (
 //
 //go:embed wasm/pg_query_17.wasm
 var wasm17 []byte
+
+// Built by wasm/build.sh from libpg_query tag 18.0.0.
+//
+//go:embed wasm/pg_query_18.wasm
+var wasm18 []byte
 
 // Error is what the parser reports: the message as PostgreSQL words it, and the 1-based
 // character position in the input the message points at (0 when there is none).
@@ -51,7 +63,38 @@ type module struct {
 	pool     sync.Pool // *instance
 }
 
-var pg17 = &module{wasm: wasm17}
+// Version is a PostgreSQL major version with an embedded parser.
+type Version int
+
+const (
+	PG17 Version = 17
+	PG18 Version = 18
+
+	// Default is the version the package-level functions parse with: the newest version
+	// sqlshape supports end to end (parser, catalog, oracle, regress corpus). PG18's parser
+	// is embedded ahead of the rest.
+	Default = PG17
+
+	// newest is the version whose pg_query.proto the Go node types come from, and whose
+	// module deparses (a tree of any version is in its types).
+	newest = PG18
+)
+
+var modules = map[Version]*module{
+	PG17: {wasm: wasm17},
+	PG18: {wasm: wasm18},
+}
+
+// Supported lists the versions with an embedded parser, oldest first.
+func Supported() []Version { return []Version{PG17, PG18} }
+
+func (v Version) module() *module {
+	m := modules[v]
+	if m == nil {
+		panic(fmt.Sprintf("pgparse: no parser for PostgreSQL %d", int(v)))
+	}
+	return m
+}
 
 func (m *module) compile() error {
 	m.once.Do(func() {
@@ -242,14 +285,55 @@ func (m *module) parseProtobuf(sql string) (out []byte, err error) {
 	return out, err
 }
 
-// Parse parses sql into a parse tree.
-func Parse(sql string) (*ParseResult, error) {
-	b, err := pg17.parseProtobuf(sql)
+// parseJSON returns the JSON encoding of the ParseResult for sql. The JSON names fields
+// and node types, where the protobuf numbers them, and libpg_query renumbers between
+// PostgreSQL versions; so JSON is what a tree from any version's parser is read from.
+func (m *module) parseJSON(sql string) (out string, err error) {
+	err = m.with(func(in *instance) error {
+		input, err := in.put(sql)
+		if err != nil {
+			return err
+		}
+		defer in.call("free", uint64(input))
+		res, err := in.call("shim_parse_json", uint64(input))
+		if err != nil {
+			return err
+		}
+		defer in.call("shim_parse_json_free", res)
+		if e, err := in.call("shim_parse_json_error", res); err != nil {
+			return err
+		} else if e != 0 {
+			cur, _ := in.call("shim_parse_json_cursor", res)
+			return &Error{Message: in.cstr(uint32(e)), Cursorpos: int(int32(cur))}
+		}
+		p, err := in.call("shim_parse_json_tree", res)
+		if err != nil {
+			return err
+		}
+		out = in.cstr(uint32(p))
+		return nil
+	})
+	return out, err
+}
+
+// Parse parses sql with the Default version's parser.
+func Parse(sql string) (*ParseResult, error) { return Default.Parse(sql) }
+
+// Parse parses sql with this version's grammar into a parse tree (in the newest version's
+// node types).
+func (v Version) Parse(sql string) (*ParseResult, error) {
+	js, err := v.module().parseJSON(sql)
 	if err != nil {
 		return nil, err
 	}
+	if v != newest {
+		js, err = upgrade(v, js)
+		if err != nil {
+			return nil, err
+		}
+	}
 	tree := &ParseResult{}
-	if err := proto.Unmarshal(b, tree); err != nil {
+	if err := protojson.Unmarshal([]byte(js), tree); err != nil {
 		return nil, fmt.Errorf("pgparse: decoding parse tree: %w", err)
 	}
 	return tree, nil
@@ -261,7 +345,7 @@ func Deparse(tree *ParseResult) (out string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("pgparse: encoding parse tree: %w", err)
 	}
-	err = pg17.with(func(in *instance) error {
+	err = newest.module().with(func(in *instance) error {
 		data, err := in.putBytes(b)
 		if err != nil {
 			return err
@@ -287,10 +371,13 @@ func Deparse(tree *ParseResult) (out string, err error) {
 	return out, err
 }
 
+// ParsePlPgSqlToJSON parses PL/pgSQL with the Default version.
+func ParsePlPgSqlToJSON(input string) (string, error) { return Default.ParsePlPgSqlToJSON(input) }
+
 // ParsePlPgSqlToJSON parses the PL/pgSQL function bodies in input (CREATE FUNCTION
 // statements) and returns their parse trees as JSON.
-func ParsePlPgSqlToJSON(input string) (out string, err error) {
-	err = pg17.with(func(in *instance) error {
+func (v Version) ParsePlPgSqlToJSON(input string) (out string, err error) {
+	err = v.module().with(func(in *instance) error {
 		p, err := in.put(input)
 		if err != nil {
 			return err
@@ -316,11 +403,26 @@ func ParsePlPgSqlToJSON(input string) (out string, err error) {
 	return out, err
 }
 
-// SplitWithScanner splits input into statements by the scanner alone, so a text the
-// grammar rejects can still be cut at its semicolons. With trimSpace, each statement is
-// trimmed of surrounding whitespace.
-func SplitWithScanner(input string, trimSpace bool) (out []string, err error) {
-	err = pg17.with(func(in *instance) error {
+// SplitWithScanner splits input into statements by the Default version's scanner alone, so
+// a text the grammar rejects can still be cut at its semicolons. With trimSpace, each
+// statement is trimmed of surrounding whitespace.
+func SplitWithScanner(input string, trimSpace bool) ([]string, error) {
+	return Default.SplitWithScanner(input, trimSpace)
+}
+
+// SplitWithScanner splits input into statements with this version's scanner.
+func (v Version) SplitWithScanner(input string, trimSpace bool) ([]string, error) {
+	out, err := v.module().splitWithScanner(input)
+	if trimSpace {
+		for i := range out {
+			out[i] = strings.TrimSpace(out[i])
+		}
+	}
+	return out, err
+}
+
+func (m *module) splitWithScanner(input string) (out []string, err error) {
+	err = m.with(func(in *instance) error {
 		p, err := in.put(input)
 		if err != nil {
 			return err
@@ -349,11 +451,7 @@ func SplitWithScanner(input string, trimSpace bool) (out []string, err error) {
 			if err != nil {
 				return err
 			}
-			s := input[int32(loc) : int32(loc)+int32(l)]
-			if trimSpace {
-				s = strings.TrimSpace(s)
-			}
-			out = append(out, s)
+			out = append(out, input[int32(loc):int32(loc)+int32(l)])
 		}
 		return nil
 	})

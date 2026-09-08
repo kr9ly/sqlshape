@@ -98,7 +98,7 @@ func TestSplitWithScanner(t *testing.T) {
 // TestConcurrent: parallel callers each get a working instance.
 func TestConcurrent(t *testing.T) {
 	const sql = "MERGE INTO o USING s ON o.id = s.id WHEN MATCHED THEN UPDATE SET x = s.x WHEN NOT MATCHED THEN INSERT (id, x) VALUES (s.id, s.x)"
-	want, err := pg17.parseProtobuf(sql)
+	want, err := PG17.module().parseProtobuf(sql)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 50 {
-				got, err := pg17.parseProtobuf(sql)
+				got, err := PG17.module().parseProtobuf(sql)
 				if err != nil || string(got) != string(want) {
 					t.Errorf("concurrent parse: err=%v same=%v", err, string(got) == string(want))
 					return
@@ -124,6 +124,6 @@ func TestConcurrent(t *testing.T) {
 
 func BenchmarkParse(b *testing.B) {
 	for range b.N {
-		pg17.parseProtobuf("SELECT o.id, o.total, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.tenant_id = $1 AND o.status IN ('open','paid') ORDER BY o.created_at DESC LIMIT 20")
+		PG17.module().parseProtobuf("SELECT o.id, o.total, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.tenant_id = $1 AND o.status IN ('open','paid') ORDER BY o.created_at DESC LIMIT 20")
 	}
 }

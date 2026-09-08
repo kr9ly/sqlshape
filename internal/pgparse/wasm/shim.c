@@ -19,6 +19,18 @@ char* shim_parse_error(PgQueryProtobufParseResult* r) { return r->error ? r->err
 int shim_parse_cursor(PgQueryProtobufParseResult* r) { return r->error ? r->error->cursorpos : 0; }
 void shim_parse_free(PgQueryProtobufParseResult* r) { pg_query_free_protobuf_parse_result(*r); free(r); }
 
+// parse_json: SQL text -> JSON ParseResult (field names, not numbers: readable across
+// libpg_query versions, whose protobuf field numbers are not stable)
+PgQueryParseResult* shim_parse_json(const char* input) {
+	PgQueryParseResult* r = malloc(sizeof(PgQueryParseResult));
+	*r = pg_query_parse(input);
+	return r;
+}
+char* shim_parse_json_tree(PgQueryParseResult* r) { return r->parse_tree; }
+char* shim_parse_json_error(PgQueryParseResult* r) { return r->error ? r->error->message : NULL; }
+int shim_parse_json_cursor(PgQueryParseResult* r) { return r->error ? r->error->cursorpos : 0; }
+void shim_parse_json_free(PgQueryParseResult* r) { pg_query_free_parse_result(*r); free(r); }
+
 // deparse: protobuf-encoded ParseResult -> SQL text
 PgQueryDeparseResult* shim_deparse(char* data, unsigned int len) {
 	PgQueryProtobuf p; p.data = data; p.len = len;

@@ -2130,17 +2130,17 @@ func (rel *Relation) applyRule(r *pgparse.RuleStmt) {
 			if q := act.InsertStmt.SelectStmt.GetSelectStmt(); q != nil && len(q.ValuesLists) == 0 {
 				set(&rel.RuleInsertSelect)
 			}
-			if len(act.InsertStmt.ReturningList) == 0 {
+			if len(act.InsertStmt.GetReturningClause().GetExprs()) == 0 {
 				set(&rel.RuleNoReturning)
 			}
 		case *pgparse.Node_UpdateStmt:
 			dml = true
-			if len(act.UpdateStmt.ReturningList) == 0 {
+			if len(act.UpdateStmt.GetReturningClause().GetExprs()) == 0 {
 				set(&rel.RuleNoReturning)
 			}
 		case *pgparse.Node_DeleteStmt:
 			dml = true
-			if len(act.DeleteStmt.ReturningList) == 0 {
+			if len(act.DeleteStmt.GetReturningClause().GetExprs()) == 0 {
 				set(&rel.RuleNoReturning)
 			}
 		}

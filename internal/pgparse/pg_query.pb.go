@@ -628,21 +628,23 @@ const (
 	RTEKind_RTE_CTE             RTEKind = 7
 	RTEKind_RTE_NAMEDTUPLESTORE RTEKind = 8
 	RTEKind_RTE_RESULT          RTEKind = 9
+	RTEKind_RTE_GROUP           RTEKind = 10
 )
 
 // Enum value maps for RTEKind.
 var (
 	RTEKind_name = map[int32]string{
-		0: "RTEKIND_UNDEFINED",
-		1: "RTE_RELATION",
-		2: "RTE_SUBQUERY",
-		3: "RTE_JOIN",
-		4: "RTE_FUNCTION",
-		5: "RTE_TABLEFUNC",
-		6: "RTE_VALUES",
-		7: "RTE_CTE",
-		8: "RTE_NAMEDTUPLESTORE",
-		9: "RTE_RESULT",
+		0:  "RTEKIND_UNDEFINED",
+		1:  "RTE_RELATION",
+		2:  "RTE_SUBQUERY",
+		3:  "RTE_JOIN",
+		4:  "RTE_FUNCTION",
+		5:  "RTE_TABLEFUNC",
+		6:  "RTE_VALUES",
+		7:  "RTE_CTE",
+		8:  "RTE_NAMEDTUPLESTORE",
+		9:  "RTE_RESULT",
+		10: "RTE_GROUP",
 	}
 	RTEKind_value = map[string]int32{
 		"RTEKIND_UNDEFINED":   0,
@@ -655,6 +657,7 @@ var (
 		"RTE_CTE":             7,
 		"RTE_NAMEDTUPLESTORE": 8,
 		"RTE_RESULT":          9,
+		"RTE_GROUP":           10,
 	}
 )
 
@@ -856,6 +859,55 @@ func (CTEMaterialize) EnumDescriptor() ([]byte, []int) {
 	return file_pg_query_proto_rawDescGZIP(), []int{13}
 }
 
+type ReturningOptionKind int32
+
+const (
+	ReturningOptionKind_RETURNING_OPTION_KIND_UNDEFINED ReturningOptionKind = 0
+	ReturningOptionKind_RETURNING_OPTION_OLD            ReturningOptionKind = 1
+	ReturningOptionKind_RETURNING_OPTION_NEW            ReturningOptionKind = 2
+)
+
+// Enum value maps for ReturningOptionKind.
+var (
+	ReturningOptionKind_name = map[int32]string{
+		0: "RETURNING_OPTION_KIND_UNDEFINED",
+		1: "RETURNING_OPTION_OLD",
+		2: "RETURNING_OPTION_NEW",
+	}
+	ReturningOptionKind_value = map[string]int32{
+		"RETURNING_OPTION_KIND_UNDEFINED": 0,
+		"RETURNING_OPTION_OLD":            1,
+		"RETURNING_OPTION_NEW":            2,
+	}
+)
+
+func (x ReturningOptionKind) Enum() *ReturningOptionKind {
+	p := new(ReturningOptionKind)
+	*p = x
+	return p
+}
+
+func (x ReturningOptionKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ReturningOptionKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_pg_query_proto_enumTypes[14].Descriptor()
+}
+
+func (ReturningOptionKind) Type() protoreflect.EnumType {
+	return &file_pg_query_proto_enumTypes[14]
+}
+
+func (x ReturningOptionKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ReturningOptionKind.Descriptor instead.
+func (ReturningOptionKind) EnumDescriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{14}
+}
+
 type JsonQuotes int32
 
 const (
@@ -892,11 +944,11 @@ func (x JsonQuotes) String() string {
 }
 
 func (JsonQuotes) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[14].Descriptor()
+	return file_pg_query_proto_enumTypes[15].Descriptor()
 }
 
 func (JsonQuotes) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[14]
+	return &file_pg_query_proto_enumTypes[15]
 }
 
 func (x JsonQuotes) Number() protoreflect.EnumNumber {
@@ -905,7 +957,7 @@ func (x JsonQuotes) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonQuotes.Descriptor instead.
 func (JsonQuotes) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{14}
+	return file_pg_query_proto_rawDescGZIP(), []int{15}
 }
 
 type JsonTableColumnType int32
@@ -950,11 +1002,11 @@ func (x JsonTableColumnType) String() string {
 }
 
 func (JsonTableColumnType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[15].Descriptor()
+	return file_pg_query_proto_enumTypes[16].Descriptor()
 }
 
 func (JsonTableColumnType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[15]
+	return &file_pg_query_proto_enumTypes[16]
 }
 
 func (x JsonTableColumnType) Number() protoreflect.EnumNumber {
@@ -963,7 +1015,7 @@ func (x JsonTableColumnType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonTableColumnType.Descriptor instead.
 func (JsonTableColumnType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{15}
+	return file_pg_query_proto_rawDescGZIP(), []int{16}
 }
 
 type SetOperation int32
@@ -1005,11 +1057,11 @@ func (x SetOperation) String() string {
 }
 
 func (SetOperation) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[16].Descriptor()
+	return file_pg_query_proto_enumTypes[17].Descriptor()
 }
 
 func (SetOperation) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[16]
+	return &file_pg_query_proto_enumTypes[17]
 }
 
 func (x SetOperation) Number() protoreflect.EnumNumber {
@@ -1018,7 +1070,7 @@ func (x SetOperation) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SetOperation.Descriptor instead.
 func (SetOperation) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{16}
+	return file_pg_query_proto_rawDescGZIP(), []int{17}
 }
 
 type ObjectType int32
@@ -1204,11 +1256,11 @@ func (x ObjectType) String() string {
 }
 
 func (ObjectType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[17].Descriptor()
+	return file_pg_query_proto_enumTypes[18].Descriptor()
 }
 
 func (ObjectType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[17]
+	return &file_pg_query_proto_enumTypes[18]
 }
 
 func (x ObjectType) Number() protoreflect.EnumNumber {
@@ -1217,7 +1269,7 @@ func (x ObjectType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ObjectType.Descriptor instead.
 func (ObjectType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{17}
+	return file_pg_query_proto_rawDescGZIP(), []int{18}
 }
 
 type DropBehavior int32
@@ -1253,11 +1305,11 @@ func (x DropBehavior) String() string {
 }
 
 func (DropBehavior) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[18].Descriptor()
+	return file_pg_query_proto_enumTypes[19].Descriptor()
 }
 
 func (DropBehavior) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[18]
+	return &file_pg_query_proto_enumTypes[19]
 }
 
 func (x DropBehavior) Number() protoreflect.EnumNumber {
@@ -1266,7 +1318,7 @@ func (x DropBehavior) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DropBehavior.Descriptor instead.
 func (DropBehavior) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{18}
+	return file_pg_query_proto_rawDescGZIP(), []int{19}
 }
 
 type AlterTableType int32
@@ -1281,65 +1333,64 @@ const (
 	AlterTableType_AT_SetNotNull                AlterTableType = 6
 	AlterTableType_AT_SetExpression             AlterTableType = 7
 	AlterTableType_AT_DropExpression            AlterTableType = 8
-	AlterTableType_AT_CheckNotNull              AlterTableType = 9
-	AlterTableType_AT_SetStatistics             AlterTableType = 10
-	AlterTableType_AT_SetOptions                AlterTableType = 11
-	AlterTableType_AT_ResetOptions              AlterTableType = 12
-	AlterTableType_AT_SetStorage                AlterTableType = 13
-	AlterTableType_AT_SetCompression            AlterTableType = 14
-	AlterTableType_AT_DropColumn                AlterTableType = 15
-	AlterTableType_AT_AddIndex                  AlterTableType = 16
-	AlterTableType_AT_ReAddIndex                AlterTableType = 17
-	AlterTableType_AT_AddConstraint             AlterTableType = 18
-	AlterTableType_AT_ReAddConstraint           AlterTableType = 19
-	AlterTableType_AT_ReAddDomainConstraint     AlterTableType = 20
-	AlterTableType_AT_AlterConstraint           AlterTableType = 21
-	AlterTableType_AT_ValidateConstraint        AlterTableType = 22
-	AlterTableType_AT_AddIndexConstraint        AlterTableType = 23
-	AlterTableType_AT_DropConstraint            AlterTableType = 24
-	AlterTableType_AT_ReAddComment              AlterTableType = 25
-	AlterTableType_AT_AlterColumnType           AlterTableType = 26
-	AlterTableType_AT_AlterColumnGenericOptions AlterTableType = 27
-	AlterTableType_AT_ChangeOwner               AlterTableType = 28
-	AlterTableType_AT_ClusterOn                 AlterTableType = 29
-	AlterTableType_AT_DropCluster               AlterTableType = 30
-	AlterTableType_AT_SetLogged                 AlterTableType = 31
-	AlterTableType_AT_SetUnLogged               AlterTableType = 32
-	AlterTableType_AT_DropOids                  AlterTableType = 33
-	AlterTableType_AT_SetAccessMethod           AlterTableType = 34
-	AlterTableType_AT_SetTableSpace             AlterTableType = 35
-	AlterTableType_AT_SetRelOptions             AlterTableType = 36
-	AlterTableType_AT_ResetRelOptions           AlterTableType = 37
-	AlterTableType_AT_ReplaceRelOptions         AlterTableType = 38
-	AlterTableType_AT_EnableTrig                AlterTableType = 39
-	AlterTableType_AT_EnableAlwaysTrig          AlterTableType = 40
-	AlterTableType_AT_EnableReplicaTrig         AlterTableType = 41
-	AlterTableType_AT_DisableTrig               AlterTableType = 42
-	AlterTableType_AT_EnableTrigAll             AlterTableType = 43
-	AlterTableType_AT_DisableTrigAll            AlterTableType = 44
-	AlterTableType_AT_EnableTrigUser            AlterTableType = 45
-	AlterTableType_AT_DisableTrigUser           AlterTableType = 46
-	AlterTableType_AT_EnableRule                AlterTableType = 47
-	AlterTableType_AT_EnableAlwaysRule          AlterTableType = 48
-	AlterTableType_AT_EnableReplicaRule         AlterTableType = 49
-	AlterTableType_AT_DisableRule               AlterTableType = 50
-	AlterTableType_AT_AddInherit                AlterTableType = 51
-	AlterTableType_AT_DropInherit               AlterTableType = 52
-	AlterTableType_AT_AddOf                     AlterTableType = 53
-	AlterTableType_AT_DropOf                    AlterTableType = 54
-	AlterTableType_AT_ReplicaIdentity           AlterTableType = 55
-	AlterTableType_AT_EnableRowSecurity         AlterTableType = 56
-	AlterTableType_AT_DisableRowSecurity        AlterTableType = 57
-	AlterTableType_AT_ForceRowSecurity          AlterTableType = 58
-	AlterTableType_AT_NoForceRowSecurity        AlterTableType = 59
-	AlterTableType_AT_GenericOptions            AlterTableType = 60
-	AlterTableType_AT_AttachPartition           AlterTableType = 61
-	AlterTableType_AT_DetachPartition           AlterTableType = 62
-	AlterTableType_AT_DetachPartitionFinalize   AlterTableType = 63
-	AlterTableType_AT_AddIdentity               AlterTableType = 64
-	AlterTableType_AT_SetIdentity               AlterTableType = 65
-	AlterTableType_AT_DropIdentity              AlterTableType = 66
-	AlterTableType_AT_ReAddStatistics           AlterTableType = 67
+	AlterTableType_AT_SetStatistics             AlterTableType = 9
+	AlterTableType_AT_SetOptions                AlterTableType = 10
+	AlterTableType_AT_ResetOptions              AlterTableType = 11
+	AlterTableType_AT_SetStorage                AlterTableType = 12
+	AlterTableType_AT_SetCompression            AlterTableType = 13
+	AlterTableType_AT_DropColumn                AlterTableType = 14
+	AlterTableType_AT_AddIndex                  AlterTableType = 15
+	AlterTableType_AT_ReAddIndex                AlterTableType = 16
+	AlterTableType_AT_AddConstraint             AlterTableType = 17
+	AlterTableType_AT_ReAddConstraint           AlterTableType = 18
+	AlterTableType_AT_ReAddDomainConstraint     AlterTableType = 19
+	AlterTableType_AT_AlterConstraint           AlterTableType = 20
+	AlterTableType_AT_ValidateConstraint        AlterTableType = 21
+	AlterTableType_AT_AddIndexConstraint        AlterTableType = 22
+	AlterTableType_AT_DropConstraint            AlterTableType = 23
+	AlterTableType_AT_ReAddComment              AlterTableType = 24
+	AlterTableType_AT_AlterColumnType           AlterTableType = 25
+	AlterTableType_AT_AlterColumnGenericOptions AlterTableType = 26
+	AlterTableType_AT_ChangeOwner               AlterTableType = 27
+	AlterTableType_AT_ClusterOn                 AlterTableType = 28
+	AlterTableType_AT_DropCluster               AlterTableType = 29
+	AlterTableType_AT_SetLogged                 AlterTableType = 30
+	AlterTableType_AT_SetUnLogged               AlterTableType = 31
+	AlterTableType_AT_DropOids                  AlterTableType = 32
+	AlterTableType_AT_SetAccessMethod           AlterTableType = 33
+	AlterTableType_AT_SetTableSpace             AlterTableType = 34
+	AlterTableType_AT_SetRelOptions             AlterTableType = 35
+	AlterTableType_AT_ResetRelOptions           AlterTableType = 36
+	AlterTableType_AT_ReplaceRelOptions         AlterTableType = 37
+	AlterTableType_AT_EnableTrig                AlterTableType = 38
+	AlterTableType_AT_EnableAlwaysTrig          AlterTableType = 39
+	AlterTableType_AT_EnableReplicaTrig         AlterTableType = 40
+	AlterTableType_AT_DisableTrig               AlterTableType = 41
+	AlterTableType_AT_EnableTrigAll             AlterTableType = 42
+	AlterTableType_AT_DisableTrigAll            AlterTableType = 43
+	AlterTableType_AT_EnableTrigUser            AlterTableType = 44
+	AlterTableType_AT_DisableTrigUser           AlterTableType = 45
+	AlterTableType_AT_EnableRule                AlterTableType = 46
+	AlterTableType_AT_EnableAlwaysRule          AlterTableType = 47
+	AlterTableType_AT_EnableReplicaRule         AlterTableType = 48
+	AlterTableType_AT_DisableRule               AlterTableType = 49
+	AlterTableType_AT_AddInherit                AlterTableType = 50
+	AlterTableType_AT_DropInherit               AlterTableType = 51
+	AlterTableType_AT_AddOf                     AlterTableType = 52
+	AlterTableType_AT_DropOf                    AlterTableType = 53
+	AlterTableType_AT_ReplicaIdentity           AlterTableType = 54
+	AlterTableType_AT_EnableRowSecurity         AlterTableType = 55
+	AlterTableType_AT_DisableRowSecurity        AlterTableType = 56
+	AlterTableType_AT_ForceRowSecurity          AlterTableType = 57
+	AlterTableType_AT_NoForceRowSecurity        AlterTableType = 58
+	AlterTableType_AT_GenericOptions            AlterTableType = 59
+	AlterTableType_AT_AttachPartition           AlterTableType = 60
+	AlterTableType_AT_DetachPartition           AlterTableType = 61
+	AlterTableType_AT_DetachPartitionFinalize   AlterTableType = 62
+	AlterTableType_AT_AddIdentity               AlterTableType = 63
+	AlterTableType_AT_SetIdentity               AlterTableType = 64
+	AlterTableType_AT_DropIdentity              AlterTableType = 65
+	AlterTableType_AT_ReAddStatistics           AlterTableType = 66
 )
 
 // Enum value maps for AlterTableType.
@@ -1354,65 +1405,64 @@ var (
 		6:  "AT_SetNotNull",
 		7:  "AT_SetExpression",
 		8:  "AT_DropExpression",
-		9:  "AT_CheckNotNull",
-		10: "AT_SetStatistics",
-		11: "AT_SetOptions",
-		12: "AT_ResetOptions",
-		13: "AT_SetStorage",
-		14: "AT_SetCompression",
-		15: "AT_DropColumn",
-		16: "AT_AddIndex",
-		17: "AT_ReAddIndex",
-		18: "AT_AddConstraint",
-		19: "AT_ReAddConstraint",
-		20: "AT_ReAddDomainConstraint",
-		21: "AT_AlterConstraint",
-		22: "AT_ValidateConstraint",
-		23: "AT_AddIndexConstraint",
-		24: "AT_DropConstraint",
-		25: "AT_ReAddComment",
-		26: "AT_AlterColumnType",
-		27: "AT_AlterColumnGenericOptions",
-		28: "AT_ChangeOwner",
-		29: "AT_ClusterOn",
-		30: "AT_DropCluster",
-		31: "AT_SetLogged",
-		32: "AT_SetUnLogged",
-		33: "AT_DropOids",
-		34: "AT_SetAccessMethod",
-		35: "AT_SetTableSpace",
-		36: "AT_SetRelOptions",
-		37: "AT_ResetRelOptions",
-		38: "AT_ReplaceRelOptions",
-		39: "AT_EnableTrig",
-		40: "AT_EnableAlwaysTrig",
-		41: "AT_EnableReplicaTrig",
-		42: "AT_DisableTrig",
-		43: "AT_EnableTrigAll",
-		44: "AT_DisableTrigAll",
-		45: "AT_EnableTrigUser",
-		46: "AT_DisableTrigUser",
-		47: "AT_EnableRule",
-		48: "AT_EnableAlwaysRule",
-		49: "AT_EnableReplicaRule",
-		50: "AT_DisableRule",
-		51: "AT_AddInherit",
-		52: "AT_DropInherit",
-		53: "AT_AddOf",
-		54: "AT_DropOf",
-		55: "AT_ReplicaIdentity",
-		56: "AT_EnableRowSecurity",
-		57: "AT_DisableRowSecurity",
-		58: "AT_ForceRowSecurity",
-		59: "AT_NoForceRowSecurity",
-		60: "AT_GenericOptions",
-		61: "AT_AttachPartition",
-		62: "AT_DetachPartition",
-		63: "AT_DetachPartitionFinalize",
-		64: "AT_AddIdentity",
-		65: "AT_SetIdentity",
-		66: "AT_DropIdentity",
-		67: "AT_ReAddStatistics",
+		9:  "AT_SetStatistics",
+		10: "AT_SetOptions",
+		11: "AT_ResetOptions",
+		12: "AT_SetStorage",
+		13: "AT_SetCompression",
+		14: "AT_DropColumn",
+		15: "AT_AddIndex",
+		16: "AT_ReAddIndex",
+		17: "AT_AddConstraint",
+		18: "AT_ReAddConstraint",
+		19: "AT_ReAddDomainConstraint",
+		20: "AT_AlterConstraint",
+		21: "AT_ValidateConstraint",
+		22: "AT_AddIndexConstraint",
+		23: "AT_DropConstraint",
+		24: "AT_ReAddComment",
+		25: "AT_AlterColumnType",
+		26: "AT_AlterColumnGenericOptions",
+		27: "AT_ChangeOwner",
+		28: "AT_ClusterOn",
+		29: "AT_DropCluster",
+		30: "AT_SetLogged",
+		31: "AT_SetUnLogged",
+		32: "AT_DropOids",
+		33: "AT_SetAccessMethod",
+		34: "AT_SetTableSpace",
+		35: "AT_SetRelOptions",
+		36: "AT_ResetRelOptions",
+		37: "AT_ReplaceRelOptions",
+		38: "AT_EnableTrig",
+		39: "AT_EnableAlwaysTrig",
+		40: "AT_EnableReplicaTrig",
+		41: "AT_DisableTrig",
+		42: "AT_EnableTrigAll",
+		43: "AT_DisableTrigAll",
+		44: "AT_EnableTrigUser",
+		45: "AT_DisableTrigUser",
+		46: "AT_EnableRule",
+		47: "AT_EnableAlwaysRule",
+		48: "AT_EnableReplicaRule",
+		49: "AT_DisableRule",
+		50: "AT_AddInherit",
+		51: "AT_DropInherit",
+		52: "AT_AddOf",
+		53: "AT_DropOf",
+		54: "AT_ReplicaIdentity",
+		55: "AT_EnableRowSecurity",
+		56: "AT_DisableRowSecurity",
+		57: "AT_ForceRowSecurity",
+		58: "AT_NoForceRowSecurity",
+		59: "AT_GenericOptions",
+		60: "AT_AttachPartition",
+		61: "AT_DetachPartition",
+		62: "AT_DetachPartitionFinalize",
+		63: "AT_AddIdentity",
+		64: "AT_SetIdentity",
+		65: "AT_DropIdentity",
+		66: "AT_ReAddStatistics",
 	}
 	AlterTableType_value = map[string]int32{
 		"ALTER_TABLE_TYPE_UNDEFINED":   0,
@@ -1424,65 +1474,64 @@ var (
 		"AT_SetNotNull":                6,
 		"AT_SetExpression":             7,
 		"AT_DropExpression":            8,
-		"AT_CheckNotNull":              9,
-		"AT_SetStatistics":             10,
-		"AT_SetOptions":                11,
-		"AT_ResetOptions":              12,
-		"AT_SetStorage":                13,
-		"AT_SetCompression":            14,
-		"AT_DropColumn":                15,
-		"AT_AddIndex":                  16,
-		"AT_ReAddIndex":                17,
-		"AT_AddConstraint":             18,
-		"AT_ReAddConstraint":           19,
-		"AT_ReAddDomainConstraint":     20,
-		"AT_AlterConstraint":           21,
-		"AT_ValidateConstraint":        22,
-		"AT_AddIndexConstraint":        23,
-		"AT_DropConstraint":            24,
-		"AT_ReAddComment":              25,
-		"AT_AlterColumnType":           26,
-		"AT_AlterColumnGenericOptions": 27,
-		"AT_ChangeOwner":               28,
-		"AT_ClusterOn":                 29,
-		"AT_DropCluster":               30,
-		"AT_SetLogged":                 31,
-		"AT_SetUnLogged":               32,
-		"AT_DropOids":                  33,
-		"AT_SetAccessMethod":           34,
-		"AT_SetTableSpace":             35,
-		"AT_SetRelOptions":             36,
-		"AT_ResetRelOptions":           37,
-		"AT_ReplaceRelOptions":         38,
-		"AT_EnableTrig":                39,
-		"AT_EnableAlwaysTrig":          40,
-		"AT_EnableReplicaTrig":         41,
-		"AT_DisableTrig":               42,
-		"AT_EnableTrigAll":             43,
-		"AT_DisableTrigAll":            44,
-		"AT_EnableTrigUser":            45,
-		"AT_DisableTrigUser":           46,
-		"AT_EnableRule":                47,
-		"AT_EnableAlwaysRule":          48,
-		"AT_EnableReplicaRule":         49,
-		"AT_DisableRule":               50,
-		"AT_AddInherit":                51,
-		"AT_DropInherit":               52,
-		"AT_AddOf":                     53,
-		"AT_DropOf":                    54,
-		"AT_ReplicaIdentity":           55,
-		"AT_EnableRowSecurity":         56,
-		"AT_DisableRowSecurity":        57,
-		"AT_ForceRowSecurity":          58,
-		"AT_NoForceRowSecurity":        59,
-		"AT_GenericOptions":            60,
-		"AT_AttachPartition":           61,
-		"AT_DetachPartition":           62,
-		"AT_DetachPartitionFinalize":   63,
-		"AT_AddIdentity":               64,
-		"AT_SetIdentity":               65,
-		"AT_DropIdentity":              66,
-		"AT_ReAddStatistics":           67,
+		"AT_SetStatistics":             9,
+		"AT_SetOptions":                10,
+		"AT_ResetOptions":              11,
+		"AT_SetStorage":                12,
+		"AT_SetCompression":            13,
+		"AT_DropColumn":                14,
+		"AT_AddIndex":                  15,
+		"AT_ReAddIndex":                16,
+		"AT_AddConstraint":             17,
+		"AT_ReAddConstraint":           18,
+		"AT_ReAddDomainConstraint":     19,
+		"AT_AlterConstraint":           20,
+		"AT_ValidateConstraint":        21,
+		"AT_AddIndexConstraint":        22,
+		"AT_DropConstraint":            23,
+		"AT_ReAddComment":              24,
+		"AT_AlterColumnType":           25,
+		"AT_AlterColumnGenericOptions": 26,
+		"AT_ChangeOwner":               27,
+		"AT_ClusterOn":                 28,
+		"AT_DropCluster":               29,
+		"AT_SetLogged":                 30,
+		"AT_SetUnLogged":               31,
+		"AT_DropOids":                  32,
+		"AT_SetAccessMethod":           33,
+		"AT_SetTableSpace":             34,
+		"AT_SetRelOptions":             35,
+		"AT_ResetRelOptions":           36,
+		"AT_ReplaceRelOptions":         37,
+		"AT_EnableTrig":                38,
+		"AT_EnableAlwaysTrig":          39,
+		"AT_EnableReplicaTrig":         40,
+		"AT_DisableTrig":               41,
+		"AT_EnableTrigAll":             42,
+		"AT_DisableTrigAll":            43,
+		"AT_EnableTrigUser":            44,
+		"AT_DisableTrigUser":           45,
+		"AT_EnableRule":                46,
+		"AT_EnableAlwaysRule":          47,
+		"AT_EnableReplicaRule":         48,
+		"AT_DisableRule":               49,
+		"AT_AddInherit":                50,
+		"AT_DropInherit":               51,
+		"AT_AddOf":                     52,
+		"AT_DropOf":                    53,
+		"AT_ReplicaIdentity":           54,
+		"AT_EnableRowSecurity":         55,
+		"AT_DisableRowSecurity":        56,
+		"AT_ForceRowSecurity":          57,
+		"AT_NoForceRowSecurity":        58,
+		"AT_GenericOptions":            59,
+		"AT_AttachPartition":           60,
+		"AT_DetachPartition":           61,
+		"AT_DetachPartitionFinalize":   62,
+		"AT_AddIdentity":               63,
+		"AT_SetIdentity":               64,
+		"AT_DropIdentity":              65,
+		"AT_ReAddStatistics":           66,
 	}
 )
 
@@ -1497,11 +1546,11 @@ func (x AlterTableType) String() string {
 }
 
 func (AlterTableType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[19].Descriptor()
+	return file_pg_query_proto_enumTypes[20].Descriptor()
 }
 
 func (AlterTableType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[19]
+	return &file_pg_query_proto_enumTypes[20]
 }
 
 func (x AlterTableType) Number() protoreflect.EnumNumber {
@@ -1510,7 +1559,7 @@ func (x AlterTableType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AlterTableType.Descriptor instead.
 func (AlterTableType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{19}
+	return file_pg_query_proto_rawDescGZIP(), []int{20}
 }
 
 type GrantTargetType int32
@@ -1549,11 +1598,11 @@ func (x GrantTargetType) String() string {
 }
 
 func (GrantTargetType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[20].Descriptor()
+	return file_pg_query_proto_enumTypes[21].Descriptor()
 }
 
 func (GrantTargetType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[20]
+	return &file_pg_query_proto_enumTypes[21]
 }
 
 func (x GrantTargetType) Number() protoreflect.EnumNumber {
@@ -1562,7 +1611,7 @@ func (x GrantTargetType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GrantTargetType.Descriptor instead.
 func (GrantTargetType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{20}
+	return file_pg_query_proto_rawDescGZIP(), []int{21}
 }
 
 type VariableSetKind int32
@@ -1610,11 +1659,11 @@ func (x VariableSetKind) String() string {
 }
 
 func (VariableSetKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[21].Descriptor()
+	return file_pg_query_proto_enumTypes[22].Descriptor()
 }
 
 func (VariableSetKind) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[21]
+	return &file_pg_query_proto_enumTypes[22]
 }
 
 func (x VariableSetKind) Number() protoreflect.EnumNumber {
@@ -1623,7 +1672,7 @@ func (x VariableSetKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use VariableSetKind.Descriptor instead.
 func (VariableSetKind) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{21}
+	return file_pg_query_proto_rawDescGZIP(), []int{22}
 }
 
 type ConstrType int32
@@ -1644,6 +1693,8 @@ const (
 	ConstrType_CONSTR_ATTR_NOT_DEFERRABLE ConstrType = 12
 	ConstrType_CONSTR_ATTR_DEFERRED       ConstrType = 13
 	ConstrType_CONSTR_ATTR_IMMEDIATE      ConstrType = 14
+	ConstrType_CONSTR_ATTR_ENFORCED       ConstrType = 15
+	ConstrType_CONSTR_ATTR_NOT_ENFORCED   ConstrType = 16
 )
 
 // Enum value maps for ConstrType.
@@ -1664,6 +1715,8 @@ var (
 		12: "CONSTR_ATTR_NOT_DEFERRABLE",
 		13: "CONSTR_ATTR_DEFERRED",
 		14: "CONSTR_ATTR_IMMEDIATE",
+		15: "CONSTR_ATTR_ENFORCED",
+		16: "CONSTR_ATTR_NOT_ENFORCED",
 	}
 	ConstrType_value = map[string]int32{
 		"CONSTR_TYPE_UNDEFINED":      0,
@@ -1681,6 +1734,8 @@ var (
 		"CONSTR_ATTR_NOT_DEFERRABLE": 12,
 		"CONSTR_ATTR_DEFERRED":       13,
 		"CONSTR_ATTR_IMMEDIATE":      14,
+		"CONSTR_ATTR_ENFORCED":       15,
+		"CONSTR_ATTR_NOT_ENFORCED":   16,
 	}
 )
 
@@ -1695,11 +1750,11 @@ func (x ConstrType) String() string {
 }
 
 func (ConstrType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[22].Descriptor()
+	return file_pg_query_proto_enumTypes[23].Descriptor()
 }
 
 func (ConstrType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[22]
+	return &file_pg_query_proto_enumTypes[23]
 }
 
 func (x ConstrType) Number() protoreflect.EnumNumber {
@@ -1708,7 +1763,7 @@ func (x ConstrType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ConstrType.Descriptor instead.
 func (ConstrType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{22}
+	return file_pg_query_proto_rawDescGZIP(), []int{23}
 }
 
 type ImportForeignSchemaType int32
@@ -1747,11 +1802,11 @@ func (x ImportForeignSchemaType) String() string {
 }
 
 func (ImportForeignSchemaType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[23].Descriptor()
+	return file_pg_query_proto_enumTypes[24].Descriptor()
 }
 
 func (ImportForeignSchemaType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[23]
+	return &file_pg_query_proto_enumTypes[24]
 }
 
 func (x ImportForeignSchemaType) Number() protoreflect.EnumNumber {
@@ -1760,7 +1815,7 @@ func (x ImportForeignSchemaType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ImportForeignSchemaType.Descriptor instead.
 func (ImportForeignSchemaType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{23}
+	return file_pg_query_proto_rawDescGZIP(), []int{24}
 }
 
 type RoleStmtType int32
@@ -1799,11 +1854,11 @@ func (x RoleStmtType) String() string {
 }
 
 func (RoleStmtType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[24].Descriptor()
+	return file_pg_query_proto_enumTypes[25].Descriptor()
 }
 
 func (RoleStmtType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[24]
+	return &file_pg_query_proto_enumTypes[25]
 }
 
 func (x RoleStmtType) Number() protoreflect.EnumNumber {
@@ -1812,7 +1867,7 @@ func (x RoleStmtType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RoleStmtType.Descriptor instead.
 func (RoleStmtType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{24}
+	return file_pg_query_proto_rawDescGZIP(), []int{25}
 }
 
 type FetchDirection int32
@@ -1854,11 +1909,11 @@ func (x FetchDirection) String() string {
 }
 
 func (FetchDirection) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[25].Descriptor()
+	return file_pg_query_proto_enumTypes[26].Descriptor()
 }
 
 func (FetchDirection) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[25]
+	return &file_pg_query_proto_enumTypes[26]
 }
 
 func (x FetchDirection) Number() protoreflect.EnumNumber {
@@ -1867,7 +1922,7 @@ func (x FetchDirection) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FetchDirection.Descriptor instead.
 func (FetchDirection) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{25}
+	return file_pg_query_proto_rawDescGZIP(), []int{26}
 }
 
 type FunctionParameterMode int32
@@ -1915,11 +1970,11 @@ func (x FunctionParameterMode) String() string {
 }
 
 func (FunctionParameterMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[26].Descriptor()
+	return file_pg_query_proto_enumTypes[27].Descriptor()
 }
 
 func (FunctionParameterMode) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[26]
+	return &file_pg_query_proto_enumTypes[27]
 }
 
 func (x FunctionParameterMode) Number() protoreflect.EnumNumber {
@@ -1928,7 +1983,7 @@ func (x FunctionParameterMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FunctionParameterMode.Descriptor instead.
 func (FunctionParameterMode) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{26}
+	return file_pg_query_proto_rawDescGZIP(), []int{27}
 }
 
 type TransactionStmtKind int32
@@ -1988,11 +2043,11 @@ func (x TransactionStmtKind) String() string {
 }
 
 func (TransactionStmtKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[27].Descriptor()
+	return file_pg_query_proto_enumTypes[28].Descriptor()
 }
 
 func (TransactionStmtKind) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[27]
+	return &file_pg_query_proto_enumTypes[28]
 }
 
 func (x TransactionStmtKind) Number() protoreflect.EnumNumber {
@@ -2001,7 +2056,7 @@ func (x TransactionStmtKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TransactionStmtKind.Descriptor instead.
 func (TransactionStmtKind) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{27}
+	return file_pg_query_proto_rawDescGZIP(), []int{28}
 }
 
 type ViewCheckOption int32
@@ -2040,11 +2095,11 @@ func (x ViewCheckOption) String() string {
 }
 
 func (ViewCheckOption) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[28].Descriptor()
+	return file_pg_query_proto_enumTypes[29].Descriptor()
 }
 
 func (ViewCheckOption) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[28]
+	return &file_pg_query_proto_enumTypes[29]
 }
 
 func (x ViewCheckOption) Number() protoreflect.EnumNumber {
@@ -2053,7 +2108,7 @@ func (x ViewCheckOption) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ViewCheckOption.Descriptor instead.
 func (ViewCheckOption) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{28}
+	return file_pg_query_proto_rawDescGZIP(), []int{29}
 }
 
 type DiscardMode int32
@@ -2095,11 +2150,11 @@ func (x DiscardMode) String() string {
 }
 
 func (DiscardMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[29].Descriptor()
+	return file_pg_query_proto_enumTypes[30].Descriptor()
 }
 
 func (DiscardMode) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[29]
+	return &file_pg_query_proto_enumTypes[30]
 }
 
 func (x DiscardMode) Number() protoreflect.EnumNumber {
@@ -2108,7 +2163,7 @@ func (x DiscardMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DiscardMode.Descriptor instead.
 func (DiscardMode) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{29}
+	return file_pg_query_proto_rawDescGZIP(), []int{30}
 }
 
 type ReindexObjectType int32
@@ -2153,11 +2208,11 @@ func (x ReindexObjectType) String() string {
 }
 
 func (ReindexObjectType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[30].Descriptor()
+	return file_pg_query_proto_enumTypes[31].Descriptor()
 }
 
 func (ReindexObjectType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[30]
+	return &file_pg_query_proto_enumTypes[31]
 }
 
 func (x ReindexObjectType) Number() protoreflect.EnumNumber {
@@ -2166,7 +2221,7 @@ func (x ReindexObjectType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ReindexObjectType.Descriptor instead.
 func (ReindexObjectType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{30}
+	return file_pg_query_proto_rawDescGZIP(), []int{31}
 }
 
 type AlterTSConfigType int32
@@ -2211,11 +2266,11 @@ func (x AlterTSConfigType) String() string {
 }
 
 func (AlterTSConfigType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[31].Descriptor()
+	return file_pg_query_proto_enumTypes[32].Descriptor()
 }
 
 func (AlterTSConfigType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[31]
+	return &file_pg_query_proto_enumTypes[32]
 }
 
 func (x AlterTSConfigType) Number() protoreflect.EnumNumber {
@@ -2224,7 +2279,7 @@ func (x AlterTSConfigType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AlterTSConfigType.Descriptor instead.
 func (AlterTSConfigType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{31}
+	return file_pg_query_proto_rawDescGZIP(), []int{32}
 }
 
 type PublicationObjSpecType int32
@@ -2266,11 +2321,11 @@ func (x PublicationObjSpecType) String() string {
 }
 
 func (PublicationObjSpecType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[32].Descriptor()
+	return file_pg_query_proto_enumTypes[33].Descriptor()
 }
 
 func (PublicationObjSpecType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[32]
+	return &file_pg_query_proto_enumTypes[33]
 }
 
 func (x PublicationObjSpecType) Number() protoreflect.EnumNumber {
@@ -2279,7 +2334,7 @@ func (x PublicationObjSpecType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PublicationObjSpecType.Descriptor instead.
 func (PublicationObjSpecType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{32}
+	return file_pg_query_proto_rawDescGZIP(), []int{33}
 }
 
 type AlterPublicationAction int32
@@ -2318,11 +2373,11 @@ func (x AlterPublicationAction) String() string {
 }
 
 func (AlterPublicationAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[33].Descriptor()
+	return file_pg_query_proto_enumTypes[34].Descriptor()
 }
 
 func (AlterPublicationAction) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[33]
+	return &file_pg_query_proto_enumTypes[34]
 }
 
 func (x AlterPublicationAction) Number() protoreflect.EnumNumber {
@@ -2331,7 +2386,7 @@ func (x AlterPublicationAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AlterPublicationAction.Descriptor instead.
 func (AlterPublicationAction) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{33}
+	return file_pg_query_proto_rawDescGZIP(), []int{34}
 }
 
 type AlterSubscriptionType int32
@@ -2385,11 +2440,11 @@ func (x AlterSubscriptionType) String() string {
 }
 
 func (AlterSubscriptionType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[34].Descriptor()
+	return file_pg_query_proto_enumTypes[35].Descriptor()
 }
 
 func (AlterSubscriptionType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[34]
+	return &file_pg_query_proto_enumTypes[35]
 }
 
 func (x AlterSubscriptionType) Number() protoreflect.EnumNumber {
@@ -2398,7 +2453,7 @@ func (x AlterSubscriptionType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AlterSubscriptionType.Descriptor instead.
 func (AlterSubscriptionType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{34}
+	return file_pg_query_proto_rawDescGZIP(), []int{35}
 }
 
 type OverridingKind int32
@@ -2437,11 +2492,11 @@ func (x OverridingKind) String() string {
 }
 
 func (OverridingKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[35].Descriptor()
+	return file_pg_query_proto_enumTypes[36].Descriptor()
 }
 
 func (OverridingKind) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[35]
+	return &file_pg_query_proto_enumTypes[36]
 }
 
 func (x OverridingKind) Number() protoreflect.EnumNumber {
@@ -2450,7 +2505,7 @@ func (x OverridingKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OverridingKind.Descriptor instead.
 func (OverridingKind) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{35}
+	return file_pg_query_proto_rawDescGZIP(), []int{36}
 }
 
 type OnCommitAction int32
@@ -2492,11 +2547,11 @@ func (x OnCommitAction) String() string {
 }
 
 func (OnCommitAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[36].Descriptor()
+	return file_pg_query_proto_enumTypes[37].Descriptor()
 }
 
 func (OnCommitAction) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[36]
+	return &file_pg_query_proto_enumTypes[37]
 }
 
 func (x OnCommitAction) Number() protoreflect.EnumNumber {
@@ -2505,7 +2560,7 @@ func (x OnCommitAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OnCommitAction.Descriptor instead.
 func (OnCommitAction) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{36}
+	return file_pg_query_proto_rawDescGZIP(), []int{37}
 }
 
 type TableFuncType int32
@@ -2541,11 +2596,11 @@ func (x TableFuncType) String() string {
 }
 
 func (TableFuncType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[37].Descriptor()
+	return file_pg_query_proto_enumTypes[38].Descriptor()
 }
 
 func (TableFuncType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[37]
+	return &file_pg_query_proto_enumTypes[38]
 }
 
 func (x TableFuncType) Number() protoreflect.EnumNumber {
@@ -2554,7 +2609,59 @@ func (x TableFuncType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TableFuncType.Descriptor instead.
 func (TableFuncType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{37}
+	return file_pg_query_proto_rawDescGZIP(), []int{38}
+}
+
+type VarReturningType int32
+
+const (
+	VarReturningType_VAR_RETURNING_TYPE_UNDEFINED VarReturningType = 0
+	VarReturningType_VAR_RETURNING_DEFAULT        VarReturningType = 1
+	VarReturningType_VAR_RETURNING_OLD            VarReturningType = 2
+	VarReturningType_VAR_RETURNING_NEW            VarReturningType = 3
+)
+
+// Enum value maps for VarReturningType.
+var (
+	VarReturningType_name = map[int32]string{
+		0: "VAR_RETURNING_TYPE_UNDEFINED",
+		1: "VAR_RETURNING_DEFAULT",
+		2: "VAR_RETURNING_OLD",
+		3: "VAR_RETURNING_NEW",
+	}
+	VarReturningType_value = map[string]int32{
+		"VAR_RETURNING_TYPE_UNDEFINED": 0,
+		"VAR_RETURNING_DEFAULT":        1,
+		"VAR_RETURNING_OLD":            2,
+		"VAR_RETURNING_NEW":            3,
+	}
+)
+
+func (x VarReturningType) Enum() *VarReturningType {
+	p := new(VarReturningType)
+	*p = x
+	return p
+}
+
+func (x VarReturningType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (VarReturningType) Descriptor() protoreflect.EnumDescriptor {
+	return file_pg_query_proto_enumTypes[39].Descriptor()
+}
+
+func (VarReturningType) Type() protoreflect.EnumType {
+	return &file_pg_query_proto_enumTypes[39]
+}
+
+func (x VarReturningType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use VarReturningType.Descriptor instead.
+func (VarReturningType) EnumDescriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{39}
 }
 
 type ParamKind int32
@@ -2596,11 +2703,11 @@ func (x ParamKind) String() string {
 }
 
 func (ParamKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[38].Descriptor()
+	return file_pg_query_proto_enumTypes[40].Descriptor()
 }
 
 func (ParamKind) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[38]
+	return &file_pg_query_proto_enumTypes[40]
 }
 
 func (x ParamKind) Number() protoreflect.EnumNumber {
@@ -2609,7 +2716,7 @@ func (x ParamKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ParamKind.Descriptor instead.
 func (ParamKind) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{38}
+	return file_pg_query_proto_rawDescGZIP(), []int{40}
 }
 
 type CoercionContext int32
@@ -2651,11 +2758,11 @@ func (x CoercionContext) String() string {
 }
 
 func (CoercionContext) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[39].Descriptor()
+	return file_pg_query_proto_enumTypes[41].Descriptor()
 }
 
 func (CoercionContext) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[39]
+	return &file_pg_query_proto_enumTypes[41]
 }
 
 func (x CoercionContext) Number() protoreflect.EnumNumber {
@@ -2664,7 +2771,7 @@ func (x CoercionContext) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CoercionContext.Descriptor instead.
 func (CoercionContext) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{39}
+	return file_pg_query_proto_rawDescGZIP(), []int{41}
 }
 
 type CoercionForm int32
@@ -2706,11 +2813,11 @@ func (x CoercionForm) String() string {
 }
 
 func (CoercionForm) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[40].Descriptor()
+	return file_pg_query_proto_enumTypes[42].Descriptor()
 }
 
 func (CoercionForm) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[40]
+	return &file_pg_query_proto_enumTypes[42]
 }
 
 func (x CoercionForm) Number() protoreflect.EnumNumber {
@@ -2719,7 +2826,7 @@ func (x CoercionForm) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CoercionForm.Descriptor instead.
 func (CoercionForm) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{40}
+	return file_pg_query_proto_rawDescGZIP(), []int{42}
 }
 
 type BoolExprType int32
@@ -2758,11 +2865,11 @@ func (x BoolExprType) String() string {
 }
 
 func (BoolExprType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[41].Descriptor()
+	return file_pg_query_proto_enumTypes[43].Descriptor()
 }
 
 func (BoolExprType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[41]
+	return &file_pg_query_proto_enumTypes[43]
 }
 
 func (x BoolExprType) Number() protoreflect.EnumNumber {
@@ -2771,7 +2878,7 @@ func (x BoolExprType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use BoolExprType.Descriptor instead.
 func (BoolExprType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{41}
+	return file_pg_query_proto_rawDescGZIP(), []int{43}
 }
 
 type SubLinkType int32
@@ -2825,11 +2932,11 @@ func (x SubLinkType) String() string {
 }
 
 func (SubLinkType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[42].Descriptor()
+	return file_pg_query_proto_enumTypes[44].Descriptor()
 }
 
 func (SubLinkType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[42]
+	return &file_pg_query_proto_enumTypes[44]
 }
 
 func (x SubLinkType) Number() protoreflect.EnumNumber {
@@ -2838,68 +2945,7 @@ func (x SubLinkType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SubLinkType.Descriptor instead.
 func (SubLinkType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{42}
-}
-
-type RowCompareType int32
-
-const (
-	RowCompareType_ROW_COMPARE_TYPE_UNDEFINED RowCompareType = 0
-	RowCompareType_ROWCOMPARE_LT              RowCompareType = 1
-	RowCompareType_ROWCOMPARE_LE              RowCompareType = 2
-	RowCompareType_ROWCOMPARE_EQ              RowCompareType = 3
-	RowCompareType_ROWCOMPARE_GE              RowCompareType = 4
-	RowCompareType_ROWCOMPARE_GT              RowCompareType = 5
-	RowCompareType_ROWCOMPARE_NE              RowCompareType = 6
-)
-
-// Enum value maps for RowCompareType.
-var (
-	RowCompareType_name = map[int32]string{
-		0: "ROW_COMPARE_TYPE_UNDEFINED",
-		1: "ROWCOMPARE_LT",
-		2: "ROWCOMPARE_LE",
-		3: "ROWCOMPARE_EQ",
-		4: "ROWCOMPARE_GE",
-		5: "ROWCOMPARE_GT",
-		6: "ROWCOMPARE_NE",
-	}
-	RowCompareType_value = map[string]int32{
-		"ROW_COMPARE_TYPE_UNDEFINED": 0,
-		"ROWCOMPARE_LT":              1,
-		"ROWCOMPARE_LE":              2,
-		"ROWCOMPARE_EQ":              3,
-		"ROWCOMPARE_GE":              4,
-		"ROWCOMPARE_GT":              5,
-		"ROWCOMPARE_NE":              6,
-	}
-)
-
-func (x RowCompareType) Enum() *RowCompareType {
-	p := new(RowCompareType)
-	*p = x
-	return p
-}
-
-func (x RowCompareType) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (RowCompareType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[43].Descriptor()
-}
-
-func (RowCompareType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[43]
-}
-
-func (x RowCompareType) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use RowCompareType.Descriptor instead.
-func (RowCompareType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{43}
+	return file_pg_query_proto_rawDescGZIP(), []int{44}
 }
 
 type MinMaxOp int32
@@ -2935,11 +2981,11 @@ func (x MinMaxOp) String() string {
 }
 
 func (MinMaxOp) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[44].Descriptor()
+	return file_pg_query_proto_enumTypes[45].Descriptor()
 }
 
 func (MinMaxOp) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[44]
+	return &file_pg_query_proto_enumTypes[45]
 }
 
 func (x MinMaxOp) Number() protoreflect.EnumNumber {
@@ -2948,7 +2994,7 @@ func (x MinMaxOp) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use MinMaxOp.Descriptor instead.
 func (MinMaxOp) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{44}
+	return file_pg_query_proto_rawDescGZIP(), []int{45}
 }
 
 type SQLValueFunctionOp int32
@@ -3023,11 +3069,11 @@ func (x SQLValueFunctionOp) String() string {
 }
 
 func (SQLValueFunctionOp) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[45].Descriptor()
+	return file_pg_query_proto_enumTypes[46].Descriptor()
 }
 
 func (SQLValueFunctionOp) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[45]
+	return &file_pg_query_proto_enumTypes[46]
 }
 
 func (x SQLValueFunctionOp) Number() protoreflect.EnumNumber {
@@ -3036,7 +3082,7 @@ func (x SQLValueFunctionOp) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SQLValueFunctionOp.Descriptor instead.
 func (SQLValueFunctionOp) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{45}
+	return file_pg_query_proto_rawDescGZIP(), []int{46}
 }
 
 type XmlExprOp int32
@@ -3090,11 +3136,11 @@ func (x XmlExprOp) String() string {
 }
 
 func (XmlExprOp) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[46].Descriptor()
+	return file_pg_query_proto_enumTypes[47].Descriptor()
 }
 
 func (XmlExprOp) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[46]
+	return &file_pg_query_proto_enumTypes[47]
 }
 
 func (x XmlExprOp) Number() protoreflect.EnumNumber {
@@ -3103,7 +3149,7 @@ func (x XmlExprOp) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use XmlExprOp.Descriptor instead.
 func (XmlExprOp) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{46}
+	return file_pg_query_proto_rawDescGZIP(), []int{47}
 }
 
 type XmlOptionType int32
@@ -3139,11 +3185,11 @@ func (x XmlOptionType) String() string {
 }
 
 func (XmlOptionType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[47].Descriptor()
+	return file_pg_query_proto_enumTypes[48].Descriptor()
 }
 
 func (XmlOptionType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[47]
+	return &file_pg_query_proto_enumTypes[48]
 }
 
 func (x XmlOptionType) Number() protoreflect.EnumNumber {
@@ -3152,7 +3198,7 @@ func (x XmlOptionType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use XmlOptionType.Descriptor instead.
 func (XmlOptionType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{47}
+	return file_pg_query_proto_rawDescGZIP(), []int{48}
 }
 
 type JsonEncoding int32
@@ -3194,11 +3240,11 @@ func (x JsonEncoding) String() string {
 }
 
 func (JsonEncoding) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[48].Descriptor()
+	return file_pg_query_proto_enumTypes[49].Descriptor()
 }
 
 func (JsonEncoding) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[48]
+	return &file_pg_query_proto_enumTypes[49]
 }
 
 func (x JsonEncoding) Number() protoreflect.EnumNumber {
@@ -3207,7 +3253,7 @@ func (x JsonEncoding) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonEncoding.Descriptor instead.
 func (JsonEncoding) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{48}
+	return file_pg_query_proto_rawDescGZIP(), []int{49}
 }
 
 type JsonFormatType int32
@@ -3246,11 +3292,11 @@ func (x JsonFormatType) String() string {
 }
 
 func (JsonFormatType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[49].Descriptor()
+	return file_pg_query_proto_enumTypes[50].Descriptor()
 }
 
 func (JsonFormatType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[49]
+	return &file_pg_query_proto_enumTypes[50]
 }
 
 func (x JsonFormatType) Number() protoreflect.EnumNumber {
@@ -3259,7 +3305,7 @@ func (x JsonFormatType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonFormatType.Descriptor instead.
 func (JsonFormatType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{49}
+	return file_pg_query_proto_rawDescGZIP(), []int{50}
 }
 
 type JsonConstructorType int32
@@ -3310,11 +3356,11 @@ func (x JsonConstructorType) String() string {
 }
 
 func (JsonConstructorType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[50].Descriptor()
+	return file_pg_query_proto_enumTypes[51].Descriptor()
 }
 
 func (JsonConstructorType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[50]
+	return &file_pg_query_proto_enumTypes[51]
 }
 
 func (x JsonConstructorType) Number() protoreflect.EnumNumber {
@@ -3323,7 +3369,7 @@ func (x JsonConstructorType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonConstructorType.Descriptor instead.
 func (JsonConstructorType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{50}
+	return file_pg_query_proto_rawDescGZIP(), []int{51}
 }
 
 type JsonValueType int32
@@ -3365,11 +3411,11 @@ func (x JsonValueType) String() string {
 }
 
 func (JsonValueType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[51].Descriptor()
+	return file_pg_query_proto_enumTypes[52].Descriptor()
 }
 
 func (JsonValueType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[51]
+	return &file_pg_query_proto_enumTypes[52]
 }
 
 func (x JsonValueType) Number() protoreflect.EnumNumber {
@@ -3378,7 +3424,7 @@ func (x JsonValueType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonValueType.Descriptor instead.
 func (JsonValueType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{51}
+	return file_pg_query_proto_rawDescGZIP(), []int{52}
 }
 
 type JsonWrapper int32
@@ -3420,11 +3466,11 @@ func (x JsonWrapper) String() string {
 }
 
 func (JsonWrapper) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[52].Descriptor()
+	return file_pg_query_proto_enumTypes[53].Descriptor()
 }
 
 func (JsonWrapper) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[52]
+	return &file_pg_query_proto_enumTypes[53]
 }
 
 func (x JsonWrapper) Number() protoreflect.EnumNumber {
@@ -3433,7 +3479,7 @@ func (x JsonWrapper) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonWrapper.Descriptor instead.
 func (JsonWrapper) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{52}
+	return file_pg_query_proto_rawDescGZIP(), []int{53}
 }
 
 type JsonBehaviorType int32
@@ -3490,11 +3536,11 @@ func (x JsonBehaviorType) String() string {
 }
 
 func (JsonBehaviorType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[53].Descriptor()
+	return file_pg_query_proto_enumTypes[54].Descriptor()
 }
 
 func (JsonBehaviorType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[53]
+	return &file_pg_query_proto_enumTypes[54]
 }
 
 func (x JsonBehaviorType) Number() protoreflect.EnumNumber {
@@ -3503,7 +3549,7 @@ func (x JsonBehaviorType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonBehaviorType.Descriptor instead.
 func (JsonBehaviorType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{53}
+	return file_pg_query_proto_rawDescGZIP(), []int{54}
 }
 
 type JsonExprOp int32
@@ -3545,11 +3591,11 @@ func (x JsonExprOp) String() string {
 }
 
 func (JsonExprOp) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[54].Descriptor()
+	return file_pg_query_proto_enumTypes[55].Descriptor()
 }
 
 func (JsonExprOp) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[54]
+	return &file_pg_query_proto_enumTypes[55]
 }
 
 func (x JsonExprOp) Number() protoreflect.EnumNumber {
@@ -3558,7 +3604,7 @@ func (x JsonExprOp) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JsonExprOp.Descriptor instead.
 func (JsonExprOp) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{54}
+	return file_pg_query_proto_rawDescGZIP(), []int{55}
 }
 
 type NullTestType int32
@@ -3594,11 +3640,11 @@ func (x NullTestType) String() string {
 }
 
 func (NullTestType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[55].Descriptor()
+	return file_pg_query_proto_enumTypes[56].Descriptor()
 }
 
 func (NullTestType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[55]
+	return &file_pg_query_proto_enumTypes[56]
 }
 
 func (x NullTestType) Number() protoreflect.EnumNumber {
@@ -3607,7 +3653,7 @@ func (x NullTestType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NullTestType.Descriptor instead.
 func (NullTestType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{55}
+	return file_pg_query_proto_rawDescGZIP(), []int{56}
 }
 
 type BoolTestType int32
@@ -3655,11 +3701,11 @@ func (x BoolTestType) String() string {
 }
 
 func (BoolTestType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[56].Descriptor()
+	return file_pg_query_proto_enumTypes[57].Descriptor()
 }
 
 func (BoolTestType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[56]
+	return &file_pg_query_proto_enumTypes[57]
 }
 
 func (x BoolTestType) Number() protoreflect.EnumNumber {
@@ -3668,7 +3714,7 @@ func (x BoolTestType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use BoolTestType.Descriptor instead.
 func (BoolTestType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{56}
+	return file_pg_query_proto_rawDescGZIP(), []int{57}
 }
 
 type MergeMatchKind int32
@@ -3707,11 +3753,11 @@ func (x MergeMatchKind) String() string {
 }
 
 func (MergeMatchKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[57].Descriptor()
+	return file_pg_query_proto_enumTypes[58].Descriptor()
 }
 
 func (MergeMatchKind) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[57]
+	return &file_pg_query_proto_enumTypes[58]
 }
 
 func (x MergeMatchKind) Number() protoreflect.EnumNumber {
@@ -3720,7 +3766,7 @@ func (x MergeMatchKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use MergeMatchKind.Descriptor instead.
 func (MergeMatchKind) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{57}
+	return file_pg_query_proto_rawDescGZIP(), []int{58}
 }
 
 type CmdType int32
@@ -3774,11 +3820,11 @@ func (x CmdType) String() string {
 }
 
 func (CmdType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[58].Descriptor()
+	return file_pg_query_proto_enumTypes[59].Descriptor()
 }
 
 func (CmdType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[58]
+	return &file_pg_query_proto_enumTypes[59]
 }
 
 func (x CmdType) Number() protoreflect.EnumNumber {
@@ -3787,7 +3833,7 @@ func (x CmdType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CmdType.Descriptor instead.
 func (CmdType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{58}
+	return file_pg_query_proto_rawDescGZIP(), []int{59}
 }
 
 type JoinType int32
@@ -3800,24 +3846,26 @@ const (
 	JoinType_JOIN_RIGHT          JoinType = 4
 	JoinType_JOIN_SEMI           JoinType = 5
 	JoinType_JOIN_ANTI           JoinType = 6
-	JoinType_JOIN_RIGHT_ANTI     JoinType = 7
-	JoinType_JOIN_UNIQUE_OUTER   JoinType = 8
-	JoinType_JOIN_UNIQUE_INNER   JoinType = 9
+	JoinType_JOIN_RIGHT_SEMI     JoinType = 7
+	JoinType_JOIN_RIGHT_ANTI     JoinType = 8
+	JoinType_JOIN_UNIQUE_OUTER   JoinType = 9
+	JoinType_JOIN_UNIQUE_INNER   JoinType = 10
 )
 
 // Enum value maps for JoinType.
 var (
 	JoinType_name = map[int32]string{
-		0: "JOIN_TYPE_UNDEFINED",
-		1: "JOIN_INNER",
-		2: "JOIN_LEFT",
-		3: "JOIN_FULL",
-		4: "JOIN_RIGHT",
-		5: "JOIN_SEMI",
-		6: "JOIN_ANTI",
-		7: "JOIN_RIGHT_ANTI",
-		8: "JOIN_UNIQUE_OUTER",
-		9: "JOIN_UNIQUE_INNER",
+		0:  "JOIN_TYPE_UNDEFINED",
+		1:  "JOIN_INNER",
+		2:  "JOIN_LEFT",
+		3:  "JOIN_FULL",
+		4:  "JOIN_RIGHT",
+		5:  "JOIN_SEMI",
+		6:  "JOIN_ANTI",
+		7:  "JOIN_RIGHT_SEMI",
+		8:  "JOIN_RIGHT_ANTI",
+		9:  "JOIN_UNIQUE_OUTER",
+		10: "JOIN_UNIQUE_INNER",
 	}
 	JoinType_value = map[string]int32{
 		"JOIN_TYPE_UNDEFINED": 0,
@@ -3827,9 +3875,10 @@ var (
 		"JOIN_RIGHT":          4,
 		"JOIN_SEMI":           5,
 		"JOIN_ANTI":           6,
-		"JOIN_RIGHT_ANTI":     7,
-		"JOIN_UNIQUE_OUTER":   8,
-		"JOIN_UNIQUE_INNER":   9,
+		"JOIN_RIGHT_SEMI":     7,
+		"JOIN_RIGHT_ANTI":     8,
+		"JOIN_UNIQUE_OUTER":   9,
+		"JOIN_UNIQUE_INNER":   10,
 	}
 )
 
@@ -3844,11 +3893,11 @@ func (x JoinType) String() string {
 }
 
 func (JoinType) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[59].Descriptor()
+	return file_pg_query_proto_enumTypes[60].Descriptor()
 }
 
 func (JoinType) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[59]
+	return &file_pg_query_proto_enumTypes[60]
 }
 
 func (x JoinType) Number() protoreflect.EnumNumber {
@@ -3857,7 +3906,7 @@ func (x JoinType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use JoinType.Descriptor instead.
 func (JoinType) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{59}
+	return file_pg_query_proto_rawDescGZIP(), []int{60}
 }
 
 type AggStrategy int32
@@ -3899,11 +3948,11 @@ func (x AggStrategy) String() string {
 }
 
 func (AggStrategy) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[60].Descriptor()
+	return file_pg_query_proto_enumTypes[61].Descriptor()
 }
 
 func (AggStrategy) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[60]
+	return &file_pg_query_proto_enumTypes[61]
 }
 
 func (x AggStrategy) Number() protoreflect.EnumNumber {
@@ -3912,7 +3961,7 @@ func (x AggStrategy) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AggStrategy.Descriptor instead.
 func (AggStrategy) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{60}
+	return file_pg_query_proto_rawDescGZIP(), []int{61}
 }
 
 type AggSplit int32
@@ -3951,11 +4000,11 @@ func (x AggSplit) String() string {
 }
 
 func (AggSplit) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[61].Descriptor()
+	return file_pg_query_proto_enumTypes[62].Descriptor()
 }
 
 func (AggSplit) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[61]
+	return &file_pg_query_proto_enumTypes[62]
 }
 
 func (x AggSplit) Number() protoreflect.EnumNumber {
@@ -3964,7 +4013,7 @@ func (x AggSplit) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AggSplit.Descriptor instead.
 func (AggSplit) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{61}
+	return file_pg_query_proto_rawDescGZIP(), []int{62}
 }
 
 type SetOpCmd int32
@@ -4006,11 +4055,11 @@ func (x SetOpCmd) String() string {
 }
 
 func (SetOpCmd) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[62].Descriptor()
+	return file_pg_query_proto_enumTypes[63].Descriptor()
 }
 
 func (SetOpCmd) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[62]
+	return &file_pg_query_proto_enumTypes[63]
 }
 
 func (x SetOpCmd) Number() protoreflect.EnumNumber {
@@ -4019,7 +4068,7 @@ func (x SetOpCmd) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SetOpCmd.Descriptor instead.
 func (SetOpCmd) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{62}
+	return file_pg_query_proto_rawDescGZIP(), []int{63}
 }
 
 type SetOpStrategy int32
@@ -4055,11 +4104,11 @@ func (x SetOpStrategy) String() string {
 }
 
 func (SetOpStrategy) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[63].Descriptor()
+	return file_pg_query_proto_enumTypes[64].Descriptor()
 }
 
 func (SetOpStrategy) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[63]
+	return &file_pg_query_proto_enumTypes[64]
 }
 
 func (x SetOpStrategy) Number() protoreflect.EnumNumber {
@@ -4068,7 +4117,7 @@ func (x SetOpStrategy) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SetOpStrategy.Descriptor instead.
 func (SetOpStrategy) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{63}
+	return file_pg_query_proto_rawDescGZIP(), []int{64}
 }
 
 type OnConflictAction int32
@@ -4107,11 +4156,11 @@ func (x OnConflictAction) String() string {
 }
 
 func (OnConflictAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[64].Descriptor()
+	return file_pg_query_proto_enumTypes[65].Descriptor()
 }
 
 func (OnConflictAction) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[64]
+	return &file_pg_query_proto_enumTypes[65]
 }
 
 func (x OnConflictAction) Number() protoreflect.EnumNumber {
@@ -4120,7 +4169,7 @@ func (x OnConflictAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OnConflictAction.Descriptor instead.
 func (OnConflictAction) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{64}
+	return file_pg_query_proto_rawDescGZIP(), []int{65}
 }
 
 type LimitOption int32
@@ -4159,11 +4208,11 @@ func (x LimitOption) String() string {
 }
 
 func (LimitOption) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[65].Descriptor()
+	return file_pg_query_proto_enumTypes[66].Descriptor()
 }
 
 func (LimitOption) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[65]
+	return &file_pg_query_proto_enumTypes[66]
 }
 
 func (x LimitOption) Number() protoreflect.EnumNumber {
@@ -4172,7 +4221,7 @@ func (x LimitOption) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LimitOption.Descriptor instead.
 func (LimitOption) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{65}
+	return file_pg_query_proto_rawDescGZIP(), []int{66}
 }
 
 type LockClauseStrength int32
@@ -4217,11 +4266,11 @@ func (x LockClauseStrength) String() string {
 }
 
 func (LockClauseStrength) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[66].Descriptor()
+	return file_pg_query_proto_enumTypes[67].Descriptor()
 }
 
 func (LockClauseStrength) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[66]
+	return &file_pg_query_proto_enumTypes[67]
 }
 
 func (x LockClauseStrength) Number() protoreflect.EnumNumber {
@@ -4230,7 +4279,7 @@ func (x LockClauseStrength) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LockClauseStrength.Descriptor instead.
 func (LockClauseStrength) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{66}
+	return file_pg_query_proto_rawDescGZIP(), []int{67}
 }
 
 type LockWaitPolicy int32
@@ -4269,11 +4318,11 @@ func (x LockWaitPolicy) String() string {
 }
 
 func (LockWaitPolicy) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[67].Descriptor()
+	return file_pg_query_proto_enumTypes[68].Descriptor()
 }
 
 func (LockWaitPolicy) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[67]
+	return &file_pg_query_proto_enumTypes[68]
 }
 
 func (x LockWaitPolicy) Number() protoreflect.EnumNumber {
@@ -4282,7 +4331,7 @@ func (x LockWaitPolicy) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LockWaitPolicy.Descriptor instead.
 func (LockWaitPolicy) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{67}
+	return file_pg_query_proto_rawDescGZIP(), []int{68}
 }
 
 type LockTupleMode int32
@@ -4324,11 +4373,11 @@ func (x LockTupleMode) String() string {
 }
 
 func (LockTupleMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[68].Descriptor()
+	return file_pg_query_proto_enumTypes[69].Descriptor()
 }
 
 func (LockTupleMode) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[68]
+	return &file_pg_query_proto_enumTypes[69]
 }
 
 func (x LockTupleMode) Number() protoreflect.EnumNumber {
@@ -4337,7 +4386,77 @@ func (x LockTupleMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LockTupleMode.Descriptor instead.
 func (LockTupleMode) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{68}
+	return file_pg_query_proto_rawDescGZIP(), []int{69}
+}
+
+type CompareType int32
+
+const (
+	CompareType_COMPARE_TYPE_UNDEFINED CompareType = 0
+	CompareType_COMPARE_INVALID        CompareType = 1
+	CompareType_COMPARE_LT             CompareType = 2
+	CompareType_COMPARE_LE             CompareType = 3
+	CompareType_COMPARE_EQ             CompareType = 4
+	CompareType_COMPARE_GE             CompareType = 5
+	CompareType_COMPARE_GT             CompareType = 6
+	CompareType_COMPARE_NE             CompareType = 7
+	CompareType_COMPARE_OVERLAP        CompareType = 8
+	CompareType_COMPARE_CONTAINED_BY   CompareType = 9
+)
+
+// Enum value maps for CompareType.
+var (
+	CompareType_name = map[int32]string{
+		0: "COMPARE_TYPE_UNDEFINED",
+		1: "COMPARE_INVALID",
+		2: "COMPARE_LT",
+		3: "COMPARE_LE",
+		4: "COMPARE_EQ",
+		5: "COMPARE_GE",
+		6: "COMPARE_GT",
+		7: "COMPARE_NE",
+		8: "COMPARE_OVERLAP",
+		9: "COMPARE_CONTAINED_BY",
+	}
+	CompareType_value = map[string]int32{
+		"COMPARE_TYPE_UNDEFINED": 0,
+		"COMPARE_INVALID":        1,
+		"COMPARE_LT":             2,
+		"COMPARE_LE":             3,
+		"COMPARE_EQ":             4,
+		"COMPARE_GE":             5,
+		"COMPARE_GT":             6,
+		"COMPARE_NE":             7,
+		"COMPARE_OVERLAP":        8,
+		"COMPARE_CONTAINED_BY":   9,
+	}
+)
+
+func (x CompareType) Enum() *CompareType {
+	p := new(CompareType)
+	*p = x
+	return p
+}
+
+func (x CompareType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CompareType) Descriptor() protoreflect.EnumDescriptor {
+	return file_pg_query_proto_enumTypes[70].Descriptor()
+}
+
+func (CompareType) Type() protoreflect.EnumType {
+	return &file_pg_query_proto_enumTypes[70]
+}
+
+func (x CompareType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CompareType.Descriptor instead.
+func (CompareType) EnumDescriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{70}
 }
 
 type KeywordKind int32
@@ -4379,11 +4498,11 @@ func (x KeywordKind) String() string {
 }
 
 func (KeywordKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[69].Descriptor()
+	return file_pg_query_proto_enumTypes[71].Descriptor()
 }
 
 func (KeywordKind) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[69]
+	return &file_pg_query_proto_enumTypes[71]
 }
 
 func (x KeywordKind) Number() protoreflect.EnumNumber {
@@ -4392,7 +4511,7 @@ func (x KeywordKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use KeywordKind.Descriptor instead.
 func (KeywordKind) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{69}
+	return file_pg_query_proto_rawDescGZIP(), []int{71}
 }
 
 type Token int32
@@ -4570,380 +4689,383 @@ const (
 	Token_ENCODING             Token = 402
 	Token_ENCRYPTED            Token = 403
 	Token_END_P                Token = 404
-	Token_ENUM_P               Token = 405
-	Token_ERROR_P              Token = 406
-	Token_ESCAPE               Token = 407
-	Token_EVENT                Token = 408
-	Token_EXCEPT               Token = 409
-	Token_EXCLUDE              Token = 410
-	Token_EXCLUDING            Token = 411
-	Token_EXCLUSIVE            Token = 412
-	Token_EXECUTE              Token = 413
-	Token_EXISTS               Token = 414
-	Token_EXPLAIN              Token = 415
-	Token_EXPRESSION           Token = 416
-	Token_EXTENSION            Token = 417
-	Token_EXTERNAL             Token = 418
-	Token_EXTRACT              Token = 419
-	Token_FALSE_P              Token = 420
-	Token_FAMILY               Token = 421
-	Token_FETCH                Token = 422
-	Token_FILTER               Token = 423
-	Token_FINALIZE             Token = 424
-	Token_FIRST_P              Token = 425
-	Token_FLOAT_P              Token = 426
-	Token_FOLLOWING            Token = 427
-	Token_FOR                  Token = 428
-	Token_FORCE                Token = 429
-	Token_FOREIGN              Token = 430
-	Token_FORMAT               Token = 431
-	Token_FORWARD              Token = 432
-	Token_FREEZE               Token = 433
-	Token_FROM                 Token = 434
-	Token_FULL                 Token = 435
-	Token_FUNCTION             Token = 436
-	Token_FUNCTIONS            Token = 437
-	Token_GENERATED            Token = 438
-	Token_GLOBAL               Token = 439
-	Token_GRANT                Token = 440
-	Token_GRANTED              Token = 441
-	Token_GREATEST             Token = 442
-	Token_GROUP_P              Token = 443
-	Token_GROUPING             Token = 444
-	Token_GROUPS               Token = 445
-	Token_HANDLER              Token = 446
-	Token_HAVING               Token = 447
-	Token_HEADER_P             Token = 448
-	Token_HOLD                 Token = 449
-	Token_HOUR_P               Token = 450
-	Token_IDENTITY_P           Token = 451
-	Token_IF_P                 Token = 452
-	Token_ILIKE                Token = 453
-	Token_IMMEDIATE            Token = 454
-	Token_IMMUTABLE            Token = 455
-	Token_IMPLICIT_P           Token = 456
-	Token_IMPORT_P             Token = 457
-	Token_IN_P                 Token = 458
-	Token_INCLUDE              Token = 459
-	Token_INCLUDING            Token = 460
-	Token_INCREMENT            Token = 461
-	Token_INDENT               Token = 462
-	Token_INDEX                Token = 463
-	Token_INDEXES              Token = 464
-	Token_INHERIT              Token = 465
-	Token_INHERITS             Token = 466
-	Token_INITIALLY            Token = 467
-	Token_INLINE_P             Token = 468
-	Token_INNER_P              Token = 469
-	Token_INOUT                Token = 470
-	Token_INPUT_P              Token = 471
-	Token_INSENSITIVE          Token = 472
-	Token_INSERT               Token = 473
-	Token_INSTEAD              Token = 474
-	Token_INT_P                Token = 475
-	Token_INTEGER              Token = 476
-	Token_INTERSECT            Token = 477
-	Token_INTERVAL             Token = 478
-	Token_INTO                 Token = 479
-	Token_INVOKER              Token = 480
-	Token_IS                   Token = 481
-	Token_ISNULL               Token = 482
-	Token_ISOLATION            Token = 483
-	Token_JOIN                 Token = 484
-	Token_JSON                 Token = 485
-	Token_JSON_ARRAY           Token = 486
-	Token_JSON_ARRAYAGG        Token = 487
-	Token_JSON_EXISTS          Token = 488
-	Token_JSON_OBJECT          Token = 489
-	Token_JSON_OBJECTAGG       Token = 490
-	Token_JSON_QUERY           Token = 491
-	Token_JSON_SCALAR          Token = 492
-	Token_JSON_SERIALIZE       Token = 493
-	Token_JSON_TABLE           Token = 494
-	Token_JSON_VALUE           Token = 495
-	Token_KEEP                 Token = 496
-	Token_KEY                  Token = 497
-	Token_KEYS                 Token = 498
-	Token_LABEL                Token = 499
-	Token_LANGUAGE             Token = 500
-	Token_LARGE_P              Token = 501
-	Token_LAST_P               Token = 502
-	Token_LATERAL_P            Token = 503
-	Token_LEADING              Token = 504
-	Token_LEAKPROOF            Token = 505
-	Token_LEAST                Token = 506
-	Token_LEFT                 Token = 507
-	Token_LEVEL                Token = 508
-	Token_LIKE                 Token = 509
-	Token_LIMIT                Token = 510
-	Token_LISTEN               Token = 511
-	Token_LOAD                 Token = 512
-	Token_LOCAL                Token = 513
-	Token_LOCALTIME            Token = 514
-	Token_LOCALTIMESTAMP       Token = 515
-	Token_LOCATION             Token = 516
-	Token_LOCK_P               Token = 517
-	Token_LOCKED               Token = 518
-	Token_LOGGED               Token = 519
-	Token_MAPPING              Token = 520
-	Token_MATCH                Token = 521
-	Token_MATCHED              Token = 522
-	Token_MATERIALIZED         Token = 523
-	Token_MAXVALUE             Token = 524
-	Token_MERGE                Token = 525
-	Token_MERGE_ACTION         Token = 526
-	Token_METHOD               Token = 527
-	Token_MINUTE_P             Token = 528
-	Token_MINVALUE             Token = 529
-	Token_MODE                 Token = 530
-	Token_MONTH_P              Token = 531
-	Token_MOVE                 Token = 532
-	Token_NAME_P               Token = 533
-	Token_NAMES                Token = 534
-	Token_NATIONAL             Token = 535
-	Token_NATURAL              Token = 536
-	Token_NCHAR                Token = 537
-	Token_NESTED               Token = 538
-	Token_NEW                  Token = 539
-	Token_NEXT                 Token = 540
-	Token_NFC                  Token = 541
-	Token_NFD                  Token = 542
-	Token_NFKC                 Token = 543
-	Token_NFKD                 Token = 544
-	Token_NO                   Token = 545
-	Token_NONE                 Token = 546
-	Token_NORMALIZE            Token = 547
-	Token_NORMALIZED           Token = 548
-	Token_NOT                  Token = 549
-	Token_NOTHING              Token = 550
-	Token_NOTIFY               Token = 551
-	Token_NOTNULL              Token = 552
-	Token_NOWAIT               Token = 553
-	Token_NULL_P               Token = 554
-	Token_NULLIF               Token = 555
-	Token_NULLS_P              Token = 556
-	Token_NUMERIC              Token = 557
-	Token_OBJECT_P             Token = 558
-	Token_OF                   Token = 559
-	Token_OFF                  Token = 560
-	Token_OFFSET               Token = 561
-	Token_OIDS                 Token = 562
-	Token_OLD                  Token = 563
-	Token_OMIT                 Token = 564
-	Token_ON                   Token = 565
-	Token_ONLY                 Token = 566
-	Token_OPERATOR             Token = 567
-	Token_OPTION               Token = 568
-	Token_OPTIONS              Token = 569
-	Token_OR                   Token = 570
-	Token_ORDER                Token = 571
-	Token_ORDINALITY           Token = 572
-	Token_OTHERS               Token = 573
-	Token_OUT_P                Token = 574
-	Token_OUTER_P              Token = 575
-	Token_OVER                 Token = 576
-	Token_OVERLAPS             Token = 577
-	Token_OVERLAY              Token = 578
-	Token_OVERRIDING           Token = 579
-	Token_OWNED                Token = 580
-	Token_OWNER                Token = 581
-	Token_PARALLEL             Token = 582
-	Token_PARAMETER            Token = 583
-	Token_PARSER               Token = 584
-	Token_PARTIAL              Token = 585
-	Token_PARTITION            Token = 586
-	Token_PASSING              Token = 587
-	Token_PASSWORD             Token = 588
-	Token_PATH                 Token = 589
-	Token_PLACING              Token = 590
-	Token_PLAN                 Token = 591
-	Token_PLANS                Token = 592
-	Token_POLICY               Token = 593
-	Token_POSITION             Token = 594
-	Token_PRECEDING            Token = 595
-	Token_PRECISION            Token = 596
-	Token_PRESERVE             Token = 597
-	Token_PREPARE              Token = 598
-	Token_PREPARED             Token = 599
-	Token_PRIMARY              Token = 600
-	Token_PRIOR                Token = 601
-	Token_PRIVILEGES           Token = 602
-	Token_PROCEDURAL           Token = 603
-	Token_PROCEDURE            Token = 604
-	Token_PROCEDURES           Token = 605
-	Token_PROGRAM              Token = 606
-	Token_PUBLICATION          Token = 607
-	Token_QUOTE                Token = 608
-	Token_QUOTES               Token = 609
-	Token_RANGE                Token = 610
-	Token_READ                 Token = 611
-	Token_REAL                 Token = 612
-	Token_REASSIGN             Token = 613
-	Token_RECHECK              Token = 614
-	Token_RECURSIVE            Token = 615
-	Token_REF_P                Token = 616
-	Token_REFERENCES           Token = 617
-	Token_REFERENCING          Token = 618
-	Token_REFRESH              Token = 619
-	Token_REINDEX              Token = 620
-	Token_RELATIVE_P           Token = 621
-	Token_RELEASE              Token = 622
-	Token_RENAME               Token = 623
-	Token_REPEATABLE           Token = 624
-	Token_REPLACE              Token = 625
-	Token_REPLICA              Token = 626
-	Token_RESET                Token = 627
-	Token_RESTART              Token = 628
-	Token_RESTRICT             Token = 629
-	Token_RETURN               Token = 630
-	Token_RETURNING            Token = 631
-	Token_RETURNS              Token = 632
-	Token_REVOKE               Token = 633
-	Token_RIGHT                Token = 634
-	Token_ROLE                 Token = 635
-	Token_ROLLBACK             Token = 636
-	Token_ROLLUP               Token = 637
-	Token_ROUTINE              Token = 638
-	Token_ROUTINES             Token = 639
-	Token_ROW                  Token = 640
-	Token_ROWS                 Token = 641
-	Token_RULE                 Token = 642
-	Token_SAVEPOINT            Token = 643
-	Token_SCALAR               Token = 644
-	Token_SCHEMA               Token = 645
-	Token_SCHEMAS              Token = 646
-	Token_SCROLL               Token = 647
-	Token_SEARCH               Token = 648
-	Token_SECOND_P             Token = 649
-	Token_SECURITY             Token = 650
-	Token_SELECT               Token = 651
-	Token_SEQUENCE             Token = 652
-	Token_SEQUENCES            Token = 653
-	Token_SERIALIZABLE         Token = 654
-	Token_SERVER               Token = 655
-	Token_SESSION              Token = 656
-	Token_SESSION_USER         Token = 657
-	Token_SET                  Token = 658
-	Token_SETS                 Token = 659
-	Token_SETOF                Token = 660
-	Token_SHARE                Token = 661
-	Token_SHOW                 Token = 662
-	Token_SIMILAR              Token = 663
-	Token_SIMPLE               Token = 664
-	Token_SKIP                 Token = 665
-	Token_SMALLINT             Token = 666
-	Token_SNAPSHOT             Token = 667
-	Token_SOME                 Token = 668
-	Token_SOURCE               Token = 669
-	Token_SQL_P                Token = 670
-	Token_STABLE               Token = 671
-	Token_STANDALONE_P         Token = 672
-	Token_START                Token = 673
-	Token_STATEMENT            Token = 674
-	Token_STATISTICS           Token = 675
-	Token_STDIN                Token = 676
-	Token_STDOUT               Token = 677
-	Token_STORAGE              Token = 678
-	Token_STORED               Token = 679
-	Token_STRICT_P             Token = 680
-	Token_STRING_P             Token = 681
-	Token_STRIP_P              Token = 682
-	Token_SUBSCRIPTION         Token = 683
-	Token_SUBSTRING            Token = 684
-	Token_SUPPORT              Token = 685
-	Token_SYMMETRIC            Token = 686
-	Token_SYSID                Token = 687
-	Token_SYSTEM_P             Token = 688
-	Token_SYSTEM_USER          Token = 689
-	Token_TABLE                Token = 690
-	Token_TABLES               Token = 691
-	Token_TABLESAMPLE          Token = 692
-	Token_TABLESPACE           Token = 693
-	Token_TARGET               Token = 694
-	Token_TEMP                 Token = 695
-	Token_TEMPLATE             Token = 696
-	Token_TEMPORARY            Token = 697
-	Token_TEXT_P               Token = 698
-	Token_THEN                 Token = 699
-	Token_TIES                 Token = 700
-	Token_TIME                 Token = 701
-	Token_TIMESTAMP            Token = 702
-	Token_TO                   Token = 703
-	Token_TRAILING             Token = 704
-	Token_TRANSACTION          Token = 705
-	Token_TRANSFORM            Token = 706
-	Token_TREAT                Token = 707
-	Token_TRIGGER              Token = 708
-	Token_TRIM                 Token = 709
-	Token_TRUE_P               Token = 710
-	Token_TRUNCATE             Token = 711
-	Token_TRUSTED              Token = 712
-	Token_TYPE_P               Token = 713
-	Token_TYPES_P              Token = 714
-	Token_UESCAPE              Token = 715
-	Token_UNBOUNDED            Token = 716
-	Token_UNCONDITIONAL        Token = 717
-	Token_UNCOMMITTED          Token = 718
-	Token_UNENCRYPTED          Token = 719
-	Token_UNION                Token = 720
-	Token_UNIQUE               Token = 721
-	Token_UNKNOWN              Token = 722
-	Token_UNLISTEN             Token = 723
-	Token_UNLOGGED             Token = 724
-	Token_UNTIL                Token = 725
-	Token_UPDATE               Token = 726
-	Token_USER                 Token = 727
-	Token_USING                Token = 728
-	Token_VACUUM               Token = 729
-	Token_VALID                Token = 730
-	Token_VALIDATE             Token = 731
-	Token_VALIDATOR            Token = 732
-	Token_VALUE_P              Token = 733
-	Token_VALUES               Token = 734
-	Token_VARCHAR              Token = 735
-	Token_VARIADIC             Token = 736
-	Token_VARYING              Token = 737
-	Token_VERBOSE              Token = 738
-	Token_VERSION_P            Token = 739
-	Token_VIEW                 Token = 740
-	Token_VIEWS                Token = 741
-	Token_VOLATILE             Token = 742
-	Token_WHEN                 Token = 743
-	Token_WHERE                Token = 744
-	Token_WHITESPACE_P         Token = 745
-	Token_WINDOW               Token = 746
-	Token_WITH                 Token = 747
-	Token_WITHIN               Token = 748
-	Token_WITHOUT              Token = 749
-	Token_WORK                 Token = 750
-	Token_WRAPPER              Token = 751
-	Token_WRITE                Token = 752
-	Token_XML_P                Token = 753
-	Token_XMLATTRIBUTES        Token = 754
-	Token_XMLCONCAT            Token = 755
-	Token_XMLELEMENT           Token = 756
-	Token_XMLEXISTS            Token = 757
-	Token_XMLFOREST            Token = 758
-	Token_XMLNAMESPACES        Token = 759
-	Token_XMLPARSE             Token = 760
-	Token_XMLPI                Token = 761
-	Token_XMLROOT              Token = 762
-	Token_XMLSERIALIZE         Token = 763
-	Token_XMLTABLE             Token = 764
-	Token_YEAR_P               Token = 765
-	Token_YES_P                Token = 766
-	Token_ZONE                 Token = 767
-	Token_FORMAT_LA            Token = 768
-	Token_NOT_LA               Token = 769
-	Token_NULLS_LA             Token = 770
-	Token_WITH_LA              Token = 771
-	Token_WITHOUT_LA           Token = 772
-	Token_MODE_TYPE_NAME       Token = 773
-	Token_MODE_PLPGSQL_EXPR    Token = 774
-	Token_MODE_PLPGSQL_ASSIGN1 Token = 775
-	Token_MODE_PLPGSQL_ASSIGN2 Token = 776
-	Token_MODE_PLPGSQL_ASSIGN3 Token = 777
-	Token_UMINUS               Token = 778
+	Token_ENFORCED             Token = 405
+	Token_ENUM_P               Token = 406
+	Token_ERROR_P              Token = 407
+	Token_ESCAPE               Token = 408
+	Token_EVENT                Token = 409
+	Token_EXCEPT               Token = 410
+	Token_EXCLUDE              Token = 411
+	Token_EXCLUDING            Token = 412
+	Token_EXCLUSIVE            Token = 413
+	Token_EXECUTE              Token = 414
+	Token_EXISTS               Token = 415
+	Token_EXPLAIN              Token = 416
+	Token_EXPRESSION           Token = 417
+	Token_EXTENSION            Token = 418
+	Token_EXTERNAL             Token = 419
+	Token_EXTRACT              Token = 420
+	Token_FALSE_P              Token = 421
+	Token_FAMILY               Token = 422
+	Token_FETCH                Token = 423
+	Token_FILTER               Token = 424
+	Token_FINALIZE             Token = 425
+	Token_FIRST_P              Token = 426
+	Token_FLOAT_P              Token = 427
+	Token_FOLLOWING            Token = 428
+	Token_FOR                  Token = 429
+	Token_FORCE                Token = 430
+	Token_FOREIGN              Token = 431
+	Token_FORMAT               Token = 432
+	Token_FORWARD              Token = 433
+	Token_FREEZE               Token = 434
+	Token_FROM                 Token = 435
+	Token_FULL                 Token = 436
+	Token_FUNCTION             Token = 437
+	Token_FUNCTIONS            Token = 438
+	Token_GENERATED            Token = 439
+	Token_GLOBAL               Token = 440
+	Token_GRANT                Token = 441
+	Token_GRANTED              Token = 442
+	Token_GREATEST             Token = 443
+	Token_GROUP_P              Token = 444
+	Token_GROUPING             Token = 445
+	Token_GROUPS               Token = 446
+	Token_HANDLER              Token = 447
+	Token_HAVING               Token = 448
+	Token_HEADER_P             Token = 449
+	Token_HOLD                 Token = 450
+	Token_HOUR_P               Token = 451
+	Token_IDENTITY_P           Token = 452
+	Token_IF_P                 Token = 453
+	Token_ILIKE                Token = 454
+	Token_IMMEDIATE            Token = 455
+	Token_IMMUTABLE            Token = 456
+	Token_IMPLICIT_P           Token = 457
+	Token_IMPORT_P             Token = 458
+	Token_IN_P                 Token = 459
+	Token_INCLUDE              Token = 460
+	Token_INCLUDING            Token = 461
+	Token_INCREMENT            Token = 462
+	Token_INDENT               Token = 463
+	Token_INDEX                Token = 464
+	Token_INDEXES              Token = 465
+	Token_INHERIT              Token = 466
+	Token_INHERITS             Token = 467
+	Token_INITIALLY            Token = 468
+	Token_INLINE_P             Token = 469
+	Token_INNER_P              Token = 470
+	Token_INOUT                Token = 471
+	Token_INPUT_P              Token = 472
+	Token_INSENSITIVE          Token = 473
+	Token_INSERT               Token = 474
+	Token_INSTEAD              Token = 475
+	Token_INT_P                Token = 476
+	Token_INTEGER              Token = 477
+	Token_INTERSECT            Token = 478
+	Token_INTERVAL             Token = 479
+	Token_INTO                 Token = 480
+	Token_INVOKER              Token = 481
+	Token_IS                   Token = 482
+	Token_ISNULL               Token = 483
+	Token_ISOLATION            Token = 484
+	Token_JOIN                 Token = 485
+	Token_JSON                 Token = 486
+	Token_JSON_ARRAY           Token = 487
+	Token_JSON_ARRAYAGG        Token = 488
+	Token_JSON_EXISTS          Token = 489
+	Token_JSON_OBJECT          Token = 490
+	Token_JSON_OBJECTAGG       Token = 491
+	Token_JSON_QUERY           Token = 492
+	Token_JSON_SCALAR          Token = 493
+	Token_JSON_SERIALIZE       Token = 494
+	Token_JSON_TABLE           Token = 495
+	Token_JSON_VALUE           Token = 496
+	Token_KEEP                 Token = 497
+	Token_KEY                  Token = 498
+	Token_KEYS                 Token = 499
+	Token_LABEL                Token = 500
+	Token_LANGUAGE             Token = 501
+	Token_LARGE_P              Token = 502
+	Token_LAST_P               Token = 503
+	Token_LATERAL_P            Token = 504
+	Token_LEADING              Token = 505
+	Token_LEAKPROOF            Token = 506
+	Token_LEAST                Token = 507
+	Token_LEFT                 Token = 508
+	Token_LEVEL                Token = 509
+	Token_LIKE                 Token = 510
+	Token_LIMIT                Token = 511
+	Token_LISTEN               Token = 512
+	Token_LOAD                 Token = 513
+	Token_LOCAL                Token = 514
+	Token_LOCALTIME            Token = 515
+	Token_LOCALTIMESTAMP       Token = 516
+	Token_LOCATION             Token = 517
+	Token_LOCK_P               Token = 518
+	Token_LOCKED               Token = 519
+	Token_LOGGED               Token = 520
+	Token_MAPPING              Token = 521
+	Token_MATCH                Token = 522
+	Token_MATCHED              Token = 523
+	Token_MATERIALIZED         Token = 524
+	Token_MAXVALUE             Token = 525
+	Token_MERGE                Token = 526
+	Token_MERGE_ACTION         Token = 527
+	Token_METHOD               Token = 528
+	Token_MINUTE_P             Token = 529
+	Token_MINVALUE             Token = 530
+	Token_MODE                 Token = 531
+	Token_MONTH_P              Token = 532
+	Token_MOVE                 Token = 533
+	Token_NAME_P               Token = 534
+	Token_NAMES                Token = 535
+	Token_NATIONAL             Token = 536
+	Token_NATURAL              Token = 537
+	Token_NCHAR                Token = 538
+	Token_NESTED               Token = 539
+	Token_NEW                  Token = 540
+	Token_NEXT                 Token = 541
+	Token_NFC                  Token = 542
+	Token_NFD                  Token = 543
+	Token_NFKC                 Token = 544
+	Token_NFKD                 Token = 545
+	Token_NO                   Token = 546
+	Token_NONE                 Token = 547
+	Token_NORMALIZE            Token = 548
+	Token_NORMALIZED           Token = 549
+	Token_NOT                  Token = 550
+	Token_NOTHING              Token = 551
+	Token_NOTIFY               Token = 552
+	Token_NOTNULL              Token = 553
+	Token_NOWAIT               Token = 554
+	Token_NULL_P               Token = 555
+	Token_NULLIF               Token = 556
+	Token_NULLS_P              Token = 557
+	Token_NUMERIC              Token = 558
+	Token_OBJECT_P             Token = 559
+	Token_OBJECTS_P            Token = 560
+	Token_OF                   Token = 561
+	Token_OFF                  Token = 562
+	Token_OFFSET               Token = 563
+	Token_OIDS                 Token = 564
+	Token_OLD                  Token = 565
+	Token_OMIT                 Token = 566
+	Token_ON                   Token = 567
+	Token_ONLY                 Token = 568
+	Token_OPERATOR             Token = 569
+	Token_OPTION               Token = 570
+	Token_OPTIONS              Token = 571
+	Token_OR                   Token = 572
+	Token_ORDER                Token = 573
+	Token_ORDINALITY           Token = 574
+	Token_OTHERS               Token = 575
+	Token_OUT_P                Token = 576
+	Token_OUTER_P              Token = 577
+	Token_OVER                 Token = 578
+	Token_OVERLAPS             Token = 579
+	Token_OVERLAY              Token = 580
+	Token_OVERRIDING           Token = 581
+	Token_OWNED                Token = 582
+	Token_OWNER                Token = 583
+	Token_PARALLEL             Token = 584
+	Token_PARAMETER            Token = 585
+	Token_PARSER               Token = 586
+	Token_PARTIAL              Token = 587
+	Token_PARTITION            Token = 588
+	Token_PASSING              Token = 589
+	Token_PASSWORD             Token = 590
+	Token_PATH                 Token = 591
+	Token_PERIOD               Token = 592
+	Token_PLACING              Token = 593
+	Token_PLAN                 Token = 594
+	Token_PLANS                Token = 595
+	Token_POLICY               Token = 596
+	Token_POSITION             Token = 597
+	Token_PRECEDING            Token = 598
+	Token_PRECISION            Token = 599
+	Token_PRESERVE             Token = 600
+	Token_PREPARE              Token = 601
+	Token_PREPARED             Token = 602
+	Token_PRIMARY              Token = 603
+	Token_PRIOR                Token = 604
+	Token_PRIVILEGES           Token = 605
+	Token_PROCEDURAL           Token = 606
+	Token_PROCEDURE            Token = 607
+	Token_PROCEDURES           Token = 608
+	Token_PROGRAM              Token = 609
+	Token_PUBLICATION          Token = 610
+	Token_QUOTE                Token = 611
+	Token_QUOTES               Token = 612
+	Token_RANGE                Token = 613
+	Token_READ                 Token = 614
+	Token_REAL                 Token = 615
+	Token_REASSIGN             Token = 616
+	Token_RECURSIVE            Token = 617
+	Token_REF_P                Token = 618
+	Token_REFERENCES           Token = 619
+	Token_REFERENCING          Token = 620
+	Token_REFRESH              Token = 621
+	Token_REINDEX              Token = 622
+	Token_RELATIVE_P           Token = 623
+	Token_RELEASE              Token = 624
+	Token_RENAME               Token = 625
+	Token_REPEATABLE           Token = 626
+	Token_REPLACE              Token = 627
+	Token_REPLICA              Token = 628
+	Token_RESET                Token = 629
+	Token_RESTART              Token = 630
+	Token_RESTRICT             Token = 631
+	Token_RETURN               Token = 632
+	Token_RETURNING            Token = 633
+	Token_RETURNS              Token = 634
+	Token_REVOKE               Token = 635
+	Token_RIGHT                Token = 636
+	Token_ROLE                 Token = 637
+	Token_ROLLBACK             Token = 638
+	Token_ROLLUP               Token = 639
+	Token_ROUTINE              Token = 640
+	Token_ROUTINES             Token = 641
+	Token_ROW                  Token = 642
+	Token_ROWS                 Token = 643
+	Token_RULE                 Token = 644
+	Token_SAVEPOINT            Token = 645
+	Token_SCALAR               Token = 646
+	Token_SCHEMA               Token = 647
+	Token_SCHEMAS              Token = 648
+	Token_SCROLL               Token = 649
+	Token_SEARCH               Token = 650
+	Token_SECOND_P             Token = 651
+	Token_SECURITY             Token = 652
+	Token_SELECT               Token = 653
+	Token_SEQUENCE             Token = 654
+	Token_SEQUENCES            Token = 655
+	Token_SERIALIZABLE         Token = 656
+	Token_SERVER               Token = 657
+	Token_SESSION              Token = 658
+	Token_SESSION_USER         Token = 659
+	Token_SET                  Token = 660
+	Token_SETS                 Token = 661
+	Token_SETOF                Token = 662
+	Token_SHARE                Token = 663
+	Token_SHOW                 Token = 664
+	Token_SIMILAR              Token = 665
+	Token_SIMPLE               Token = 666
+	Token_SKIP                 Token = 667
+	Token_SMALLINT             Token = 668
+	Token_SNAPSHOT             Token = 669
+	Token_SOME                 Token = 670
+	Token_SOURCE               Token = 671
+	Token_SQL_P                Token = 672
+	Token_STABLE               Token = 673
+	Token_STANDALONE_P         Token = 674
+	Token_START                Token = 675
+	Token_STATEMENT            Token = 676
+	Token_STATISTICS           Token = 677
+	Token_STDIN                Token = 678
+	Token_STDOUT               Token = 679
+	Token_STORAGE              Token = 680
+	Token_STORED               Token = 681
+	Token_STRICT_P             Token = 682
+	Token_STRING_P             Token = 683
+	Token_STRIP_P              Token = 684
+	Token_SUBSCRIPTION         Token = 685
+	Token_SUBSTRING            Token = 686
+	Token_SUPPORT              Token = 687
+	Token_SYMMETRIC            Token = 688
+	Token_SYSID                Token = 689
+	Token_SYSTEM_P             Token = 690
+	Token_SYSTEM_USER          Token = 691
+	Token_TABLE                Token = 692
+	Token_TABLES               Token = 693
+	Token_TABLESAMPLE          Token = 694
+	Token_TABLESPACE           Token = 695
+	Token_TARGET               Token = 696
+	Token_TEMP                 Token = 697
+	Token_TEMPLATE             Token = 698
+	Token_TEMPORARY            Token = 699
+	Token_TEXT_P               Token = 700
+	Token_THEN                 Token = 701
+	Token_TIES                 Token = 702
+	Token_TIME                 Token = 703
+	Token_TIMESTAMP            Token = 704
+	Token_TO                   Token = 705
+	Token_TRAILING             Token = 706
+	Token_TRANSACTION          Token = 707
+	Token_TRANSFORM            Token = 708
+	Token_TREAT                Token = 709
+	Token_TRIGGER              Token = 710
+	Token_TRIM                 Token = 711
+	Token_TRUE_P               Token = 712
+	Token_TRUNCATE             Token = 713
+	Token_TRUSTED              Token = 714
+	Token_TYPE_P               Token = 715
+	Token_TYPES_P              Token = 716
+	Token_UESCAPE              Token = 717
+	Token_UNBOUNDED            Token = 718
+	Token_UNCONDITIONAL        Token = 719
+	Token_UNCOMMITTED          Token = 720
+	Token_UNENCRYPTED          Token = 721
+	Token_UNION                Token = 722
+	Token_UNIQUE               Token = 723
+	Token_UNKNOWN              Token = 724
+	Token_UNLISTEN             Token = 725
+	Token_UNLOGGED             Token = 726
+	Token_UNTIL                Token = 727
+	Token_UPDATE               Token = 728
+	Token_USER                 Token = 729
+	Token_USING                Token = 730
+	Token_VACUUM               Token = 731
+	Token_VALID                Token = 732
+	Token_VALIDATE             Token = 733
+	Token_VALIDATOR            Token = 734
+	Token_VALUE_P              Token = 735
+	Token_VALUES               Token = 736
+	Token_VARCHAR              Token = 737
+	Token_VARIADIC             Token = 738
+	Token_VARYING              Token = 739
+	Token_VERBOSE              Token = 740
+	Token_VERSION_P            Token = 741
+	Token_VIEW                 Token = 742
+	Token_VIEWS                Token = 743
+	Token_VIRTUAL              Token = 744
+	Token_VOLATILE             Token = 745
+	Token_WHEN                 Token = 746
+	Token_WHERE                Token = 747
+	Token_WHITESPACE_P         Token = 748
+	Token_WINDOW               Token = 749
+	Token_WITH                 Token = 750
+	Token_WITHIN               Token = 751
+	Token_WITHOUT              Token = 752
+	Token_WORK                 Token = 753
+	Token_WRAPPER              Token = 754
+	Token_WRITE                Token = 755
+	Token_XML_P                Token = 756
+	Token_XMLATTRIBUTES        Token = 757
+	Token_XMLCONCAT            Token = 758
+	Token_XMLELEMENT           Token = 759
+	Token_XMLEXISTS            Token = 760
+	Token_XMLFOREST            Token = 761
+	Token_XMLNAMESPACES        Token = 762
+	Token_XMLPARSE             Token = 763
+	Token_XMLPI                Token = 764
+	Token_XMLROOT              Token = 765
+	Token_XMLSERIALIZE         Token = 766
+	Token_XMLTABLE             Token = 767
+	Token_YEAR_P               Token = 768
+	Token_YES_P                Token = 769
+	Token_ZONE                 Token = 770
+	Token_FORMAT_LA            Token = 771
+	Token_NOT_LA               Token = 772
+	Token_NULLS_LA             Token = 773
+	Token_WITH_LA              Token = 774
+	Token_WITHOUT_LA           Token = 775
+	Token_MODE_TYPE_NAME       Token = 776
+	Token_MODE_PLPGSQL_EXPR    Token = 777
+	Token_MODE_PLPGSQL_ASSIGN1 Token = 778
+	Token_MODE_PLPGSQL_ASSIGN2 Token = 779
+	Token_MODE_PLPGSQL_ASSIGN3 Token = 780
+	Token_UMINUS               Token = 781
 )
 
 // Enum value maps for Token.
@@ -5117,380 +5239,383 @@ var (
 		402: "ENCODING",
 		403: "ENCRYPTED",
 		404: "END_P",
-		405: "ENUM_P",
-		406: "ERROR_P",
-		407: "ESCAPE",
-		408: "EVENT",
-		409: "EXCEPT",
-		410: "EXCLUDE",
-		411: "EXCLUDING",
-		412: "EXCLUSIVE",
-		413: "EXECUTE",
-		414: "EXISTS",
-		415: "EXPLAIN",
-		416: "EXPRESSION",
-		417: "EXTENSION",
-		418: "EXTERNAL",
-		419: "EXTRACT",
-		420: "FALSE_P",
-		421: "FAMILY",
-		422: "FETCH",
-		423: "FILTER",
-		424: "FINALIZE",
-		425: "FIRST_P",
-		426: "FLOAT_P",
-		427: "FOLLOWING",
-		428: "FOR",
-		429: "FORCE",
-		430: "FOREIGN",
-		431: "FORMAT",
-		432: "FORWARD",
-		433: "FREEZE",
-		434: "FROM",
-		435: "FULL",
-		436: "FUNCTION",
-		437: "FUNCTIONS",
-		438: "GENERATED",
-		439: "GLOBAL",
-		440: "GRANT",
-		441: "GRANTED",
-		442: "GREATEST",
-		443: "GROUP_P",
-		444: "GROUPING",
-		445: "GROUPS",
-		446: "HANDLER",
-		447: "HAVING",
-		448: "HEADER_P",
-		449: "HOLD",
-		450: "HOUR_P",
-		451: "IDENTITY_P",
-		452: "IF_P",
-		453: "ILIKE",
-		454: "IMMEDIATE",
-		455: "IMMUTABLE",
-		456: "IMPLICIT_P",
-		457: "IMPORT_P",
-		458: "IN_P",
-		459: "INCLUDE",
-		460: "INCLUDING",
-		461: "INCREMENT",
-		462: "INDENT",
-		463: "INDEX",
-		464: "INDEXES",
-		465: "INHERIT",
-		466: "INHERITS",
-		467: "INITIALLY",
-		468: "INLINE_P",
-		469: "INNER_P",
-		470: "INOUT",
-		471: "INPUT_P",
-		472: "INSENSITIVE",
-		473: "INSERT",
-		474: "INSTEAD",
-		475: "INT_P",
-		476: "INTEGER",
-		477: "INTERSECT",
-		478: "INTERVAL",
-		479: "INTO",
-		480: "INVOKER",
-		481: "IS",
-		482: "ISNULL",
-		483: "ISOLATION",
-		484: "JOIN",
-		485: "JSON",
-		486: "JSON_ARRAY",
-		487: "JSON_ARRAYAGG",
-		488: "JSON_EXISTS",
-		489: "JSON_OBJECT",
-		490: "JSON_OBJECTAGG",
-		491: "JSON_QUERY",
-		492: "JSON_SCALAR",
-		493: "JSON_SERIALIZE",
-		494: "JSON_TABLE",
-		495: "JSON_VALUE",
-		496: "KEEP",
-		497: "KEY",
-		498: "KEYS",
-		499: "LABEL",
-		500: "LANGUAGE",
-		501: "LARGE_P",
-		502: "LAST_P",
-		503: "LATERAL_P",
-		504: "LEADING",
-		505: "LEAKPROOF",
-		506: "LEAST",
-		507: "LEFT",
-		508: "LEVEL",
-		509: "LIKE",
-		510: "LIMIT",
-		511: "LISTEN",
-		512: "LOAD",
-		513: "LOCAL",
-		514: "LOCALTIME",
-		515: "LOCALTIMESTAMP",
-		516: "LOCATION",
-		517: "LOCK_P",
-		518: "LOCKED",
-		519: "LOGGED",
-		520: "MAPPING",
-		521: "MATCH",
-		522: "MATCHED",
-		523: "MATERIALIZED",
-		524: "MAXVALUE",
-		525: "MERGE",
-		526: "MERGE_ACTION",
-		527: "METHOD",
-		528: "MINUTE_P",
-		529: "MINVALUE",
-		530: "MODE",
-		531: "MONTH_P",
-		532: "MOVE",
-		533: "NAME_P",
-		534: "NAMES",
-		535: "NATIONAL",
-		536: "NATURAL",
-		537: "NCHAR",
-		538: "NESTED",
-		539: "NEW",
-		540: "NEXT",
-		541: "NFC",
-		542: "NFD",
-		543: "NFKC",
-		544: "NFKD",
-		545: "NO",
-		546: "NONE",
-		547: "NORMALIZE",
-		548: "NORMALIZED",
-		549: "NOT",
-		550: "NOTHING",
-		551: "NOTIFY",
-		552: "NOTNULL",
-		553: "NOWAIT",
-		554: "NULL_P",
-		555: "NULLIF",
-		556: "NULLS_P",
-		557: "NUMERIC",
-		558: "OBJECT_P",
-		559: "OF",
-		560: "OFF",
-		561: "OFFSET",
-		562: "OIDS",
-		563: "OLD",
-		564: "OMIT",
-		565: "ON",
-		566: "ONLY",
-		567: "OPERATOR",
-		568: "OPTION",
-		569: "OPTIONS",
-		570: "OR",
-		571: "ORDER",
-		572: "ORDINALITY",
-		573: "OTHERS",
-		574: "OUT_P",
-		575: "OUTER_P",
-		576: "OVER",
-		577: "OVERLAPS",
-		578: "OVERLAY",
-		579: "OVERRIDING",
-		580: "OWNED",
-		581: "OWNER",
-		582: "PARALLEL",
-		583: "PARAMETER",
-		584: "PARSER",
-		585: "PARTIAL",
-		586: "PARTITION",
-		587: "PASSING",
-		588: "PASSWORD",
-		589: "PATH",
-		590: "PLACING",
-		591: "PLAN",
-		592: "PLANS",
-		593: "POLICY",
-		594: "POSITION",
-		595: "PRECEDING",
-		596: "PRECISION",
-		597: "PRESERVE",
-		598: "PREPARE",
-		599: "PREPARED",
-		600: "PRIMARY",
-		601: "PRIOR",
-		602: "PRIVILEGES",
-		603: "PROCEDURAL",
-		604: "PROCEDURE",
-		605: "PROCEDURES",
-		606: "PROGRAM",
-		607: "PUBLICATION",
-		608: "QUOTE",
-		609: "QUOTES",
-		610: "RANGE",
-		611: "READ",
-		612: "REAL",
-		613: "REASSIGN",
-		614: "RECHECK",
-		615: "RECURSIVE",
-		616: "REF_P",
-		617: "REFERENCES",
-		618: "REFERENCING",
-		619: "REFRESH",
-		620: "REINDEX",
-		621: "RELATIVE_P",
-		622: "RELEASE",
-		623: "RENAME",
-		624: "REPEATABLE",
-		625: "REPLACE",
-		626: "REPLICA",
-		627: "RESET",
-		628: "RESTART",
-		629: "RESTRICT",
-		630: "RETURN",
-		631: "RETURNING",
-		632: "RETURNS",
-		633: "REVOKE",
-		634: "RIGHT",
-		635: "ROLE",
-		636: "ROLLBACK",
-		637: "ROLLUP",
-		638: "ROUTINE",
-		639: "ROUTINES",
-		640: "ROW",
-		641: "ROWS",
-		642: "RULE",
-		643: "SAVEPOINT",
-		644: "SCALAR",
-		645: "SCHEMA",
-		646: "SCHEMAS",
-		647: "SCROLL",
-		648: "SEARCH",
-		649: "SECOND_P",
-		650: "SECURITY",
-		651: "SELECT",
-		652: "SEQUENCE",
-		653: "SEQUENCES",
-		654: "SERIALIZABLE",
-		655: "SERVER",
-		656: "SESSION",
-		657: "SESSION_USER",
-		658: "SET",
-		659: "SETS",
-		660: "SETOF",
-		661: "SHARE",
-		662: "SHOW",
-		663: "SIMILAR",
-		664: "SIMPLE",
-		665: "SKIP",
-		666: "SMALLINT",
-		667: "SNAPSHOT",
-		668: "SOME",
-		669: "SOURCE",
-		670: "SQL_P",
-		671: "STABLE",
-		672: "STANDALONE_P",
-		673: "START",
-		674: "STATEMENT",
-		675: "STATISTICS",
-		676: "STDIN",
-		677: "STDOUT",
-		678: "STORAGE",
-		679: "STORED",
-		680: "STRICT_P",
-		681: "STRING_P",
-		682: "STRIP_P",
-		683: "SUBSCRIPTION",
-		684: "SUBSTRING",
-		685: "SUPPORT",
-		686: "SYMMETRIC",
-		687: "SYSID",
-		688: "SYSTEM_P",
-		689: "SYSTEM_USER",
-		690: "TABLE",
-		691: "TABLES",
-		692: "TABLESAMPLE",
-		693: "TABLESPACE",
-		694: "TARGET",
-		695: "TEMP",
-		696: "TEMPLATE",
-		697: "TEMPORARY",
-		698: "TEXT_P",
-		699: "THEN",
-		700: "TIES",
-		701: "TIME",
-		702: "TIMESTAMP",
-		703: "TO",
-		704: "TRAILING",
-		705: "TRANSACTION",
-		706: "TRANSFORM",
-		707: "TREAT",
-		708: "TRIGGER",
-		709: "TRIM",
-		710: "TRUE_P",
-		711: "TRUNCATE",
-		712: "TRUSTED",
-		713: "TYPE_P",
-		714: "TYPES_P",
-		715: "UESCAPE",
-		716: "UNBOUNDED",
-		717: "UNCONDITIONAL",
-		718: "UNCOMMITTED",
-		719: "UNENCRYPTED",
-		720: "UNION",
-		721: "UNIQUE",
-		722: "UNKNOWN",
-		723: "UNLISTEN",
-		724: "UNLOGGED",
-		725: "UNTIL",
-		726: "UPDATE",
-		727: "USER",
-		728: "USING",
-		729: "VACUUM",
-		730: "VALID",
-		731: "VALIDATE",
-		732: "VALIDATOR",
-		733: "VALUE_P",
-		734: "VALUES",
-		735: "VARCHAR",
-		736: "VARIADIC",
-		737: "VARYING",
-		738: "VERBOSE",
-		739: "VERSION_P",
-		740: "VIEW",
-		741: "VIEWS",
-		742: "VOLATILE",
-		743: "WHEN",
-		744: "WHERE",
-		745: "WHITESPACE_P",
-		746: "WINDOW",
-		747: "WITH",
-		748: "WITHIN",
-		749: "WITHOUT",
-		750: "WORK",
-		751: "WRAPPER",
-		752: "WRITE",
-		753: "XML_P",
-		754: "XMLATTRIBUTES",
-		755: "XMLCONCAT",
-		756: "XMLELEMENT",
-		757: "XMLEXISTS",
-		758: "XMLFOREST",
-		759: "XMLNAMESPACES",
-		760: "XMLPARSE",
-		761: "XMLPI",
-		762: "XMLROOT",
-		763: "XMLSERIALIZE",
-		764: "XMLTABLE",
-		765: "YEAR_P",
-		766: "YES_P",
-		767: "ZONE",
-		768: "FORMAT_LA",
-		769: "NOT_LA",
-		770: "NULLS_LA",
-		771: "WITH_LA",
-		772: "WITHOUT_LA",
-		773: "MODE_TYPE_NAME",
-		774: "MODE_PLPGSQL_EXPR",
-		775: "MODE_PLPGSQL_ASSIGN1",
-		776: "MODE_PLPGSQL_ASSIGN2",
-		777: "MODE_PLPGSQL_ASSIGN3",
-		778: "UMINUS",
+		405: "ENFORCED",
+		406: "ENUM_P",
+		407: "ERROR_P",
+		408: "ESCAPE",
+		409: "EVENT",
+		410: "EXCEPT",
+		411: "EXCLUDE",
+		412: "EXCLUDING",
+		413: "EXCLUSIVE",
+		414: "EXECUTE",
+		415: "EXISTS",
+		416: "EXPLAIN",
+		417: "EXPRESSION",
+		418: "EXTENSION",
+		419: "EXTERNAL",
+		420: "EXTRACT",
+		421: "FALSE_P",
+		422: "FAMILY",
+		423: "FETCH",
+		424: "FILTER",
+		425: "FINALIZE",
+		426: "FIRST_P",
+		427: "FLOAT_P",
+		428: "FOLLOWING",
+		429: "FOR",
+		430: "FORCE",
+		431: "FOREIGN",
+		432: "FORMAT",
+		433: "FORWARD",
+		434: "FREEZE",
+		435: "FROM",
+		436: "FULL",
+		437: "FUNCTION",
+		438: "FUNCTIONS",
+		439: "GENERATED",
+		440: "GLOBAL",
+		441: "GRANT",
+		442: "GRANTED",
+		443: "GREATEST",
+		444: "GROUP_P",
+		445: "GROUPING",
+		446: "GROUPS",
+		447: "HANDLER",
+		448: "HAVING",
+		449: "HEADER_P",
+		450: "HOLD",
+		451: "HOUR_P",
+		452: "IDENTITY_P",
+		453: "IF_P",
+		454: "ILIKE",
+		455: "IMMEDIATE",
+		456: "IMMUTABLE",
+		457: "IMPLICIT_P",
+		458: "IMPORT_P",
+		459: "IN_P",
+		460: "INCLUDE",
+		461: "INCLUDING",
+		462: "INCREMENT",
+		463: "INDENT",
+		464: "INDEX",
+		465: "INDEXES",
+		466: "INHERIT",
+		467: "INHERITS",
+		468: "INITIALLY",
+		469: "INLINE_P",
+		470: "INNER_P",
+		471: "INOUT",
+		472: "INPUT_P",
+		473: "INSENSITIVE",
+		474: "INSERT",
+		475: "INSTEAD",
+		476: "INT_P",
+		477: "INTEGER",
+		478: "INTERSECT",
+		479: "INTERVAL",
+		480: "INTO",
+		481: "INVOKER",
+		482: "IS",
+		483: "ISNULL",
+		484: "ISOLATION",
+		485: "JOIN",
+		486: "JSON",
+		487: "JSON_ARRAY",
+		488: "JSON_ARRAYAGG",
+		489: "JSON_EXISTS",
+		490: "JSON_OBJECT",
+		491: "JSON_OBJECTAGG",
+		492: "JSON_QUERY",
+		493: "JSON_SCALAR",
+		494: "JSON_SERIALIZE",
+		495: "JSON_TABLE",
+		496: "JSON_VALUE",
+		497: "KEEP",
+		498: "KEY",
+		499: "KEYS",
+		500: "LABEL",
+		501: "LANGUAGE",
+		502: "LARGE_P",
+		503: "LAST_P",
+		504: "LATERAL_P",
+		505: "LEADING",
+		506: "LEAKPROOF",
+		507: "LEAST",
+		508: "LEFT",
+		509: "LEVEL",
+		510: "LIKE",
+		511: "LIMIT",
+		512: "LISTEN",
+		513: "LOAD",
+		514: "LOCAL",
+		515: "LOCALTIME",
+		516: "LOCALTIMESTAMP",
+		517: "LOCATION",
+		518: "LOCK_P",
+		519: "LOCKED",
+		520: "LOGGED",
+		521: "MAPPING",
+		522: "MATCH",
+		523: "MATCHED",
+		524: "MATERIALIZED",
+		525: "MAXVALUE",
+		526: "MERGE",
+		527: "MERGE_ACTION",
+		528: "METHOD",
+		529: "MINUTE_P",
+		530: "MINVALUE",
+		531: "MODE",
+		532: "MONTH_P",
+		533: "MOVE",
+		534: "NAME_P",
+		535: "NAMES",
+		536: "NATIONAL",
+		537: "NATURAL",
+		538: "NCHAR",
+		539: "NESTED",
+		540: "NEW",
+		541: "NEXT",
+		542: "NFC",
+		543: "NFD",
+		544: "NFKC",
+		545: "NFKD",
+		546: "NO",
+		547: "NONE",
+		548: "NORMALIZE",
+		549: "NORMALIZED",
+		550: "NOT",
+		551: "NOTHING",
+		552: "NOTIFY",
+		553: "NOTNULL",
+		554: "NOWAIT",
+		555: "NULL_P",
+		556: "NULLIF",
+		557: "NULLS_P",
+		558: "NUMERIC",
+		559: "OBJECT_P",
+		560: "OBJECTS_P",
+		561: "OF",
+		562: "OFF",
+		563: "OFFSET",
+		564: "OIDS",
+		565: "OLD",
+		566: "OMIT",
+		567: "ON",
+		568: "ONLY",
+		569: "OPERATOR",
+		570: "OPTION",
+		571: "OPTIONS",
+		572: "OR",
+		573: "ORDER",
+		574: "ORDINALITY",
+		575: "OTHERS",
+		576: "OUT_P",
+		577: "OUTER_P",
+		578: "OVER",
+		579: "OVERLAPS",
+		580: "OVERLAY",
+		581: "OVERRIDING",
+		582: "OWNED",
+		583: "OWNER",
+		584: "PARALLEL",
+		585: "PARAMETER",
+		586: "PARSER",
+		587: "PARTIAL",
+		588: "PARTITION",
+		589: "PASSING",
+		590: "PASSWORD",
+		591: "PATH",
+		592: "PERIOD",
+		593: "PLACING",
+		594: "PLAN",
+		595: "PLANS",
+		596: "POLICY",
+		597: "POSITION",
+		598: "PRECEDING",
+		599: "PRECISION",
+		600: "PRESERVE",
+		601: "PREPARE",
+		602: "PREPARED",
+		603: "PRIMARY",
+		604: "PRIOR",
+		605: "PRIVILEGES",
+		606: "PROCEDURAL",
+		607: "PROCEDURE",
+		608: "PROCEDURES",
+		609: "PROGRAM",
+		610: "PUBLICATION",
+		611: "QUOTE",
+		612: "QUOTES",
+		613: "RANGE",
+		614: "READ",
+		615: "REAL",
+		616: "REASSIGN",
+		617: "RECURSIVE",
+		618: "REF_P",
+		619: "REFERENCES",
+		620: "REFERENCING",
+		621: "REFRESH",
+		622: "REINDEX",
+		623: "RELATIVE_P",
+		624: "RELEASE",
+		625: "RENAME",
+		626: "REPEATABLE",
+		627: "REPLACE",
+		628: "REPLICA",
+		629: "RESET",
+		630: "RESTART",
+		631: "RESTRICT",
+		632: "RETURN",
+		633: "RETURNING",
+		634: "RETURNS",
+		635: "REVOKE",
+		636: "RIGHT",
+		637: "ROLE",
+		638: "ROLLBACK",
+		639: "ROLLUP",
+		640: "ROUTINE",
+		641: "ROUTINES",
+		642: "ROW",
+		643: "ROWS",
+		644: "RULE",
+		645: "SAVEPOINT",
+		646: "SCALAR",
+		647: "SCHEMA",
+		648: "SCHEMAS",
+		649: "SCROLL",
+		650: "SEARCH",
+		651: "SECOND_P",
+		652: "SECURITY",
+		653: "SELECT",
+		654: "SEQUENCE",
+		655: "SEQUENCES",
+		656: "SERIALIZABLE",
+		657: "SERVER",
+		658: "SESSION",
+		659: "SESSION_USER",
+		660: "SET",
+		661: "SETS",
+		662: "SETOF",
+		663: "SHARE",
+		664: "SHOW",
+		665: "SIMILAR",
+		666: "SIMPLE",
+		667: "SKIP",
+		668: "SMALLINT",
+		669: "SNAPSHOT",
+		670: "SOME",
+		671: "SOURCE",
+		672: "SQL_P",
+		673: "STABLE",
+		674: "STANDALONE_P",
+		675: "START",
+		676: "STATEMENT",
+		677: "STATISTICS",
+		678: "STDIN",
+		679: "STDOUT",
+		680: "STORAGE",
+		681: "STORED",
+		682: "STRICT_P",
+		683: "STRING_P",
+		684: "STRIP_P",
+		685: "SUBSCRIPTION",
+		686: "SUBSTRING",
+		687: "SUPPORT",
+		688: "SYMMETRIC",
+		689: "SYSID",
+		690: "SYSTEM_P",
+		691: "SYSTEM_USER",
+		692: "TABLE",
+		693: "TABLES",
+		694: "TABLESAMPLE",
+		695: "TABLESPACE",
+		696: "TARGET",
+		697: "TEMP",
+		698: "TEMPLATE",
+		699: "TEMPORARY",
+		700: "TEXT_P",
+		701: "THEN",
+		702: "TIES",
+		703: "TIME",
+		704: "TIMESTAMP",
+		705: "TO",
+		706: "TRAILING",
+		707: "TRANSACTION",
+		708: "TRANSFORM",
+		709: "TREAT",
+		710: "TRIGGER",
+		711: "TRIM",
+		712: "TRUE_P",
+		713: "TRUNCATE",
+		714: "TRUSTED",
+		715: "TYPE_P",
+		716: "TYPES_P",
+		717: "UESCAPE",
+		718: "UNBOUNDED",
+		719: "UNCONDITIONAL",
+		720: "UNCOMMITTED",
+		721: "UNENCRYPTED",
+		722: "UNION",
+		723: "UNIQUE",
+		724: "UNKNOWN",
+		725: "UNLISTEN",
+		726: "UNLOGGED",
+		727: "UNTIL",
+		728: "UPDATE",
+		729: "USER",
+		730: "USING",
+		731: "VACUUM",
+		732: "VALID",
+		733: "VALIDATE",
+		734: "VALIDATOR",
+		735: "VALUE_P",
+		736: "VALUES",
+		737: "VARCHAR",
+		738: "VARIADIC",
+		739: "VARYING",
+		740: "VERBOSE",
+		741: "VERSION_P",
+		742: "VIEW",
+		743: "VIEWS",
+		744: "VIRTUAL",
+		745: "VOLATILE",
+		746: "WHEN",
+		747: "WHERE",
+		748: "WHITESPACE_P",
+		749: "WINDOW",
+		750: "WITH",
+		751: "WITHIN",
+		752: "WITHOUT",
+		753: "WORK",
+		754: "WRAPPER",
+		755: "WRITE",
+		756: "XML_P",
+		757: "XMLATTRIBUTES",
+		758: "XMLCONCAT",
+		759: "XMLELEMENT",
+		760: "XMLEXISTS",
+		761: "XMLFOREST",
+		762: "XMLNAMESPACES",
+		763: "XMLPARSE",
+		764: "XMLPI",
+		765: "XMLROOT",
+		766: "XMLSERIALIZE",
+		767: "XMLTABLE",
+		768: "YEAR_P",
+		769: "YES_P",
+		770: "ZONE",
+		771: "FORMAT_LA",
+		772: "NOT_LA",
+		773: "NULLS_LA",
+		774: "WITH_LA",
+		775: "WITHOUT_LA",
+		776: "MODE_TYPE_NAME",
+		777: "MODE_PLPGSQL_EXPR",
+		778: "MODE_PLPGSQL_ASSIGN1",
+		779: "MODE_PLPGSQL_ASSIGN2",
+		780: "MODE_PLPGSQL_ASSIGN3",
+		781: "UMINUS",
 	}
 	Token_value = map[string]int32{
 		"NUL":                  0,
@@ -5661,380 +5786,383 @@ var (
 		"ENCODING":             402,
 		"ENCRYPTED":            403,
 		"END_P":                404,
-		"ENUM_P":               405,
-		"ERROR_P":              406,
-		"ESCAPE":               407,
-		"EVENT":                408,
-		"EXCEPT":               409,
-		"EXCLUDE":              410,
-		"EXCLUDING":            411,
-		"EXCLUSIVE":            412,
-		"EXECUTE":              413,
-		"EXISTS":               414,
-		"EXPLAIN":              415,
-		"EXPRESSION":           416,
-		"EXTENSION":            417,
-		"EXTERNAL":             418,
-		"EXTRACT":              419,
-		"FALSE_P":              420,
-		"FAMILY":               421,
-		"FETCH":                422,
-		"FILTER":               423,
-		"FINALIZE":             424,
-		"FIRST_P":              425,
-		"FLOAT_P":              426,
-		"FOLLOWING":            427,
-		"FOR":                  428,
-		"FORCE":                429,
-		"FOREIGN":              430,
-		"FORMAT":               431,
-		"FORWARD":              432,
-		"FREEZE":               433,
-		"FROM":                 434,
-		"FULL":                 435,
-		"FUNCTION":             436,
-		"FUNCTIONS":            437,
-		"GENERATED":            438,
-		"GLOBAL":               439,
-		"GRANT":                440,
-		"GRANTED":              441,
-		"GREATEST":             442,
-		"GROUP_P":              443,
-		"GROUPING":             444,
-		"GROUPS":               445,
-		"HANDLER":              446,
-		"HAVING":               447,
-		"HEADER_P":             448,
-		"HOLD":                 449,
-		"HOUR_P":               450,
-		"IDENTITY_P":           451,
-		"IF_P":                 452,
-		"ILIKE":                453,
-		"IMMEDIATE":            454,
-		"IMMUTABLE":            455,
-		"IMPLICIT_P":           456,
-		"IMPORT_P":             457,
-		"IN_P":                 458,
-		"INCLUDE":              459,
-		"INCLUDING":            460,
-		"INCREMENT":            461,
-		"INDENT":               462,
-		"INDEX":                463,
-		"INDEXES":              464,
-		"INHERIT":              465,
-		"INHERITS":             466,
-		"INITIALLY":            467,
-		"INLINE_P":             468,
-		"INNER_P":              469,
-		"INOUT":                470,
-		"INPUT_P":              471,
-		"INSENSITIVE":          472,
-		"INSERT":               473,
-		"INSTEAD":              474,
-		"INT_P":                475,
-		"INTEGER":              476,
-		"INTERSECT":            477,
-		"INTERVAL":             478,
-		"INTO":                 479,
-		"INVOKER":              480,
-		"IS":                   481,
-		"ISNULL":               482,
-		"ISOLATION":            483,
-		"JOIN":                 484,
-		"JSON":                 485,
-		"JSON_ARRAY":           486,
-		"JSON_ARRAYAGG":        487,
-		"JSON_EXISTS":          488,
-		"JSON_OBJECT":          489,
-		"JSON_OBJECTAGG":       490,
-		"JSON_QUERY":           491,
-		"JSON_SCALAR":          492,
-		"JSON_SERIALIZE":       493,
-		"JSON_TABLE":           494,
-		"JSON_VALUE":           495,
-		"KEEP":                 496,
-		"KEY":                  497,
-		"KEYS":                 498,
-		"LABEL":                499,
-		"LANGUAGE":             500,
-		"LARGE_P":              501,
-		"LAST_P":               502,
-		"LATERAL_P":            503,
-		"LEADING":              504,
-		"LEAKPROOF":            505,
-		"LEAST":                506,
-		"LEFT":                 507,
-		"LEVEL":                508,
-		"LIKE":                 509,
-		"LIMIT":                510,
-		"LISTEN":               511,
-		"LOAD":                 512,
-		"LOCAL":                513,
-		"LOCALTIME":            514,
-		"LOCALTIMESTAMP":       515,
-		"LOCATION":             516,
-		"LOCK_P":               517,
-		"LOCKED":               518,
-		"LOGGED":               519,
-		"MAPPING":              520,
-		"MATCH":                521,
-		"MATCHED":              522,
-		"MATERIALIZED":         523,
-		"MAXVALUE":             524,
-		"MERGE":                525,
-		"MERGE_ACTION":         526,
-		"METHOD":               527,
-		"MINUTE_P":             528,
-		"MINVALUE":             529,
-		"MODE":                 530,
-		"MONTH_P":              531,
-		"MOVE":                 532,
-		"NAME_P":               533,
-		"NAMES":                534,
-		"NATIONAL":             535,
-		"NATURAL":              536,
-		"NCHAR":                537,
-		"NESTED":               538,
-		"NEW":                  539,
-		"NEXT":                 540,
-		"NFC":                  541,
-		"NFD":                  542,
-		"NFKC":                 543,
-		"NFKD":                 544,
-		"NO":                   545,
-		"NONE":                 546,
-		"NORMALIZE":            547,
-		"NORMALIZED":           548,
-		"NOT":                  549,
-		"NOTHING":              550,
-		"NOTIFY":               551,
-		"NOTNULL":              552,
-		"NOWAIT":               553,
-		"NULL_P":               554,
-		"NULLIF":               555,
-		"NULLS_P":              556,
-		"NUMERIC":              557,
-		"OBJECT_P":             558,
-		"OF":                   559,
-		"OFF":                  560,
-		"OFFSET":               561,
-		"OIDS":                 562,
-		"OLD":                  563,
-		"OMIT":                 564,
-		"ON":                   565,
-		"ONLY":                 566,
-		"OPERATOR":             567,
-		"OPTION":               568,
-		"OPTIONS":              569,
-		"OR":                   570,
-		"ORDER":                571,
-		"ORDINALITY":           572,
-		"OTHERS":               573,
-		"OUT_P":                574,
-		"OUTER_P":              575,
-		"OVER":                 576,
-		"OVERLAPS":             577,
-		"OVERLAY":              578,
-		"OVERRIDING":           579,
-		"OWNED":                580,
-		"OWNER":                581,
-		"PARALLEL":             582,
-		"PARAMETER":            583,
-		"PARSER":               584,
-		"PARTIAL":              585,
-		"PARTITION":            586,
-		"PASSING":              587,
-		"PASSWORD":             588,
-		"PATH":                 589,
-		"PLACING":              590,
-		"PLAN":                 591,
-		"PLANS":                592,
-		"POLICY":               593,
-		"POSITION":             594,
-		"PRECEDING":            595,
-		"PRECISION":            596,
-		"PRESERVE":             597,
-		"PREPARE":              598,
-		"PREPARED":             599,
-		"PRIMARY":              600,
-		"PRIOR":                601,
-		"PRIVILEGES":           602,
-		"PROCEDURAL":           603,
-		"PROCEDURE":            604,
-		"PROCEDURES":           605,
-		"PROGRAM":              606,
-		"PUBLICATION":          607,
-		"QUOTE":                608,
-		"QUOTES":               609,
-		"RANGE":                610,
-		"READ":                 611,
-		"REAL":                 612,
-		"REASSIGN":             613,
-		"RECHECK":              614,
-		"RECURSIVE":            615,
-		"REF_P":                616,
-		"REFERENCES":           617,
-		"REFERENCING":          618,
-		"REFRESH":              619,
-		"REINDEX":              620,
-		"RELATIVE_P":           621,
-		"RELEASE":              622,
-		"RENAME":               623,
-		"REPEATABLE":           624,
-		"REPLACE":              625,
-		"REPLICA":              626,
-		"RESET":                627,
-		"RESTART":              628,
-		"RESTRICT":             629,
-		"RETURN":               630,
-		"RETURNING":            631,
-		"RETURNS":              632,
-		"REVOKE":               633,
-		"RIGHT":                634,
-		"ROLE":                 635,
-		"ROLLBACK":             636,
-		"ROLLUP":               637,
-		"ROUTINE":              638,
-		"ROUTINES":             639,
-		"ROW":                  640,
-		"ROWS":                 641,
-		"RULE":                 642,
-		"SAVEPOINT":            643,
-		"SCALAR":               644,
-		"SCHEMA":               645,
-		"SCHEMAS":              646,
-		"SCROLL":               647,
-		"SEARCH":               648,
-		"SECOND_P":             649,
-		"SECURITY":             650,
-		"SELECT":               651,
-		"SEQUENCE":             652,
-		"SEQUENCES":            653,
-		"SERIALIZABLE":         654,
-		"SERVER":               655,
-		"SESSION":              656,
-		"SESSION_USER":         657,
-		"SET":                  658,
-		"SETS":                 659,
-		"SETOF":                660,
-		"SHARE":                661,
-		"SHOW":                 662,
-		"SIMILAR":              663,
-		"SIMPLE":               664,
-		"SKIP":                 665,
-		"SMALLINT":             666,
-		"SNAPSHOT":             667,
-		"SOME":                 668,
-		"SOURCE":               669,
-		"SQL_P":                670,
-		"STABLE":               671,
-		"STANDALONE_P":         672,
-		"START":                673,
-		"STATEMENT":            674,
-		"STATISTICS":           675,
-		"STDIN":                676,
-		"STDOUT":               677,
-		"STORAGE":              678,
-		"STORED":               679,
-		"STRICT_P":             680,
-		"STRING_P":             681,
-		"STRIP_P":              682,
-		"SUBSCRIPTION":         683,
-		"SUBSTRING":            684,
-		"SUPPORT":              685,
-		"SYMMETRIC":            686,
-		"SYSID":                687,
-		"SYSTEM_P":             688,
-		"SYSTEM_USER":          689,
-		"TABLE":                690,
-		"TABLES":               691,
-		"TABLESAMPLE":          692,
-		"TABLESPACE":           693,
-		"TARGET":               694,
-		"TEMP":                 695,
-		"TEMPLATE":             696,
-		"TEMPORARY":            697,
-		"TEXT_P":               698,
-		"THEN":                 699,
-		"TIES":                 700,
-		"TIME":                 701,
-		"TIMESTAMP":            702,
-		"TO":                   703,
-		"TRAILING":             704,
-		"TRANSACTION":          705,
-		"TRANSFORM":            706,
-		"TREAT":                707,
-		"TRIGGER":              708,
-		"TRIM":                 709,
-		"TRUE_P":               710,
-		"TRUNCATE":             711,
-		"TRUSTED":              712,
-		"TYPE_P":               713,
-		"TYPES_P":              714,
-		"UESCAPE":              715,
-		"UNBOUNDED":            716,
-		"UNCONDITIONAL":        717,
-		"UNCOMMITTED":          718,
-		"UNENCRYPTED":          719,
-		"UNION":                720,
-		"UNIQUE":               721,
-		"UNKNOWN":              722,
-		"UNLISTEN":             723,
-		"UNLOGGED":             724,
-		"UNTIL":                725,
-		"UPDATE":               726,
-		"USER":                 727,
-		"USING":                728,
-		"VACUUM":               729,
-		"VALID":                730,
-		"VALIDATE":             731,
-		"VALIDATOR":            732,
-		"VALUE_P":              733,
-		"VALUES":               734,
-		"VARCHAR":              735,
-		"VARIADIC":             736,
-		"VARYING":              737,
-		"VERBOSE":              738,
-		"VERSION_P":            739,
-		"VIEW":                 740,
-		"VIEWS":                741,
-		"VOLATILE":             742,
-		"WHEN":                 743,
-		"WHERE":                744,
-		"WHITESPACE_P":         745,
-		"WINDOW":               746,
-		"WITH":                 747,
-		"WITHIN":               748,
-		"WITHOUT":              749,
-		"WORK":                 750,
-		"WRAPPER":              751,
-		"WRITE":                752,
-		"XML_P":                753,
-		"XMLATTRIBUTES":        754,
-		"XMLCONCAT":            755,
-		"XMLELEMENT":           756,
-		"XMLEXISTS":            757,
-		"XMLFOREST":            758,
-		"XMLNAMESPACES":        759,
-		"XMLPARSE":             760,
-		"XMLPI":                761,
-		"XMLROOT":              762,
-		"XMLSERIALIZE":         763,
-		"XMLTABLE":             764,
-		"YEAR_P":               765,
-		"YES_P":                766,
-		"ZONE":                 767,
-		"FORMAT_LA":            768,
-		"NOT_LA":               769,
-		"NULLS_LA":             770,
-		"WITH_LA":              771,
-		"WITHOUT_LA":           772,
-		"MODE_TYPE_NAME":       773,
-		"MODE_PLPGSQL_EXPR":    774,
-		"MODE_PLPGSQL_ASSIGN1": 775,
-		"MODE_PLPGSQL_ASSIGN2": 776,
-		"MODE_PLPGSQL_ASSIGN3": 777,
-		"UMINUS":               778,
+		"ENFORCED":             405,
+		"ENUM_P":               406,
+		"ERROR_P":              407,
+		"ESCAPE":               408,
+		"EVENT":                409,
+		"EXCEPT":               410,
+		"EXCLUDE":              411,
+		"EXCLUDING":            412,
+		"EXCLUSIVE":            413,
+		"EXECUTE":              414,
+		"EXISTS":               415,
+		"EXPLAIN":              416,
+		"EXPRESSION":           417,
+		"EXTENSION":            418,
+		"EXTERNAL":             419,
+		"EXTRACT":              420,
+		"FALSE_P":              421,
+		"FAMILY":               422,
+		"FETCH":                423,
+		"FILTER":               424,
+		"FINALIZE":             425,
+		"FIRST_P":              426,
+		"FLOAT_P":              427,
+		"FOLLOWING":            428,
+		"FOR":                  429,
+		"FORCE":                430,
+		"FOREIGN":              431,
+		"FORMAT":               432,
+		"FORWARD":              433,
+		"FREEZE":               434,
+		"FROM":                 435,
+		"FULL":                 436,
+		"FUNCTION":             437,
+		"FUNCTIONS":            438,
+		"GENERATED":            439,
+		"GLOBAL":               440,
+		"GRANT":                441,
+		"GRANTED":              442,
+		"GREATEST":             443,
+		"GROUP_P":              444,
+		"GROUPING":             445,
+		"GROUPS":               446,
+		"HANDLER":              447,
+		"HAVING":               448,
+		"HEADER_P":             449,
+		"HOLD":                 450,
+		"HOUR_P":               451,
+		"IDENTITY_P":           452,
+		"IF_P":                 453,
+		"ILIKE":                454,
+		"IMMEDIATE":            455,
+		"IMMUTABLE":            456,
+		"IMPLICIT_P":           457,
+		"IMPORT_P":             458,
+		"IN_P":                 459,
+		"INCLUDE":              460,
+		"INCLUDING":            461,
+		"INCREMENT":            462,
+		"INDENT":               463,
+		"INDEX":                464,
+		"INDEXES":              465,
+		"INHERIT":              466,
+		"INHERITS":             467,
+		"INITIALLY":            468,
+		"INLINE_P":             469,
+		"INNER_P":              470,
+		"INOUT":                471,
+		"INPUT_P":              472,
+		"INSENSITIVE":          473,
+		"INSERT":               474,
+		"INSTEAD":              475,
+		"INT_P":                476,
+		"INTEGER":              477,
+		"INTERSECT":            478,
+		"INTERVAL":             479,
+		"INTO":                 480,
+		"INVOKER":              481,
+		"IS":                   482,
+		"ISNULL":               483,
+		"ISOLATION":            484,
+		"JOIN":                 485,
+		"JSON":                 486,
+		"JSON_ARRAY":           487,
+		"JSON_ARRAYAGG":        488,
+		"JSON_EXISTS":          489,
+		"JSON_OBJECT":          490,
+		"JSON_OBJECTAGG":       491,
+		"JSON_QUERY":           492,
+		"JSON_SCALAR":          493,
+		"JSON_SERIALIZE":       494,
+		"JSON_TABLE":           495,
+		"JSON_VALUE":           496,
+		"KEEP":                 497,
+		"KEY":                  498,
+		"KEYS":                 499,
+		"LABEL":                500,
+		"LANGUAGE":             501,
+		"LARGE_P":              502,
+		"LAST_P":               503,
+		"LATERAL_P":            504,
+		"LEADING":              505,
+		"LEAKPROOF":            506,
+		"LEAST":                507,
+		"LEFT":                 508,
+		"LEVEL":                509,
+		"LIKE":                 510,
+		"LIMIT":                511,
+		"LISTEN":               512,
+		"LOAD":                 513,
+		"LOCAL":                514,
+		"LOCALTIME":            515,
+		"LOCALTIMESTAMP":       516,
+		"LOCATION":             517,
+		"LOCK_P":               518,
+		"LOCKED":               519,
+		"LOGGED":               520,
+		"MAPPING":              521,
+		"MATCH":                522,
+		"MATCHED":              523,
+		"MATERIALIZED":         524,
+		"MAXVALUE":             525,
+		"MERGE":                526,
+		"MERGE_ACTION":         527,
+		"METHOD":               528,
+		"MINUTE_P":             529,
+		"MINVALUE":             530,
+		"MODE":                 531,
+		"MONTH_P":              532,
+		"MOVE":                 533,
+		"NAME_P":               534,
+		"NAMES":                535,
+		"NATIONAL":             536,
+		"NATURAL":              537,
+		"NCHAR":                538,
+		"NESTED":               539,
+		"NEW":                  540,
+		"NEXT":                 541,
+		"NFC":                  542,
+		"NFD":                  543,
+		"NFKC":                 544,
+		"NFKD":                 545,
+		"NO":                   546,
+		"NONE":                 547,
+		"NORMALIZE":            548,
+		"NORMALIZED":           549,
+		"NOT":                  550,
+		"NOTHING":              551,
+		"NOTIFY":               552,
+		"NOTNULL":              553,
+		"NOWAIT":               554,
+		"NULL_P":               555,
+		"NULLIF":               556,
+		"NULLS_P":              557,
+		"NUMERIC":              558,
+		"OBJECT_P":             559,
+		"OBJECTS_P":            560,
+		"OF":                   561,
+		"OFF":                  562,
+		"OFFSET":               563,
+		"OIDS":                 564,
+		"OLD":                  565,
+		"OMIT":                 566,
+		"ON":                   567,
+		"ONLY":                 568,
+		"OPERATOR":             569,
+		"OPTION":               570,
+		"OPTIONS":              571,
+		"OR":                   572,
+		"ORDER":                573,
+		"ORDINALITY":           574,
+		"OTHERS":               575,
+		"OUT_P":                576,
+		"OUTER_P":              577,
+		"OVER":                 578,
+		"OVERLAPS":             579,
+		"OVERLAY":              580,
+		"OVERRIDING":           581,
+		"OWNED":                582,
+		"OWNER":                583,
+		"PARALLEL":             584,
+		"PARAMETER":            585,
+		"PARSER":               586,
+		"PARTIAL":              587,
+		"PARTITION":            588,
+		"PASSING":              589,
+		"PASSWORD":             590,
+		"PATH":                 591,
+		"PERIOD":               592,
+		"PLACING":              593,
+		"PLAN":                 594,
+		"PLANS":                595,
+		"POLICY":               596,
+		"POSITION":             597,
+		"PRECEDING":            598,
+		"PRECISION":            599,
+		"PRESERVE":             600,
+		"PREPARE":              601,
+		"PREPARED":             602,
+		"PRIMARY":              603,
+		"PRIOR":                604,
+		"PRIVILEGES":           605,
+		"PROCEDURAL":           606,
+		"PROCEDURE":            607,
+		"PROCEDURES":           608,
+		"PROGRAM":              609,
+		"PUBLICATION":          610,
+		"QUOTE":                611,
+		"QUOTES":               612,
+		"RANGE":                613,
+		"READ":                 614,
+		"REAL":                 615,
+		"REASSIGN":             616,
+		"RECURSIVE":            617,
+		"REF_P":                618,
+		"REFERENCES":           619,
+		"REFERENCING":          620,
+		"REFRESH":              621,
+		"REINDEX":              622,
+		"RELATIVE_P":           623,
+		"RELEASE":              624,
+		"RENAME":               625,
+		"REPEATABLE":           626,
+		"REPLACE":              627,
+		"REPLICA":              628,
+		"RESET":                629,
+		"RESTART":              630,
+		"RESTRICT":             631,
+		"RETURN":               632,
+		"RETURNING":            633,
+		"RETURNS":              634,
+		"REVOKE":               635,
+		"RIGHT":                636,
+		"ROLE":                 637,
+		"ROLLBACK":             638,
+		"ROLLUP":               639,
+		"ROUTINE":              640,
+		"ROUTINES":             641,
+		"ROW":                  642,
+		"ROWS":                 643,
+		"RULE":                 644,
+		"SAVEPOINT":            645,
+		"SCALAR":               646,
+		"SCHEMA":               647,
+		"SCHEMAS":              648,
+		"SCROLL":               649,
+		"SEARCH":               650,
+		"SECOND_P":             651,
+		"SECURITY":             652,
+		"SELECT":               653,
+		"SEQUENCE":             654,
+		"SEQUENCES":            655,
+		"SERIALIZABLE":         656,
+		"SERVER":               657,
+		"SESSION":              658,
+		"SESSION_USER":         659,
+		"SET":                  660,
+		"SETS":                 661,
+		"SETOF":                662,
+		"SHARE":                663,
+		"SHOW":                 664,
+		"SIMILAR":              665,
+		"SIMPLE":               666,
+		"SKIP":                 667,
+		"SMALLINT":             668,
+		"SNAPSHOT":             669,
+		"SOME":                 670,
+		"SOURCE":               671,
+		"SQL_P":                672,
+		"STABLE":               673,
+		"STANDALONE_P":         674,
+		"START":                675,
+		"STATEMENT":            676,
+		"STATISTICS":           677,
+		"STDIN":                678,
+		"STDOUT":               679,
+		"STORAGE":              680,
+		"STORED":               681,
+		"STRICT_P":             682,
+		"STRING_P":             683,
+		"STRIP_P":              684,
+		"SUBSCRIPTION":         685,
+		"SUBSTRING":            686,
+		"SUPPORT":              687,
+		"SYMMETRIC":            688,
+		"SYSID":                689,
+		"SYSTEM_P":             690,
+		"SYSTEM_USER":          691,
+		"TABLE":                692,
+		"TABLES":               693,
+		"TABLESAMPLE":          694,
+		"TABLESPACE":           695,
+		"TARGET":               696,
+		"TEMP":                 697,
+		"TEMPLATE":             698,
+		"TEMPORARY":            699,
+		"TEXT_P":               700,
+		"THEN":                 701,
+		"TIES":                 702,
+		"TIME":                 703,
+		"TIMESTAMP":            704,
+		"TO":                   705,
+		"TRAILING":             706,
+		"TRANSACTION":          707,
+		"TRANSFORM":            708,
+		"TREAT":                709,
+		"TRIGGER":              710,
+		"TRIM":                 711,
+		"TRUE_P":               712,
+		"TRUNCATE":             713,
+		"TRUSTED":              714,
+		"TYPE_P":               715,
+		"TYPES_P":              716,
+		"UESCAPE":              717,
+		"UNBOUNDED":            718,
+		"UNCONDITIONAL":        719,
+		"UNCOMMITTED":          720,
+		"UNENCRYPTED":          721,
+		"UNION":                722,
+		"UNIQUE":               723,
+		"UNKNOWN":              724,
+		"UNLISTEN":             725,
+		"UNLOGGED":             726,
+		"UNTIL":                727,
+		"UPDATE":               728,
+		"USER":                 729,
+		"USING":                730,
+		"VACUUM":               731,
+		"VALID":                732,
+		"VALIDATE":             733,
+		"VALIDATOR":            734,
+		"VALUE_P":              735,
+		"VALUES":               736,
+		"VARCHAR":              737,
+		"VARIADIC":             738,
+		"VARYING":              739,
+		"VERBOSE":              740,
+		"VERSION_P":            741,
+		"VIEW":                 742,
+		"VIEWS":                743,
+		"VIRTUAL":              744,
+		"VOLATILE":             745,
+		"WHEN":                 746,
+		"WHERE":                747,
+		"WHITESPACE_P":         748,
+		"WINDOW":               749,
+		"WITH":                 750,
+		"WITHIN":               751,
+		"WITHOUT":              752,
+		"WORK":                 753,
+		"WRAPPER":              754,
+		"WRITE":                755,
+		"XML_P":                756,
+		"XMLATTRIBUTES":        757,
+		"XMLCONCAT":            758,
+		"XMLELEMENT":           759,
+		"XMLEXISTS":            760,
+		"XMLFOREST":            761,
+		"XMLNAMESPACES":        762,
+		"XMLPARSE":             763,
+		"XMLPI":                764,
+		"XMLROOT":              765,
+		"XMLSERIALIZE":         766,
+		"XMLTABLE":             767,
+		"YEAR_P":               768,
+		"YES_P":                769,
+		"ZONE":                 770,
+		"FORMAT_LA":            771,
+		"NOT_LA":               772,
+		"NULLS_LA":             773,
+		"WITH_LA":              774,
+		"WITHOUT_LA":           775,
+		"MODE_TYPE_NAME":       776,
+		"MODE_PLPGSQL_EXPR":    777,
+		"MODE_PLPGSQL_ASSIGN1": 778,
+		"MODE_PLPGSQL_ASSIGN2": 779,
+		"MODE_PLPGSQL_ASSIGN3": 780,
+		"UMINUS":               781,
 	}
 )
 
@@ -6049,11 +6177,11 @@ func (x Token) String() string {
 }
 
 func (Token) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[70].Descriptor()
+	return file_pg_query_proto_enumTypes[72].Descriptor()
 }
 
 func (Token) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[70]
+	return &file_pg_query_proto_enumTypes[72]
 }
 
 func (x Token) Number() protoreflect.EnumNumber {
@@ -6062,7 +6190,7 @@ func (x Token) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Token.Descriptor instead.
 func (Token) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{70}
+	return file_pg_query_proto_rawDescGZIP(), []int{72}
 }
 
 type SummaryResult_Context int32
@@ -6104,11 +6232,11 @@ func (x SummaryResult_Context) String() string {
 }
 
 func (SummaryResult_Context) Descriptor() protoreflect.EnumDescriptor {
-	return file_pg_query_proto_enumTypes[71].Descriptor()
+	return file_pg_query_proto_enumTypes[73].Descriptor()
 }
 
 func (SummaryResult_Context) Type() protoreflect.EnumType {
-	return &file_pg_query_proto_enumTypes[71]
+	return &file_pg_query_proto_enumTypes[73]
 }
 
 func (x SummaryResult_Context) Number() protoreflect.EnumNumber {
@@ -6117,7 +6245,7 @@ func (x SummaryResult_Context) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SummaryResult_Context.Descriptor instead.
 func (SummaryResult_Context) EnumDescriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{272, 0}
+	return file_pg_query_proto_rawDescGZIP(), []int{275, 0}
 }
 
 type ParseResult struct {
@@ -6286,6 +6414,7 @@ type Node struct {
 	//	*Node_CurrentOfExpr
 	//	*Node_NextValueExpr
 	//	*Node_InferenceElem
+	//	*Node_ReturningExpr
 	//	*Node_TargetEntry
 	//	*Node_RangeTblRef
 	//	*Node_JoinExpr
@@ -6323,7 +6452,6 @@ type Node struct {
 	//	*Node_PartitionSpec
 	//	*Node_PartitionBoundSpec
 	//	*Node_PartitionRangeDatum
-	//	*Node_SinglePartitionSpec
 	//	*Node_PartitionCmd
 	//	*Node_RangeTblEntry
 	//	*Node_RtepermissionInfo
@@ -6341,6 +6469,8 @@ type Node struct {
 	//	*Node_CtecycleClause
 	//	*Node_CommonTableExpr
 	//	*Node_MergeWhenClause
+	//	*Node_ReturningOption
+	//	*Node_ReturningClause
 	//	*Node_TriggerTransition
 	//	*Node_JsonOutput
 	//	*Node_JsonArgument
@@ -6369,8 +6499,9 @@ type Node struct {
 	//	*Node_PlassignStmt
 	//	*Node_CreateSchemaStmt
 	//	*Node_AlterTableStmt
-	//	*Node_ReplicaIdentityStmt
 	//	*Node_AlterTableCmd
+	//	*Node_AtalterConstraint
+	//	*Node_ReplicaIdentityStmt
 	//	*Node_AlterCollationStmt
 	//	*Node_AlterDomainStmt
 	//	*Node_GrantStmt
@@ -7060,6 +7191,15 @@ func (x *Node) GetInferenceElem() *InferenceElem {
 	return nil
 }
 
+func (x *Node) GetReturningExpr() *ReturningExpr {
+	if x != nil {
+		if x, ok := x.Node.(*Node_ReturningExpr); ok {
+			return x.ReturningExpr
+		}
+	}
+	return nil
+}
+
 func (x *Node) GetTargetEntry() *TargetEntry {
 	if x != nil {
 		if x, ok := x.Node.(*Node_TargetEntry); ok {
@@ -7393,15 +7533,6 @@ func (x *Node) GetPartitionRangeDatum() *PartitionRangeDatum {
 	return nil
 }
 
-func (x *Node) GetSinglePartitionSpec() *SinglePartitionSpec {
-	if x != nil {
-		if x, ok := x.Node.(*Node_SinglePartitionSpec); ok {
-			return x.SinglePartitionSpec
-		}
-	}
-	return nil
-}
-
 func (x *Node) GetPartitionCmd() *PartitionCmd {
 	if x != nil {
 		if x, ok := x.Node.(*Node_PartitionCmd); ok {
@@ -7550,6 +7681,24 @@ func (x *Node) GetMergeWhenClause() *MergeWhenClause {
 	if x != nil {
 		if x, ok := x.Node.(*Node_MergeWhenClause); ok {
 			return x.MergeWhenClause
+		}
+	}
+	return nil
+}
+
+func (x *Node) GetReturningOption() *ReturningOption {
+	if x != nil {
+		if x, ok := x.Node.(*Node_ReturningOption); ok {
+			return x.ReturningOption
+		}
+	}
+	return nil
+}
+
+func (x *Node) GetReturningClause() *ReturningClause {
+	if x != nil {
+		if x, ok := x.Node.(*Node_ReturningClause); ok {
+			return x.ReturningClause
 		}
 	}
 	return nil
@@ -7807,19 +7956,28 @@ func (x *Node) GetAlterTableStmt() *AlterTableStmt {
 	return nil
 }
 
-func (x *Node) GetReplicaIdentityStmt() *ReplicaIdentityStmt {
+func (x *Node) GetAlterTableCmd() *AlterTableCmd {
 	if x != nil {
-		if x, ok := x.Node.(*Node_ReplicaIdentityStmt); ok {
-			return x.ReplicaIdentityStmt
+		if x, ok := x.Node.(*Node_AlterTableCmd); ok {
+			return x.AlterTableCmd
 		}
 	}
 	return nil
 }
 
-func (x *Node) GetAlterTableCmd() *AlterTableCmd {
+func (x *Node) GetAtalterConstraint() *ATAlterConstraint {
 	if x != nil {
-		if x, ok := x.Node.(*Node_AlterTableCmd); ok {
-			return x.AlterTableCmd
+		if x, ok := x.Node.(*Node_AtalterConstraint); ok {
+			return x.AtalterConstraint
+		}
+	}
+	return nil
+}
+
+func (x *Node) GetReplicaIdentityStmt() *ReplicaIdentityStmt {
+	if x != nil {
+		if x, ok := x.Node.(*Node_ReplicaIdentityStmt); ok {
+			return x.ReplicaIdentityStmt
 		}
 	}
 	return nil
@@ -9186,156 +9344,156 @@ type Node_InferenceElem struct {
 	InferenceElem *InferenceElem `protobuf:"bytes,58,opt,name=inference_elem,json=InferenceElem,proto3,oneof"`
 }
 
+type Node_ReturningExpr struct {
+	ReturningExpr *ReturningExpr `protobuf:"bytes,59,opt,name=returning_expr,json=ReturningExpr,proto3,oneof"`
+}
+
 type Node_TargetEntry struct {
-	TargetEntry *TargetEntry `protobuf:"bytes,59,opt,name=target_entry,json=TargetEntry,proto3,oneof"`
+	TargetEntry *TargetEntry `protobuf:"bytes,60,opt,name=target_entry,json=TargetEntry,proto3,oneof"`
 }
 
 type Node_RangeTblRef struct {
-	RangeTblRef *RangeTblRef `protobuf:"bytes,60,opt,name=range_tbl_ref,json=RangeTblRef,proto3,oneof"`
+	RangeTblRef *RangeTblRef `protobuf:"bytes,61,opt,name=range_tbl_ref,json=RangeTblRef,proto3,oneof"`
 }
 
 type Node_JoinExpr struct {
-	JoinExpr *JoinExpr `protobuf:"bytes,61,opt,name=join_expr,json=JoinExpr,proto3,oneof"`
+	JoinExpr *JoinExpr `protobuf:"bytes,62,opt,name=join_expr,json=JoinExpr,proto3,oneof"`
 }
 
 type Node_FromExpr struct {
-	FromExpr *FromExpr `protobuf:"bytes,62,opt,name=from_expr,json=FromExpr,proto3,oneof"`
+	FromExpr *FromExpr `protobuf:"bytes,63,opt,name=from_expr,json=FromExpr,proto3,oneof"`
 }
 
 type Node_OnConflictExpr struct {
-	OnConflictExpr *OnConflictExpr `protobuf:"bytes,63,opt,name=on_conflict_expr,json=OnConflictExpr,proto3,oneof"`
+	OnConflictExpr *OnConflictExpr `protobuf:"bytes,64,opt,name=on_conflict_expr,json=OnConflictExpr,proto3,oneof"`
 }
 
 type Node_Query struct {
-	Query *Query `protobuf:"bytes,64,opt,name=query,json=Query,proto3,oneof"`
+	Query *Query `protobuf:"bytes,65,opt,name=query,json=Query,proto3,oneof"`
 }
 
 type Node_TypeName struct {
-	TypeName *TypeName `protobuf:"bytes,65,opt,name=type_name,json=TypeName,proto3,oneof"`
+	TypeName *TypeName `protobuf:"bytes,66,opt,name=type_name,json=TypeName,proto3,oneof"`
 }
 
 type Node_ColumnRef struct {
-	ColumnRef *ColumnRef `protobuf:"bytes,66,opt,name=column_ref,json=ColumnRef,proto3,oneof"`
+	ColumnRef *ColumnRef `protobuf:"bytes,67,opt,name=column_ref,json=ColumnRef,proto3,oneof"`
 }
 
 type Node_ParamRef struct {
-	ParamRef *ParamRef `protobuf:"bytes,67,opt,name=param_ref,json=ParamRef,proto3,oneof"`
+	ParamRef *ParamRef `protobuf:"bytes,68,opt,name=param_ref,json=ParamRef,proto3,oneof"`
 }
 
 type Node_AExpr struct {
-	AExpr *A_Expr `protobuf:"bytes,68,opt,name=a_expr,json=A_Expr,proto3,oneof"`
+	AExpr *A_Expr `protobuf:"bytes,69,opt,name=a_expr,json=A_Expr,proto3,oneof"`
 }
 
 type Node_TypeCast struct {
-	TypeCast *TypeCast `protobuf:"bytes,69,opt,name=type_cast,json=TypeCast,proto3,oneof"`
+	TypeCast *TypeCast `protobuf:"bytes,70,opt,name=type_cast,json=TypeCast,proto3,oneof"`
 }
 
 type Node_CollateClause struct {
-	CollateClause *CollateClause `protobuf:"bytes,70,opt,name=collate_clause,json=CollateClause,proto3,oneof"`
+	CollateClause *CollateClause `protobuf:"bytes,71,opt,name=collate_clause,json=CollateClause,proto3,oneof"`
 }
 
 type Node_RoleSpec struct {
-	RoleSpec *RoleSpec `protobuf:"bytes,71,opt,name=role_spec,json=RoleSpec,proto3,oneof"`
+	RoleSpec *RoleSpec `protobuf:"bytes,72,opt,name=role_spec,json=RoleSpec,proto3,oneof"`
 }
 
 type Node_FuncCall struct {
-	FuncCall *FuncCall `protobuf:"bytes,72,opt,name=func_call,json=FuncCall,proto3,oneof"`
+	FuncCall *FuncCall `protobuf:"bytes,73,opt,name=func_call,json=FuncCall,proto3,oneof"`
 }
 
 type Node_AStar struct {
-	AStar *A_Star `protobuf:"bytes,73,opt,name=a_star,json=A_Star,proto3,oneof"`
+	AStar *A_Star `protobuf:"bytes,74,opt,name=a_star,json=A_Star,proto3,oneof"`
 }
 
 type Node_AIndices struct {
-	AIndices *A_Indices `protobuf:"bytes,74,opt,name=a_indices,json=A_Indices,proto3,oneof"`
+	AIndices *A_Indices `protobuf:"bytes,75,opt,name=a_indices,json=A_Indices,proto3,oneof"`
 }
 
 type Node_AIndirection struct {
-	AIndirection *A_Indirection `protobuf:"bytes,75,opt,name=a_indirection,json=A_Indirection,proto3,oneof"`
+	AIndirection *A_Indirection `protobuf:"bytes,76,opt,name=a_indirection,json=A_Indirection,proto3,oneof"`
 }
 
 type Node_AArrayExpr struct {
-	AArrayExpr *A_ArrayExpr `protobuf:"bytes,76,opt,name=a_array_expr,json=A_ArrayExpr,proto3,oneof"`
+	AArrayExpr *A_ArrayExpr `protobuf:"bytes,77,opt,name=a_array_expr,json=A_ArrayExpr,proto3,oneof"`
 }
 
 type Node_ResTarget struct {
-	ResTarget *ResTarget `protobuf:"bytes,77,opt,name=res_target,json=ResTarget,proto3,oneof"`
+	ResTarget *ResTarget `protobuf:"bytes,78,opt,name=res_target,json=ResTarget,proto3,oneof"`
 }
 
 type Node_MultiAssignRef struct {
-	MultiAssignRef *MultiAssignRef `protobuf:"bytes,78,opt,name=multi_assign_ref,json=MultiAssignRef,proto3,oneof"`
+	MultiAssignRef *MultiAssignRef `protobuf:"bytes,79,opt,name=multi_assign_ref,json=MultiAssignRef,proto3,oneof"`
 }
 
 type Node_SortBy struct {
-	SortBy *SortBy `protobuf:"bytes,79,opt,name=sort_by,json=SortBy,proto3,oneof"`
+	SortBy *SortBy `protobuf:"bytes,80,opt,name=sort_by,json=SortBy,proto3,oneof"`
 }
 
 type Node_WindowDef struct {
-	WindowDef *WindowDef `protobuf:"bytes,80,opt,name=window_def,json=WindowDef,proto3,oneof"`
+	WindowDef *WindowDef `protobuf:"bytes,81,opt,name=window_def,json=WindowDef,proto3,oneof"`
 }
 
 type Node_RangeSubselect struct {
-	RangeSubselect *RangeSubselect `protobuf:"bytes,81,opt,name=range_subselect,json=RangeSubselect,proto3,oneof"`
+	RangeSubselect *RangeSubselect `protobuf:"bytes,82,opt,name=range_subselect,json=RangeSubselect,proto3,oneof"`
 }
 
 type Node_RangeFunction struct {
-	RangeFunction *RangeFunction `protobuf:"bytes,82,opt,name=range_function,json=RangeFunction,proto3,oneof"`
+	RangeFunction *RangeFunction `protobuf:"bytes,83,opt,name=range_function,json=RangeFunction,proto3,oneof"`
 }
 
 type Node_RangeTableFunc struct {
-	RangeTableFunc *RangeTableFunc `protobuf:"bytes,83,opt,name=range_table_func,json=RangeTableFunc,proto3,oneof"`
+	RangeTableFunc *RangeTableFunc `protobuf:"bytes,84,opt,name=range_table_func,json=RangeTableFunc,proto3,oneof"`
 }
 
 type Node_RangeTableFuncCol struct {
-	RangeTableFuncCol *RangeTableFuncCol `protobuf:"bytes,84,opt,name=range_table_func_col,json=RangeTableFuncCol,proto3,oneof"`
+	RangeTableFuncCol *RangeTableFuncCol `protobuf:"bytes,85,opt,name=range_table_func_col,json=RangeTableFuncCol,proto3,oneof"`
 }
 
 type Node_RangeTableSample struct {
-	RangeTableSample *RangeTableSample `protobuf:"bytes,85,opt,name=range_table_sample,json=RangeTableSample,proto3,oneof"`
+	RangeTableSample *RangeTableSample `protobuf:"bytes,86,opt,name=range_table_sample,json=RangeTableSample,proto3,oneof"`
 }
 
 type Node_ColumnDef struct {
-	ColumnDef *ColumnDef `protobuf:"bytes,86,opt,name=column_def,json=ColumnDef,proto3,oneof"`
+	ColumnDef *ColumnDef `protobuf:"bytes,87,opt,name=column_def,json=ColumnDef,proto3,oneof"`
 }
 
 type Node_TableLikeClause struct {
-	TableLikeClause *TableLikeClause `protobuf:"bytes,87,opt,name=table_like_clause,json=TableLikeClause,proto3,oneof"`
+	TableLikeClause *TableLikeClause `protobuf:"bytes,88,opt,name=table_like_clause,json=TableLikeClause,proto3,oneof"`
 }
 
 type Node_IndexElem struct {
-	IndexElem *IndexElem `protobuf:"bytes,88,opt,name=index_elem,json=IndexElem,proto3,oneof"`
+	IndexElem *IndexElem `protobuf:"bytes,89,opt,name=index_elem,json=IndexElem,proto3,oneof"`
 }
 
 type Node_DefElem struct {
-	DefElem *DefElem `protobuf:"bytes,89,opt,name=def_elem,json=DefElem,proto3,oneof"`
+	DefElem *DefElem `protobuf:"bytes,90,opt,name=def_elem,json=DefElem,proto3,oneof"`
 }
 
 type Node_LockingClause struct {
-	LockingClause *LockingClause `protobuf:"bytes,90,opt,name=locking_clause,json=LockingClause,proto3,oneof"`
+	LockingClause *LockingClause `protobuf:"bytes,91,opt,name=locking_clause,json=LockingClause,proto3,oneof"`
 }
 
 type Node_XmlSerialize struct {
-	XmlSerialize *XmlSerialize `protobuf:"bytes,91,opt,name=xml_serialize,json=XmlSerialize,proto3,oneof"`
+	XmlSerialize *XmlSerialize `protobuf:"bytes,92,opt,name=xml_serialize,json=XmlSerialize,proto3,oneof"`
 }
 
 type Node_PartitionElem struct {
-	PartitionElem *PartitionElem `protobuf:"bytes,92,opt,name=partition_elem,json=PartitionElem,proto3,oneof"`
+	PartitionElem *PartitionElem `protobuf:"bytes,93,opt,name=partition_elem,json=PartitionElem,proto3,oneof"`
 }
 
 type Node_PartitionSpec struct {
-	PartitionSpec *PartitionSpec `protobuf:"bytes,93,opt,name=partition_spec,json=PartitionSpec,proto3,oneof"`
+	PartitionSpec *PartitionSpec `protobuf:"bytes,94,opt,name=partition_spec,json=PartitionSpec,proto3,oneof"`
 }
 
 type Node_PartitionBoundSpec struct {
-	PartitionBoundSpec *PartitionBoundSpec `protobuf:"bytes,94,opt,name=partition_bound_spec,json=PartitionBoundSpec,proto3,oneof"`
+	PartitionBoundSpec *PartitionBoundSpec `protobuf:"bytes,95,opt,name=partition_bound_spec,json=PartitionBoundSpec,proto3,oneof"`
 }
 
 type Node_PartitionRangeDatum struct {
-	PartitionRangeDatum *PartitionRangeDatum `protobuf:"bytes,95,opt,name=partition_range_datum,json=PartitionRangeDatum,proto3,oneof"`
-}
-
-type Node_SinglePartitionSpec struct {
-	SinglePartitionSpec *SinglePartitionSpec `protobuf:"bytes,96,opt,name=single_partition_spec,json=SinglePartitionSpec,proto3,oneof"`
+	PartitionRangeDatum *PartitionRangeDatum `protobuf:"bytes,96,opt,name=partition_range_datum,json=PartitionRangeDatum,proto3,oneof"`
 }
 
 type Node_PartitionCmd struct {
@@ -9406,624 +9564,636 @@ type Node_MergeWhenClause struct {
 	MergeWhenClause *MergeWhenClause `protobuf:"bytes,113,opt,name=merge_when_clause,json=MergeWhenClause,proto3,oneof"`
 }
 
+type Node_ReturningOption struct {
+	ReturningOption *ReturningOption `protobuf:"bytes,114,opt,name=returning_option,json=ReturningOption,proto3,oneof"`
+}
+
+type Node_ReturningClause struct {
+	ReturningClause *ReturningClause `protobuf:"bytes,115,opt,name=returning_clause,json=ReturningClause,proto3,oneof"`
+}
+
 type Node_TriggerTransition struct {
-	TriggerTransition *TriggerTransition `protobuf:"bytes,114,opt,name=trigger_transition,json=TriggerTransition,proto3,oneof"`
+	TriggerTransition *TriggerTransition `protobuf:"bytes,116,opt,name=trigger_transition,json=TriggerTransition,proto3,oneof"`
 }
 
 type Node_JsonOutput struct {
-	JsonOutput *JsonOutput `protobuf:"bytes,115,opt,name=json_output,json=JsonOutput,proto3,oneof"`
+	JsonOutput *JsonOutput `protobuf:"bytes,117,opt,name=json_output,json=JsonOutput,proto3,oneof"`
 }
 
 type Node_JsonArgument struct {
-	JsonArgument *JsonArgument `protobuf:"bytes,116,opt,name=json_argument,json=JsonArgument,proto3,oneof"`
+	JsonArgument *JsonArgument `protobuf:"bytes,118,opt,name=json_argument,json=JsonArgument,proto3,oneof"`
 }
 
 type Node_JsonFuncExpr struct {
-	JsonFuncExpr *JsonFuncExpr `protobuf:"bytes,117,opt,name=json_func_expr,json=JsonFuncExpr,proto3,oneof"`
+	JsonFuncExpr *JsonFuncExpr `protobuf:"bytes,119,opt,name=json_func_expr,json=JsonFuncExpr,proto3,oneof"`
 }
 
 type Node_JsonTablePathSpec struct {
-	JsonTablePathSpec *JsonTablePathSpec `protobuf:"bytes,118,opt,name=json_table_path_spec,json=JsonTablePathSpec,proto3,oneof"`
+	JsonTablePathSpec *JsonTablePathSpec `protobuf:"bytes,120,opt,name=json_table_path_spec,json=JsonTablePathSpec,proto3,oneof"`
 }
 
 type Node_JsonTable struct {
-	JsonTable *JsonTable `protobuf:"bytes,119,opt,name=json_table,json=JsonTable,proto3,oneof"`
+	JsonTable *JsonTable `protobuf:"bytes,121,opt,name=json_table,json=JsonTable,proto3,oneof"`
 }
 
 type Node_JsonTableColumn struct {
-	JsonTableColumn *JsonTableColumn `protobuf:"bytes,120,opt,name=json_table_column,json=JsonTableColumn,proto3,oneof"`
+	JsonTableColumn *JsonTableColumn `protobuf:"bytes,122,opt,name=json_table_column,json=JsonTableColumn,proto3,oneof"`
 }
 
 type Node_JsonKeyValue struct {
-	JsonKeyValue *JsonKeyValue `protobuf:"bytes,121,opt,name=json_key_value,json=JsonKeyValue,proto3,oneof"`
+	JsonKeyValue *JsonKeyValue `protobuf:"bytes,123,opt,name=json_key_value,json=JsonKeyValue,proto3,oneof"`
 }
 
 type Node_JsonParseExpr struct {
-	JsonParseExpr *JsonParseExpr `protobuf:"bytes,122,opt,name=json_parse_expr,json=JsonParseExpr,proto3,oneof"`
+	JsonParseExpr *JsonParseExpr `protobuf:"bytes,124,opt,name=json_parse_expr,json=JsonParseExpr,proto3,oneof"`
 }
 
 type Node_JsonScalarExpr struct {
-	JsonScalarExpr *JsonScalarExpr `protobuf:"bytes,123,opt,name=json_scalar_expr,json=JsonScalarExpr,proto3,oneof"`
+	JsonScalarExpr *JsonScalarExpr `protobuf:"bytes,125,opt,name=json_scalar_expr,json=JsonScalarExpr,proto3,oneof"`
 }
 
 type Node_JsonSerializeExpr struct {
-	JsonSerializeExpr *JsonSerializeExpr `protobuf:"bytes,124,opt,name=json_serialize_expr,json=JsonSerializeExpr,proto3,oneof"`
+	JsonSerializeExpr *JsonSerializeExpr `protobuf:"bytes,126,opt,name=json_serialize_expr,json=JsonSerializeExpr,proto3,oneof"`
 }
 
 type Node_JsonObjectConstructor struct {
-	JsonObjectConstructor *JsonObjectConstructor `protobuf:"bytes,125,opt,name=json_object_constructor,json=JsonObjectConstructor,proto3,oneof"`
+	JsonObjectConstructor *JsonObjectConstructor `protobuf:"bytes,127,opt,name=json_object_constructor,json=JsonObjectConstructor,proto3,oneof"`
 }
 
 type Node_JsonArrayConstructor struct {
-	JsonArrayConstructor *JsonArrayConstructor `protobuf:"bytes,126,opt,name=json_array_constructor,json=JsonArrayConstructor,proto3,oneof"`
+	JsonArrayConstructor *JsonArrayConstructor `protobuf:"bytes,128,opt,name=json_array_constructor,json=JsonArrayConstructor,proto3,oneof"`
 }
 
 type Node_JsonArrayQueryConstructor struct {
-	JsonArrayQueryConstructor *JsonArrayQueryConstructor `protobuf:"bytes,127,opt,name=json_array_query_constructor,json=JsonArrayQueryConstructor,proto3,oneof"`
+	JsonArrayQueryConstructor *JsonArrayQueryConstructor `protobuf:"bytes,129,opt,name=json_array_query_constructor,json=JsonArrayQueryConstructor,proto3,oneof"`
 }
 
 type Node_JsonAggConstructor struct {
-	JsonAggConstructor *JsonAggConstructor `protobuf:"bytes,128,opt,name=json_agg_constructor,json=JsonAggConstructor,proto3,oneof"`
+	JsonAggConstructor *JsonAggConstructor `protobuf:"bytes,130,opt,name=json_agg_constructor,json=JsonAggConstructor,proto3,oneof"`
 }
 
 type Node_JsonObjectAgg struct {
-	JsonObjectAgg *JsonObjectAgg `protobuf:"bytes,129,opt,name=json_object_agg,json=JsonObjectAgg,proto3,oneof"`
+	JsonObjectAgg *JsonObjectAgg `protobuf:"bytes,131,opt,name=json_object_agg,json=JsonObjectAgg,proto3,oneof"`
 }
 
 type Node_JsonArrayAgg struct {
-	JsonArrayAgg *JsonArrayAgg `protobuf:"bytes,130,opt,name=json_array_agg,json=JsonArrayAgg,proto3,oneof"`
+	JsonArrayAgg *JsonArrayAgg `protobuf:"bytes,132,opt,name=json_array_agg,json=JsonArrayAgg,proto3,oneof"`
 }
 
 type Node_RawStmt struct {
-	RawStmt *RawStmt `protobuf:"bytes,131,opt,name=raw_stmt,json=RawStmt,proto3,oneof"`
+	RawStmt *RawStmt `protobuf:"bytes,133,opt,name=raw_stmt,json=RawStmt,proto3,oneof"`
 }
 
 type Node_InsertStmt struct {
-	InsertStmt *InsertStmt `protobuf:"bytes,132,opt,name=insert_stmt,json=InsertStmt,proto3,oneof"`
+	InsertStmt *InsertStmt `protobuf:"bytes,134,opt,name=insert_stmt,json=InsertStmt,proto3,oneof"`
 }
 
 type Node_DeleteStmt struct {
-	DeleteStmt *DeleteStmt `protobuf:"bytes,133,opt,name=delete_stmt,json=DeleteStmt,proto3,oneof"`
+	DeleteStmt *DeleteStmt `protobuf:"bytes,135,opt,name=delete_stmt,json=DeleteStmt,proto3,oneof"`
 }
 
 type Node_UpdateStmt struct {
-	UpdateStmt *UpdateStmt `protobuf:"bytes,134,opt,name=update_stmt,json=UpdateStmt,proto3,oneof"`
+	UpdateStmt *UpdateStmt `protobuf:"bytes,136,opt,name=update_stmt,json=UpdateStmt,proto3,oneof"`
 }
 
 type Node_MergeStmt struct {
-	MergeStmt *MergeStmt `protobuf:"bytes,135,opt,name=merge_stmt,json=MergeStmt,proto3,oneof"`
+	MergeStmt *MergeStmt `protobuf:"bytes,137,opt,name=merge_stmt,json=MergeStmt,proto3,oneof"`
 }
 
 type Node_SelectStmt struct {
-	SelectStmt *SelectStmt `protobuf:"bytes,136,opt,name=select_stmt,json=SelectStmt,proto3,oneof"`
+	SelectStmt *SelectStmt `protobuf:"bytes,138,opt,name=select_stmt,json=SelectStmt,proto3,oneof"`
 }
 
 type Node_SetOperationStmt struct {
-	SetOperationStmt *SetOperationStmt `protobuf:"bytes,137,opt,name=set_operation_stmt,json=SetOperationStmt,proto3,oneof"`
+	SetOperationStmt *SetOperationStmt `protobuf:"bytes,139,opt,name=set_operation_stmt,json=SetOperationStmt,proto3,oneof"`
 }
 
 type Node_ReturnStmt struct {
-	ReturnStmt *ReturnStmt `protobuf:"bytes,138,opt,name=return_stmt,json=ReturnStmt,proto3,oneof"`
+	ReturnStmt *ReturnStmt `protobuf:"bytes,140,opt,name=return_stmt,json=ReturnStmt,proto3,oneof"`
 }
 
 type Node_PlassignStmt struct {
-	PlassignStmt *PLAssignStmt `protobuf:"bytes,139,opt,name=plassign_stmt,json=PLAssignStmt,proto3,oneof"`
+	PlassignStmt *PLAssignStmt `protobuf:"bytes,141,opt,name=plassign_stmt,json=PLAssignStmt,proto3,oneof"`
 }
 
 type Node_CreateSchemaStmt struct {
-	CreateSchemaStmt *CreateSchemaStmt `protobuf:"bytes,140,opt,name=create_schema_stmt,json=CreateSchemaStmt,proto3,oneof"`
+	CreateSchemaStmt *CreateSchemaStmt `protobuf:"bytes,142,opt,name=create_schema_stmt,json=CreateSchemaStmt,proto3,oneof"`
 }
 
 type Node_AlterTableStmt struct {
-	AlterTableStmt *AlterTableStmt `protobuf:"bytes,141,opt,name=alter_table_stmt,json=AlterTableStmt,proto3,oneof"`
-}
-
-type Node_ReplicaIdentityStmt struct {
-	ReplicaIdentityStmt *ReplicaIdentityStmt `protobuf:"bytes,142,opt,name=replica_identity_stmt,json=ReplicaIdentityStmt,proto3,oneof"`
+	AlterTableStmt *AlterTableStmt `protobuf:"bytes,143,opt,name=alter_table_stmt,json=AlterTableStmt,proto3,oneof"`
 }
 
 type Node_AlterTableCmd struct {
-	AlterTableCmd *AlterTableCmd `protobuf:"bytes,143,opt,name=alter_table_cmd,json=AlterTableCmd,proto3,oneof"`
+	AlterTableCmd *AlterTableCmd `protobuf:"bytes,144,opt,name=alter_table_cmd,json=AlterTableCmd,proto3,oneof"`
+}
+
+type Node_AtalterConstraint struct {
+	AtalterConstraint *ATAlterConstraint `protobuf:"bytes,145,opt,name=atalter_constraint,json=ATAlterConstraint,proto3,oneof"`
+}
+
+type Node_ReplicaIdentityStmt struct {
+	ReplicaIdentityStmt *ReplicaIdentityStmt `protobuf:"bytes,146,opt,name=replica_identity_stmt,json=ReplicaIdentityStmt,proto3,oneof"`
 }
 
 type Node_AlterCollationStmt struct {
-	AlterCollationStmt *AlterCollationStmt `protobuf:"bytes,144,opt,name=alter_collation_stmt,json=AlterCollationStmt,proto3,oneof"`
+	AlterCollationStmt *AlterCollationStmt `protobuf:"bytes,147,opt,name=alter_collation_stmt,json=AlterCollationStmt,proto3,oneof"`
 }
 
 type Node_AlterDomainStmt struct {
-	AlterDomainStmt *AlterDomainStmt `protobuf:"bytes,145,opt,name=alter_domain_stmt,json=AlterDomainStmt,proto3,oneof"`
+	AlterDomainStmt *AlterDomainStmt `protobuf:"bytes,148,opt,name=alter_domain_stmt,json=AlterDomainStmt,proto3,oneof"`
 }
 
 type Node_GrantStmt struct {
-	GrantStmt *GrantStmt `protobuf:"bytes,146,opt,name=grant_stmt,json=GrantStmt,proto3,oneof"`
+	GrantStmt *GrantStmt `protobuf:"bytes,149,opt,name=grant_stmt,json=GrantStmt,proto3,oneof"`
 }
 
 type Node_ObjectWithArgs struct {
-	ObjectWithArgs *ObjectWithArgs `protobuf:"bytes,147,opt,name=object_with_args,json=ObjectWithArgs,proto3,oneof"`
+	ObjectWithArgs *ObjectWithArgs `protobuf:"bytes,150,opt,name=object_with_args,json=ObjectWithArgs,proto3,oneof"`
 }
 
 type Node_AccessPriv struct {
-	AccessPriv *AccessPriv `protobuf:"bytes,148,opt,name=access_priv,json=AccessPriv,proto3,oneof"`
+	AccessPriv *AccessPriv `protobuf:"bytes,151,opt,name=access_priv,json=AccessPriv,proto3,oneof"`
 }
 
 type Node_GrantRoleStmt struct {
-	GrantRoleStmt *GrantRoleStmt `protobuf:"bytes,149,opt,name=grant_role_stmt,json=GrantRoleStmt,proto3,oneof"`
+	GrantRoleStmt *GrantRoleStmt `protobuf:"bytes,152,opt,name=grant_role_stmt,json=GrantRoleStmt,proto3,oneof"`
 }
 
 type Node_AlterDefaultPrivilegesStmt struct {
-	AlterDefaultPrivilegesStmt *AlterDefaultPrivilegesStmt `protobuf:"bytes,150,opt,name=alter_default_privileges_stmt,json=AlterDefaultPrivilegesStmt,proto3,oneof"`
+	AlterDefaultPrivilegesStmt *AlterDefaultPrivilegesStmt `protobuf:"bytes,153,opt,name=alter_default_privileges_stmt,json=AlterDefaultPrivilegesStmt,proto3,oneof"`
 }
 
 type Node_CopyStmt struct {
-	CopyStmt *CopyStmt `protobuf:"bytes,151,opt,name=copy_stmt,json=CopyStmt,proto3,oneof"`
+	CopyStmt *CopyStmt `protobuf:"bytes,154,opt,name=copy_stmt,json=CopyStmt,proto3,oneof"`
 }
 
 type Node_VariableSetStmt struct {
-	VariableSetStmt *VariableSetStmt `protobuf:"bytes,152,opt,name=variable_set_stmt,json=VariableSetStmt,proto3,oneof"`
+	VariableSetStmt *VariableSetStmt `protobuf:"bytes,155,opt,name=variable_set_stmt,json=VariableSetStmt,proto3,oneof"`
 }
 
 type Node_VariableShowStmt struct {
-	VariableShowStmt *VariableShowStmt `protobuf:"bytes,153,opt,name=variable_show_stmt,json=VariableShowStmt,proto3,oneof"`
+	VariableShowStmt *VariableShowStmt `protobuf:"bytes,156,opt,name=variable_show_stmt,json=VariableShowStmt,proto3,oneof"`
 }
 
 type Node_CreateStmt struct {
-	CreateStmt *CreateStmt `protobuf:"bytes,154,opt,name=create_stmt,json=CreateStmt,proto3,oneof"`
+	CreateStmt *CreateStmt `protobuf:"bytes,157,opt,name=create_stmt,json=CreateStmt,proto3,oneof"`
 }
 
 type Node_Constraint struct {
-	Constraint *Constraint `protobuf:"bytes,155,opt,name=constraint,json=Constraint,proto3,oneof"`
+	Constraint *Constraint `protobuf:"bytes,158,opt,name=constraint,json=Constraint,proto3,oneof"`
 }
 
 type Node_CreateTableSpaceStmt struct {
-	CreateTableSpaceStmt *CreateTableSpaceStmt `protobuf:"bytes,156,opt,name=create_table_space_stmt,json=CreateTableSpaceStmt,proto3,oneof"`
+	CreateTableSpaceStmt *CreateTableSpaceStmt `protobuf:"bytes,159,opt,name=create_table_space_stmt,json=CreateTableSpaceStmt,proto3,oneof"`
 }
 
 type Node_DropTableSpaceStmt struct {
-	DropTableSpaceStmt *DropTableSpaceStmt `protobuf:"bytes,157,opt,name=drop_table_space_stmt,json=DropTableSpaceStmt,proto3,oneof"`
+	DropTableSpaceStmt *DropTableSpaceStmt `protobuf:"bytes,160,opt,name=drop_table_space_stmt,json=DropTableSpaceStmt,proto3,oneof"`
 }
 
 type Node_AlterTableSpaceOptionsStmt struct {
-	AlterTableSpaceOptionsStmt *AlterTableSpaceOptionsStmt `protobuf:"bytes,158,opt,name=alter_table_space_options_stmt,json=AlterTableSpaceOptionsStmt,proto3,oneof"`
+	AlterTableSpaceOptionsStmt *AlterTableSpaceOptionsStmt `protobuf:"bytes,161,opt,name=alter_table_space_options_stmt,json=AlterTableSpaceOptionsStmt,proto3,oneof"`
 }
 
 type Node_AlterTableMoveAllStmt struct {
-	AlterTableMoveAllStmt *AlterTableMoveAllStmt `protobuf:"bytes,159,opt,name=alter_table_move_all_stmt,json=AlterTableMoveAllStmt,proto3,oneof"`
+	AlterTableMoveAllStmt *AlterTableMoveAllStmt `protobuf:"bytes,162,opt,name=alter_table_move_all_stmt,json=AlterTableMoveAllStmt,proto3,oneof"`
 }
 
 type Node_CreateExtensionStmt struct {
-	CreateExtensionStmt *CreateExtensionStmt `protobuf:"bytes,160,opt,name=create_extension_stmt,json=CreateExtensionStmt,proto3,oneof"`
+	CreateExtensionStmt *CreateExtensionStmt `protobuf:"bytes,163,opt,name=create_extension_stmt,json=CreateExtensionStmt,proto3,oneof"`
 }
 
 type Node_AlterExtensionStmt struct {
-	AlterExtensionStmt *AlterExtensionStmt `protobuf:"bytes,161,opt,name=alter_extension_stmt,json=AlterExtensionStmt,proto3,oneof"`
+	AlterExtensionStmt *AlterExtensionStmt `protobuf:"bytes,164,opt,name=alter_extension_stmt,json=AlterExtensionStmt,proto3,oneof"`
 }
 
 type Node_AlterExtensionContentsStmt struct {
-	AlterExtensionContentsStmt *AlterExtensionContentsStmt `protobuf:"bytes,162,opt,name=alter_extension_contents_stmt,json=AlterExtensionContentsStmt,proto3,oneof"`
+	AlterExtensionContentsStmt *AlterExtensionContentsStmt `protobuf:"bytes,165,opt,name=alter_extension_contents_stmt,json=AlterExtensionContentsStmt,proto3,oneof"`
 }
 
 type Node_CreateFdwStmt struct {
-	CreateFdwStmt *CreateFdwStmt `protobuf:"bytes,163,opt,name=create_fdw_stmt,json=CreateFdwStmt,proto3,oneof"`
+	CreateFdwStmt *CreateFdwStmt `protobuf:"bytes,166,opt,name=create_fdw_stmt,json=CreateFdwStmt,proto3,oneof"`
 }
 
 type Node_AlterFdwStmt struct {
-	AlterFdwStmt *AlterFdwStmt `protobuf:"bytes,164,opt,name=alter_fdw_stmt,json=AlterFdwStmt,proto3,oneof"`
+	AlterFdwStmt *AlterFdwStmt `protobuf:"bytes,167,opt,name=alter_fdw_stmt,json=AlterFdwStmt,proto3,oneof"`
 }
 
 type Node_CreateForeignServerStmt struct {
-	CreateForeignServerStmt *CreateForeignServerStmt `protobuf:"bytes,165,opt,name=create_foreign_server_stmt,json=CreateForeignServerStmt,proto3,oneof"`
+	CreateForeignServerStmt *CreateForeignServerStmt `protobuf:"bytes,168,opt,name=create_foreign_server_stmt,json=CreateForeignServerStmt,proto3,oneof"`
 }
 
 type Node_AlterForeignServerStmt struct {
-	AlterForeignServerStmt *AlterForeignServerStmt `protobuf:"bytes,166,opt,name=alter_foreign_server_stmt,json=AlterForeignServerStmt,proto3,oneof"`
+	AlterForeignServerStmt *AlterForeignServerStmt `protobuf:"bytes,169,opt,name=alter_foreign_server_stmt,json=AlterForeignServerStmt,proto3,oneof"`
 }
 
 type Node_CreateForeignTableStmt struct {
-	CreateForeignTableStmt *CreateForeignTableStmt `protobuf:"bytes,167,opt,name=create_foreign_table_stmt,json=CreateForeignTableStmt,proto3,oneof"`
+	CreateForeignTableStmt *CreateForeignTableStmt `protobuf:"bytes,170,opt,name=create_foreign_table_stmt,json=CreateForeignTableStmt,proto3,oneof"`
 }
 
 type Node_CreateUserMappingStmt struct {
-	CreateUserMappingStmt *CreateUserMappingStmt `protobuf:"bytes,168,opt,name=create_user_mapping_stmt,json=CreateUserMappingStmt,proto3,oneof"`
+	CreateUserMappingStmt *CreateUserMappingStmt `protobuf:"bytes,171,opt,name=create_user_mapping_stmt,json=CreateUserMappingStmt,proto3,oneof"`
 }
 
 type Node_AlterUserMappingStmt struct {
-	AlterUserMappingStmt *AlterUserMappingStmt `protobuf:"bytes,169,opt,name=alter_user_mapping_stmt,json=AlterUserMappingStmt,proto3,oneof"`
+	AlterUserMappingStmt *AlterUserMappingStmt `protobuf:"bytes,172,opt,name=alter_user_mapping_stmt,json=AlterUserMappingStmt,proto3,oneof"`
 }
 
 type Node_DropUserMappingStmt struct {
-	DropUserMappingStmt *DropUserMappingStmt `protobuf:"bytes,170,opt,name=drop_user_mapping_stmt,json=DropUserMappingStmt,proto3,oneof"`
+	DropUserMappingStmt *DropUserMappingStmt `protobuf:"bytes,173,opt,name=drop_user_mapping_stmt,json=DropUserMappingStmt,proto3,oneof"`
 }
 
 type Node_ImportForeignSchemaStmt struct {
-	ImportForeignSchemaStmt *ImportForeignSchemaStmt `protobuf:"bytes,171,opt,name=import_foreign_schema_stmt,json=ImportForeignSchemaStmt,proto3,oneof"`
+	ImportForeignSchemaStmt *ImportForeignSchemaStmt `protobuf:"bytes,174,opt,name=import_foreign_schema_stmt,json=ImportForeignSchemaStmt,proto3,oneof"`
 }
 
 type Node_CreatePolicyStmt struct {
-	CreatePolicyStmt *CreatePolicyStmt `protobuf:"bytes,172,opt,name=create_policy_stmt,json=CreatePolicyStmt,proto3,oneof"`
+	CreatePolicyStmt *CreatePolicyStmt `protobuf:"bytes,175,opt,name=create_policy_stmt,json=CreatePolicyStmt,proto3,oneof"`
 }
 
 type Node_AlterPolicyStmt struct {
-	AlterPolicyStmt *AlterPolicyStmt `protobuf:"bytes,173,opt,name=alter_policy_stmt,json=AlterPolicyStmt,proto3,oneof"`
+	AlterPolicyStmt *AlterPolicyStmt `protobuf:"bytes,176,opt,name=alter_policy_stmt,json=AlterPolicyStmt,proto3,oneof"`
 }
 
 type Node_CreateAmStmt struct {
-	CreateAmStmt *CreateAmStmt `protobuf:"bytes,174,opt,name=create_am_stmt,json=CreateAmStmt,proto3,oneof"`
+	CreateAmStmt *CreateAmStmt `protobuf:"bytes,177,opt,name=create_am_stmt,json=CreateAmStmt,proto3,oneof"`
 }
 
 type Node_CreateTrigStmt struct {
-	CreateTrigStmt *CreateTrigStmt `protobuf:"bytes,175,opt,name=create_trig_stmt,json=CreateTrigStmt,proto3,oneof"`
+	CreateTrigStmt *CreateTrigStmt `protobuf:"bytes,178,opt,name=create_trig_stmt,json=CreateTrigStmt,proto3,oneof"`
 }
 
 type Node_CreateEventTrigStmt struct {
-	CreateEventTrigStmt *CreateEventTrigStmt `protobuf:"bytes,176,opt,name=create_event_trig_stmt,json=CreateEventTrigStmt,proto3,oneof"`
+	CreateEventTrigStmt *CreateEventTrigStmt `protobuf:"bytes,179,opt,name=create_event_trig_stmt,json=CreateEventTrigStmt,proto3,oneof"`
 }
 
 type Node_AlterEventTrigStmt struct {
-	AlterEventTrigStmt *AlterEventTrigStmt `protobuf:"bytes,177,opt,name=alter_event_trig_stmt,json=AlterEventTrigStmt,proto3,oneof"`
+	AlterEventTrigStmt *AlterEventTrigStmt `protobuf:"bytes,180,opt,name=alter_event_trig_stmt,json=AlterEventTrigStmt,proto3,oneof"`
 }
 
 type Node_CreatePlangStmt struct {
-	CreatePlangStmt *CreatePLangStmt `protobuf:"bytes,178,opt,name=create_plang_stmt,json=CreatePLangStmt,proto3,oneof"`
+	CreatePlangStmt *CreatePLangStmt `protobuf:"bytes,181,opt,name=create_plang_stmt,json=CreatePLangStmt,proto3,oneof"`
 }
 
 type Node_CreateRoleStmt struct {
-	CreateRoleStmt *CreateRoleStmt `protobuf:"bytes,179,opt,name=create_role_stmt,json=CreateRoleStmt,proto3,oneof"`
+	CreateRoleStmt *CreateRoleStmt `protobuf:"bytes,182,opt,name=create_role_stmt,json=CreateRoleStmt,proto3,oneof"`
 }
 
 type Node_AlterRoleStmt struct {
-	AlterRoleStmt *AlterRoleStmt `protobuf:"bytes,180,opt,name=alter_role_stmt,json=AlterRoleStmt,proto3,oneof"`
+	AlterRoleStmt *AlterRoleStmt `protobuf:"bytes,183,opt,name=alter_role_stmt,json=AlterRoleStmt,proto3,oneof"`
 }
 
 type Node_AlterRoleSetStmt struct {
-	AlterRoleSetStmt *AlterRoleSetStmt `protobuf:"bytes,181,opt,name=alter_role_set_stmt,json=AlterRoleSetStmt,proto3,oneof"`
+	AlterRoleSetStmt *AlterRoleSetStmt `protobuf:"bytes,184,opt,name=alter_role_set_stmt,json=AlterRoleSetStmt,proto3,oneof"`
 }
 
 type Node_DropRoleStmt struct {
-	DropRoleStmt *DropRoleStmt `protobuf:"bytes,182,opt,name=drop_role_stmt,json=DropRoleStmt,proto3,oneof"`
+	DropRoleStmt *DropRoleStmt `protobuf:"bytes,185,opt,name=drop_role_stmt,json=DropRoleStmt,proto3,oneof"`
 }
 
 type Node_CreateSeqStmt struct {
-	CreateSeqStmt *CreateSeqStmt `protobuf:"bytes,183,opt,name=create_seq_stmt,json=CreateSeqStmt,proto3,oneof"`
+	CreateSeqStmt *CreateSeqStmt `protobuf:"bytes,186,opt,name=create_seq_stmt,json=CreateSeqStmt,proto3,oneof"`
 }
 
 type Node_AlterSeqStmt struct {
-	AlterSeqStmt *AlterSeqStmt `protobuf:"bytes,184,opt,name=alter_seq_stmt,json=AlterSeqStmt,proto3,oneof"`
+	AlterSeqStmt *AlterSeqStmt `protobuf:"bytes,187,opt,name=alter_seq_stmt,json=AlterSeqStmt,proto3,oneof"`
 }
 
 type Node_DefineStmt struct {
-	DefineStmt *DefineStmt `protobuf:"bytes,185,opt,name=define_stmt,json=DefineStmt,proto3,oneof"`
+	DefineStmt *DefineStmt `protobuf:"bytes,188,opt,name=define_stmt,json=DefineStmt,proto3,oneof"`
 }
 
 type Node_CreateDomainStmt struct {
-	CreateDomainStmt *CreateDomainStmt `protobuf:"bytes,186,opt,name=create_domain_stmt,json=CreateDomainStmt,proto3,oneof"`
+	CreateDomainStmt *CreateDomainStmt `protobuf:"bytes,189,opt,name=create_domain_stmt,json=CreateDomainStmt,proto3,oneof"`
 }
 
 type Node_CreateOpClassStmt struct {
-	CreateOpClassStmt *CreateOpClassStmt `protobuf:"bytes,187,opt,name=create_op_class_stmt,json=CreateOpClassStmt,proto3,oneof"`
+	CreateOpClassStmt *CreateOpClassStmt `protobuf:"bytes,190,opt,name=create_op_class_stmt,json=CreateOpClassStmt,proto3,oneof"`
 }
 
 type Node_CreateOpClassItem struct {
-	CreateOpClassItem *CreateOpClassItem `protobuf:"bytes,188,opt,name=create_op_class_item,json=CreateOpClassItem,proto3,oneof"`
+	CreateOpClassItem *CreateOpClassItem `protobuf:"bytes,191,opt,name=create_op_class_item,json=CreateOpClassItem,proto3,oneof"`
 }
 
 type Node_CreateOpFamilyStmt struct {
-	CreateOpFamilyStmt *CreateOpFamilyStmt `protobuf:"bytes,189,opt,name=create_op_family_stmt,json=CreateOpFamilyStmt,proto3,oneof"`
+	CreateOpFamilyStmt *CreateOpFamilyStmt `protobuf:"bytes,192,opt,name=create_op_family_stmt,json=CreateOpFamilyStmt,proto3,oneof"`
 }
 
 type Node_AlterOpFamilyStmt struct {
-	AlterOpFamilyStmt *AlterOpFamilyStmt `protobuf:"bytes,190,opt,name=alter_op_family_stmt,json=AlterOpFamilyStmt,proto3,oneof"`
+	AlterOpFamilyStmt *AlterOpFamilyStmt `protobuf:"bytes,193,opt,name=alter_op_family_stmt,json=AlterOpFamilyStmt,proto3,oneof"`
 }
 
 type Node_DropStmt struct {
-	DropStmt *DropStmt `protobuf:"bytes,191,opt,name=drop_stmt,json=DropStmt,proto3,oneof"`
+	DropStmt *DropStmt `protobuf:"bytes,194,opt,name=drop_stmt,json=DropStmt,proto3,oneof"`
 }
 
 type Node_TruncateStmt struct {
-	TruncateStmt *TruncateStmt `protobuf:"bytes,192,opt,name=truncate_stmt,json=TruncateStmt,proto3,oneof"`
+	TruncateStmt *TruncateStmt `protobuf:"bytes,195,opt,name=truncate_stmt,json=TruncateStmt,proto3,oneof"`
 }
 
 type Node_CommentStmt struct {
-	CommentStmt *CommentStmt `protobuf:"bytes,193,opt,name=comment_stmt,json=CommentStmt,proto3,oneof"`
+	CommentStmt *CommentStmt `protobuf:"bytes,196,opt,name=comment_stmt,json=CommentStmt,proto3,oneof"`
 }
 
 type Node_SecLabelStmt struct {
-	SecLabelStmt *SecLabelStmt `protobuf:"bytes,194,opt,name=sec_label_stmt,json=SecLabelStmt,proto3,oneof"`
+	SecLabelStmt *SecLabelStmt `protobuf:"bytes,197,opt,name=sec_label_stmt,json=SecLabelStmt,proto3,oneof"`
 }
 
 type Node_DeclareCursorStmt struct {
-	DeclareCursorStmt *DeclareCursorStmt `protobuf:"bytes,195,opt,name=declare_cursor_stmt,json=DeclareCursorStmt,proto3,oneof"`
+	DeclareCursorStmt *DeclareCursorStmt `protobuf:"bytes,198,opt,name=declare_cursor_stmt,json=DeclareCursorStmt,proto3,oneof"`
 }
 
 type Node_ClosePortalStmt struct {
-	ClosePortalStmt *ClosePortalStmt `protobuf:"bytes,196,opt,name=close_portal_stmt,json=ClosePortalStmt,proto3,oneof"`
+	ClosePortalStmt *ClosePortalStmt `protobuf:"bytes,199,opt,name=close_portal_stmt,json=ClosePortalStmt,proto3,oneof"`
 }
 
 type Node_FetchStmt struct {
-	FetchStmt *FetchStmt `protobuf:"bytes,197,opt,name=fetch_stmt,json=FetchStmt,proto3,oneof"`
+	FetchStmt *FetchStmt `protobuf:"bytes,200,opt,name=fetch_stmt,json=FetchStmt,proto3,oneof"`
 }
 
 type Node_IndexStmt struct {
-	IndexStmt *IndexStmt `protobuf:"bytes,198,opt,name=index_stmt,json=IndexStmt,proto3,oneof"`
+	IndexStmt *IndexStmt `protobuf:"bytes,201,opt,name=index_stmt,json=IndexStmt,proto3,oneof"`
 }
 
 type Node_CreateStatsStmt struct {
-	CreateStatsStmt *CreateStatsStmt `protobuf:"bytes,199,opt,name=create_stats_stmt,json=CreateStatsStmt,proto3,oneof"`
+	CreateStatsStmt *CreateStatsStmt `protobuf:"bytes,202,opt,name=create_stats_stmt,json=CreateStatsStmt,proto3,oneof"`
 }
 
 type Node_StatsElem struct {
-	StatsElem *StatsElem `protobuf:"bytes,200,opt,name=stats_elem,json=StatsElem,proto3,oneof"`
+	StatsElem *StatsElem `protobuf:"bytes,203,opt,name=stats_elem,json=StatsElem,proto3,oneof"`
 }
 
 type Node_AlterStatsStmt struct {
-	AlterStatsStmt *AlterStatsStmt `protobuf:"bytes,201,opt,name=alter_stats_stmt,json=AlterStatsStmt,proto3,oneof"`
+	AlterStatsStmt *AlterStatsStmt `protobuf:"bytes,204,opt,name=alter_stats_stmt,json=AlterStatsStmt,proto3,oneof"`
 }
 
 type Node_CreateFunctionStmt struct {
-	CreateFunctionStmt *CreateFunctionStmt `protobuf:"bytes,202,opt,name=create_function_stmt,json=CreateFunctionStmt,proto3,oneof"`
+	CreateFunctionStmt *CreateFunctionStmt `protobuf:"bytes,205,opt,name=create_function_stmt,json=CreateFunctionStmt,proto3,oneof"`
 }
 
 type Node_FunctionParameter struct {
-	FunctionParameter *FunctionParameter `protobuf:"bytes,203,opt,name=function_parameter,json=FunctionParameter,proto3,oneof"`
+	FunctionParameter *FunctionParameter `protobuf:"bytes,206,opt,name=function_parameter,json=FunctionParameter,proto3,oneof"`
 }
 
 type Node_AlterFunctionStmt struct {
-	AlterFunctionStmt *AlterFunctionStmt `protobuf:"bytes,204,opt,name=alter_function_stmt,json=AlterFunctionStmt,proto3,oneof"`
+	AlterFunctionStmt *AlterFunctionStmt `protobuf:"bytes,207,opt,name=alter_function_stmt,json=AlterFunctionStmt,proto3,oneof"`
 }
 
 type Node_DoStmt struct {
-	DoStmt *DoStmt `protobuf:"bytes,205,opt,name=do_stmt,json=DoStmt,proto3,oneof"`
+	DoStmt *DoStmt `protobuf:"bytes,208,opt,name=do_stmt,json=DoStmt,proto3,oneof"`
 }
 
 type Node_InlineCodeBlock struct {
-	InlineCodeBlock *InlineCodeBlock `protobuf:"bytes,206,opt,name=inline_code_block,json=InlineCodeBlock,proto3,oneof"`
+	InlineCodeBlock *InlineCodeBlock `protobuf:"bytes,209,opt,name=inline_code_block,json=InlineCodeBlock,proto3,oneof"`
 }
 
 type Node_CallStmt struct {
-	CallStmt *CallStmt `protobuf:"bytes,207,opt,name=call_stmt,json=CallStmt,proto3,oneof"`
+	CallStmt *CallStmt `protobuf:"bytes,210,opt,name=call_stmt,json=CallStmt,proto3,oneof"`
 }
 
 type Node_CallContext struct {
-	CallContext *CallContext `protobuf:"bytes,208,opt,name=call_context,json=CallContext,proto3,oneof"`
+	CallContext *CallContext `protobuf:"bytes,211,opt,name=call_context,json=CallContext,proto3,oneof"`
 }
 
 type Node_RenameStmt struct {
-	RenameStmt *RenameStmt `protobuf:"bytes,209,opt,name=rename_stmt,json=RenameStmt,proto3,oneof"`
+	RenameStmt *RenameStmt `protobuf:"bytes,212,opt,name=rename_stmt,json=RenameStmt,proto3,oneof"`
 }
 
 type Node_AlterObjectDependsStmt struct {
-	AlterObjectDependsStmt *AlterObjectDependsStmt `protobuf:"bytes,210,opt,name=alter_object_depends_stmt,json=AlterObjectDependsStmt,proto3,oneof"`
+	AlterObjectDependsStmt *AlterObjectDependsStmt `protobuf:"bytes,213,opt,name=alter_object_depends_stmt,json=AlterObjectDependsStmt,proto3,oneof"`
 }
 
 type Node_AlterObjectSchemaStmt struct {
-	AlterObjectSchemaStmt *AlterObjectSchemaStmt `protobuf:"bytes,211,opt,name=alter_object_schema_stmt,json=AlterObjectSchemaStmt,proto3,oneof"`
+	AlterObjectSchemaStmt *AlterObjectSchemaStmt `protobuf:"bytes,214,opt,name=alter_object_schema_stmt,json=AlterObjectSchemaStmt,proto3,oneof"`
 }
 
 type Node_AlterOwnerStmt struct {
-	AlterOwnerStmt *AlterOwnerStmt `protobuf:"bytes,212,opt,name=alter_owner_stmt,json=AlterOwnerStmt,proto3,oneof"`
+	AlterOwnerStmt *AlterOwnerStmt `protobuf:"bytes,215,opt,name=alter_owner_stmt,json=AlterOwnerStmt,proto3,oneof"`
 }
 
 type Node_AlterOperatorStmt struct {
-	AlterOperatorStmt *AlterOperatorStmt `protobuf:"bytes,213,opt,name=alter_operator_stmt,json=AlterOperatorStmt,proto3,oneof"`
+	AlterOperatorStmt *AlterOperatorStmt `protobuf:"bytes,216,opt,name=alter_operator_stmt,json=AlterOperatorStmt,proto3,oneof"`
 }
 
 type Node_AlterTypeStmt struct {
-	AlterTypeStmt *AlterTypeStmt `protobuf:"bytes,214,opt,name=alter_type_stmt,json=AlterTypeStmt,proto3,oneof"`
+	AlterTypeStmt *AlterTypeStmt `protobuf:"bytes,217,opt,name=alter_type_stmt,json=AlterTypeStmt,proto3,oneof"`
 }
 
 type Node_RuleStmt struct {
-	RuleStmt *RuleStmt `protobuf:"bytes,215,opt,name=rule_stmt,json=RuleStmt,proto3,oneof"`
+	RuleStmt *RuleStmt `protobuf:"bytes,218,opt,name=rule_stmt,json=RuleStmt,proto3,oneof"`
 }
 
 type Node_NotifyStmt struct {
-	NotifyStmt *NotifyStmt `protobuf:"bytes,216,opt,name=notify_stmt,json=NotifyStmt,proto3,oneof"`
+	NotifyStmt *NotifyStmt `protobuf:"bytes,219,opt,name=notify_stmt,json=NotifyStmt,proto3,oneof"`
 }
 
 type Node_ListenStmt struct {
-	ListenStmt *ListenStmt `protobuf:"bytes,217,opt,name=listen_stmt,json=ListenStmt,proto3,oneof"`
+	ListenStmt *ListenStmt `protobuf:"bytes,220,opt,name=listen_stmt,json=ListenStmt,proto3,oneof"`
 }
 
 type Node_UnlistenStmt struct {
-	UnlistenStmt *UnlistenStmt `protobuf:"bytes,218,opt,name=unlisten_stmt,json=UnlistenStmt,proto3,oneof"`
+	UnlistenStmt *UnlistenStmt `protobuf:"bytes,221,opt,name=unlisten_stmt,json=UnlistenStmt,proto3,oneof"`
 }
 
 type Node_TransactionStmt struct {
-	TransactionStmt *TransactionStmt `protobuf:"bytes,219,opt,name=transaction_stmt,json=TransactionStmt,proto3,oneof"`
+	TransactionStmt *TransactionStmt `protobuf:"bytes,222,opt,name=transaction_stmt,json=TransactionStmt,proto3,oneof"`
 }
 
 type Node_CompositeTypeStmt struct {
-	CompositeTypeStmt *CompositeTypeStmt `protobuf:"bytes,220,opt,name=composite_type_stmt,json=CompositeTypeStmt,proto3,oneof"`
+	CompositeTypeStmt *CompositeTypeStmt `protobuf:"bytes,223,opt,name=composite_type_stmt,json=CompositeTypeStmt,proto3,oneof"`
 }
 
 type Node_CreateEnumStmt struct {
-	CreateEnumStmt *CreateEnumStmt `protobuf:"bytes,221,opt,name=create_enum_stmt,json=CreateEnumStmt,proto3,oneof"`
+	CreateEnumStmt *CreateEnumStmt `protobuf:"bytes,224,opt,name=create_enum_stmt,json=CreateEnumStmt,proto3,oneof"`
 }
 
 type Node_CreateRangeStmt struct {
-	CreateRangeStmt *CreateRangeStmt `protobuf:"bytes,222,opt,name=create_range_stmt,json=CreateRangeStmt,proto3,oneof"`
+	CreateRangeStmt *CreateRangeStmt `protobuf:"bytes,225,opt,name=create_range_stmt,json=CreateRangeStmt,proto3,oneof"`
 }
 
 type Node_AlterEnumStmt struct {
-	AlterEnumStmt *AlterEnumStmt `protobuf:"bytes,223,opt,name=alter_enum_stmt,json=AlterEnumStmt,proto3,oneof"`
+	AlterEnumStmt *AlterEnumStmt `protobuf:"bytes,226,opt,name=alter_enum_stmt,json=AlterEnumStmt,proto3,oneof"`
 }
 
 type Node_ViewStmt struct {
-	ViewStmt *ViewStmt `protobuf:"bytes,224,opt,name=view_stmt,json=ViewStmt,proto3,oneof"`
+	ViewStmt *ViewStmt `protobuf:"bytes,227,opt,name=view_stmt,json=ViewStmt,proto3,oneof"`
 }
 
 type Node_LoadStmt struct {
-	LoadStmt *LoadStmt `protobuf:"bytes,225,opt,name=load_stmt,json=LoadStmt,proto3,oneof"`
+	LoadStmt *LoadStmt `protobuf:"bytes,228,opt,name=load_stmt,json=LoadStmt,proto3,oneof"`
 }
 
 type Node_CreatedbStmt struct {
-	CreatedbStmt *CreatedbStmt `protobuf:"bytes,226,opt,name=createdb_stmt,json=CreatedbStmt,proto3,oneof"`
+	CreatedbStmt *CreatedbStmt `protobuf:"bytes,229,opt,name=createdb_stmt,json=CreatedbStmt,proto3,oneof"`
 }
 
 type Node_AlterDatabaseStmt struct {
-	AlterDatabaseStmt *AlterDatabaseStmt `protobuf:"bytes,227,opt,name=alter_database_stmt,json=AlterDatabaseStmt,proto3,oneof"`
+	AlterDatabaseStmt *AlterDatabaseStmt `protobuf:"bytes,230,opt,name=alter_database_stmt,json=AlterDatabaseStmt,proto3,oneof"`
 }
 
 type Node_AlterDatabaseRefreshCollStmt struct {
-	AlterDatabaseRefreshCollStmt *AlterDatabaseRefreshCollStmt `protobuf:"bytes,228,opt,name=alter_database_refresh_coll_stmt,json=AlterDatabaseRefreshCollStmt,proto3,oneof"`
+	AlterDatabaseRefreshCollStmt *AlterDatabaseRefreshCollStmt `protobuf:"bytes,231,opt,name=alter_database_refresh_coll_stmt,json=AlterDatabaseRefreshCollStmt,proto3,oneof"`
 }
 
 type Node_AlterDatabaseSetStmt struct {
-	AlterDatabaseSetStmt *AlterDatabaseSetStmt `protobuf:"bytes,229,opt,name=alter_database_set_stmt,json=AlterDatabaseSetStmt,proto3,oneof"`
+	AlterDatabaseSetStmt *AlterDatabaseSetStmt `protobuf:"bytes,232,opt,name=alter_database_set_stmt,json=AlterDatabaseSetStmt,proto3,oneof"`
 }
 
 type Node_DropdbStmt struct {
-	DropdbStmt *DropdbStmt `protobuf:"bytes,230,opt,name=dropdb_stmt,json=DropdbStmt,proto3,oneof"`
+	DropdbStmt *DropdbStmt `protobuf:"bytes,233,opt,name=dropdb_stmt,json=DropdbStmt,proto3,oneof"`
 }
 
 type Node_AlterSystemStmt struct {
-	AlterSystemStmt *AlterSystemStmt `protobuf:"bytes,231,opt,name=alter_system_stmt,json=AlterSystemStmt,proto3,oneof"`
+	AlterSystemStmt *AlterSystemStmt `protobuf:"bytes,234,opt,name=alter_system_stmt,json=AlterSystemStmt,proto3,oneof"`
 }
 
 type Node_ClusterStmt struct {
-	ClusterStmt *ClusterStmt `protobuf:"bytes,232,opt,name=cluster_stmt,json=ClusterStmt,proto3,oneof"`
+	ClusterStmt *ClusterStmt `protobuf:"bytes,235,opt,name=cluster_stmt,json=ClusterStmt,proto3,oneof"`
 }
 
 type Node_VacuumStmt struct {
-	VacuumStmt *VacuumStmt `protobuf:"bytes,233,opt,name=vacuum_stmt,json=VacuumStmt,proto3,oneof"`
+	VacuumStmt *VacuumStmt `protobuf:"bytes,236,opt,name=vacuum_stmt,json=VacuumStmt,proto3,oneof"`
 }
 
 type Node_VacuumRelation struct {
-	VacuumRelation *VacuumRelation `protobuf:"bytes,234,opt,name=vacuum_relation,json=VacuumRelation,proto3,oneof"`
+	VacuumRelation *VacuumRelation `protobuf:"bytes,237,opt,name=vacuum_relation,json=VacuumRelation,proto3,oneof"`
 }
 
 type Node_ExplainStmt struct {
-	ExplainStmt *ExplainStmt `protobuf:"bytes,235,opt,name=explain_stmt,json=ExplainStmt,proto3,oneof"`
+	ExplainStmt *ExplainStmt `protobuf:"bytes,238,opt,name=explain_stmt,json=ExplainStmt,proto3,oneof"`
 }
 
 type Node_CreateTableAsStmt struct {
-	CreateTableAsStmt *CreateTableAsStmt `protobuf:"bytes,236,opt,name=create_table_as_stmt,json=CreateTableAsStmt,proto3,oneof"`
+	CreateTableAsStmt *CreateTableAsStmt `protobuf:"bytes,239,opt,name=create_table_as_stmt,json=CreateTableAsStmt,proto3,oneof"`
 }
 
 type Node_RefreshMatViewStmt struct {
-	RefreshMatViewStmt *RefreshMatViewStmt `protobuf:"bytes,237,opt,name=refresh_mat_view_stmt,json=RefreshMatViewStmt,proto3,oneof"`
+	RefreshMatViewStmt *RefreshMatViewStmt `protobuf:"bytes,240,opt,name=refresh_mat_view_stmt,json=RefreshMatViewStmt,proto3,oneof"`
 }
 
 type Node_CheckPointStmt struct {
-	CheckPointStmt *CheckPointStmt `protobuf:"bytes,238,opt,name=check_point_stmt,json=CheckPointStmt,proto3,oneof"`
+	CheckPointStmt *CheckPointStmt `protobuf:"bytes,241,opt,name=check_point_stmt,json=CheckPointStmt,proto3,oneof"`
 }
 
 type Node_DiscardStmt struct {
-	DiscardStmt *DiscardStmt `protobuf:"bytes,239,opt,name=discard_stmt,json=DiscardStmt,proto3,oneof"`
+	DiscardStmt *DiscardStmt `protobuf:"bytes,242,opt,name=discard_stmt,json=DiscardStmt,proto3,oneof"`
 }
 
 type Node_LockStmt struct {
-	LockStmt *LockStmt `protobuf:"bytes,240,opt,name=lock_stmt,json=LockStmt,proto3,oneof"`
+	LockStmt *LockStmt `protobuf:"bytes,243,opt,name=lock_stmt,json=LockStmt,proto3,oneof"`
 }
 
 type Node_ConstraintsSetStmt struct {
-	ConstraintsSetStmt *ConstraintsSetStmt `protobuf:"bytes,241,opt,name=constraints_set_stmt,json=ConstraintsSetStmt,proto3,oneof"`
+	ConstraintsSetStmt *ConstraintsSetStmt `protobuf:"bytes,244,opt,name=constraints_set_stmt,json=ConstraintsSetStmt,proto3,oneof"`
 }
 
 type Node_ReindexStmt struct {
-	ReindexStmt *ReindexStmt `protobuf:"bytes,242,opt,name=reindex_stmt,json=ReindexStmt,proto3,oneof"`
+	ReindexStmt *ReindexStmt `protobuf:"bytes,245,opt,name=reindex_stmt,json=ReindexStmt,proto3,oneof"`
 }
 
 type Node_CreateConversionStmt struct {
-	CreateConversionStmt *CreateConversionStmt `protobuf:"bytes,243,opt,name=create_conversion_stmt,json=CreateConversionStmt,proto3,oneof"`
+	CreateConversionStmt *CreateConversionStmt `protobuf:"bytes,246,opt,name=create_conversion_stmt,json=CreateConversionStmt,proto3,oneof"`
 }
 
 type Node_CreateCastStmt struct {
-	CreateCastStmt *CreateCastStmt `protobuf:"bytes,244,opt,name=create_cast_stmt,json=CreateCastStmt,proto3,oneof"`
+	CreateCastStmt *CreateCastStmt `protobuf:"bytes,247,opt,name=create_cast_stmt,json=CreateCastStmt,proto3,oneof"`
 }
 
 type Node_CreateTransformStmt struct {
-	CreateTransformStmt *CreateTransformStmt `protobuf:"bytes,245,opt,name=create_transform_stmt,json=CreateTransformStmt,proto3,oneof"`
+	CreateTransformStmt *CreateTransformStmt `protobuf:"bytes,248,opt,name=create_transform_stmt,json=CreateTransformStmt,proto3,oneof"`
 }
 
 type Node_PrepareStmt struct {
-	PrepareStmt *PrepareStmt `protobuf:"bytes,246,opt,name=prepare_stmt,json=PrepareStmt,proto3,oneof"`
+	PrepareStmt *PrepareStmt `protobuf:"bytes,249,opt,name=prepare_stmt,json=PrepareStmt,proto3,oneof"`
 }
 
 type Node_ExecuteStmt struct {
-	ExecuteStmt *ExecuteStmt `protobuf:"bytes,247,opt,name=execute_stmt,json=ExecuteStmt,proto3,oneof"`
+	ExecuteStmt *ExecuteStmt `protobuf:"bytes,250,opt,name=execute_stmt,json=ExecuteStmt,proto3,oneof"`
 }
 
 type Node_DeallocateStmt struct {
-	DeallocateStmt *DeallocateStmt `protobuf:"bytes,248,opt,name=deallocate_stmt,json=DeallocateStmt,proto3,oneof"`
+	DeallocateStmt *DeallocateStmt `protobuf:"bytes,251,opt,name=deallocate_stmt,json=DeallocateStmt,proto3,oneof"`
 }
 
 type Node_DropOwnedStmt struct {
-	DropOwnedStmt *DropOwnedStmt `protobuf:"bytes,249,opt,name=drop_owned_stmt,json=DropOwnedStmt,proto3,oneof"`
+	DropOwnedStmt *DropOwnedStmt `protobuf:"bytes,252,opt,name=drop_owned_stmt,json=DropOwnedStmt,proto3,oneof"`
 }
 
 type Node_ReassignOwnedStmt struct {
-	ReassignOwnedStmt *ReassignOwnedStmt `protobuf:"bytes,250,opt,name=reassign_owned_stmt,json=ReassignOwnedStmt,proto3,oneof"`
+	ReassignOwnedStmt *ReassignOwnedStmt `protobuf:"bytes,253,opt,name=reassign_owned_stmt,json=ReassignOwnedStmt,proto3,oneof"`
 }
 
 type Node_AlterTsdictionaryStmt struct {
-	AlterTsdictionaryStmt *AlterTSDictionaryStmt `protobuf:"bytes,251,opt,name=alter_tsdictionary_stmt,json=AlterTSDictionaryStmt,proto3,oneof"`
+	AlterTsdictionaryStmt *AlterTSDictionaryStmt `protobuf:"bytes,254,opt,name=alter_tsdictionary_stmt,json=AlterTSDictionaryStmt,proto3,oneof"`
 }
 
 type Node_AlterTsconfigurationStmt struct {
-	AlterTsconfigurationStmt *AlterTSConfigurationStmt `protobuf:"bytes,252,opt,name=alter_tsconfiguration_stmt,json=AlterTSConfigurationStmt,proto3,oneof"`
+	AlterTsconfigurationStmt *AlterTSConfigurationStmt `protobuf:"bytes,255,opt,name=alter_tsconfiguration_stmt,json=AlterTSConfigurationStmt,proto3,oneof"`
 }
 
 type Node_PublicationTable struct {
-	PublicationTable *PublicationTable `protobuf:"bytes,253,opt,name=publication_table,json=PublicationTable,proto3,oneof"`
+	PublicationTable *PublicationTable `protobuf:"bytes,256,opt,name=publication_table,json=PublicationTable,proto3,oneof"`
 }
 
 type Node_PublicationObjSpec struct {
-	PublicationObjSpec *PublicationObjSpec `protobuf:"bytes,254,opt,name=publication_obj_spec,json=PublicationObjSpec,proto3,oneof"`
+	PublicationObjSpec *PublicationObjSpec `protobuf:"bytes,257,opt,name=publication_obj_spec,json=PublicationObjSpec,proto3,oneof"`
 }
 
 type Node_CreatePublicationStmt struct {
-	CreatePublicationStmt *CreatePublicationStmt `protobuf:"bytes,255,opt,name=create_publication_stmt,json=CreatePublicationStmt,proto3,oneof"`
+	CreatePublicationStmt *CreatePublicationStmt `protobuf:"bytes,258,opt,name=create_publication_stmt,json=CreatePublicationStmt,proto3,oneof"`
 }
 
 type Node_AlterPublicationStmt struct {
-	AlterPublicationStmt *AlterPublicationStmt `protobuf:"bytes,256,opt,name=alter_publication_stmt,json=AlterPublicationStmt,proto3,oneof"`
+	AlterPublicationStmt *AlterPublicationStmt `protobuf:"bytes,259,opt,name=alter_publication_stmt,json=AlterPublicationStmt,proto3,oneof"`
 }
 
 type Node_CreateSubscriptionStmt struct {
-	CreateSubscriptionStmt *CreateSubscriptionStmt `protobuf:"bytes,257,opt,name=create_subscription_stmt,json=CreateSubscriptionStmt,proto3,oneof"`
+	CreateSubscriptionStmt *CreateSubscriptionStmt `protobuf:"bytes,260,opt,name=create_subscription_stmt,json=CreateSubscriptionStmt,proto3,oneof"`
 }
 
 type Node_AlterSubscriptionStmt struct {
-	AlterSubscriptionStmt *AlterSubscriptionStmt `protobuf:"bytes,258,opt,name=alter_subscription_stmt,json=AlterSubscriptionStmt,proto3,oneof"`
+	AlterSubscriptionStmt *AlterSubscriptionStmt `protobuf:"bytes,261,opt,name=alter_subscription_stmt,json=AlterSubscriptionStmt,proto3,oneof"`
 }
 
 type Node_DropSubscriptionStmt struct {
-	DropSubscriptionStmt *DropSubscriptionStmt `protobuf:"bytes,259,opt,name=drop_subscription_stmt,json=DropSubscriptionStmt,proto3,oneof"`
+	DropSubscriptionStmt *DropSubscriptionStmt `protobuf:"bytes,262,opt,name=drop_subscription_stmt,json=DropSubscriptionStmt,proto3,oneof"`
 }
 
 type Node_Integer struct {
-	Integer *Integer `protobuf:"bytes,260,opt,name=integer,json=Integer,proto3,oneof"`
+	Integer *Integer `protobuf:"bytes,263,opt,name=integer,json=Integer,proto3,oneof"`
 }
 
 type Node_Float struct {
-	Float *Float `protobuf:"bytes,261,opt,name=float,json=Float,proto3,oneof"`
+	Float *Float `protobuf:"bytes,264,opt,name=float,json=Float,proto3,oneof"`
 }
 
 type Node_Boolean struct {
-	Boolean *Boolean `protobuf:"bytes,262,opt,name=boolean,json=Boolean,proto3,oneof"`
+	Boolean *Boolean `protobuf:"bytes,265,opt,name=boolean,json=Boolean,proto3,oneof"`
 }
 
 type Node_String_ struct {
-	String_ *String `protobuf:"bytes,263,opt,name=string,json=String,proto3,oneof"`
+	String_ *String `protobuf:"bytes,266,opt,name=string,json=String,proto3,oneof"`
 }
 
 type Node_BitString struct {
-	BitString *BitString `protobuf:"bytes,264,opt,name=bit_string,json=BitString,proto3,oneof"`
+	BitString *BitString `protobuf:"bytes,267,opt,name=bit_string,json=BitString,proto3,oneof"`
 }
 
 type Node_List struct {
-	List *List `protobuf:"bytes,265,opt,name=list,json=List,proto3,oneof"`
+	List *List `protobuf:"bytes,268,opt,name=list,json=List,proto3,oneof"`
 }
 
 type Node_IntList struct {
-	IntList *IntList `protobuf:"bytes,266,opt,name=int_list,json=IntList,proto3,oneof"`
+	IntList *IntList `protobuf:"bytes,269,opt,name=int_list,json=IntList,proto3,oneof"`
 }
 
 type Node_OidList struct {
-	OidList *OidList `protobuf:"bytes,267,opt,name=oid_list,json=OidList,proto3,oneof"`
+	OidList *OidList `protobuf:"bytes,270,opt,name=oid_list,json=OidList,proto3,oneof"`
 }
 
 type Node_AConst struct {
-	AConst *A_Const `protobuf:"bytes,268,opt,name=a_const,json=A_Const,proto3,oneof"`
+	AConst *A_Const `protobuf:"bytes,271,opt,name=a_const,json=A_Const,proto3,oneof"`
 }
 
 func (*Node_Alias) isNode_Node() {}
@@ -10142,6 +10312,8 @@ func (*Node_NextValueExpr) isNode_Node() {}
 
 func (*Node_InferenceElem) isNode_Node() {}
 
+func (*Node_ReturningExpr) isNode_Node() {}
+
 func (*Node_TargetEntry) isNode_Node() {}
 
 func (*Node_RangeTblRef) isNode_Node() {}
@@ -10216,8 +10388,6 @@ func (*Node_PartitionBoundSpec) isNode_Node() {}
 
 func (*Node_PartitionRangeDatum) isNode_Node() {}
 
-func (*Node_SinglePartitionSpec) isNode_Node() {}
-
 func (*Node_PartitionCmd) isNode_Node() {}
 
 func (*Node_RangeTblEntry) isNode_Node() {}
@@ -10251,6 +10421,10 @@ func (*Node_CtecycleClause) isNode_Node() {}
 func (*Node_CommonTableExpr) isNode_Node() {}
 
 func (*Node_MergeWhenClause) isNode_Node() {}
+
+func (*Node_ReturningOption) isNode_Node() {}
+
+func (*Node_ReturningClause) isNode_Node() {}
 
 func (*Node_TriggerTransition) isNode_Node() {}
 
@@ -10308,9 +10482,11 @@ func (*Node_CreateSchemaStmt) isNode_Node() {}
 
 func (*Node_AlterTableStmt) isNode_Node() {}
 
-func (*Node_ReplicaIdentityStmt) isNode_Node() {}
-
 func (*Node_AlterTableCmd) isNode_Node() {}
+
+func (*Node_AtalterConstraint) isNode_Node() {}
+
+func (*Node_ReplicaIdentityStmt) isNode_Node() {}
 
 func (*Node_AlterCollationStmt) isNode_Node() {}
 
@@ -11384,7 +11560,7 @@ type IntoClause struct {
 	Options        []*Node                `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
 	OnCommit       OnCommitAction         `protobuf:"varint,5,opt,name=on_commit,json=onCommit,proto3,enum=pg_query.OnCommitAction" json:"on_commit,omitempty"`
 	TableSpaceName string                 `protobuf:"bytes,6,opt,name=table_space_name,json=tableSpaceName,proto3" json:"table_space_name,omitempty"`
-	ViewQuery      *Node                  `protobuf:"bytes,7,opt,name=view_query,json=viewQuery,proto3" json:"view_query,omitempty"`
+	ViewQuery      *Query                 `protobuf:"bytes,7,opt,name=view_query,json=viewQuery,proto3" json:"view_query,omitempty"`
 	SkipData       bool                   `protobuf:"varint,8,opt,name=skip_data,json=skipData,proto3" json:"skip_data,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -11462,7 +11638,7 @@ func (x *IntoClause) GetTableSpaceName() string {
 	return ""
 }
 
-func (x *IntoClause) GetViewQuery() *Node {
+func (x *IntoClause) GetViewQuery() *Query {
 	if x != nil {
 		return x.ViewQuery
 	}
@@ -11477,18 +11653,19 @@ func (x *IntoClause) GetSkipData() bool {
 }
 
 type Var struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Xpr            *Node                  `protobuf:"bytes,1,opt,name=xpr,proto3" json:"xpr,omitempty"`
-	Varno          int32                  `protobuf:"varint,2,opt,name=varno,proto3" json:"varno,omitempty"`
-	Varattno       int32                  `protobuf:"varint,3,opt,name=varattno,proto3" json:"varattno,omitempty"`
-	Vartype        uint32                 `protobuf:"varint,4,opt,name=vartype,proto3" json:"vartype,omitempty"`
-	Vartypmod      int32                  `protobuf:"varint,5,opt,name=vartypmod,proto3" json:"vartypmod,omitempty"`
-	Varcollid      uint32                 `protobuf:"varint,6,opt,name=varcollid,proto3" json:"varcollid,omitempty"`
-	Varnullingrels []uint64               `protobuf:"varint,7,rep,packed,name=varnullingrels,proto3" json:"varnullingrels,omitempty"`
-	Varlevelsup    uint32                 `protobuf:"varint,8,opt,name=varlevelsup,proto3" json:"varlevelsup,omitempty"`
-	Location       int32                  `protobuf:"varint,9,opt,name=location,proto3" json:"location,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Xpr              *Node                  `protobuf:"bytes,1,opt,name=xpr,proto3" json:"xpr,omitempty"`
+	Varno            int32                  `protobuf:"varint,2,opt,name=varno,proto3" json:"varno,omitempty"`
+	Varattno         int32                  `protobuf:"varint,3,opt,name=varattno,proto3" json:"varattno,omitempty"`
+	Vartype          uint32                 `protobuf:"varint,4,opt,name=vartype,proto3" json:"vartype,omitempty"`
+	Vartypmod        int32                  `protobuf:"varint,5,opt,name=vartypmod,proto3" json:"vartypmod,omitempty"`
+	Varcollid        uint32                 `protobuf:"varint,6,opt,name=varcollid,proto3" json:"varcollid,omitempty"`
+	Varnullingrels   []uint64               `protobuf:"varint,7,rep,packed,name=varnullingrels,proto3" json:"varnullingrels,omitempty"`
+	Varlevelsup      uint32                 `protobuf:"varint,8,opt,name=varlevelsup,proto3" json:"varlevelsup,omitempty"`
+	Varreturningtype VarReturningType       `protobuf:"varint,9,opt,name=varreturningtype,proto3,enum=pg_query.VarReturningType" json:"varreturningtype,omitempty"`
+	Location         int32                  `protobuf:"varint,10,opt,name=location,proto3" json:"location,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Var) Reset() {
@@ -11575,6 +11752,13 @@ func (x *Var) GetVarlevelsup() uint32 {
 		return x.Varlevelsup
 	}
 	return 0
+}
+
+func (x *Var) GetVarreturningtype() VarReturningType {
+	if x != nil {
+		return x.Varreturningtype
+	}
+	return VarReturningType_VAR_RETURNING_TYPE_UNDEFINED
 }
 
 func (x *Var) GetLocation() int32 {
@@ -14108,7 +14292,9 @@ type ArrayExpr struct {
 	ElementTypeid uint32                 `protobuf:"varint,4,opt,name=element_typeid,proto3" json:"element_typeid,omitempty"`
 	Elements      []*Node                `protobuf:"bytes,5,rep,name=elements,proto3" json:"elements,omitempty"`
 	Multidims     bool                   `protobuf:"varint,6,opt,name=multidims,proto3" json:"multidims,omitempty"`
-	Location      int32                  `protobuf:"varint,7,opt,name=location,proto3" json:"location,omitempty"`
+	ListStart     int32                  `protobuf:"varint,7,opt,name=list_start,proto3" json:"list_start,omitempty"`
+	ListEnd       int32                  `protobuf:"varint,8,opt,name=list_end,proto3" json:"list_end,omitempty"`
+	Location      int32                  `protobuf:"varint,9,opt,name=location,proto3" json:"location,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -14183,6 +14369,20 @@ func (x *ArrayExpr) GetMultidims() bool {
 		return x.Multidims
 	}
 	return false
+}
+
+func (x *ArrayExpr) GetListStart() int32 {
+	if x != nil {
+		return x.ListStart
+	}
+	return 0
+}
+
+func (x *ArrayExpr) GetListEnd() int32 {
+	if x != nil {
+		return x.ListEnd
+	}
+	return 0
 }
 
 func (x *ArrayExpr) GetLocation() int32 {
@@ -14279,7 +14479,7 @@ func (x *RowExpr) GetLocation() int32 {
 type RowCompareExpr struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Xpr           *Node                  `protobuf:"bytes,1,opt,name=xpr,proto3" json:"xpr,omitempty"`
-	Rctype        RowCompareType         `protobuf:"varint,2,opt,name=rctype,proto3,enum=pg_query.RowCompareType" json:"rctype,omitempty"`
+	Cmptype       CompareType            `protobuf:"varint,2,opt,name=cmptype,proto3,enum=pg_query.CompareType" json:"cmptype,omitempty"`
 	Opnos         []*Node                `protobuf:"bytes,3,rep,name=opnos,proto3" json:"opnos,omitempty"`
 	Opfamilies    []*Node                `protobuf:"bytes,4,rep,name=opfamilies,proto3" json:"opfamilies,omitempty"`
 	Inputcollids  []*Node                `protobuf:"bytes,5,rep,name=inputcollids,proto3" json:"inputcollids,omitempty"`
@@ -14326,11 +14526,11 @@ func (x *RowCompareExpr) GetXpr() *Node {
 	return nil
 }
 
-func (x *RowCompareExpr) GetRctype() RowCompareType {
+func (x *RowCompareExpr) GetCmptype() CompareType {
 	if x != nil {
-		return x.Rctype
+		return x.Cmptype
 	}
-	return RowCompareType_ROW_COMPARE_TYPE_UNDEFINED
+	return CompareType_COMPARE_TYPE_UNDEFINED
 }
 
 func (x *RowCompareExpr) GetOpnos() []*Node {
@@ -16196,6 +16396,74 @@ func (x *InferenceElem) GetInferopclass() uint32 {
 	return 0
 }
 
+type ReturningExpr struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Xpr           *Node                  `protobuf:"bytes,1,opt,name=xpr,proto3" json:"xpr,omitempty"`
+	Retlevelsup   int32                  `protobuf:"varint,2,opt,name=retlevelsup,proto3" json:"retlevelsup,omitempty"`
+	Retold        bool                   `protobuf:"varint,3,opt,name=retold,proto3" json:"retold,omitempty"`
+	Retexpr       *Node                  `protobuf:"bytes,4,opt,name=retexpr,proto3" json:"retexpr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReturningExpr) Reset() {
+	*x = ReturningExpr{}
+	mi := &file_pg_query_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReturningExpr) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReturningExpr) ProtoMessage() {}
+
+func (x *ReturningExpr) ProtoReflect() protoreflect.Message {
+	mi := &file_pg_query_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReturningExpr.ProtoReflect.Descriptor instead.
+func (*ReturningExpr) Descriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *ReturningExpr) GetXpr() *Node {
+	if x != nil {
+		return x.Xpr
+	}
+	return nil
+}
+
+func (x *ReturningExpr) GetRetlevelsup() int32 {
+	if x != nil {
+		return x.Retlevelsup
+	}
+	return 0
+}
+
+func (x *ReturningExpr) GetRetold() bool {
+	if x != nil {
+		return x.Retold
+	}
+	return false
+}
+
+func (x *ReturningExpr) GetRetexpr() *Node {
+	if x != nil {
+		return x.Retexpr
+	}
+	return nil
+}
+
 type TargetEntry struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Xpr             *Node                  `protobuf:"bytes,1,opt,name=xpr,proto3" json:"xpr,omitempty"`
@@ -16212,7 +16480,7 @@ type TargetEntry struct {
 
 func (x *TargetEntry) Reset() {
 	*x = TargetEntry{}
-	mi := &file_pg_query_proto_msgTypes[70]
+	mi := &file_pg_query_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16224,7 +16492,7 @@ func (x *TargetEntry) String() string {
 func (*TargetEntry) ProtoMessage() {}
 
 func (x *TargetEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[70]
+	mi := &file_pg_query_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16237,7 +16505,7 @@ func (x *TargetEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetEntry.ProtoReflect.Descriptor instead.
 func (*TargetEntry) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{70}
+	return file_pg_query_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *TargetEntry) GetXpr() *Node {
@@ -16305,7 +16573,7 @@ type RangeTblRef struct {
 
 func (x *RangeTblRef) Reset() {
 	*x = RangeTblRef{}
-	mi := &file_pg_query_proto_msgTypes[71]
+	mi := &file_pg_query_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16317,7 +16585,7 @@ func (x *RangeTblRef) String() string {
 func (*RangeTblRef) ProtoMessage() {}
 
 func (x *RangeTblRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[71]
+	mi := &file_pg_query_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16330,7 +16598,7 @@ func (x *RangeTblRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RangeTblRef.ProtoReflect.Descriptor instead.
 func (*RangeTblRef) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{71}
+	return file_pg_query_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *RangeTblRef) GetRtindex() int32 {
@@ -16357,7 +16625,7 @@ type JoinExpr struct {
 
 func (x *JoinExpr) Reset() {
 	*x = JoinExpr{}
-	mi := &file_pg_query_proto_msgTypes[72]
+	mi := &file_pg_query_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16369,7 +16637,7 @@ func (x *JoinExpr) String() string {
 func (*JoinExpr) ProtoMessage() {}
 
 func (x *JoinExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[72]
+	mi := &file_pg_query_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16382,7 +16650,7 @@ func (x *JoinExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinExpr.ProtoReflect.Descriptor instead.
 func (*JoinExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{72}
+	return file_pg_query_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *JoinExpr) GetJointype() JoinType {
@@ -16458,7 +16726,7 @@ type FromExpr struct {
 
 func (x *FromExpr) Reset() {
 	*x = FromExpr{}
-	mi := &file_pg_query_proto_msgTypes[73]
+	mi := &file_pg_query_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16470,7 +16738,7 @@ func (x *FromExpr) String() string {
 func (*FromExpr) ProtoMessage() {}
 
 func (x *FromExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[73]
+	mi := &file_pg_query_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16483,7 +16751,7 @@ func (x *FromExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FromExpr.ProtoReflect.Descriptor instead.
 func (*FromExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{73}
+	return file_pg_query_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *FromExpr) GetFromlist() []*Node {
@@ -16516,7 +16784,7 @@ type OnConflictExpr struct {
 
 func (x *OnConflictExpr) Reset() {
 	*x = OnConflictExpr{}
-	mi := &file_pg_query_proto_msgTypes[74]
+	mi := &file_pg_query_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16528,7 +16796,7 @@ func (x *OnConflictExpr) String() string {
 func (*OnConflictExpr) ProtoMessage() {}
 
 func (x *OnConflictExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[74]
+	mi := &file_pg_query_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16541,7 +16809,7 @@ func (x *OnConflictExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnConflictExpr.ProtoReflect.Descriptor instead.
 func (*OnConflictExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{74}
+	return file_pg_query_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *OnConflictExpr) GetAction() OnConflictAction {
@@ -16616,41 +16884,44 @@ type Query struct {
 	HasModifyingCte     bool                   `protobuf:"varint,12,opt,name=has_modifying_cte,json=hasModifyingCTE,proto3" json:"has_modifying_cte,omitempty"`
 	HasForUpdate        bool                   `protobuf:"varint,13,opt,name=has_for_update,json=hasForUpdate,proto3" json:"has_for_update,omitempty"`
 	HasRowSecurity      bool                   `protobuf:"varint,14,opt,name=has_row_security,json=hasRowSecurity,proto3" json:"has_row_security,omitempty"`
-	IsReturn            bool                   `protobuf:"varint,15,opt,name=is_return,json=isReturn,proto3" json:"is_return,omitempty"`
-	CteList             []*Node                `protobuf:"bytes,16,rep,name=cte_list,json=cteList,proto3" json:"cte_list,omitempty"`
-	Rtable              []*Node                `protobuf:"bytes,17,rep,name=rtable,proto3" json:"rtable,omitempty"`
-	Rteperminfos        []*Node                `protobuf:"bytes,18,rep,name=rteperminfos,proto3" json:"rteperminfos,omitempty"`
-	Jointree            *FromExpr              `protobuf:"bytes,19,opt,name=jointree,proto3" json:"jointree,omitempty"`
-	MergeActionList     []*Node                `protobuf:"bytes,20,rep,name=merge_action_list,json=mergeActionList,proto3" json:"merge_action_list,omitempty"`
-	MergeTargetRelation int32                  `protobuf:"varint,21,opt,name=merge_target_relation,json=mergeTargetRelation,proto3" json:"merge_target_relation,omitempty"`
-	MergeJoinCondition  *Node                  `protobuf:"bytes,22,opt,name=merge_join_condition,json=mergeJoinCondition,proto3" json:"merge_join_condition,omitempty"`
-	TargetList          []*Node                `protobuf:"bytes,23,rep,name=target_list,json=targetList,proto3" json:"target_list,omitempty"`
-	Override            OverridingKind         `protobuf:"varint,24,opt,name=override,proto3,enum=pg_query.OverridingKind" json:"override,omitempty"`
-	OnConflict          *OnConflictExpr        `protobuf:"bytes,25,opt,name=on_conflict,json=onConflict,proto3" json:"on_conflict,omitempty"`
-	ReturningList       []*Node                `protobuf:"bytes,26,rep,name=returning_list,json=returningList,proto3" json:"returning_list,omitempty"`
-	GroupClause         []*Node                `protobuf:"bytes,27,rep,name=group_clause,json=groupClause,proto3" json:"group_clause,omitempty"`
-	GroupDistinct       bool                   `protobuf:"varint,28,opt,name=group_distinct,json=groupDistinct,proto3" json:"group_distinct,omitempty"`
-	GroupingSets        []*Node                `protobuf:"bytes,29,rep,name=grouping_sets,json=groupingSets,proto3" json:"grouping_sets,omitempty"`
-	HavingQual          *Node                  `protobuf:"bytes,30,opt,name=having_qual,json=havingQual,proto3" json:"having_qual,omitempty"`
-	WindowClause        []*Node                `protobuf:"bytes,31,rep,name=window_clause,json=windowClause,proto3" json:"window_clause,omitempty"`
-	DistinctClause      []*Node                `protobuf:"bytes,32,rep,name=distinct_clause,json=distinctClause,proto3" json:"distinct_clause,omitempty"`
-	SortClause          []*Node                `protobuf:"bytes,33,rep,name=sort_clause,json=sortClause,proto3" json:"sort_clause,omitempty"`
-	LimitOffset         *Node                  `protobuf:"bytes,34,opt,name=limit_offset,json=limitOffset,proto3" json:"limit_offset,omitempty"`
-	LimitCount          *Node                  `protobuf:"bytes,35,opt,name=limit_count,json=limitCount,proto3" json:"limit_count,omitempty"`
-	LimitOption         LimitOption            `protobuf:"varint,36,opt,name=limit_option,json=limitOption,proto3,enum=pg_query.LimitOption" json:"limit_option,omitempty"`
-	RowMarks            []*Node                `protobuf:"bytes,37,rep,name=row_marks,json=rowMarks,proto3" json:"row_marks,omitempty"`
-	SetOperations       *Node                  `protobuf:"bytes,38,opt,name=set_operations,json=setOperations,proto3" json:"set_operations,omitempty"`
-	ConstraintDeps      []*Node                `protobuf:"bytes,39,rep,name=constraint_deps,json=constraintDeps,proto3" json:"constraint_deps,omitempty"`
-	WithCheckOptions    []*Node                `protobuf:"bytes,40,rep,name=with_check_options,json=withCheckOptions,proto3" json:"with_check_options,omitempty"`
-	StmtLocation        int32                  `protobuf:"varint,41,opt,name=stmt_location,proto3" json:"stmt_location,omitempty"`
-	StmtLen             int32                  `protobuf:"varint,42,opt,name=stmt_len,proto3" json:"stmt_len,omitempty"`
+	HasGroupRte         bool                   `protobuf:"varint,15,opt,name=has_group_rte,json=hasGroupRTE,proto3" json:"has_group_rte,omitempty"`
+	IsReturn            bool                   `protobuf:"varint,16,opt,name=is_return,json=isReturn,proto3" json:"is_return,omitempty"`
+	CteList             []*Node                `protobuf:"bytes,17,rep,name=cte_list,json=cteList,proto3" json:"cte_list,omitempty"`
+	Rtable              []*Node                `protobuf:"bytes,18,rep,name=rtable,proto3" json:"rtable,omitempty"`
+	Rteperminfos        []*Node                `protobuf:"bytes,19,rep,name=rteperminfos,proto3" json:"rteperminfos,omitempty"`
+	Jointree            *FromExpr              `protobuf:"bytes,20,opt,name=jointree,proto3" json:"jointree,omitempty"`
+	MergeActionList     []*Node                `protobuf:"bytes,21,rep,name=merge_action_list,json=mergeActionList,proto3" json:"merge_action_list,omitempty"`
+	MergeTargetRelation int32                  `protobuf:"varint,22,opt,name=merge_target_relation,json=mergeTargetRelation,proto3" json:"merge_target_relation,omitempty"`
+	MergeJoinCondition  *Node                  `protobuf:"bytes,23,opt,name=merge_join_condition,json=mergeJoinCondition,proto3" json:"merge_join_condition,omitempty"`
+	TargetList          []*Node                `protobuf:"bytes,24,rep,name=target_list,json=targetList,proto3" json:"target_list,omitempty"`
+	Override            OverridingKind         `protobuf:"varint,25,opt,name=override,proto3,enum=pg_query.OverridingKind" json:"override,omitempty"`
+	OnConflict          *OnConflictExpr        `protobuf:"bytes,26,opt,name=on_conflict,json=onConflict,proto3" json:"on_conflict,omitempty"`
+	ReturningOldAlias   string                 `protobuf:"bytes,27,opt,name=returning_old_alias,json=returningOldAlias,proto3" json:"returning_old_alias,omitempty"`
+	ReturningNewAlias   string                 `protobuf:"bytes,28,opt,name=returning_new_alias,json=returningNewAlias,proto3" json:"returning_new_alias,omitempty"`
+	ReturningList       []*Node                `protobuf:"bytes,29,rep,name=returning_list,json=returningList,proto3" json:"returning_list,omitempty"`
+	GroupClause         []*Node                `protobuf:"bytes,30,rep,name=group_clause,json=groupClause,proto3" json:"group_clause,omitempty"`
+	GroupDistinct       bool                   `protobuf:"varint,31,opt,name=group_distinct,json=groupDistinct,proto3" json:"group_distinct,omitempty"`
+	GroupingSets        []*Node                `protobuf:"bytes,32,rep,name=grouping_sets,json=groupingSets,proto3" json:"grouping_sets,omitempty"`
+	HavingQual          *Node                  `protobuf:"bytes,33,opt,name=having_qual,json=havingQual,proto3" json:"having_qual,omitempty"`
+	WindowClause        []*Node                `protobuf:"bytes,34,rep,name=window_clause,json=windowClause,proto3" json:"window_clause,omitempty"`
+	DistinctClause      []*Node                `protobuf:"bytes,35,rep,name=distinct_clause,json=distinctClause,proto3" json:"distinct_clause,omitempty"`
+	SortClause          []*Node                `protobuf:"bytes,36,rep,name=sort_clause,json=sortClause,proto3" json:"sort_clause,omitempty"`
+	LimitOffset         *Node                  `protobuf:"bytes,37,opt,name=limit_offset,json=limitOffset,proto3" json:"limit_offset,omitempty"`
+	LimitCount          *Node                  `protobuf:"bytes,38,opt,name=limit_count,json=limitCount,proto3" json:"limit_count,omitempty"`
+	LimitOption         LimitOption            `protobuf:"varint,39,opt,name=limit_option,json=limitOption,proto3,enum=pg_query.LimitOption" json:"limit_option,omitempty"`
+	RowMarks            []*Node                `protobuf:"bytes,40,rep,name=row_marks,json=rowMarks,proto3" json:"row_marks,omitempty"`
+	SetOperations       *Node                  `protobuf:"bytes,41,opt,name=set_operations,json=setOperations,proto3" json:"set_operations,omitempty"`
+	ConstraintDeps      []*Node                `protobuf:"bytes,42,rep,name=constraint_deps,json=constraintDeps,proto3" json:"constraint_deps,omitempty"`
+	WithCheckOptions    []*Node                `protobuf:"bytes,43,rep,name=with_check_options,json=withCheckOptions,proto3" json:"with_check_options,omitempty"`
+	StmtLocation        int32                  `protobuf:"varint,44,opt,name=stmt_location,proto3" json:"stmt_location,omitempty"`
+	StmtLen             int32                  `protobuf:"varint,45,opt,name=stmt_len,proto3" json:"stmt_len,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Query) Reset() {
 	*x = Query{}
-	mi := &file_pg_query_proto_msgTypes[75]
+	mi := &file_pg_query_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16662,7 +16933,7 @@ func (x *Query) String() string {
 func (*Query) ProtoMessage() {}
 
 func (x *Query) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[75]
+	mi := &file_pg_query_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16675,7 +16946,7 @@ func (x *Query) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Query.ProtoReflect.Descriptor instead.
 func (*Query) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{75}
+	return file_pg_query_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *Query) GetCommandType() CmdType {
@@ -16776,6 +17047,13 @@ func (x *Query) GetHasRowSecurity() bool {
 	return false
 }
 
+func (x *Query) GetHasGroupRte() bool {
+	if x != nil {
+		return x.HasGroupRte
+	}
+	return false
+}
+
 func (x *Query) GetIsReturn() bool {
 	if x != nil {
 		return x.IsReturn
@@ -16851,6 +17129,20 @@ func (x *Query) GetOnConflict() *OnConflictExpr {
 		return x.OnConflict
 	}
 	return nil
+}
+
+func (x *Query) GetReturningOldAlias() string {
+	if x != nil {
+		return x.ReturningOldAlias
+	}
+	return ""
+}
+
+func (x *Query) GetReturningNewAlias() string {
+	if x != nil {
+		return x.ReturningNewAlias
+	}
+	return ""
 }
 
 func (x *Query) GetReturningList() []*Node {
@@ -16988,7 +17280,7 @@ type TypeName struct {
 
 func (x *TypeName) Reset() {
 	*x = TypeName{}
-	mi := &file_pg_query_proto_msgTypes[76]
+	mi := &file_pg_query_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17000,7 +17292,7 @@ func (x *TypeName) String() string {
 func (*TypeName) ProtoMessage() {}
 
 func (x *TypeName) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[76]
+	mi := &file_pg_query_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17013,7 +17305,7 @@ func (x *TypeName) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TypeName.ProtoReflect.Descriptor instead.
 func (*TypeName) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{76}
+	return file_pg_query_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *TypeName) GetNames() []*Node {
@@ -17082,7 +17374,7 @@ type ColumnRef struct {
 
 func (x *ColumnRef) Reset() {
 	*x = ColumnRef{}
-	mi := &file_pg_query_proto_msgTypes[77]
+	mi := &file_pg_query_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17094,7 +17386,7 @@ func (x *ColumnRef) String() string {
 func (*ColumnRef) ProtoMessage() {}
 
 func (x *ColumnRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[77]
+	mi := &file_pg_query_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17107,7 +17399,7 @@ func (x *ColumnRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ColumnRef.ProtoReflect.Descriptor instead.
 func (*ColumnRef) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{77}
+	return file_pg_query_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *ColumnRef) GetFields() []*Node {
@@ -17134,7 +17426,7 @@ type ParamRef struct {
 
 func (x *ParamRef) Reset() {
 	*x = ParamRef{}
-	mi := &file_pg_query_proto_msgTypes[78]
+	mi := &file_pg_query_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17146,7 +17438,7 @@ func (x *ParamRef) String() string {
 func (*ParamRef) ProtoMessage() {}
 
 func (x *ParamRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[78]
+	mi := &file_pg_query_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17159,7 +17451,7 @@ func (x *ParamRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParamRef.ProtoReflect.Descriptor instead.
 func (*ParamRef) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{78}
+	return file_pg_query_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *ParamRef) GetNumber() int32 {
@@ -17177,19 +17469,21 @@ func (x *ParamRef) GetLocation() int32 {
 }
 
 type A_Expr struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Kind          A_Expr_Kind            `protobuf:"varint,1,opt,name=kind,proto3,enum=pg_query.A_Expr_Kind" json:"kind,omitempty"`
-	Name          []*Node                `protobuf:"bytes,2,rep,name=name,proto3" json:"name,omitempty"`
-	Lexpr         *Node                  `protobuf:"bytes,3,opt,name=lexpr,proto3" json:"lexpr,omitempty"`
-	Rexpr         *Node                  `protobuf:"bytes,4,opt,name=rexpr,proto3" json:"rexpr,omitempty"`
-	Location      int32                  `protobuf:"varint,5,opt,name=location,proto3" json:"location,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Kind           A_Expr_Kind            `protobuf:"varint,1,opt,name=kind,proto3,enum=pg_query.A_Expr_Kind" json:"kind,omitempty"`
+	Name           []*Node                `protobuf:"bytes,2,rep,name=name,proto3" json:"name,omitempty"`
+	Lexpr          *Node                  `protobuf:"bytes,3,opt,name=lexpr,proto3" json:"lexpr,omitempty"`
+	Rexpr          *Node                  `protobuf:"bytes,4,opt,name=rexpr,proto3" json:"rexpr,omitempty"`
+	RexprListStart int32                  `protobuf:"varint,5,opt,name=rexpr_list_start,proto3" json:"rexpr_list_start,omitempty"`
+	RexprListEnd   int32                  `protobuf:"varint,6,opt,name=rexpr_list_end,proto3" json:"rexpr_list_end,omitempty"`
+	Location       int32                  `protobuf:"varint,7,opt,name=location,proto3" json:"location,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *A_Expr) Reset() {
 	*x = A_Expr{}
-	mi := &file_pg_query_proto_msgTypes[79]
+	mi := &file_pg_query_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17201,7 +17495,7 @@ func (x *A_Expr) String() string {
 func (*A_Expr) ProtoMessage() {}
 
 func (x *A_Expr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[79]
+	mi := &file_pg_query_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17214,7 +17508,7 @@ func (x *A_Expr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use A_Expr.ProtoReflect.Descriptor instead.
 func (*A_Expr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{79}
+	return file_pg_query_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *A_Expr) GetKind() A_Expr_Kind {
@@ -17245,6 +17539,20 @@ func (x *A_Expr) GetRexpr() *Node {
 	return nil
 }
 
+func (x *A_Expr) GetRexprListStart() int32 {
+	if x != nil {
+		return x.RexprListStart
+	}
+	return 0
+}
+
+func (x *A_Expr) GetRexprListEnd() int32 {
+	if x != nil {
+		return x.RexprListEnd
+	}
+	return 0
+}
+
 func (x *A_Expr) GetLocation() int32 {
 	if x != nil {
 		return x.Location
@@ -17263,7 +17571,7 @@ type TypeCast struct {
 
 func (x *TypeCast) Reset() {
 	*x = TypeCast{}
-	mi := &file_pg_query_proto_msgTypes[80]
+	mi := &file_pg_query_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17275,7 +17583,7 @@ func (x *TypeCast) String() string {
 func (*TypeCast) ProtoMessage() {}
 
 func (x *TypeCast) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[80]
+	mi := &file_pg_query_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17288,7 +17596,7 @@ func (x *TypeCast) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TypeCast.ProtoReflect.Descriptor instead.
 func (*TypeCast) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{80}
+	return file_pg_query_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *TypeCast) GetArg() *Node {
@@ -17323,7 +17631,7 @@ type CollateClause struct {
 
 func (x *CollateClause) Reset() {
 	*x = CollateClause{}
-	mi := &file_pg_query_proto_msgTypes[81]
+	mi := &file_pg_query_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17335,7 +17643,7 @@ func (x *CollateClause) String() string {
 func (*CollateClause) ProtoMessage() {}
 
 func (x *CollateClause) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[81]
+	mi := &file_pg_query_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17348,7 +17656,7 @@ func (x *CollateClause) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollateClause.ProtoReflect.Descriptor instead.
 func (*CollateClause) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{81}
+	return file_pg_query_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *CollateClause) GetArg() *Node {
@@ -17383,7 +17691,7 @@ type RoleSpec struct {
 
 func (x *RoleSpec) Reset() {
 	*x = RoleSpec{}
-	mi := &file_pg_query_proto_msgTypes[82]
+	mi := &file_pg_query_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17395,7 +17703,7 @@ func (x *RoleSpec) String() string {
 func (*RoleSpec) ProtoMessage() {}
 
 func (x *RoleSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[82]
+	mi := &file_pg_query_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17408,7 +17716,7 @@ func (x *RoleSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoleSpec.ProtoReflect.Descriptor instead.
 func (*RoleSpec) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{82}
+	return file_pg_query_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *RoleSpec) GetRoletype() RoleSpecType {
@@ -17451,7 +17759,7 @@ type FuncCall struct {
 
 func (x *FuncCall) Reset() {
 	*x = FuncCall{}
-	mi := &file_pg_query_proto_msgTypes[83]
+	mi := &file_pg_query_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17463,7 +17771,7 @@ func (x *FuncCall) String() string {
 func (*FuncCall) ProtoMessage() {}
 
 func (x *FuncCall) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[83]
+	mi := &file_pg_query_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17476,7 +17784,7 @@ func (x *FuncCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FuncCall.ProtoReflect.Descriptor instead.
 func (*FuncCall) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{83}
+	return file_pg_query_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *FuncCall) GetFuncname() []*Node {
@@ -17564,7 +17872,7 @@ type A_Star struct {
 
 func (x *A_Star) Reset() {
 	*x = A_Star{}
-	mi := &file_pg_query_proto_msgTypes[84]
+	mi := &file_pg_query_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17576,7 +17884,7 @@ func (x *A_Star) String() string {
 func (*A_Star) ProtoMessage() {}
 
 func (x *A_Star) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[84]
+	mi := &file_pg_query_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17589,7 +17897,7 @@ func (x *A_Star) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use A_Star.ProtoReflect.Descriptor instead.
 func (*A_Star) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{84}
+	return file_pg_query_proto_rawDescGZIP(), []int{85}
 }
 
 type A_Indices struct {
@@ -17603,7 +17911,7 @@ type A_Indices struct {
 
 func (x *A_Indices) Reset() {
 	*x = A_Indices{}
-	mi := &file_pg_query_proto_msgTypes[85]
+	mi := &file_pg_query_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17615,7 +17923,7 @@ func (x *A_Indices) String() string {
 func (*A_Indices) ProtoMessage() {}
 
 func (x *A_Indices) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[85]
+	mi := &file_pg_query_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17628,7 +17936,7 @@ func (x *A_Indices) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use A_Indices.ProtoReflect.Descriptor instead.
 func (*A_Indices) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{85}
+	return file_pg_query_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *A_Indices) GetIsSlice() bool {
@@ -17662,7 +17970,7 @@ type A_Indirection struct {
 
 func (x *A_Indirection) Reset() {
 	*x = A_Indirection{}
-	mi := &file_pg_query_proto_msgTypes[86]
+	mi := &file_pg_query_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17674,7 +17982,7 @@ func (x *A_Indirection) String() string {
 func (*A_Indirection) ProtoMessage() {}
 
 func (x *A_Indirection) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[86]
+	mi := &file_pg_query_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17687,7 +17995,7 @@ func (x *A_Indirection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use A_Indirection.ProtoReflect.Descriptor instead.
 func (*A_Indirection) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{86}
+	return file_pg_query_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *A_Indirection) GetArg() *Node {
@@ -17707,14 +18015,16 @@ func (x *A_Indirection) GetIndirection() []*Node {
 type A_ArrayExpr struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Elements      []*Node                `protobuf:"bytes,1,rep,name=elements,proto3" json:"elements,omitempty"`
-	Location      int32                  `protobuf:"varint,2,opt,name=location,proto3" json:"location,omitempty"`
+	ListStart     int32                  `protobuf:"varint,2,opt,name=list_start,proto3" json:"list_start,omitempty"`
+	ListEnd       int32                  `protobuf:"varint,3,opt,name=list_end,proto3" json:"list_end,omitempty"`
+	Location      int32                  `protobuf:"varint,4,opt,name=location,proto3" json:"location,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *A_ArrayExpr) Reset() {
 	*x = A_ArrayExpr{}
-	mi := &file_pg_query_proto_msgTypes[87]
+	mi := &file_pg_query_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17726,7 +18036,7 @@ func (x *A_ArrayExpr) String() string {
 func (*A_ArrayExpr) ProtoMessage() {}
 
 func (x *A_ArrayExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[87]
+	mi := &file_pg_query_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17739,7 +18049,7 @@ func (x *A_ArrayExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use A_ArrayExpr.ProtoReflect.Descriptor instead.
 func (*A_ArrayExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{87}
+	return file_pg_query_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *A_ArrayExpr) GetElements() []*Node {
@@ -17747,6 +18057,20 @@ func (x *A_ArrayExpr) GetElements() []*Node {
 		return x.Elements
 	}
 	return nil
+}
+
+func (x *A_ArrayExpr) GetListStart() int32 {
+	if x != nil {
+		return x.ListStart
+	}
+	return 0
+}
+
+func (x *A_ArrayExpr) GetListEnd() int32 {
+	if x != nil {
+		return x.ListEnd
+	}
+	return 0
 }
 
 func (x *A_ArrayExpr) GetLocation() int32 {
@@ -17768,7 +18092,7 @@ type ResTarget struct {
 
 func (x *ResTarget) Reset() {
 	*x = ResTarget{}
-	mi := &file_pg_query_proto_msgTypes[88]
+	mi := &file_pg_query_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17780,7 +18104,7 @@ func (x *ResTarget) String() string {
 func (*ResTarget) ProtoMessage() {}
 
 func (x *ResTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[88]
+	mi := &file_pg_query_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17793,7 +18117,7 @@ func (x *ResTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResTarget.ProtoReflect.Descriptor instead.
 func (*ResTarget) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{88}
+	return file_pg_query_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *ResTarget) GetName() string {
@@ -17835,7 +18159,7 @@ type MultiAssignRef struct {
 
 func (x *MultiAssignRef) Reset() {
 	*x = MultiAssignRef{}
-	mi := &file_pg_query_proto_msgTypes[89]
+	mi := &file_pg_query_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17847,7 +18171,7 @@ func (x *MultiAssignRef) String() string {
 func (*MultiAssignRef) ProtoMessage() {}
 
 func (x *MultiAssignRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[89]
+	mi := &file_pg_query_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17860,7 +18184,7 @@ func (x *MultiAssignRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MultiAssignRef.ProtoReflect.Descriptor instead.
 func (*MultiAssignRef) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{89}
+	return file_pg_query_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *MultiAssignRef) GetSource() *Node {
@@ -17897,7 +18221,7 @@ type SortBy struct {
 
 func (x *SortBy) Reset() {
 	*x = SortBy{}
-	mi := &file_pg_query_proto_msgTypes[90]
+	mi := &file_pg_query_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17909,7 +18233,7 @@ func (x *SortBy) String() string {
 func (*SortBy) ProtoMessage() {}
 
 func (x *SortBy) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[90]
+	mi := &file_pg_query_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17922,7 +18246,7 @@ func (x *SortBy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SortBy.ProtoReflect.Descriptor instead.
 func (*SortBy) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{90}
+	return file_pg_query_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *SortBy) GetNode() *Node {
@@ -17976,7 +18300,7 @@ type WindowDef struct {
 
 func (x *WindowDef) Reset() {
 	*x = WindowDef{}
-	mi := &file_pg_query_proto_msgTypes[91]
+	mi := &file_pg_query_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17988,7 +18312,7 @@ func (x *WindowDef) String() string {
 func (*WindowDef) ProtoMessage() {}
 
 func (x *WindowDef) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[91]
+	mi := &file_pg_query_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18001,7 +18325,7 @@ func (x *WindowDef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WindowDef.ProtoReflect.Descriptor instead.
 func (*WindowDef) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{91}
+	return file_pg_query_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *WindowDef) GetName() string {
@@ -18071,7 +18395,7 @@ type RangeSubselect struct {
 
 func (x *RangeSubselect) Reset() {
 	*x = RangeSubselect{}
-	mi := &file_pg_query_proto_msgTypes[92]
+	mi := &file_pg_query_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18083,7 +18407,7 @@ func (x *RangeSubselect) String() string {
 func (*RangeSubselect) ProtoMessage() {}
 
 func (x *RangeSubselect) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[92]
+	mi := &file_pg_query_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18096,7 +18420,7 @@ func (x *RangeSubselect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RangeSubselect.ProtoReflect.Descriptor instead.
 func (*RangeSubselect) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{92}
+	return file_pg_query_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *RangeSubselect) GetLateral() bool {
@@ -18134,7 +18458,7 @@ type RangeFunction struct {
 
 func (x *RangeFunction) Reset() {
 	*x = RangeFunction{}
-	mi := &file_pg_query_proto_msgTypes[93]
+	mi := &file_pg_query_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18146,7 +18470,7 @@ func (x *RangeFunction) String() string {
 func (*RangeFunction) ProtoMessage() {}
 
 func (x *RangeFunction) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[93]
+	mi := &file_pg_query_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18159,7 +18483,7 @@ func (x *RangeFunction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RangeFunction.ProtoReflect.Descriptor instead.
 func (*RangeFunction) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{93}
+	return file_pg_query_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *RangeFunction) GetLateral() bool {
@@ -18219,7 +18543,7 @@ type RangeTableFunc struct {
 
 func (x *RangeTableFunc) Reset() {
 	*x = RangeTableFunc{}
-	mi := &file_pg_query_proto_msgTypes[94]
+	mi := &file_pg_query_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18231,7 +18555,7 @@ func (x *RangeTableFunc) String() string {
 func (*RangeTableFunc) ProtoMessage() {}
 
 func (x *RangeTableFunc) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[94]
+	mi := &file_pg_query_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18244,7 +18568,7 @@ func (x *RangeTableFunc) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RangeTableFunc.ProtoReflect.Descriptor instead.
 func (*RangeTableFunc) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{94}
+	return file_pg_query_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *RangeTableFunc) GetLateral() bool {
@@ -18311,7 +18635,7 @@ type RangeTableFuncCol struct {
 
 func (x *RangeTableFuncCol) Reset() {
 	*x = RangeTableFuncCol{}
-	mi := &file_pg_query_proto_msgTypes[95]
+	mi := &file_pg_query_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18323,7 +18647,7 @@ func (x *RangeTableFuncCol) String() string {
 func (*RangeTableFuncCol) ProtoMessage() {}
 
 func (x *RangeTableFuncCol) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[95]
+	mi := &file_pg_query_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18336,7 +18660,7 @@ func (x *RangeTableFuncCol) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RangeTableFuncCol.ProtoReflect.Descriptor instead.
 func (*RangeTableFuncCol) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{95}
+	return file_pg_query_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *RangeTableFuncCol) GetColname() string {
@@ -18401,7 +18725,7 @@ type RangeTableSample struct {
 
 func (x *RangeTableSample) Reset() {
 	*x = RangeTableSample{}
-	mi := &file_pg_query_proto_msgTypes[96]
+	mi := &file_pg_query_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18413,7 +18737,7 @@ func (x *RangeTableSample) String() string {
 func (*RangeTableSample) ProtoMessage() {}
 
 func (x *RangeTableSample) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[96]
+	mi := &file_pg_query_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18426,7 +18750,7 @@ func (x *RangeTableSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RangeTableSample.ProtoReflect.Descriptor instead.
 func (*RangeTableSample) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{96}
+	return file_pg_query_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *RangeTableSample) GetRelation() *Node {
@@ -18491,7 +18815,7 @@ type ColumnDef struct {
 
 func (x *ColumnDef) Reset() {
 	*x = ColumnDef{}
-	mi := &file_pg_query_proto_msgTypes[97]
+	mi := &file_pg_query_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18503,7 +18827,7 @@ func (x *ColumnDef) String() string {
 func (*ColumnDef) ProtoMessage() {}
 
 func (x *ColumnDef) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[97]
+	mi := &file_pg_query_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18516,7 +18840,7 @@ func (x *ColumnDef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ColumnDef.ProtoReflect.Descriptor instead.
 func (*ColumnDef) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{97}
+	return file_pg_query_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *ColumnDef) GetColname() string {
@@ -18663,7 +18987,7 @@ type TableLikeClause struct {
 
 func (x *TableLikeClause) Reset() {
 	*x = TableLikeClause{}
-	mi := &file_pg_query_proto_msgTypes[98]
+	mi := &file_pg_query_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18675,7 +18999,7 @@ func (x *TableLikeClause) String() string {
 func (*TableLikeClause) ProtoMessage() {}
 
 func (x *TableLikeClause) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[98]
+	mi := &file_pg_query_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18688,7 +19012,7 @@ func (x *TableLikeClause) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TableLikeClause.ProtoReflect.Descriptor instead.
 func (*TableLikeClause) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{98}
+	return file_pg_query_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *TableLikeClause) GetRelation() *RangeVar {
@@ -18728,7 +19052,7 @@ type IndexElem struct {
 
 func (x *IndexElem) Reset() {
 	*x = IndexElem{}
-	mi := &file_pg_query_proto_msgTypes[99]
+	mi := &file_pg_query_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18740,7 +19064,7 @@ func (x *IndexElem) String() string {
 func (*IndexElem) ProtoMessage() {}
 
 func (x *IndexElem) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[99]
+	mi := &file_pg_query_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18753,7 +19077,7 @@ func (x *IndexElem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IndexElem.ProtoReflect.Descriptor instead.
 func (*IndexElem) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{99}
+	return file_pg_query_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *IndexElem) GetName() string {
@@ -18825,7 +19149,7 @@ type DefElem struct {
 
 func (x *DefElem) Reset() {
 	*x = DefElem{}
-	mi := &file_pg_query_proto_msgTypes[100]
+	mi := &file_pg_query_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18837,7 +19161,7 @@ func (x *DefElem) String() string {
 func (*DefElem) ProtoMessage() {}
 
 func (x *DefElem) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[100]
+	mi := &file_pg_query_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18850,7 +19174,7 @@ func (x *DefElem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DefElem.ProtoReflect.Descriptor instead.
 func (*DefElem) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{100}
+	return file_pg_query_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *DefElem) GetDefnamespace() string {
@@ -18899,7 +19223,7 @@ type LockingClause struct {
 
 func (x *LockingClause) Reset() {
 	*x = LockingClause{}
-	mi := &file_pg_query_proto_msgTypes[101]
+	mi := &file_pg_query_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18911,7 +19235,7 @@ func (x *LockingClause) String() string {
 func (*LockingClause) ProtoMessage() {}
 
 func (x *LockingClause) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[101]
+	mi := &file_pg_query_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18924,7 +19248,7 @@ func (x *LockingClause) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LockingClause.ProtoReflect.Descriptor instead.
 func (*LockingClause) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{101}
+	return file_pg_query_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *LockingClause) GetLockedRels() []*Node {
@@ -18961,7 +19285,7 @@ type XmlSerialize struct {
 
 func (x *XmlSerialize) Reset() {
 	*x = XmlSerialize{}
-	mi := &file_pg_query_proto_msgTypes[102]
+	mi := &file_pg_query_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18973,7 +19297,7 @@ func (x *XmlSerialize) String() string {
 func (*XmlSerialize) ProtoMessage() {}
 
 func (x *XmlSerialize) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[102]
+	mi := &file_pg_query_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18986,7 +19310,7 @@ func (x *XmlSerialize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use XmlSerialize.ProtoReflect.Descriptor instead.
 func (*XmlSerialize) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{102}
+	return file_pg_query_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *XmlSerialize) GetXmloption() XmlOptionType {
@@ -19037,7 +19361,7 @@ type PartitionElem struct {
 
 func (x *PartitionElem) Reset() {
 	*x = PartitionElem{}
-	mi := &file_pg_query_proto_msgTypes[103]
+	mi := &file_pg_query_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19049,7 +19373,7 @@ func (x *PartitionElem) String() string {
 func (*PartitionElem) ProtoMessage() {}
 
 func (x *PartitionElem) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[103]
+	mi := &file_pg_query_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19062,7 +19386,7 @@ func (x *PartitionElem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartitionElem.ProtoReflect.Descriptor instead.
 func (*PartitionElem) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{103}
+	return file_pg_query_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *PartitionElem) GetName() string {
@@ -19111,7 +19435,7 @@ type PartitionSpec struct {
 
 func (x *PartitionSpec) Reset() {
 	*x = PartitionSpec{}
-	mi := &file_pg_query_proto_msgTypes[104]
+	mi := &file_pg_query_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19123,7 +19447,7 @@ func (x *PartitionSpec) String() string {
 func (*PartitionSpec) ProtoMessage() {}
 
 func (x *PartitionSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[104]
+	mi := &file_pg_query_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19136,7 +19460,7 @@ func (x *PartitionSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartitionSpec.ProtoReflect.Descriptor instead.
 func (*PartitionSpec) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{104}
+	return file_pg_query_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *PartitionSpec) GetStrategy() PartitionStrategy {
@@ -19176,7 +19500,7 @@ type PartitionBoundSpec struct {
 
 func (x *PartitionBoundSpec) Reset() {
 	*x = PartitionBoundSpec{}
-	mi := &file_pg_query_proto_msgTypes[105]
+	mi := &file_pg_query_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19188,7 +19512,7 @@ func (x *PartitionBoundSpec) String() string {
 func (*PartitionBoundSpec) ProtoMessage() {}
 
 func (x *PartitionBoundSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[105]
+	mi := &file_pg_query_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19201,7 +19525,7 @@ func (x *PartitionBoundSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartitionBoundSpec.ProtoReflect.Descriptor instead.
 func (*PartitionBoundSpec) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{105}
+	return file_pg_query_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *PartitionBoundSpec) GetStrategy() string {
@@ -19271,7 +19595,7 @@ type PartitionRangeDatum struct {
 
 func (x *PartitionRangeDatum) Reset() {
 	*x = PartitionRangeDatum{}
-	mi := &file_pg_query_proto_msgTypes[106]
+	mi := &file_pg_query_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19283,7 +19607,7 @@ func (x *PartitionRangeDatum) String() string {
 func (*PartitionRangeDatum) ProtoMessage() {}
 
 func (x *PartitionRangeDatum) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[106]
+	mi := &file_pg_query_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19296,7 +19620,7 @@ func (x *PartitionRangeDatum) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartitionRangeDatum.ProtoReflect.Descriptor instead.
 func (*PartitionRangeDatum) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{106}
+	return file_pg_query_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *PartitionRangeDatum) GetKind() PartitionRangeDatumKind {
@@ -19318,42 +19642,6 @@ func (x *PartitionRangeDatum) GetLocation() int32 {
 		return x.Location
 	}
 	return 0
-}
-
-type SinglePartitionSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SinglePartitionSpec) Reset() {
-	*x = SinglePartitionSpec{}
-	mi := &file_pg_query_proto_msgTypes[107]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SinglePartitionSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SinglePartitionSpec) ProtoMessage() {}
-
-func (x *SinglePartitionSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[107]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SinglePartitionSpec.ProtoReflect.Descriptor instead.
-func (*SinglePartitionSpec) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{107}
 }
 
 type PartitionCmd struct {
@@ -19447,9 +19735,10 @@ type RangeTblEntry struct {
 	Colcollations   []*Node                `protobuf:"bytes,27,rep,name=colcollations,proto3" json:"colcollations,omitempty"`
 	Enrname         string                 `protobuf:"bytes,28,opt,name=enrname,proto3" json:"enrname,omitempty"`
 	Enrtuples       float64                `protobuf:"fixed64,29,opt,name=enrtuples,proto3" json:"enrtuples,omitempty"`
-	Lateral         bool                   `protobuf:"varint,30,opt,name=lateral,proto3" json:"lateral,omitempty"`
-	InFromCl        bool                   `protobuf:"varint,31,opt,name=in_from_cl,json=inFromCl,proto3" json:"in_from_cl,omitempty"`
-	SecurityQuals   []*Node                `protobuf:"bytes,32,rep,name=security_quals,json=securityQuals,proto3" json:"security_quals,omitempty"`
+	Groupexprs      []*Node                `protobuf:"bytes,30,rep,name=groupexprs,proto3" json:"groupexprs,omitempty"`
+	Lateral         bool                   `protobuf:"varint,31,opt,name=lateral,proto3" json:"lateral,omitempty"`
+	InFromCl        bool                   `protobuf:"varint,32,opt,name=in_from_cl,json=inFromCl,proto3" json:"in_from_cl,omitempty"`
+	SecurityQuals   []*Node                `protobuf:"bytes,33,rep,name=security_quals,json=securityQuals,proto3" json:"security_quals,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -19685,6 +19974,13 @@ func (x *RangeTblEntry) GetEnrtuples() float64 {
 		return x.Enrtuples
 	}
 	return 0
+}
+
+func (x *RangeTblEntry) GetGroupexprs() []*Node {
+	if x != nil {
+		return x.Groupexprs
+	}
+	return nil
 }
 
 func (x *RangeTblEntry) GetLateral() bool {
@@ -20033,8 +20329,9 @@ type SortGroupClause struct {
 	TleSortGroupRef uint32                 `protobuf:"varint,1,opt,name=tle_sort_group_ref,json=tleSortGroupRef,proto3" json:"tle_sort_group_ref,omitempty"`
 	Eqop            uint32                 `protobuf:"varint,2,opt,name=eqop,proto3" json:"eqop,omitempty"`
 	Sortop          uint32                 `protobuf:"varint,3,opt,name=sortop,proto3" json:"sortop,omitempty"`
-	NullsFirst      bool                   `protobuf:"varint,4,opt,name=nulls_first,proto3" json:"nulls_first,omitempty"`
-	Hashable        bool                   `protobuf:"varint,5,opt,name=hashable,proto3" json:"hashable,omitempty"`
+	ReverseSort     bool                   `protobuf:"varint,4,opt,name=reverse_sort,proto3" json:"reverse_sort,omitempty"`
+	NullsFirst      bool                   `protobuf:"varint,5,opt,name=nulls_first,proto3" json:"nulls_first,omitempty"`
+	Hashable        bool                   `protobuf:"varint,6,opt,name=hashable,proto3" json:"hashable,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -20088,6 +20385,13 @@ func (x *SortGroupClause) GetSortop() uint32 {
 		return x.Sortop
 	}
 	return 0
+}
+
+func (x *SortGroupClause) GetReverseSort() bool {
+	if x != nil {
+		return x.ReverseSort
+	}
+	return false
 }
 
 func (x *SortGroupClause) GetNullsFirst() bool {
@@ -20992,6 +21296,118 @@ func (x *MergeWhenClause) GetValues() []*Node {
 	return nil
 }
 
+type ReturningOption struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Option        ReturningOptionKind    `protobuf:"varint,1,opt,name=option,proto3,enum=pg_query.ReturningOptionKind" json:"option,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Location      int32                  `protobuf:"varint,3,opt,name=location,proto3" json:"location,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReturningOption) Reset() {
+	*x = ReturningOption{}
+	mi := &file_pg_query_proto_msgTypes[125]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReturningOption) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReturningOption) ProtoMessage() {}
+
+func (x *ReturningOption) ProtoReflect() protoreflect.Message {
+	mi := &file_pg_query_proto_msgTypes[125]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReturningOption.ProtoReflect.Descriptor instead.
+func (*ReturningOption) Descriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{125}
+}
+
+func (x *ReturningOption) GetOption() ReturningOptionKind {
+	if x != nil {
+		return x.Option
+	}
+	return ReturningOptionKind_RETURNING_OPTION_KIND_UNDEFINED
+}
+
+func (x *ReturningOption) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *ReturningOption) GetLocation() int32 {
+	if x != nil {
+		return x.Location
+	}
+	return 0
+}
+
+type ReturningClause struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Options       []*Node                `protobuf:"bytes,1,rep,name=options,proto3" json:"options,omitempty"`
+	Exprs         []*Node                `protobuf:"bytes,2,rep,name=exprs,proto3" json:"exprs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReturningClause) Reset() {
+	*x = ReturningClause{}
+	mi := &file_pg_query_proto_msgTypes[126]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReturningClause) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReturningClause) ProtoMessage() {}
+
+func (x *ReturningClause) ProtoReflect() protoreflect.Message {
+	mi := &file_pg_query_proto_msgTypes[126]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReturningClause.ProtoReflect.Descriptor instead.
+func (*ReturningClause) Descriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{126}
+}
+
+func (x *ReturningClause) GetOptions() []*Node {
+	if x != nil {
+		return x.Options
+	}
+	return nil
+}
+
+func (x *ReturningClause) GetExprs() []*Node {
+	if x != nil {
+		return x.Exprs
+	}
+	return nil
+}
+
 type TriggerTransition struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -21003,7 +21419,7 @@ type TriggerTransition struct {
 
 func (x *TriggerTransition) Reset() {
 	*x = TriggerTransition{}
-	mi := &file_pg_query_proto_msgTypes[125]
+	mi := &file_pg_query_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21015,7 +21431,7 @@ func (x *TriggerTransition) String() string {
 func (*TriggerTransition) ProtoMessage() {}
 
 func (x *TriggerTransition) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[125]
+	mi := &file_pg_query_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21028,7 +21444,7 @@ func (x *TriggerTransition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TriggerTransition.ProtoReflect.Descriptor instead.
 func (*TriggerTransition) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{125}
+	return file_pg_query_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *TriggerTransition) GetName() string {
@@ -21062,7 +21478,7 @@ type JsonOutput struct {
 
 func (x *JsonOutput) Reset() {
 	*x = JsonOutput{}
-	mi := &file_pg_query_proto_msgTypes[126]
+	mi := &file_pg_query_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21074,7 +21490,7 @@ func (x *JsonOutput) String() string {
 func (*JsonOutput) ProtoMessage() {}
 
 func (x *JsonOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[126]
+	mi := &file_pg_query_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21087,7 +21503,7 @@ func (x *JsonOutput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonOutput.ProtoReflect.Descriptor instead.
 func (*JsonOutput) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{126}
+	return file_pg_query_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *JsonOutput) GetTypeName() *TypeName {
@@ -21114,7 +21530,7 @@ type JsonArgument struct {
 
 func (x *JsonArgument) Reset() {
 	*x = JsonArgument{}
-	mi := &file_pg_query_proto_msgTypes[127]
+	mi := &file_pg_query_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21126,7 +21542,7 @@ func (x *JsonArgument) String() string {
 func (*JsonArgument) ProtoMessage() {}
 
 func (x *JsonArgument) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[127]
+	mi := &file_pg_query_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21139,7 +21555,7 @@ func (x *JsonArgument) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonArgument.ProtoReflect.Descriptor instead.
 func (*JsonArgument) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{127}
+	return file_pg_query_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *JsonArgument) GetVal() *JsonValueExpr {
@@ -21175,7 +21591,7 @@ type JsonFuncExpr struct {
 
 func (x *JsonFuncExpr) Reset() {
 	*x = JsonFuncExpr{}
-	mi := &file_pg_query_proto_msgTypes[128]
+	mi := &file_pg_query_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21187,7 +21603,7 @@ func (x *JsonFuncExpr) String() string {
 func (*JsonFuncExpr) ProtoMessage() {}
 
 func (x *JsonFuncExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[128]
+	mi := &file_pg_query_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21200,7 +21616,7 @@ func (x *JsonFuncExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonFuncExpr.ProtoReflect.Descriptor instead.
 func (*JsonFuncExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{128}
+	return file_pg_query_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *JsonFuncExpr) GetOp() JsonExprOp {
@@ -21292,7 +21708,7 @@ type JsonTablePathSpec struct {
 
 func (x *JsonTablePathSpec) Reset() {
 	*x = JsonTablePathSpec{}
-	mi := &file_pg_query_proto_msgTypes[129]
+	mi := &file_pg_query_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21304,7 +21720,7 @@ func (x *JsonTablePathSpec) String() string {
 func (*JsonTablePathSpec) ProtoMessage() {}
 
 func (x *JsonTablePathSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[129]
+	mi := &file_pg_query_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21317,7 +21733,7 @@ func (x *JsonTablePathSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonTablePathSpec.ProtoReflect.Descriptor instead.
 func (*JsonTablePathSpec) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{129}
+	return file_pg_query_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *JsonTablePathSpec) GetString_() *Node {
@@ -21364,7 +21780,7 @@ type JsonTable struct {
 
 func (x *JsonTable) Reset() {
 	*x = JsonTable{}
-	mi := &file_pg_query_proto_msgTypes[130]
+	mi := &file_pg_query_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21376,7 +21792,7 @@ func (x *JsonTable) String() string {
 func (*JsonTable) ProtoMessage() {}
 
 func (x *JsonTable) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[130]
+	mi := &file_pg_query_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21389,7 +21805,7 @@ func (x *JsonTable) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonTable.ProtoReflect.Descriptor instead.
 func (*JsonTable) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{130}
+	return file_pg_query_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *JsonTable) GetContextItem() *JsonValueExpr {
@@ -21467,7 +21883,7 @@ type JsonTableColumn struct {
 
 func (x *JsonTableColumn) Reset() {
 	*x = JsonTableColumn{}
-	mi := &file_pg_query_proto_msgTypes[131]
+	mi := &file_pg_query_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21479,7 +21895,7 @@ func (x *JsonTableColumn) String() string {
 func (*JsonTableColumn) ProtoMessage() {}
 
 func (x *JsonTableColumn) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[131]
+	mi := &file_pg_query_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21492,7 +21908,7 @@ func (x *JsonTableColumn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonTableColumn.ProtoReflect.Descriptor instead.
 func (*JsonTableColumn) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{131}
+	return file_pg_query_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *JsonTableColumn) GetColtype() JsonTableColumnType {
@@ -21582,7 +21998,7 @@ type JsonKeyValue struct {
 
 func (x *JsonKeyValue) Reset() {
 	*x = JsonKeyValue{}
-	mi := &file_pg_query_proto_msgTypes[132]
+	mi := &file_pg_query_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21594,7 +22010,7 @@ func (x *JsonKeyValue) String() string {
 func (*JsonKeyValue) ProtoMessage() {}
 
 func (x *JsonKeyValue) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[132]
+	mi := &file_pg_query_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21607,7 +22023,7 @@ func (x *JsonKeyValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonKeyValue.ProtoReflect.Descriptor instead.
 func (*JsonKeyValue) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{132}
+	return file_pg_query_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *JsonKeyValue) GetKey() *Node {
@@ -21636,7 +22052,7 @@ type JsonParseExpr struct {
 
 func (x *JsonParseExpr) Reset() {
 	*x = JsonParseExpr{}
-	mi := &file_pg_query_proto_msgTypes[133]
+	mi := &file_pg_query_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21648,7 +22064,7 @@ func (x *JsonParseExpr) String() string {
 func (*JsonParseExpr) ProtoMessage() {}
 
 func (x *JsonParseExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[133]
+	mi := &file_pg_query_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21661,7 +22077,7 @@ func (x *JsonParseExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonParseExpr.ProtoReflect.Descriptor instead.
 func (*JsonParseExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{133}
+	return file_pg_query_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *JsonParseExpr) GetExpr() *JsonValueExpr {
@@ -21703,7 +22119,7 @@ type JsonScalarExpr struct {
 
 func (x *JsonScalarExpr) Reset() {
 	*x = JsonScalarExpr{}
-	mi := &file_pg_query_proto_msgTypes[134]
+	mi := &file_pg_query_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21715,7 +22131,7 @@ func (x *JsonScalarExpr) String() string {
 func (*JsonScalarExpr) ProtoMessage() {}
 
 func (x *JsonScalarExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[134]
+	mi := &file_pg_query_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21728,7 +22144,7 @@ func (x *JsonScalarExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonScalarExpr.ProtoReflect.Descriptor instead.
 func (*JsonScalarExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{134}
+	return file_pg_query_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *JsonScalarExpr) GetExpr() *Node {
@@ -21763,7 +22179,7 @@ type JsonSerializeExpr struct {
 
 func (x *JsonSerializeExpr) Reset() {
 	*x = JsonSerializeExpr{}
-	mi := &file_pg_query_proto_msgTypes[135]
+	mi := &file_pg_query_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21775,7 +22191,7 @@ func (x *JsonSerializeExpr) String() string {
 func (*JsonSerializeExpr) ProtoMessage() {}
 
 func (x *JsonSerializeExpr) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[135]
+	mi := &file_pg_query_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21788,7 +22204,7 @@ func (x *JsonSerializeExpr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonSerializeExpr.ProtoReflect.Descriptor instead.
 func (*JsonSerializeExpr) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{135}
+	return file_pg_query_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *JsonSerializeExpr) GetExpr() *JsonValueExpr {
@@ -21825,7 +22241,7 @@ type JsonObjectConstructor struct {
 
 func (x *JsonObjectConstructor) Reset() {
 	*x = JsonObjectConstructor{}
-	mi := &file_pg_query_proto_msgTypes[136]
+	mi := &file_pg_query_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21837,7 +22253,7 @@ func (x *JsonObjectConstructor) String() string {
 func (*JsonObjectConstructor) ProtoMessage() {}
 
 func (x *JsonObjectConstructor) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[136]
+	mi := &file_pg_query_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21850,7 +22266,7 @@ func (x *JsonObjectConstructor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonObjectConstructor.ProtoReflect.Descriptor instead.
 func (*JsonObjectConstructor) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{136}
+	return file_pg_query_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *JsonObjectConstructor) GetExprs() []*Node {
@@ -21900,7 +22316,7 @@ type JsonArrayConstructor struct {
 
 func (x *JsonArrayConstructor) Reset() {
 	*x = JsonArrayConstructor{}
-	mi := &file_pg_query_proto_msgTypes[137]
+	mi := &file_pg_query_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21912,7 +22328,7 @@ func (x *JsonArrayConstructor) String() string {
 func (*JsonArrayConstructor) ProtoMessage() {}
 
 func (x *JsonArrayConstructor) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[137]
+	mi := &file_pg_query_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21925,7 +22341,7 @@ func (x *JsonArrayConstructor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonArrayConstructor.ProtoReflect.Descriptor instead.
 func (*JsonArrayConstructor) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{137}
+	return file_pg_query_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *JsonArrayConstructor) GetExprs() []*Node {
@@ -21969,7 +22385,7 @@ type JsonArrayQueryConstructor struct {
 
 func (x *JsonArrayQueryConstructor) Reset() {
 	*x = JsonArrayQueryConstructor{}
-	mi := &file_pg_query_proto_msgTypes[138]
+	mi := &file_pg_query_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21981,7 +22397,7 @@ func (x *JsonArrayQueryConstructor) String() string {
 func (*JsonArrayQueryConstructor) ProtoMessage() {}
 
 func (x *JsonArrayQueryConstructor) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[138]
+	mi := &file_pg_query_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21994,7 +22410,7 @@ func (x *JsonArrayQueryConstructor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonArrayQueryConstructor.ProtoReflect.Descriptor instead.
 func (*JsonArrayQueryConstructor) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{138}
+	return file_pg_query_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *JsonArrayQueryConstructor) GetQuery() *Node {
@@ -22045,7 +22461,7 @@ type JsonAggConstructor struct {
 
 func (x *JsonAggConstructor) Reset() {
 	*x = JsonAggConstructor{}
-	mi := &file_pg_query_proto_msgTypes[139]
+	mi := &file_pg_query_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22057,7 +22473,7 @@ func (x *JsonAggConstructor) String() string {
 func (*JsonAggConstructor) ProtoMessage() {}
 
 func (x *JsonAggConstructor) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[139]
+	mi := &file_pg_query_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22070,7 +22486,7 @@ func (x *JsonAggConstructor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonAggConstructor.ProtoReflect.Descriptor instead.
 func (*JsonAggConstructor) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{139}
+	return file_pg_query_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *JsonAggConstructor) GetOutput() *JsonOutput {
@@ -22120,7 +22536,7 @@ type JsonObjectAgg struct {
 
 func (x *JsonObjectAgg) Reset() {
 	*x = JsonObjectAgg{}
-	mi := &file_pg_query_proto_msgTypes[140]
+	mi := &file_pg_query_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22132,7 +22548,7 @@ func (x *JsonObjectAgg) String() string {
 func (*JsonObjectAgg) ProtoMessage() {}
 
 func (x *JsonObjectAgg) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[140]
+	mi := &file_pg_query_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22145,7 +22561,7 @@ func (x *JsonObjectAgg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonObjectAgg.ProtoReflect.Descriptor instead.
 func (*JsonObjectAgg) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{140}
+	return file_pg_query_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *JsonObjectAgg) GetConstructor() *JsonAggConstructor {
@@ -22187,7 +22603,7 @@ type JsonArrayAgg struct {
 
 func (x *JsonArrayAgg) Reset() {
 	*x = JsonArrayAgg{}
-	mi := &file_pg_query_proto_msgTypes[141]
+	mi := &file_pg_query_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22199,7 +22615,7 @@ func (x *JsonArrayAgg) String() string {
 func (*JsonArrayAgg) ProtoMessage() {}
 
 func (x *JsonArrayAgg) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[141]
+	mi := &file_pg_query_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22212,7 +22628,7 @@ func (x *JsonArrayAgg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JsonArrayAgg.ProtoReflect.Descriptor instead.
 func (*JsonArrayAgg) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{141}
+	return file_pg_query_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *JsonArrayAgg) GetConstructor() *JsonAggConstructor {
@@ -22247,7 +22663,7 @@ type RawStmt struct {
 
 func (x *RawStmt) Reset() {
 	*x = RawStmt{}
-	mi := &file_pg_query_proto_msgTypes[142]
+	mi := &file_pg_query_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22259,7 +22675,7 @@ func (x *RawStmt) String() string {
 func (*RawStmt) ProtoMessage() {}
 
 func (x *RawStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[142]
+	mi := &file_pg_query_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22272,7 +22688,7 @@ func (x *RawStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RawStmt.ProtoReflect.Descriptor instead.
 func (*RawStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{142}
+	return file_pg_query_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *RawStmt) GetStmt() *Node {
@@ -22302,7 +22718,7 @@ type InsertStmt struct {
 	Cols             []*Node                `protobuf:"bytes,2,rep,name=cols,proto3" json:"cols,omitempty"`
 	SelectStmt       *Node                  `protobuf:"bytes,3,opt,name=select_stmt,json=selectStmt,proto3" json:"select_stmt,omitempty"`
 	OnConflictClause *OnConflictClause      `protobuf:"bytes,4,opt,name=on_conflict_clause,json=onConflictClause,proto3" json:"on_conflict_clause,omitempty"`
-	ReturningList    []*Node                `protobuf:"bytes,5,rep,name=returning_list,json=returningList,proto3" json:"returning_list,omitempty"`
+	ReturningClause  *ReturningClause       `protobuf:"bytes,5,opt,name=returning_clause,json=returningClause,proto3" json:"returning_clause,omitempty"`
 	WithClause       *WithClause            `protobuf:"bytes,6,opt,name=with_clause,json=withClause,proto3" json:"with_clause,omitempty"`
 	Override         OverridingKind         `protobuf:"varint,7,opt,name=override,proto3,enum=pg_query.OverridingKind" json:"override,omitempty"`
 	unknownFields    protoimpl.UnknownFields
@@ -22311,7 +22727,7 @@ type InsertStmt struct {
 
 func (x *InsertStmt) Reset() {
 	*x = InsertStmt{}
-	mi := &file_pg_query_proto_msgTypes[143]
+	mi := &file_pg_query_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22323,7 +22739,7 @@ func (x *InsertStmt) String() string {
 func (*InsertStmt) ProtoMessage() {}
 
 func (x *InsertStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[143]
+	mi := &file_pg_query_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22336,7 +22752,7 @@ func (x *InsertStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertStmt.ProtoReflect.Descriptor instead.
 func (*InsertStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{143}
+	return file_pg_query_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *InsertStmt) GetRelation() *RangeVar {
@@ -22367,9 +22783,9 @@ func (x *InsertStmt) GetOnConflictClause() *OnConflictClause {
 	return nil
 }
 
-func (x *InsertStmt) GetReturningList() []*Node {
+func (x *InsertStmt) GetReturningClause() *ReturningClause {
 	if x != nil {
-		return x.ReturningList
+		return x.ReturningClause
 	}
 	return nil
 }
@@ -22389,19 +22805,19 @@ func (x *InsertStmt) GetOverride() OverridingKind {
 }
 
 type DeleteStmt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Relation      *RangeVar              `protobuf:"bytes,1,opt,name=relation,proto3" json:"relation,omitempty"`
-	UsingClause   []*Node                `protobuf:"bytes,2,rep,name=using_clause,json=usingClause,proto3" json:"using_clause,omitempty"`
-	WhereClause   *Node                  `protobuf:"bytes,3,opt,name=where_clause,json=whereClause,proto3" json:"where_clause,omitempty"`
-	ReturningList []*Node                `protobuf:"bytes,4,rep,name=returning_list,json=returningList,proto3" json:"returning_list,omitempty"`
-	WithClause    *WithClause            `protobuf:"bytes,5,opt,name=with_clause,json=withClause,proto3" json:"with_clause,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Relation        *RangeVar              `protobuf:"bytes,1,opt,name=relation,proto3" json:"relation,omitempty"`
+	UsingClause     []*Node                `protobuf:"bytes,2,rep,name=using_clause,json=usingClause,proto3" json:"using_clause,omitempty"`
+	WhereClause     *Node                  `protobuf:"bytes,3,opt,name=where_clause,json=whereClause,proto3" json:"where_clause,omitempty"`
+	ReturningClause *ReturningClause       `protobuf:"bytes,4,opt,name=returning_clause,json=returningClause,proto3" json:"returning_clause,omitempty"`
+	WithClause      *WithClause            `protobuf:"bytes,5,opt,name=with_clause,json=withClause,proto3" json:"with_clause,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *DeleteStmt) Reset() {
 	*x = DeleteStmt{}
-	mi := &file_pg_query_proto_msgTypes[144]
+	mi := &file_pg_query_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22413,7 +22829,7 @@ func (x *DeleteStmt) String() string {
 func (*DeleteStmt) ProtoMessage() {}
 
 func (x *DeleteStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[144]
+	mi := &file_pg_query_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22426,7 +22842,7 @@ func (x *DeleteStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteStmt.ProtoReflect.Descriptor instead.
 func (*DeleteStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{144}
+	return file_pg_query_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *DeleteStmt) GetRelation() *RangeVar {
@@ -22450,9 +22866,9 @@ func (x *DeleteStmt) GetWhereClause() *Node {
 	return nil
 }
 
-func (x *DeleteStmt) GetReturningList() []*Node {
+func (x *DeleteStmt) GetReturningClause() *ReturningClause {
 	if x != nil {
-		return x.ReturningList
+		return x.ReturningClause
 	}
 	return nil
 }
@@ -22465,20 +22881,20 @@ func (x *DeleteStmt) GetWithClause() *WithClause {
 }
 
 type UpdateStmt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Relation      *RangeVar              `protobuf:"bytes,1,opt,name=relation,proto3" json:"relation,omitempty"`
-	TargetList    []*Node                `protobuf:"bytes,2,rep,name=target_list,json=targetList,proto3" json:"target_list,omitempty"`
-	WhereClause   *Node                  `protobuf:"bytes,3,opt,name=where_clause,json=whereClause,proto3" json:"where_clause,omitempty"`
-	FromClause    []*Node                `protobuf:"bytes,4,rep,name=from_clause,json=fromClause,proto3" json:"from_clause,omitempty"`
-	ReturningList []*Node                `protobuf:"bytes,5,rep,name=returning_list,json=returningList,proto3" json:"returning_list,omitempty"`
-	WithClause    *WithClause            `protobuf:"bytes,6,opt,name=with_clause,json=withClause,proto3" json:"with_clause,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Relation        *RangeVar              `protobuf:"bytes,1,opt,name=relation,proto3" json:"relation,omitempty"`
+	TargetList      []*Node                `protobuf:"bytes,2,rep,name=target_list,json=targetList,proto3" json:"target_list,omitempty"`
+	WhereClause     *Node                  `protobuf:"bytes,3,opt,name=where_clause,json=whereClause,proto3" json:"where_clause,omitempty"`
+	FromClause      []*Node                `protobuf:"bytes,4,rep,name=from_clause,json=fromClause,proto3" json:"from_clause,omitempty"`
+	ReturningClause *ReturningClause       `protobuf:"bytes,5,opt,name=returning_clause,json=returningClause,proto3" json:"returning_clause,omitempty"`
+	WithClause      *WithClause            `protobuf:"bytes,6,opt,name=with_clause,json=withClause,proto3" json:"with_clause,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UpdateStmt) Reset() {
 	*x = UpdateStmt{}
-	mi := &file_pg_query_proto_msgTypes[145]
+	mi := &file_pg_query_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22490,7 +22906,7 @@ func (x *UpdateStmt) String() string {
 func (*UpdateStmt) ProtoMessage() {}
 
 func (x *UpdateStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[145]
+	mi := &file_pg_query_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22503,7 +22919,7 @@ func (x *UpdateStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateStmt.ProtoReflect.Descriptor instead.
 func (*UpdateStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{145}
+	return file_pg_query_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *UpdateStmt) GetRelation() *RangeVar {
@@ -22534,9 +22950,9 @@ func (x *UpdateStmt) GetFromClause() []*Node {
 	return nil
 }
 
-func (x *UpdateStmt) GetReturningList() []*Node {
+func (x *UpdateStmt) GetReturningClause() *ReturningClause {
 	if x != nil {
-		return x.ReturningList
+		return x.ReturningClause
 	}
 	return nil
 }
@@ -22554,7 +22970,7 @@ type MergeStmt struct {
 	SourceRelation   *Node                  `protobuf:"bytes,2,opt,name=source_relation,json=sourceRelation,proto3" json:"source_relation,omitempty"`
 	JoinCondition    *Node                  `protobuf:"bytes,3,opt,name=join_condition,json=joinCondition,proto3" json:"join_condition,omitempty"`
 	MergeWhenClauses []*Node                `protobuf:"bytes,4,rep,name=merge_when_clauses,json=mergeWhenClauses,proto3" json:"merge_when_clauses,omitempty"`
-	ReturningList    []*Node                `protobuf:"bytes,5,rep,name=returning_list,json=returningList,proto3" json:"returning_list,omitempty"`
+	ReturningClause  *ReturningClause       `protobuf:"bytes,5,opt,name=returning_clause,json=returningClause,proto3" json:"returning_clause,omitempty"`
 	WithClause       *WithClause            `protobuf:"bytes,6,opt,name=with_clause,json=withClause,proto3" json:"with_clause,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -22562,7 +22978,7 @@ type MergeStmt struct {
 
 func (x *MergeStmt) Reset() {
 	*x = MergeStmt{}
-	mi := &file_pg_query_proto_msgTypes[146]
+	mi := &file_pg_query_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22574,7 +22990,7 @@ func (x *MergeStmt) String() string {
 func (*MergeStmt) ProtoMessage() {}
 
 func (x *MergeStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[146]
+	mi := &file_pg_query_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22587,7 +23003,7 @@ func (x *MergeStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeStmt.ProtoReflect.Descriptor instead.
 func (*MergeStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{146}
+	return file_pg_query_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *MergeStmt) GetRelation() *RangeVar {
@@ -22618,9 +23034,9 @@ func (x *MergeStmt) GetMergeWhenClauses() []*Node {
 	return nil
 }
 
-func (x *MergeStmt) GetReturningList() []*Node {
+func (x *MergeStmt) GetReturningClause() *ReturningClause {
 	if x != nil {
-		return x.ReturningList
+		return x.ReturningClause
 	}
 	return nil
 }
@@ -22660,7 +23076,7 @@ type SelectStmt struct {
 
 func (x *SelectStmt) Reset() {
 	*x = SelectStmt{}
-	mi := &file_pg_query_proto_msgTypes[147]
+	mi := &file_pg_query_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22672,7 +23088,7 @@ func (x *SelectStmt) String() string {
 func (*SelectStmt) ProtoMessage() {}
 
 func (x *SelectStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[147]
+	mi := &file_pg_query_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22685,7 +23101,7 @@ func (x *SelectStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectStmt.ProtoReflect.Descriptor instead.
 func (*SelectStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{147}
+	return file_pg_query_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *SelectStmt) GetDistinctClause() []*Node {
@@ -22844,7 +23260,7 @@ type SetOperationStmt struct {
 
 func (x *SetOperationStmt) Reset() {
 	*x = SetOperationStmt{}
-	mi := &file_pg_query_proto_msgTypes[148]
+	mi := &file_pg_query_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22856,7 +23272,7 @@ func (x *SetOperationStmt) String() string {
 func (*SetOperationStmt) ProtoMessage() {}
 
 func (x *SetOperationStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[148]
+	mi := &file_pg_query_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22869,7 +23285,7 @@ func (x *SetOperationStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetOperationStmt.ProtoReflect.Descriptor instead.
 func (*SetOperationStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{148}
+	return file_pg_query_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *SetOperationStmt) GetOp() SetOperation {
@@ -22937,7 +23353,7 @@ type ReturnStmt struct {
 
 func (x *ReturnStmt) Reset() {
 	*x = ReturnStmt{}
-	mi := &file_pg_query_proto_msgTypes[149]
+	mi := &file_pg_query_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22949,7 +23365,7 @@ func (x *ReturnStmt) String() string {
 func (*ReturnStmt) ProtoMessage() {}
 
 func (x *ReturnStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[149]
+	mi := &file_pg_query_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22962,7 +23378,7 @@ func (x *ReturnStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReturnStmt.ProtoReflect.Descriptor instead.
 func (*ReturnStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{149}
+	return file_pg_query_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *ReturnStmt) GetReturnval() *Node {
@@ -22985,7 +23401,7 @@ type PLAssignStmt struct {
 
 func (x *PLAssignStmt) Reset() {
 	*x = PLAssignStmt{}
-	mi := &file_pg_query_proto_msgTypes[150]
+	mi := &file_pg_query_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22997,7 +23413,7 @@ func (x *PLAssignStmt) String() string {
 func (*PLAssignStmt) ProtoMessage() {}
 
 func (x *PLAssignStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[150]
+	mi := &file_pg_query_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23010,7 +23426,7 @@ func (x *PLAssignStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PLAssignStmt.ProtoReflect.Descriptor instead.
 func (*PLAssignStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{150}
+	return file_pg_query_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *PLAssignStmt) GetName() string {
@@ -23060,7 +23476,7 @@ type CreateSchemaStmt struct {
 
 func (x *CreateSchemaStmt) Reset() {
 	*x = CreateSchemaStmt{}
-	mi := &file_pg_query_proto_msgTypes[151]
+	mi := &file_pg_query_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23072,7 +23488,7 @@ func (x *CreateSchemaStmt) String() string {
 func (*CreateSchemaStmt) ProtoMessage() {}
 
 func (x *CreateSchemaStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[151]
+	mi := &file_pg_query_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23085,7 +23501,7 @@ func (x *CreateSchemaStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSchemaStmt.ProtoReflect.Descriptor instead.
 func (*CreateSchemaStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{151}
+	return file_pg_query_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *CreateSchemaStmt) GetSchemaname() string {
@@ -23128,7 +23544,7 @@ type AlterTableStmt struct {
 
 func (x *AlterTableStmt) Reset() {
 	*x = AlterTableStmt{}
-	mi := &file_pg_query_proto_msgTypes[152]
+	mi := &file_pg_query_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23140,7 +23556,7 @@ func (x *AlterTableStmt) String() string {
 func (*AlterTableStmt) ProtoMessage() {}
 
 func (x *AlterTableStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[152]
+	mi := &file_pg_query_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23153,7 +23569,7 @@ func (x *AlterTableStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTableStmt.ProtoReflect.Descriptor instead.
 func (*AlterTableStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{152}
+	return file_pg_query_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *AlterTableStmt) GetRelation() *RangeVar {
@@ -23184,58 +23600,6 @@ func (x *AlterTableStmt) GetMissingOk() bool {
 	return false
 }
 
-type ReplicaIdentityStmt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	IdentityType  string                 `protobuf:"bytes,1,opt,name=identity_type,proto3" json:"identity_type,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ReplicaIdentityStmt) Reset() {
-	*x = ReplicaIdentityStmt{}
-	mi := &file_pg_query_proto_msgTypes[153]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ReplicaIdentityStmt) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ReplicaIdentityStmt) ProtoMessage() {}
-
-func (x *ReplicaIdentityStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[153]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ReplicaIdentityStmt.ProtoReflect.Descriptor instead.
-func (*ReplicaIdentityStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{153}
-}
-
-func (x *ReplicaIdentityStmt) GetIdentityType() string {
-	if x != nil {
-		return x.IdentityType
-	}
-	return ""
-}
-
-func (x *ReplicaIdentityStmt) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
 type AlterTableCmd struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Subtype       AlterTableType         `protobuf:"varint,1,opt,name=subtype,proto3,enum=pg_query.AlterTableType" json:"subtype,omitempty"`
@@ -23252,7 +23616,7 @@ type AlterTableCmd struct {
 
 func (x *AlterTableCmd) Reset() {
 	*x = AlterTableCmd{}
-	mi := &file_pg_query_proto_msgTypes[154]
+	mi := &file_pg_query_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23264,7 +23628,7 @@ func (x *AlterTableCmd) String() string {
 func (*AlterTableCmd) ProtoMessage() {}
 
 func (x *AlterTableCmd) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[154]
+	mi := &file_pg_query_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23277,7 +23641,7 @@ func (x *AlterTableCmd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTableCmd.ProtoReflect.Descriptor instead.
 func (*AlterTableCmd) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{154}
+	return file_pg_query_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *AlterTableCmd) GetSubtype() AlterTableType {
@@ -23336,6 +23700,158 @@ func (x *AlterTableCmd) GetRecurse() bool {
 	return false
 }
 
+type ATAlterConstraint struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Conname             string                 `protobuf:"bytes,1,opt,name=conname,proto3" json:"conname,omitempty"`
+	AlterEnforceability bool                   `protobuf:"varint,2,opt,name=alter_enforceability,json=alterEnforceability,proto3" json:"alter_enforceability,omitempty"`
+	IsEnforced          bool                   `protobuf:"varint,3,opt,name=is_enforced,proto3" json:"is_enforced,omitempty"`
+	AlterDeferrability  bool                   `protobuf:"varint,4,opt,name=alter_deferrability,json=alterDeferrability,proto3" json:"alter_deferrability,omitempty"`
+	Deferrable          bool                   `protobuf:"varint,5,opt,name=deferrable,proto3" json:"deferrable,omitempty"`
+	Initdeferred        bool                   `protobuf:"varint,6,opt,name=initdeferred,proto3" json:"initdeferred,omitempty"`
+	AlterInheritability bool                   `protobuf:"varint,7,opt,name=alter_inheritability,json=alterInheritability,proto3" json:"alter_inheritability,omitempty"`
+	Noinherit           bool                   `protobuf:"varint,8,opt,name=noinherit,proto3" json:"noinherit,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ATAlterConstraint) Reset() {
+	*x = ATAlterConstraint{}
+	mi := &file_pg_query_proto_msgTypes[156]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ATAlterConstraint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ATAlterConstraint) ProtoMessage() {}
+
+func (x *ATAlterConstraint) ProtoReflect() protoreflect.Message {
+	mi := &file_pg_query_proto_msgTypes[156]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ATAlterConstraint.ProtoReflect.Descriptor instead.
+func (*ATAlterConstraint) Descriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{156}
+}
+
+func (x *ATAlterConstraint) GetConname() string {
+	if x != nil {
+		return x.Conname
+	}
+	return ""
+}
+
+func (x *ATAlterConstraint) GetAlterEnforceability() bool {
+	if x != nil {
+		return x.AlterEnforceability
+	}
+	return false
+}
+
+func (x *ATAlterConstraint) GetIsEnforced() bool {
+	if x != nil {
+		return x.IsEnforced
+	}
+	return false
+}
+
+func (x *ATAlterConstraint) GetAlterDeferrability() bool {
+	if x != nil {
+		return x.AlterDeferrability
+	}
+	return false
+}
+
+func (x *ATAlterConstraint) GetDeferrable() bool {
+	if x != nil {
+		return x.Deferrable
+	}
+	return false
+}
+
+func (x *ATAlterConstraint) GetInitdeferred() bool {
+	if x != nil {
+		return x.Initdeferred
+	}
+	return false
+}
+
+func (x *ATAlterConstraint) GetAlterInheritability() bool {
+	if x != nil {
+		return x.AlterInheritability
+	}
+	return false
+}
+
+func (x *ATAlterConstraint) GetNoinherit() bool {
+	if x != nil {
+		return x.Noinherit
+	}
+	return false
+}
+
+type ReplicaIdentityStmt struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	IdentityType  string                 `protobuf:"bytes,1,opt,name=identity_type,proto3" json:"identity_type,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicaIdentityStmt) Reset() {
+	*x = ReplicaIdentityStmt{}
+	mi := &file_pg_query_proto_msgTypes[157]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicaIdentityStmt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicaIdentityStmt) ProtoMessage() {}
+
+func (x *ReplicaIdentityStmt) ProtoReflect() protoreflect.Message {
+	mi := &file_pg_query_proto_msgTypes[157]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicaIdentityStmt.ProtoReflect.Descriptor instead.
+func (*ReplicaIdentityStmt) Descriptor() ([]byte, []int) {
+	return file_pg_query_proto_rawDescGZIP(), []int{157}
+}
+
+func (x *ReplicaIdentityStmt) GetIdentityType() string {
+	if x != nil {
+		return x.IdentityType
+	}
+	return ""
+}
+
+func (x *ReplicaIdentityStmt) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 type AlterCollationStmt struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collname      []*Node                `protobuf:"bytes,1,rep,name=collname,proto3" json:"collname,omitempty"`
@@ -23345,7 +23861,7 @@ type AlterCollationStmt struct {
 
 func (x *AlterCollationStmt) Reset() {
 	*x = AlterCollationStmt{}
-	mi := &file_pg_query_proto_msgTypes[155]
+	mi := &file_pg_query_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23357,7 +23873,7 @@ func (x *AlterCollationStmt) String() string {
 func (*AlterCollationStmt) ProtoMessage() {}
 
 func (x *AlterCollationStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[155]
+	mi := &file_pg_query_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23370,7 +23886,7 @@ func (x *AlterCollationStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterCollationStmt.ProtoReflect.Descriptor instead.
 func (*AlterCollationStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{155}
+	return file_pg_query_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *AlterCollationStmt) GetCollname() []*Node {
@@ -23394,7 +23910,7 @@ type AlterDomainStmt struct {
 
 func (x *AlterDomainStmt) Reset() {
 	*x = AlterDomainStmt{}
-	mi := &file_pg_query_proto_msgTypes[156]
+	mi := &file_pg_query_proto_msgTypes[159]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23406,7 +23922,7 @@ func (x *AlterDomainStmt) String() string {
 func (*AlterDomainStmt) ProtoMessage() {}
 
 func (x *AlterDomainStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[156]
+	mi := &file_pg_query_proto_msgTypes[159]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23419,7 +23935,7 @@ func (x *AlterDomainStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterDomainStmt.ProtoReflect.Descriptor instead.
 func (*AlterDomainStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{156}
+	return file_pg_query_proto_rawDescGZIP(), []int{159}
 }
 
 func (x *AlterDomainStmt) GetSubtype() string {
@@ -23481,7 +23997,7 @@ type GrantStmt struct {
 
 func (x *GrantStmt) Reset() {
 	*x = GrantStmt{}
-	mi := &file_pg_query_proto_msgTypes[157]
+	mi := &file_pg_query_proto_msgTypes[160]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23493,7 +24009,7 @@ func (x *GrantStmt) String() string {
 func (*GrantStmt) ProtoMessage() {}
 
 func (x *GrantStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[157]
+	mi := &file_pg_query_proto_msgTypes[160]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23506,7 +24022,7 @@ func (x *GrantStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GrantStmt.ProtoReflect.Descriptor instead.
 func (*GrantStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{157}
+	return file_pg_query_proto_rawDescGZIP(), []int{160}
 }
 
 func (x *GrantStmt) GetIsGrant() bool {
@@ -23584,7 +24100,7 @@ type ObjectWithArgs struct {
 
 func (x *ObjectWithArgs) Reset() {
 	*x = ObjectWithArgs{}
-	mi := &file_pg_query_proto_msgTypes[158]
+	mi := &file_pg_query_proto_msgTypes[161]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23596,7 +24112,7 @@ func (x *ObjectWithArgs) String() string {
 func (*ObjectWithArgs) ProtoMessage() {}
 
 func (x *ObjectWithArgs) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[158]
+	mi := &file_pg_query_proto_msgTypes[161]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23609,7 +24125,7 @@ func (x *ObjectWithArgs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObjectWithArgs.ProtoReflect.Descriptor instead.
 func (*ObjectWithArgs) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{158}
+	return file_pg_query_proto_rawDescGZIP(), []int{161}
 }
 
 func (x *ObjectWithArgs) GetObjname() []*Node {
@@ -23650,7 +24166,7 @@ type AccessPriv struct {
 
 func (x *AccessPriv) Reset() {
 	*x = AccessPriv{}
-	mi := &file_pg_query_proto_msgTypes[159]
+	mi := &file_pg_query_proto_msgTypes[162]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23662,7 +24178,7 @@ func (x *AccessPriv) String() string {
 func (*AccessPriv) ProtoMessage() {}
 
 func (x *AccessPriv) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[159]
+	mi := &file_pg_query_proto_msgTypes[162]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23675,7 +24191,7 @@ func (x *AccessPriv) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccessPriv.ProtoReflect.Descriptor instead.
 func (*AccessPriv) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{159}
+	return file_pg_query_proto_rawDescGZIP(), []int{162}
 }
 
 func (x *AccessPriv) GetPrivName() string {
@@ -23706,7 +24222,7 @@ type GrantRoleStmt struct {
 
 func (x *GrantRoleStmt) Reset() {
 	*x = GrantRoleStmt{}
-	mi := &file_pg_query_proto_msgTypes[160]
+	mi := &file_pg_query_proto_msgTypes[163]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23718,7 +24234,7 @@ func (x *GrantRoleStmt) String() string {
 func (*GrantRoleStmt) ProtoMessage() {}
 
 func (x *GrantRoleStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[160]
+	mi := &file_pg_query_proto_msgTypes[163]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23731,7 +24247,7 @@ func (x *GrantRoleStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GrantRoleStmt.ProtoReflect.Descriptor instead.
 func (*GrantRoleStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{160}
+	return file_pg_query_proto_rawDescGZIP(), []int{163}
 }
 
 func (x *GrantRoleStmt) GetGrantedRoles() []*Node {
@@ -23786,7 +24302,7 @@ type AlterDefaultPrivilegesStmt struct {
 
 func (x *AlterDefaultPrivilegesStmt) Reset() {
 	*x = AlterDefaultPrivilegesStmt{}
-	mi := &file_pg_query_proto_msgTypes[161]
+	mi := &file_pg_query_proto_msgTypes[164]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23798,7 +24314,7 @@ func (x *AlterDefaultPrivilegesStmt) String() string {
 func (*AlterDefaultPrivilegesStmt) ProtoMessage() {}
 
 func (x *AlterDefaultPrivilegesStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[161]
+	mi := &file_pg_query_proto_msgTypes[164]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23811,7 +24327,7 @@ func (x *AlterDefaultPrivilegesStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterDefaultPrivilegesStmt.ProtoReflect.Descriptor instead.
 func (*AlterDefaultPrivilegesStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{161}
+	return file_pg_query_proto_rawDescGZIP(), []int{164}
 }
 
 func (x *AlterDefaultPrivilegesStmt) GetOptions() []*Node {
@@ -23844,7 +24360,7 @@ type CopyStmt struct {
 
 func (x *CopyStmt) Reset() {
 	*x = CopyStmt{}
-	mi := &file_pg_query_proto_msgTypes[162]
+	mi := &file_pg_query_proto_msgTypes[165]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23856,7 +24372,7 @@ func (x *CopyStmt) String() string {
 func (*CopyStmt) ProtoMessage() {}
 
 func (x *CopyStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[162]
+	mi := &file_pg_query_proto_msgTypes[165]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23869,7 +24385,7 @@ func (x *CopyStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CopyStmt.ProtoReflect.Descriptor instead.
 func (*CopyStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{162}
+	return file_pg_query_proto_rawDescGZIP(), []int{165}
 }
 
 func (x *CopyStmt) GetRelation() *RangeVar {
@@ -23933,14 +24449,16 @@ type VariableSetStmt struct {
 	Kind          VariableSetKind        `protobuf:"varint,1,opt,name=kind,proto3,enum=pg_query.VariableSetKind" json:"kind,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Args          []*Node                `protobuf:"bytes,3,rep,name=args,proto3" json:"args,omitempty"`
-	IsLocal       bool                   `protobuf:"varint,4,opt,name=is_local,proto3" json:"is_local,omitempty"`
+	JumbleArgs    bool                   `protobuf:"varint,4,opt,name=jumble_args,proto3" json:"jumble_args,omitempty"`
+	IsLocal       bool                   `protobuf:"varint,5,opt,name=is_local,proto3" json:"is_local,omitempty"`
+	Location      int32                  `protobuf:"varint,6,opt,name=location,proto3" json:"location,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VariableSetStmt) Reset() {
 	*x = VariableSetStmt{}
-	mi := &file_pg_query_proto_msgTypes[163]
+	mi := &file_pg_query_proto_msgTypes[166]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23952,7 +24470,7 @@ func (x *VariableSetStmt) String() string {
 func (*VariableSetStmt) ProtoMessage() {}
 
 func (x *VariableSetStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[163]
+	mi := &file_pg_query_proto_msgTypes[166]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23965,7 +24483,7 @@ func (x *VariableSetStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VariableSetStmt.ProtoReflect.Descriptor instead.
 func (*VariableSetStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{163}
+	return file_pg_query_proto_rawDescGZIP(), []int{166}
 }
 
 func (x *VariableSetStmt) GetKind() VariableSetKind {
@@ -23989,11 +24507,25 @@ func (x *VariableSetStmt) GetArgs() []*Node {
 	return nil
 }
 
+func (x *VariableSetStmt) GetJumbleArgs() bool {
+	if x != nil {
+		return x.JumbleArgs
+	}
+	return false
+}
+
 func (x *VariableSetStmt) GetIsLocal() bool {
 	if x != nil {
 		return x.IsLocal
 	}
 	return false
+}
+
+func (x *VariableSetStmt) GetLocation() int32 {
+	if x != nil {
+		return x.Location
+	}
+	return 0
 }
 
 type VariableShowStmt struct {
@@ -24005,7 +24537,7 @@ type VariableShowStmt struct {
 
 func (x *VariableShowStmt) Reset() {
 	*x = VariableShowStmt{}
-	mi := &file_pg_query_proto_msgTypes[164]
+	mi := &file_pg_query_proto_msgTypes[167]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24017,7 +24549,7 @@ func (x *VariableShowStmt) String() string {
 func (*VariableShowStmt) ProtoMessage() {}
 
 func (x *VariableShowStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[164]
+	mi := &file_pg_query_proto_msgTypes[167]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24030,7 +24562,7 @@ func (x *VariableShowStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VariableShowStmt.ProtoReflect.Descriptor instead.
 func (*VariableShowStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{164}
+	return file_pg_query_proto_rawDescGZIP(), []int{167}
 }
 
 func (x *VariableShowStmt) GetName() string {
@@ -24049,18 +24581,19 @@ type CreateStmt struct {
 	Partspec       *PartitionSpec         `protobuf:"bytes,5,opt,name=partspec,proto3" json:"partspec,omitempty"`
 	OfTypename     *TypeName              `protobuf:"bytes,6,opt,name=of_typename,json=ofTypename,proto3" json:"of_typename,omitempty"`
 	Constraints    []*Node                `protobuf:"bytes,7,rep,name=constraints,proto3" json:"constraints,omitempty"`
-	Options        []*Node                `protobuf:"bytes,8,rep,name=options,proto3" json:"options,omitempty"`
-	Oncommit       OnCommitAction         `protobuf:"varint,9,opt,name=oncommit,proto3,enum=pg_query.OnCommitAction" json:"oncommit,omitempty"`
-	Tablespacename string                 `protobuf:"bytes,10,opt,name=tablespacename,proto3" json:"tablespacename,omitempty"`
-	AccessMethod   string                 `protobuf:"bytes,11,opt,name=access_method,json=accessMethod,proto3" json:"access_method,omitempty"`
-	IfNotExists    bool                   `protobuf:"varint,12,opt,name=if_not_exists,proto3" json:"if_not_exists,omitempty"`
+	Nnconstraints  []*Node                `protobuf:"bytes,8,rep,name=nnconstraints,proto3" json:"nnconstraints,omitempty"`
+	Options        []*Node                `protobuf:"bytes,9,rep,name=options,proto3" json:"options,omitempty"`
+	Oncommit       OnCommitAction         `protobuf:"varint,10,opt,name=oncommit,proto3,enum=pg_query.OnCommitAction" json:"oncommit,omitempty"`
+	Tablespacename string                 `protobuf:"bytes,11,opt,name=tablespacename,proto3" json:"tablespacename,omitempty"`
+	AccessMethod   string                 `protobuf:"bytes,12,opt,name=access_method,json=accessMethod,proto3" json:"access_method,omitempty"`
+	IfNotExists    bool                   `protobuf:"varint,13,opt,name=if_not_exists,proto3" json:"if_not_exists,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CreateStmt) Reset() {
 	*x = CreateStmt{}
-	mi := &file_pg_query_proto_msgTypes[165]
+	mi := &file_pg_query_proto_msgTypes[168]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24072,7 +24605,7 @@ func (x *CreateStmt) String() string {
 func (*CreateStmt) ProtoMessage() {}
 
 func (x *CreateStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[165]
+	mi := &file_pg_query_proto_msgTypes[168]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24085,7 +24618,7 @@ func (x *CreateStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateStmt.ProtoReflect.Descriptor instead.
 func (*CreateStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{165}
+	return file_pg_query_proto_rawDescGZIP(), []int{168}
 }
 
 func (x *CreateStmt) GetRelation() *RangeVar {
@@ -24137,6 +24670,13 @@ func (x *CreateStmt) GetConstraints() []*Node {
 	return nil
 }
 
+func (x *CreateStmt) GetNnconstraints() []*Node {
+	if x != nil {
+		return x.Nnconstraints
+	}
+	return nil
+}
+
 func (x *CreateStmt) GetOptions() []*Node {
 	if x != nil {
 		return x.Options
@@ -24178,40 +24718,44 @@ type Constraint struct {
 	Conname            string                 `protobuf:"bytes,2,opt,name=conname,proto3" json:"conname,omitempty"`
 	Deferrable         bool                   `protobuf:"varint,3,opt,name=deferrable,proto3" json:"deferrable,omitempty"`
 	Initdeferred       bool                   `protobuf:"varint,4,opt,name=initdeferred,proto3" json:"initdeferred,omitempty"`
-	SkipValidation     bool                   `protobuf:"varint,5,opt,name=skip_validation,proto3" json:"skip_validation,omitempty"`
-	InitiallyValid     bool                   `protobuf:"varint,6,opt,name=initially_valid,proto3" json:"initially_valid,omitempty"`
-	IsNoInherit        bool                   `protobuf:"varint,7,opt,name=is_no_inherit,proto3" json:"is_no_inherit,omitempty"`
-	RawExpr            *Node                  `protobuf:"bytes,8,opt,name=raw_expr,proto3" json:"raw_expr,omitempty"`
-	CookedExpr         string                 `protobuf:"bytes,9,opt,name=cooked_expr,proto3" json:"cooked_expr,omitempty"`
-	GeneratedWhen      string                 `protobuf:"bytes,10,opt,name=generated_when,proto3" json:"generated_when,omitempty"`
-	Inhcount           int32                  `protobuf:"varint,11,opt,name=inhcount,proto3" json:"inhcount,omitempty"`
-	NullsNotDistinct   bool                   `protobuf:"varint,12,opt,name=nulls_not_distinct,proto3" json:"nulls_not_distinct,omitempty"`
-	Keys               []*Node                `protobuf:"bytes,13,rep,name=keys,proto3" json:"keys,omitempty"`
-	Including          []*Node                `protobuf:"bytes,14,rep,name=including,proto3" json:"including,omitempty"`
-	Exclusions         []*Node                `protobuf:"bytes,15,rep,name=exclusions,proto3" json:"exclusions,omitempty"`
-	Options            []*Node                `protobuf:"bytes,16,rep,name=options,proto3" json:"options,omitempty"`
-	Indexname          string                 `protobuf:"bytes,17,opt,name=indexname,proto3" json:"indexname,omitempty"`
-	Indexspace         string                 `protobuf:"bytes,18,opt,name=indexspace,proto3" json:"indexspace,omitempty"`
-	ResetDefaultTblspc bool                   `protobuf:"varint,19,opt,name=reset_default_tblspc,proto3" json:"reset_default_tblspc,omitempty"`
-	AccessMethod       string                 `protobuf:"bytes,20,opt,name=access_method,proto3" json:"access_method,omitempty"`
-	WhereClause        *Node                  `protobuf:"bytes,21,opt,name=where_clause,proto3" json:"where_clause,omitempty"`
-	Pktable            *RangeVar              `protobuf:"bytes,22,opt,name=pktable,proto3" json:"pktable,omitempty"`
-	FkAttrs            []*Node                `protobuf:"bytes,23,rep,name=fk_attrs,proto3" json:"fk_attrs,omitempty"`
-	PkAttrs            []*Node                `protobuf:"bytes,24,rep,name=pk_attrs,proto3" json:"pk_attrs,omitempty"`
-	FkMatchtype        string                 `protobuf:"bytes,25,opt,name=fk_matchtype,proto3" json:"fk_matchtype,omitempty"`
-	FkUpdAction        string                 `protobuf:"bytes,26,opt,name=fk_upd_action,proto3" json:"fk_upd_action,omitempty"`
-	FkDelAction        string                 `protobuf:"bytes,27,opt,name=fk_del_action,proto3" json:"fk_del_action,omitempty"`
-	FkDelSetCols       []*Node                `protobuf:"bytes,28,rep,name=fk_del_set_cols,proto3" json:"fk_del_set_cols,omitempty"`
-	OldConpfeqop       []*Node                `protobuf:"bytes,29,rep,name=old_conpfeqop,proto3" json:"old_conpfeqop,omitempty"`
-	OldPktableOid      uint32                 `protobuf:"varint,30,opt,name=old_pktable_oid,proto3" json:"old_pktable_oid,omitempty"`
-	Location           int32                  `protobuf:"varint,31,opt,name=location,proto3" json:"location,omitempty"`
+	IsEnforced         bool                   `protobuf:"varint,5,opt,name=is_enforced,proto3" json:"is_enforced,omitempty"`
+	SkipValidation     bool                   `protobuf:"varint,6,opt,name=skip_validation,proto3" json:"skip_validation,omitempty"`
+	InitiallyValid     bool                   `protobuf:"varint,7,opt,name=initially_valid,proto3" json:"initially_valid,omitempty"`
+	IsNoInherit        bool                   `protobuf:"varint,8,opt,name=is_no_inherit,proto3" json:"is_no_inherit,omitempty"`
+	RawExpr            *Node                  `protobuf:"bytes,9,opt,name=raw_expr,proto3" json:"raw_expr,omitempty"`
+	CookedExpr         string                 `protobuf:"bytes,10,opt,name=cooked_expr,proto3" json:"cooked_expr,omitempty"`
+	GeneratedWhen      string                 `protobuf:"bytes,11,opt,name=generated_when,proto3" json:"generated_when,omitempty"`
+	GeneratedKind      string                 `protobuf:"bytes,12,opt,name=generated_kind,proto3" json:"generated_kind,omitempty"`
+	NullsNotDistinct   bool                   `protobuf:"varint,13,opt,name=nulls_not_distinct,proto3" json:"nulls_not_distinct,omitempty"`
+	Keys               []*Node                `protobuf:"bytes,14,rep,name=keys,proto3" json:"keys,omitempty"`
+	WithoutOverlaps    bool                   `protobuf:"varint,15,opt,name=without_overlaps,proto3" json:"without_overlaps,omitempty"`
+	Including          []*Node                `protobuf:"bytes,16,rep,name=including,proto3" json:"including,omitempty"`
+	Exclusions         []*Node                `protobuf:"bytes,17,rep,name=exclusions,proto3" json:"exclusions,omitempty"`
+	Options            []*Node                `protobuf:"bytes,18,rep,name=options,proto3" json:"options,omitempty"`
+	Indexname          string                 `protobuf:"bytes,19,opt,name=indexname,proto3" json:"indexname,omitempty"`
+	Indexspace         string                 `protobuf:"bytes,20,opt,name=indexspace,proto3" json:"indexspace,omitempty"`
+	ResetDefaultTblspc bool                   `protobuf:"varint,21,opt,name=reset_default_tblspc,proto3" json:"reset_default_tblspc,omitempty"`
+	AccessMethod       string                 `protobuf:"bytes,22,opt,name=access_method,proto3" json:"access_method,omitempty"`
+	WhereClause        *Node                  `protobuf:"bytes,23,opt,name=where_clause,proto3" json:"where_clause,omitempty"`
+	Pktable            *RangeVar              `protobuf:"bytes,24,opt,name=pktable,proto3" json:"pktable,omitempty"`
+	FkAttrs            []*Node                `protobuf:"bytes,25,rep,name=fk_attrs,proto3" json:"fk_attrs,omitempty"`
+	PkAttrs            []*Node                `protobuf:"bytes,26,rep,name=pk_attrs,proto3" json:"pk_attrs,omitempty"`
+	FkWithPeriod       bool                   `protobuf:"varint,27,opt,name=fk_with_period,proto3" json:"fk_with_period,omitempty"`
+	PkWithPeriod       bool                   `protobuf:"varint,28,opt,name=pk_with_period,proto3" json:"pk_with_period,omitempty"`
+	FkMatchtype        string                 `protobuf:"bytes,29,opt,name=fk_matchtype,proto3" json:"fk_matchtype,omitempty"`
+	FkUpdAction        string                 `protobuf:"bytes,30,opt,name=fk_upd_action,proto3" json:"fk_upd_action,omitempty"`
+	FkDelAction        string                 `protobuf:"bytes,31,opt,name=fk_del_action,proto3" json:"fk_del_action,omitempty"`
+	FkDelSetCols       []*Node                `protobuf:"bytes,32,rep,name=fk_del_set_cols,proto3" json:"fk_del_set_cols,omitempty"`
+	OldConpfeqop       []*Node                `protobuf:"bytes,33,rep,name=old_conpfeqop,proto3" json:"old_conpfeqop,omitempty"`
+	OldPktableOid      uint32                 `protobuf:"varint,34,opt,name=old_pktable_oid,proto3" json:"old_pktable_oid,omitempty"`
+	Location           int32                  `protobuf:"varint,35,opt,name=location,proto3" json:"location,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Constraint) Reset() {
 	*x = Constraint{}
-	mi := &file_pg_query_proto_msgTypes[166]
+	mi := &file_pg_query_proto_msgTypes[169]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24223,7 +24767,7 @@ func (x *Constraint) String() string {
 func (*Constraint) ProtoMessage() {}
 
 func (x *Constraint) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[166]
+	mi := &file_pg_query_proto_msgTypes[169]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24236,7 +24780,7 @@ func (x *Constraint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Constraint.ProtoReflect.Descriptor instead.
 func (*Constraint) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{166}
+	return file_pg_query_proto_rawDescGZIP(), []int{169}
 }
 
 func (x *Constraint) GetContype() ConstrType {
@@ -24263,6 +24807,13 @@ func (x *Constraint) GetDeferrable() bool {
 func (x *Constraint) GetInitdeferred() bool {
 	if x != nil {
 		return x.Initdeferred
+	}
+	return false
+}
+
+func (x *Constraint) GetIsEnforced() bool {
+	if x != nil {
+		return x.IsEnforced
 	}
 	return false
 }
@@ -24309,11 +24860,11 @@ func (x *Constraint) GetGeneratedWhen() string {
 	return ""
 }
 
-func (x *Constraint) GetInhcount() int32 {
+func (x *Constraint) GetGeneratedKind() string {
 	if x != nil {
-		return x.Inhcount
+		return x.GeneratedKind
 	}
-	return 0
+	return ""
 }
 
 func (x *Constraint) GetNullsNotDistinct() bool {
@@ -24328,6 +24879,13 @@ func (x *Constraint) GetKeys() []*Node {
 		return x.Keys
 	}
 	return nil
+}
+
+func (x *Constraint) GetWithoutOverlaps() bool {
+	if x != nil {
+		return x.WithoutOverlaps
+	}
+	return false
 }
 
 func (x *Constraint) GetIncluding() []*Node {
@@ -24407,6 +24965,20 @@ func (x *Constraint) GetPkAttrs() []*Node {
 	return nil
 }
 
+func (x *Constraint) GetFkWithPeriod() bool {
+	if x != nil {
+		return x.FkWithPeriod
+	}
+	return false
+}
+
+func (x *Constraint) GetPkWithPeriod() bool {
+	if x != nil {
+		return x.PkWithPeriod
+	}
+	return false
+}
+
 func (x *Constraint) GetFkMatchtype() string {
 	if x != nil {
 		return x.FkMatchtype
@@ -24468,7 +25040,7 @@ type CreateTableSpaceStmt struct {
 
 func (x *CreateTableSpaceStmt) Reset() {
 	*x = CreateTableSpaceStmt{}
-	mi := &file_pg_query_proto_msgTypes[167]
+	mi := &file_pg_query_proto_msgTypes[170]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24480,7 +25052,7 @@ func (x *CreateTableSpaceStmt) String() string {
 func (*CreateTableSpaceStmt) ProtoMessage() {}
 
 func (x *CreateTableSpaceStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[167]
+	mi := &file_pg_query_proto_msgTypes[170]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24493,7 +25065,7 @@ func (x *CreateTableSpaceStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTableSpaceStmt.ProtoReflect.Descriptor instead.
 func (*CreateTableSpaceStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{167}
+	return file_pg_query_proto_rawDescGZIP(), []int{170}
 }
 
 func (x *CreateTableSpaceStmt) GetTablespacename() string {
@@ -24534,7 +25106,7 @@ type DropTableSpaceStmt struct {
 
 func (x *DropTableSpaceStmt) Reset() {
 	*x = DropTableSpaceStmt{}
-	mi := &file_pg_query_proto_msgTypes[168]
+	mi := &file_pg_query_proto_msgTypes[171]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24546,7 +25118,7 @@ func (x *DropTableSpaceStmt) String() string {
 func (*DropTableSpaceStmt) ProtoMessage() {}
 
 func (x *DropTableSpaceStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[168]
+	mi := &file_pg_query_proto_msgTypes[171]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24559,7 +25131,7 @@ func (x *DropTableSpaceStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropTableSpaceStmt.ProtoReflect.Descriptor instead.
 func (*DropTableSpaceStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{168}
+	return file_pg_query_proto_rawDescGZIP(), []int{171}
 }
 
 func (x *DropTableSpaceStmt) GetTablespacename() string {
@@ -24587,7 +25159,7 @@ type AlterTableSpaceOptionsStmt struct {
 
 func (x *AlterTableSpaceOptionsStmt) Reset() {
 	*x = AlterTableSpaceOptionsStmt{}
-	mi := &file_pg_query_proto_msgTypes[169]
+	mi := &file_pg_query_proto_msgTypes[172]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24599,7 +25171,7 @@ func (x *AlterTableSpaceOptionsStmt) String() string {
 func (*AlterTableSpaceOptionsStmt) ProtoMessage() {}
 
 func (x *AlterTableSpaceOptionsStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[169]
+	mi := &file_pg_query_proto_msgTypes[172]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24612,7 +25184,7 @@ func (x *AlterTableSpaceOptionsStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTableSpaceOptionsStmt.ProtoReflect.Descriptor instead.
 func (*AlterTableSpaceOptionsStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{169}
+	return file_pg_query_proto_rawDescGZIP(), []int{172}
 }
 
 func (x *AlterTableSpaceOptionsStmt) GetTablespacename() string {
@@ -24649,7 +25221,7 @@ type AlterTableMoveAllStmt struct {
 
 func (x *AlterTableMoveAllStmt) Reset() {
 	*x = AlterTableMoveAllStmt{}
-	mi := &file_pg_query_proto_msgTypes[170]
+	mi := &file_pg_query_proto_msgTypes[173]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24661,7 +25233,7 @@ func (x *AlterTableMoveAllStmt) String() string {
 func (*AlterTableMoveAllStmt) ProtoMessage() {}
 
 func (x *AlterTableMoveAllStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[170]
+	mi := &file_pg_query_proto_msgTypes[173]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24674,7 +25246,7 @@ func (x *AlterTableMoveAllStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTableMoveAllStmt.ProtoReflect.Descriptor instead.
 func (*AlterTableMoveAllStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{170}
+	return file_pg_query_proto_rawDescGZIP(), []int{173}
 }
 
 func (x *AlterTableMoveAllStmt) GetOrigTablespacename() string {
@@ -24723,7 +25295,7 @@ type CreateExtensionStmt struct {
 
 func (x *CreateExtensionStmt) Reset() {
 	*x = CreateExtensionStmt{}
-	mi := &file_pg_query_proto_msgTypes[171]
+	mi := &file_pg_query_proto_msgTypes[174]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24735,7 +25307,7 @@ func (x *CreateExtensionStmt) String() string {
 func (*CreateExtensionStmt) ProtoMessage() {}
 
 func (x *CreateExtensionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[171]
+	mi := &file_pg_query_proto_msgTypes[174]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24748,7 +25320,7 @@ func (x *CreateExtensionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateExtensionStmt.ProtoReflect.Descriptor instead.
 func (*CreateExtensionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{171}
+	return file_pg_query_proto_rawDescGZIP(), []int{174}
 }
 
 func (x *CreateExtensionStmt) GetExtname() string {
@@ -24782,7 +25354,7 @@ type AlterExtensionStmt struct {
 
 func (x *AlterExtensionStmt) Reset() {
 	*x = AlterExtensionStmt{}
-	mi := &file_pg_query_proto_msgTypes[172]
+	mi := &file_pg_query_proto_msgTypes[175]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24794,7 +25366,7 @@ func (x *AlterExtensionStmt) String() string {
 func (*AlterExtensionStmt) ProtoMessage() {}
 
 func (x *AlterExtensionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[172]
+	mi := &file_pg_query_proto_msgTypes[175]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24807,7 +25379,7 @@ func (x *AlterExtensionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterExtensionStmt.ProtoReflect.Descriptor instead.
 func (*AlterExtensionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{172}
+	return file_pg_query_proto_rawDescGZIP(), []int{175}
 }
 
 func (x *AlterExtensionStmt) GetExtname() string {
@@ -24836,7 +25408,7 @@ type AlterExtensionContentsStmt struct {
 
 func (x *AlterExtensionContentsStmt) Reset() {
 	*x = AlterExtensionContentsStmt{}
-	mi := &file_pg_query_proto_msgTypes[173]
+	mi := &file_pg_query_proto_msgTypes[176]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24848,7 +25420,7 @@ func (x *AlterExtensionContentsStmt) String() string {
 func (*AlterExtensionContentsStmt) ProtoMessage() {}
 
 func (x *AlterExtensionContentsStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[173]
+	mi := &file_pg_query_proto_msgTypes[176]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24861,7 +25433,7 @@ func (x *AlterExtensionContentsStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterExtensionContentsStmt.ProtoReflect.Descriptor instead.
 func (*AlterExtensionContentsStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{173}
+	return file_pg_query_proto_rawDescGZIP(), []int{176}
 }
 
 func (x *AlterExtensionContentsStmt) GetExtname() string {
@@ -24903,7 +25475,7 @@ type CreateFdwStmt struct {
 
 func (x *CreateFdwStmt) Reset() {
 	*x = CreateFdwStmt{}
-	mi := &file_pg_query_proto_msgTypes[174]
+	mi := &file_pg_query_proto_msgTypes[177]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24915,7 +25487,7 @@ func (x *CreateFdwStmt) String() string {
 func (*CreateFdwStmt) ProtoMessage() {}
 
 func (x *CreateFdwStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[174]
+	mi := &file_pg_query_proto_msgTypes[177]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24928,7 +25500,7 @@ func (x *CreateFdwStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFdwStmt.ProtoReflect.Descriptor instead.
 func (*CreateFdwStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{174}
+	return file_pg_query_proto_rawDescGZIP(), []int{177}
 }
 
 func (x *CreateFdwStmt) GetFdwname() string {
@@ -24963,7 +25535,7 @@ type AlterFdwStmt struct {
 
 func (x *AlterFdwStmt) Reset() {
 	*x = AlterFdwStmt{}
-	mi := &file_pg_query_proto_msgTypes[175]
+	mi := &file_pg_query_proto_msgTypes[178]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24975,7 +25547,7 @@ func (x *AlterFdwStmt) String() string {
 func (*AlterFdwStmt) ProtoMessage() {}
 
 func (x *AlterFdwStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[175]
+	mi := &file_pg_query_proto_msgTypes[178]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24988,7 +25560,7 @@ func (x *AlterFdwStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterFdwStmt.ProtoReflect.Descriptor instead.
 func (*AlterFdwStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{175}
+	return file_pg_query_proto_rawDescGZIP(), []int{178}
 }
 
 func (x *AlterFdwStmt) GetFdwname() string {
@@ -25026,7 +25598,7 @@ type CreateForeignServerStmt struct {
 
 func (x *CreateForeignServerStmt) Reset() {
 	*x = CreateForeignServerStmt{}
-	mi := &file_pg_query_proto_msgTypes[176]
+	mi := &file_pg_query_proto_msgTypes[179]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25038,7 +25610,7 @@ func (x *CreateForeignServerStmt) String() string {
 func (*CreateForeignServerStmt) ProtoMessage() {}
 
 func (x *CreateForeignServerStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[176]
+	mi := &file_pg_query_proto_msgTypes[179]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25051,7 +25623,7 @@ func (x *CreateForeignServerStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateForeignServerStmt.ProtoReflect.Descriptor instead.
 func (*CreateForeignServerStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{176}
+	return file_pg_query_proto_rawDescGZIP(), []int{179}
 }
 
 func (x *CreateForeignServerStmt) GetServername() string {
@@ -25108,7 +25680,7 @@ type AlterForeignServerStmt struct {
 
 func (x *AlterForeignServerStmt) Reset() {
 	*x = AlterForeignServerStmt{}
-	mi := &file_pg_query_proto_msgTypes[177]
+	mi := &file_pg_query_proto_msgTypes[180]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25120,7 +25692,7 @@ func (x *AlterForeignServerStmt) String() string {
 func (*AlterForeignServerStmt) ProtoMessage() {}
 
 func (x *AlterForeignServerStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[177]
+	mi := &file_pg_query_proto_msgTypes[180]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25133,7 +25705,7 @@ func (x *AlterForeignServerStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterForeignServerStmt.ProtoReflect.Descriptor instead.
 func (*AlterForeignServerStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{177}
+	return file_pg_query_proto_rawDescGZIP(), []int{180}
 }
 
 func (x *AlterForeignServerStmt) GetServername() string {
@@ -25175,7 +25747,7 @@ type CreateForeignTableStmt struct {
 
 func (x *CreateForeignTableStmt) Reset() {
 	*x = CreateForeignTableStmt{}
-	mi := &file_pg_query_proto_msgTypes[178]
+	mi := &file_pg_query_proto_msgTypes[181]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25187,7 +25759,7 @@ func (x *CreateForeignTableStmt) String() string {
 func (*CreateForeignTableStmt) ProtoMessage() {}
 
 func (x *CreateForeignTableStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[178]
+	mi := &file_pg_query_proto_msgTypes[181]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25200,7 +25772,7 @@ func (x *CreateForeignTableStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateForeignTableStmt.ProtoReflect.Descriptor instead.
 func (*CreateForeignTableStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{178}
+	return file_pg_query_proto_rawDescGZIP(), []int{181}
 }
 
 func (x *CreateForeignTableStmt) GetBaseStmt() *CreateStmt {
@@ -25236,7 +25808,7 @@ type CreateUserMappingStmt struct {
 
 func (x *CreateUserMappingStmt) Reset() {
 	*x = CreateUserMappingStmt{}
-	mi := &file_pg_query_proto_msgTypes[179]
+	mi := &file_pg_query_proto_msgTypes[182]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25248,7 +25820,7 @@ func (x *CreateUserMappingStmt) String() string {
 func (*CreateUserMappingStmt) ProtoMessage() {}
 
 func (x *CreateUserMappingStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[179]
+	mi := &file_pg_query_proto_msgTypes[182]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25261,7 +25833,7 @@ func (x *CreateUserMappingStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserMappingStmt.ProtoReflect.Descriptor instead.
 func (*CreateUserMappingStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{179}
+	return file_pg_query_proto_rawDescGZIP(), []int{182}
 }
 
 func (x *CreateUserMappingStmt) GetUser() *RoleSpec {
@@ -25303,7 +25875,7 @@ type AlterUserMappingStmt struct {
 
 func (x *AlterUserMappingStmt) Reset() {
 	*x = AlterUserMappingStmt{}
-	mi := &file_pg_query_proto_msgTypes[180]
+	mi := &file_pg_query_proto_msgTypes[183]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25315,7 +25887,7 @@ func (x *AlterUserMappingStmt) String() string {
 func (*AlterUserMappingStmt) ProtoMessage() {}
 
 func (x *AlterUserMappingStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[180]
+	mi := &file_pg_query_proto_msgTypes[183]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25328,7 +25900,7 @@ func (x *AlterUserMappingStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterUserMappingStmt.ProtoReflect.Descriptor instead.
 func (*AlterUserMappingStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{180}
+	return file_pg_query_proto_rawDescGZIP(), []int{183}
 }
 
 func (x *AlterUserMappingStmt) GetUser() *RoleSpec {
@@ -25363,7 +25935,7 @@ type DropUserMappingStmt struct {
 
 func (x *DropUserMappingStmt) Reset() {
 	*x = DropUserMappingStmt{}
-	mi := &file_pg_query_proto_msgTypes[181]
+	mi := &file_pg_query_proto_msgTypes[184]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25375,7 +25947,7 @@ func (x *DropUserMappingStmt) String() string {
 func (*DropUserMappingStmt) ProtoMessage() {}
 
 func (x *DropUserMappingStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[181]
+	mi := &file_pg_query_proto_msgTypes[184]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25388,7 +25960,7 @@ func (x *DropUserMappingStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropUserMappingStmt.ProtoReflect.Descriptor instead.
 func (*DropUserMappingStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{181}
+	return file_pg_query_proto_rawDescGZIP(), []int{184}
 }
 
 func (x *DropUserMappingStmt) GetUser() *RoleSpec {
@@ -25426,7 +25998,7 @@ type ImportForeignSchemaStmt struct {
 
 func (x *ImportForeignSchemaStmt) Reset() {
 	*x = ImportForeignSchemaStmt{}
-	mi := &file_pg_query_proto_msgTypes[182]
+	mi := &file_pg_query_proto_msgTypes[185]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25438,7 +26010,7 @@ func (x *ImportForeignSchemaStmt) String() string {
 func (*ImportForeignSchemaStmt) ProtoMessage() {}
 
 func (x *ImportForeignSchemaStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[182]
+	mi := &file_pg_query_proto_msgTypes[185]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25451,7 +26023,7 @@ func (x *ImportForeignSchemaStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportForeignSchemaStmt.ProtoReflect.Descriptor instead.
 func (*ImportForeignSchemaStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{182}
+	return file_pg_query_proto_rawDescGZIP(), []int{185}
 }
 
 func (x *ImportForeignSchemaStmt) GetServerName() string {
@@ -25511,7 +26083,7 @@ type CreatePolicyStmt struct {
 
 func (x *CreatePolicyStmt) Reset() {
 	*x = CreatePolicyStmt{}
-	mi := &file_pg_query_proto_msgTypes[183]
+	mi := &file_pg_query_proto_msgTypes[186]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25523,7 +26095,7 @@ func (x *CreatePolicyStmt) String() string {
 func (*CreatePolicyStmt) ProtoMessage() {}
 
 func (x *CreatePolicyStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[183]
+	mi := &file_pg_query_proto_msgTypes[186]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25536,7 +26108,7 @@ func (x *CreatePolicyStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePolicyStmt.ProtoReflect.Descriptor instead.
 func (*CreatePolicyStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{183}
+	return file_pg_query_proto_rawDescGZIP(), []int{186}
 }
 
 func (x *CreatePolicyStmt) GetPolicyName() string {
@@ -25601,7 +26173,7 @@ type AlterPolicyStmt struct {
 
 func (x *AlterPolicyStmt) Reset() {
 	*x = AlterPolicyStmt{}
-	mi := &file_pg_query_proto_msgTypes[184]
+	mi := &file_pg_query_proto_msgTypes[187]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25613,7 +26185,7 @@ func (x *AlterPolicyStmt) String() string {
 func (*AlterPolicyStmt) ProtoMessage() {}
 
 func (x *AlterPolicyStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[184]
+	mi := &file_pg_query_proto_msgTypes[187]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25626,7 +26198,7 @@ func (x *AlterPolicyStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterPolicyStmt.ProtoReflect.Descriptor instead.
 func (*AlterPolicyStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{184}
+	return file_pg_query_proto_rawDescGZIP(), []int{187}
 }
 
 func (x *AlterPolicyStmt) GetPolicyName() string {
@@ -25675,7 +26247,7 @@ type CreateAmStmt struct {
 
 func (x *CreateAmStmt) Reset() {
 	*x = CreateAmStmt{}
-	mi := &file_pg_query_proto_msgTypes[185]
+	mi := &file_pg_query_proto_msgTypes[188]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25687,7 +26259,7 @@ func (x *CreateAmStmt) String() string {
 func (*CreateAmStmt) ProtoMessage() {}
 
 func (x *CreateAmStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[185]
+	mi := &file_pg_query_proto_msgTypes[188]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25700,7 +26272,7 @@ func (x *CreateAmStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAmStmt.ProtoReflect.Descriptor instead.
 func (*CreateAmStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{185}
+	return file_pg_query_proto_rawDescGZIP(), []int{188}
 }
 
 func (x *CreateAmStmt) GetAmname() string {
@@ -25747,7 +26319,7 @@ type CreateTrigStmt struct {
 
 func (x *CreateTrigStmt) Reset() {
 	*x = CreateTrigStmt{}
-	mi := &file_pg_query_proto_msgTypes[186]
+	mi := &file_pg_query_proto_msgTypes[189]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25759,7 +26331,7 @@ func (x *CreateTrigStmt) String() string {
 func (*CreateTrigStmt) ProtoMessage() {}
 
 func (x *CreateTrigStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[186]
+	mi := &file_pg_query_proto_msgTypes[189]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25772,7 +26344,7 @@ func (x *CreateTrigStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTrigStmt.ProtoReflect.Descriptor instead.
 func (*CreateTrigStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{186}
+	return file_pg_query_proto_rawDescGZIP(), []int{189}
 }
 
 func (x *CreateTrigStmt) GetReplace() bool {
@@ -25892,7 +26464,7 @@ type CreateEventTrigStmt struct {
 
 func (x *CreateEventTrigStmt) Reset() {
 	*x = CreateEventTrigStmt{}
-	mi := &file_pg_query_proto_msgTypes[187]
+	mi := &file_pg_query_proto_msgTypes[190]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25904,7 +26476,7 @@ func (x *CreateEventTrigStmt) String() string {
 func (*CreateEventTrigStmt) ProtoMessage() {}
 
 func (x *CreateEventTrigStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[187]
+	mi := &file_pg_query_proto_msgTypes[190]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25917,7 +26489,7 @@ func (x *CreateEventTrigStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateEventTrigStmt.ProtoReflect.Descriptor instead.
 func (*CreateEventTrigStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{187}
+	return file_pg_query_proto_rawDescGZIP(), []int{190}
 }
 
 func (x *CreateEventTrigStmt) GetTrigname() string {
@@ -25958,7 +26530,7 @@ type AlterEventTrigStmt struct {
 
 func (x *AlterEventTrigStmt) Reset() {
 	*x = AlterEventTrigStmt{}
-	mi := &file_pg_query_proto_msgTypes[188]
+	mi := &file_pg_query_proto_msgTypes[191]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25970,7 +26542,7 @@ func (x *AlterEventTrigStmt) String() string {
 func (*AlterEventTrigStmt) ProtoMessage() {}
 
 func (x *AlterEventTrigStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[188]
+	mi := &file_pg_query_proto_msgTypes[191]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25983,7 +26555,7 @@ func (x *AlterEventTrigStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterEventTrigStmt.ProtoReflect.Descriptor instead.
 func (*AlterEventTrigStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{188}
+	return file_pg_query_proto_rawDescGZIP(), []int{191}
 }
 
 func (x *AlterEventTrigStmt) GetTrigname() string {
@@ -26014,7 +26586,7 @@ type CreatePLangStmt struct {
 
 func (x *CreatePLangStmt) Reset() {
 	*x = CreatePLangStmt{}
-	mi := &file_pg_query_proto_msgTypes[189]
+	mi := &file_pg_query_proto_msgTypes[192]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26026,7 +26598,7 @@ func (x *CreatePLangStmt) String() string {
 func (*CreatePLangStmt) ProtoMessage() {}
 
 func (x *CreatePLangStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[189]
+	mi := &file_pg_query_proto_msgTypes[192]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26039,7 +26611,7 @@ func (x *CreatePLangStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePLangStmt.ProtoReflect.Descriptor instead.
 func (*CreatePLangStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{189}
+	return file_pg_query_proto_rawDescGZIP(), []int{192}
 }
 
 func (x *CreatePLangStmt) GetReplace() bool {
@@ -26095,7 +26667,7 @@ type CreateRoleStmt struct {
 
 func (x *CreateRoleStmt) Reset() {
 	*x = CreateRoleStmt{}
-	mi := &file_pg_query_proto_msgTypes[190]
+	mi := &file_pg_query_proto_msgTypes[193]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26107,7 +26679,7 @@ func (x *CreateRoleStmt) String() string {
 func (*CreateRoleStmt) ProtoMessage() {}
 
 func (x *CreateRoleStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[190]
+	mi := &file_pg_query_proto_msgTypes[193]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26120,7 +26692,7 @@ func (x *CreateRoleStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleStmt.ProtoReflect.Descriptor instead.
 func (*CreateRoleStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{190}
+	return file_pg_query_proto_rawDescGZIP(), []int{193}
 }
 
 func (x *CreateRoleStmt) GetStmtType() RoleStmtType {
@@ -26155,7 +26727,7 @@ type AlterRoleStmt struct {
 
 func (x *AlterRoleStmt) Reset() {
 	*x = AlterRoleStmt{}
-	mi := &file_pg_query_proto_msgTypes[191]
+	mi := &file_pg_query_proto_msgTypes[194]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26167,7 +26739,7 @@ func (x *AlterRoleStmt) String() string {
 func (*AlterRoleStmt) ProtoMessage() {}
 
 func (x *AlterRoleStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[191]
+	mi := &file_pg_query_proto_msgTypes[194]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26180,7 +26752,7 @@ func (x *AlterRoleStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterRoleStmt.ProtoReflect.Descriptor instead.
 func (*AlterRoleStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{191}
+	return file_pg_query_proto_rawDescGZIP(), []int{194}
 }
 
 func (x *AlterRoleStmt) GetRole() *RoleSpec {
@@ -26215,7 +26787,7 @@ type AlterRoleSetStmt struct {
 
 func (x *AlterRoleSetStmt) Reset() {
 	*x = AlterRoleSetStmt{}
-	mi := &file_pg_query_proto_msgTypes[192]
+	mi := &file_pg_query_proto_msgTypes[195]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26227,7 +26799,7 @@ func (x *AlterRoleSetStmt) String() string {
 func (*AlterRoleSetStmt) ProtoMessage() {}
 
 func (x *AlterRoleSetStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[192]
+	mi := &file_pg_query_proto_msgTypes[195]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26240,7 +26812,7 @@ func (x *AlterRoleSetStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterRoleSetStmt.ProtoReflect.Descriptor instead.
 func (*AlterRoleSetStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{192}
+	return file_pg_query_proto_rawDescGZIP(), []int{195}
 }
 
 func (x *AlterRoleSetStmt) GetRole() *RoleSpec {
@@ -26274,7 +26846,7 @@ type DropRoleStmt struct {
 
 func (x *DropRoleStmt) Reset() {
 	*x = DropRoleStmt{}
-	mi := &file_pg_query_proto_msgTypes[193]
+	mi := &file_pg_query_proto_msgTypes[196]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26286,7 +26858,7 @@ func (x *DropRoleStmt) String() string {
 func (*DropRoleStmt) ProtoMessage() {}
 
 func (x *DropRoleStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[193]
+	mi := &file_pg_query_proto_msgTypes[196]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26299,7 +26871,7 @@ func (x *DropRoleStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropRoleStmt.ProtoReflect.Descriptor instead.
 func (*DropRoleStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{193}
+	return file_pg_query_proto_rawDescGZIP(), []int{196}
 }
 
 func (x *DropRoleStmt) GetRoles() []*Node {
@@ -26329,7 +26901,7 @@ type CreateSeqStmt struct {
 
 func (x *CreateSeqStmt) Reset() {
 	*x = CreateSeqStmt{}
-	mi := &file_pg_query_proto_msgTypes[194]
+	mi := &file_pg_query_proto_msgTypes[197]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26341,7 +26913,7 @@ func (x *CreateSeqStmt) String() string {
 func (*CreateSeqStmt) ProtoMessage() {}
 
 func (x *CreateSeqStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[194]
+	mi := &file_pg_query_proto_msgTypes[197]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26354,7 +26926,7 @@ func (x *CreateSeqStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSeqStmt.ProtoReflect.Descriptor instead.
 func (*CreateSeqStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{194}
+	return file_pg_query_proto_rawDescGZIP(), []int{197}
 }
 
 func (x *CreateSeqStmt) GetSequence() *RangeVar {
@@ -26404,7 +26976,7 @@ type AlterSeqStmt struct {
 
 func (x *AlterSeqStmt) Reset() {
 	*x = AlterSeqStmt{}
-	mi := &file_pg_query_proto_msgTypes[195]
+	mi := &file_pg_query_proto_msgTypes[198]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26416,7 +26988,7 @@ func (x *AlterSeqStmt) String() string {
 func (*AlterSeqStmt) ProtoMessage() {}
 
 func (x *AlterSeqStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[195]
+	mi := &file_pg_query_proto_msgTypes[198]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26429,7 +27001,7 @@ func (x *AlterSeqStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterSeqStmt.ProtoReflect.Descriptor instead.
 func (*AlterSeqStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{195}
+	return file_pg_query_proto_rawDescGZIP(), []int{198}
 }
 
 func (x *AlterSeqStmt) GetSequence() *RangeVar {
@@ -26475,7 +27047,7 @@ type DefineStmt struct {
 
 func (x *DefineStmt) Reset() {
 	*x = DefineStmt{}
-	mi := &file_pg_query_proto_msgTypes[196]
+	mi := &file_pg_query_proto_msgTypes[199]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26487,7 +27059,7 @@ func (x *DefineStmt) String() string {
 func (*DefineStmt) ProtoMessage() {}
 
 func (x *DefineStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[196]
+	mi := &file_pg_query_proto_msgTypes[199]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26500,7 +27072,7 @@ func (x *DefineStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DefineStmt.ProtoReflect.Descriptor instead.
 func (*DefineStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{196}
+	return file_pg_query_proto_rawDescGZIP(), []int{199}
 }
 
 func (x *DefineStmt) GetKind() ObjectType {
@@ -26564,7 +27136,7 @@ type CreateDomainStmt struct {
 
 func (x *CreateDomainStmt) Reset() {
 	*x = CreateDomainStmt{}
-	mi := &file_pg_query_proto_msgTypes[197]
+	mi := &file_pg_query_proto_msgTypes[200]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26576,7 +27148,7 @@ func (x *CreateDomainStmt) String() string {
 func (*CreateDomainStmt) ProtoMessage() {}
 
 func (x *CreateDomainStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[197]
+	mi := &file_pg_query_proto_msgTypes[200]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26589,7 +27161,7 @@ func (x *CreateDomainStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateDomainStmt.ProtoReflect.Descriptor instead.
 func (*CreateDomainStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{197}
+	return file_pg_query_proto_rawDescGZIP(), []int{200}
 }
 
 func (x *CreateDomainStmt) GetDomainname() []*Node {
@@ -26634,7 +27206,7 @@ type CreateOpClassStmt struct {
 
 func (x *CreateOpClassStmt) Reset() {
 	*x = CreateOpClassStmt{}
-	mi := &file_pg_query_proto_msgTypes[198]
+	mi := &file_pg_query_proto_msgTypes[201]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26646,7 +27218,7 @@ func (x *CreateOpClassStmt) String() string {
 func (*CreateOpClassStmt) ProtoMessage() {}
 
 func (x *CreateOpClassStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[198]
+	mi := &file_pg_query_proto_msgTypes[201]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26659,7 +27231,7 @@ func (x *CreateOpClassStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateOpClassStmt.ProtoReflect.Descriptor instead.
 func (*CreateOpClassStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{198}
+	return file_pg_query_proto_rawDescGZIP(), []int{201}
 }
 
 func (x *CreateOpClassStmt) GetOpclassname() []*Node {
@@ -26718,7 +27290,7 @@ type CreateOpClassItem struct {
 
 func (x *CreateOpClassItem) Reset() {
 	*x = CreateOpClassItem{}
-	mi := &file_pg_query_proto_msgTypes[199]
+	mi := &file_pg_query_proto_msgTypes[202]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26730,7 +27302,7 @@ func (x *CreateOpClassItem) String() string {
 func (*CreateOpClassItem) ProtoMessage() {}
 
 func (x *CreateOpClassItem) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[199]
+	mi := &file_pg_query_proto_msgTypes[202]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26743,7 +27315,7 @@ func (x *CreateOpClassItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateOpClassItem.ProtoReflect.Descriptor instead.
 func (*CreateOpClassItem) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{199}
+	return file_pg_query_proto_rawDescGZIP(), []int{202}
 }
 
 func (x *CreateOpClassItem) GetItemtype() int32 {
@@ -26798,7 +27370,7 @@ type CreateOpFamilyStmt struct {
 
 func (x *CreateOpFamilyStmt) Reset() {
 	*x = CreateOpFamilyStmt{}
-	mi := &file_pg_query_proto_msgTypes[200]
+	mi := &file_pg_query_proto_msgTypes[203]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26810,7 +27382,7 @@ func (x *CreateOpFamilyStmt) String() string {
 func (*CreateOpFamilyStmt) ProtoMessage() {}
 
 func (x *CreateOpFamilyStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[200]
+	mi := &file_pg_query_proto_msgTypes[203]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26823,7 +27395,7 @@ func (x *CreateOpFamilyStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateOpFamilyStmt.ProtoReflect.Descriptor instead.
 func (*CreateOpFamilyStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{200}
+	return file_pg_query_proto_rawDescGZIP(), []int{203}
 }
 
 func (x *CreateOpFamilyStmt) GetOpfamilyname() []*Node {
@@ -26852,7 +27424,7 @@ type AlterOpFamilyStmt struct {
 
 func (x *AlterOpFamilyStmt) Reset() {
 	*x = AlterOpFamilyStmt{}
-	mi := &file_pg_query_proto_msgTypes[201]
+	mi := &file_pg_query_proto_msgTypes[204]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26864,7 +27436,7 @@ func (x *AlterOpFamilyStmt) String() string {
 func (*AlterOpFamilyStmt) ProtoMessage() {}
 
 func (x *AlterOpFamilyStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[201]
+	mi := &file_pg_query_proto_msgTypes[204]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26877,7 +27449,7 @@ func (x *AlterOpFamilyStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterOpFamilyStmt.ProtoReflect.Descriptor instead.
 func (*AlterOpFamilyStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{201}
+	return file_pg_query_proto_rawDescGZIP(), []int{204}
 }
 
 func (x *AlterOpFamilyStmt) GetOpfamilyname() []*Node {
@@ -26921,7 +27493,7 @@ type DropStmt struct {
 
 func (x *DropStmt) Reset() {
 	*x = DropStmt{}
-	mi := &file_pg_query_proto_msgTypes[202]
+	mi := &file_pg_query_proto_msgTypes[205]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26933,7 +27505,7 @@ func (x *DropStmt) String() string {
 func (*DropStmt) ProtoMessage() {}
 
 func (x *DropStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[202]
+	mi := &file_pg_query_proto_msgTypes[205]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26946,7 +27518,7 @@ func (x *DropStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropStmt.ProtoReflect.Descriptor instead.
 func (*DropStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{202}
+	return file_pg_query_proto_rawDescGZIP(), []int{205}
 }
 
 func (x *DropStmt) GetObjects() []*Node {
@@ -26995,7 +27567,7 @@ type TruncateStmt struct {
 
 func (x *TruncateStmt) Reset() {
 	*x = TruncateStmt{}
-	mi := &file_pg_query_proto_msgTypes[203]
+	mi := &file_pg_query_proto_msgTypes[206]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27007,7 +27579,7 @@ func (x *TruncateStmt) String() string {
 func (*TruncateStmt) ProtoMessage() {}
 
 func (x *TruncateStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[203]
+	mi := &file_pg_query_proto_msgTypes[206]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27020,7 +27592,7 @@ func (x *TruncateStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TruncateStmt.ProtoReflect.Descriptor instead.
 func (*TruncateStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{203}
+	return file_pg_query_proto_rawDescGZIP(), []int{206}
 }
 
 func (x *TruncateStmt) GetRelations() []*Node {
@@ -27055,7 +27627,7 @@ type CommentStmt struct {
 
 func (x *CommentStmt) Reset() {
 	*x = CommentStmt{}
-	mi := &file_pg_query_proto_msgTypes[204]
+	mi := &file_pg_query_proto_msgTypes[207]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27067,7 +27639,7 @@ func (x *CommentStmt) String() string {
 func (*CommentStmt) ProtoMessage() {}
 
 func (x *CommentStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[204]
+	mi := &file_pg_query_proto_msgTypes[207]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27080,7 +27652,7 @@ func (x *CommentStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommentStmt.ProtoReflect.Descriptor instead.
 func (*CommentStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{204}
+	return file_pg_query_proto_rawDescGZIP(), []int{207}
 }
 
 func (x *CommentStmt) GetObjtype() ObjectType {
@@ -27116,7 +27688,7 @@ type SecLabelStmt struct {
 
 func (x *SecLabelStmt) Reset() {
 	*x = SecLabelStmt{}
-	mi := &file_pg_query_proto_msgTypes[205]
+	mi := &file_pg_query_proto_msgTypes[208]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27128,7 +27700,7 @@ func (x *SecLabelStmt) String() string {
 func (*SecLabelStmt) ProtoMessage() {}
 
 func (x *SecLabelStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[205]
+	mi := &file_pg_query_proto_msgTypes[208]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27141,7 +27713,7 @@ func (x *SecLabelStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecLabelStmt.ProtoReflect.Descriptor instead.
 func (*SecLabelStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{205}
+	return file_pg_query_proto_rawDescGZIP(), []int{208}
 }
 
 func (x *SecLabelStmt) GetObjtype() ObjectType {
@@ -27183,7 +27755,7 @@ type DeclareCursorStmt struct {
 
 func (x *DeclareCursorStmt) Reset() {
 	*x = DeclareCursorStmt{}
-	mi := &file_pg_query_proto_msgTypes[206]
+	mi := &file_pg_query_proto_msgTypes[209]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27195,7 +27767,7 @@ func (x *DeclareCursorStmt) String() string {
 func (*DeclareCursorStmt) ProtoMessage() {}
 
 func (x *DeclareCursorStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[206]
+	mi := &file_pg_query_proto_msgTypes[209]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27208,7 +27780,7 @@ func (x *DeclareCursorStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeclareCursorStmt.ProtoReflect.Descriptor instead.
 func (*DeclareCursorStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{206}
+	return file_pg_query_proto_rawDescGZIP(), []int{209}
 }
 
 func (x *DeclareCursorStmt) GetPortalname() string {
@@ -27241,7 +27813,7 @@ type ClosePortalStmt struct {
 
 func (x *ClosePortalStmt) Reset() {
 	*x = ClosePortalStmt{}
-	mi := &file_pg_query_proto_msgTypes[207]
+	mi := &file_pg_query_proto_msgTypes[210]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27253,7 +27825,7 @@ func (x *ClosePortalStmt) String() string {
 func (*ClosePortalStmt) ProtoMessage() {}
 
 func (x *ClosePortalStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[207]
+	mi := &file_pg_query_proto_msgTypes[210]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27266,7 +27838,7 @@ func (x *ClosePortalStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClosePortalStmt.ProtoReflect.Descriptor instead.
 func (*ClosePortalStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{207}
+	return file_pg_query_proto_rawDescGZIP(), []int{210}
 }
 
 func (x *ClosePortalStmt) GetPortalname() string {
@@ -27288,7 +27860,7 @@ type FetchStmt struct {
 
 func (x *FetchStmt) Reset() {
 	*x = FetchStmt{}
-	mi := &file_pg_query_proto_msgTypes[208]
+	mi := &file_pg_query_proto_msgTypes[211]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27300,7 +27872,7 @@ func (x *FetchStmt) String() string {
 func (*FetchStmt) ProtoMessage() {}
 
 func (x *FetchStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[208]
+	mi := &file_pg_query_proto_msgTypes[211]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27313,7 +27885,7 @@ func (x *FetchStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchStmt.ProtoReflect.Descriptor instead.
 func (*FetchStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{208}
+	return file_pg_query_proto_rawDescGZIP(), []int{211}
 }
 
 func (x *FetchStmt) GetDirection() FetchDirection {
@@ -27364,19 +27936,20 @@ type IndexStmt struct {
 	NullsNotDistinct            bool                   `protobuf:"varint,16,opt,name=nulls_not_distinct,proto3" json:"nulls_not_distinct,omitempty"`
 	Primary                     bool                   `protobuf:"varint,17,opt,name=primary,proto3" json:"primary,omitempty"`
 	Isconstraint                bool                   `protobuf:"varint,18,opt,name=isconstraint,proto3" json:"isconstraint,omitempty"`
-	Deferrable                  bool                   `protobuf:"varint,19,opt,name=deferrable,proto3" json:"deferrable,omitempty"`
-	Initdeferred                bool                   `protobuf:"varint,20,opt,name=initdeferred,proto3" json:"initdeferred,omitempty"`
-	Transformed                 bool                   `protobuf:"varint,21,opt,name=transformed,proto3" json:"transformed,omitempty"`
-	Concurrent                  bool                   `protobuf:"varint,22,opt,name=concurrent,proto3" json:"concurrent,omitempty"`
-	IfNotExists                 bool                   `protobuf:"varint,23,opt,name=if_not_exists,proto3" json:"if_not_exists,omitempty"`
-	ResetDefaultTblspc          bool                   `protobuf:"varint,24,opt,name=reset_default_tblspc,proto3" json:"reset_default_tblspc,omitempty"`
+	Iswithoutoverlaps           bool                   `protobuf:"varint,19,opt,name=iswithoutoverlaps,proto3" json:"iswithoutoverlaps,omitempty"`
+	Deferrable                  bool                   `protobuf:"varint,20,opt,name=deferrable,proto3" json:"deferrable,omitempty"`
+	Initdeferred                bool                   `protobuf:"varint,21,opt,name=initdeferred,proto3" json:"initdeferred,omitempty"`
+	Transformed                 bool                   `protobuf:"varint,22,opt,name=transformed,proto3" json:"transformed,omitempty"`
+	Concurrent                  bool                   `protobuf:"varint,23,opt,name=concurrent,proto3" json:"concurrent,omitempty"`
+	IfNotExists                 bool                   `protobuf:"varint,24,opt,name=if_not_exists,proto3" json:"if_not_exists,omitempty"`
+	ResetDefaultTblspc          bool                   `protobuf:"varint,25,opt,name=reset_default_tblspc,proto3" json:"reset_default_tblspc,omitempty"`
 	unknownFields               protoimpl.UnknownFields
 	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *IndexStmt) Reset() {
 	*x = IndexStmt{}
-	mi := &file_pg_query_proto_msgTypes[209]
+	mi := &file_pg_query_proto_msgTypes[212]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27388,7 +27961,7 @@ func (x *IndexStmt) String() string {
 func (*IndexStmt) ProtoMessage() {}
 
 func (x *IndexStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[209]
+	mi := &file_pg_query_proto_msgTypes[212]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27401,7 +27974,7 @@ func (x *IndexStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IndexStmt.ProtoReflect.Descriptor instead.
 func (*IndexStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{209}
+	return file_pg_query_proto_rawDescGZIP(), []int{212}
 }
 
 func (x *IndexStmt) GetIdxname() string {
@@ -27530,6 +28103,13 @@ func (x *IndexStmt) GetIsconstraint() bool {
 	return false
 }
 
+func (x *IndexStmt) GetIswithoutoverlaps() bool {
+	if x != nil {
+		return x.Iswithoutoverlaps
+	}
+	return false
+}
+
 func (x *IndexStmt) GetDeferrable() bool {
 	if x != nil {
 		return x.Deferrable
@@ -27587,7 +28167,7 @@ type CreateStatsStmt struct {
 
 func (x *CreateStatsStmt) Reset() {
 	*x = CreateStatsStmt{}
-	mi := &file_pg_query_proto_msgTypes[210]
+	mi := &file_pg_query_proto_msgTypes[213]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27599,7 +28179,7 @@ func (x *CreateStatsStmt) String() string {
 func (*CreateStatsStmt) ProtoMessage() {}
 
 func (x *CreateStatsStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[210]
+	mi := &file_pg_query_proto_msgTypes[213]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27612,7 +28192,7 @@ func (x *CreateStatsStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateStatsStmt.ProtoReflect.Descriptor instead.
 func (*CreateStatsStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{210}
+	return file_pg_query_proto_rawDescGZIP(), []int{213}
 }
 
 func (x *CreateStatsStmt) GetDefnames() []*Node {
@@ -27674,7 +28254,7 @@ type StatsElem struct {
 
 func (x *StatsElem) Reset() {
 	*x = StatsElem{}
-	mi := &file_pg_query_proto_msgTypes[211]
+	mi := &file_pg_query_proto_msgTypes[214]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27686,7 +28266,7 @@ func (x *StatsElem) String() string {
 func (*StatsElem) ProtoMessage() {}
 
 func (x *StatsElem) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[211]
+	mi := &file_pg_query_proto_msgTypes[214]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27699,7 +28279,7 @@ func (x *StatsElem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatsElem.ProtoReflect.Descriptor instead.
 func (*StatsElem) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{211}
+	return file_pg_query_proto_rawDescGZIP(), []int{214}
 }
 
 func (x *StatsElem) GetName() string {
@@ -27727,7 +28307,7 @@ type AlterStatsStmt struct {
 
 func (x *AlterStatsStmt) Reset() {
 	*x = AlterStatsStmt{}
-	mi := &file_pg_query_proto_msgTypes[212]
+	mi := &file_pg_query_proto_msgTypes[215]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27739,7 +28319,7 @@ func (x *AlterStatsStmt) String() string {
 func (*AlterStatsStmt) ProtoMessage() {}
 
 func (x *AlterStatsStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[212]
+	mi := &file_pg_query_proto_msgTypes[215]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27752,7 +28332,7 @@ func (x *AlterStatsStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterStatsStmt.ProtoReflect.Descriptor instead.
 func (*AlterStatsStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{212}
+	return file_pg_query_proto_rawDescGZIP(), []int{215}
 }
 
 func (x *AlterStatsStmt) GetDefnames() []*Node {
@@ -27791,7 +28371,7 @@ type CreateFunctionStmt struct {
 
 func (x *CreateFunctionStmt) Reset() {
 	*x = CreateFunctionStmt{}
-	mi := &file_pg_query_proto_msgTypes[213]
+	mi := &file_pg_query_proto_msgTypes[216]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27803,7 +28383,7 @@ func (x *CreateFunctionStmt) String() string {
 func (*CreateFunctionStmt) ProtoMessage() {}
 
 func (x *CreateFunctionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[213]
+	mi := &file_pg_query_proto_msgTypes[216]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27816,7 +28396,7 @@ func (x *CreateFunctionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFunctionStmt.ProtoReflect.Descriptor instead.
 func (*CreateFunctionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{213}
+	return file_pg_query_proto_rawDescGZIP(), []int{216}
 }
 
 func (x *CreateFunctionStmt) GetIsProcedure() bool {
@@ -27874,13 +28454,14 @@ type FunctionParameter struct {
 	ArgType       *TypeName              `protobuf:"bytes,2,opt,name=arg_type,json=argType,proto3" json:"arg_type,omitempty"`
 	Mode          FunctionParameterMode  `protobuf:"varint,3,opt,name=mode,proto3,enum=pg_query.FunctionParameterMode" json:"mode,omitempty"`
 	Defexpr       *Node                  `protobuf:"bytes,4,opt,name=defexpr,proto3" json:"defexpr,omitempty"`
+	Location      int32                  `protobuf:"varint,5,opt,name=location,proto3" json:"location,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *FunctionParameter) Reset() {
 	*x = FunctionParameter{}
-	mi := &file_pg_query_proto_msgTypes[214]
+	mi := &file_pg_query_proto_msgTypes[217]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27892,7 +28473,7 @@ func (x *FunctionParameter) String() string {
 func (*FunctionParameter) ProtoMessage() {}
 
 func (x *FunctionParameter) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[214]
+	mi := &file_pg_query_proto_msgTypes[217]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27905,7 +28486,7 @@ func (x *FunctionParameter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FunctionParameter.ProtoReflect.Descriptor instead.
 func (*FunctionParameter) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{214}
+	return file_pg_query_proto_rawDescGZIP(), []int{217}
 }
 
 func (x *FunctionParameter) GetName() string {
@@ -27936,6 +28517,13 @@ func (x *FunctionParameter) GetDefexpr() *Node {
 	return nil
 }
 
+func (x *FunctionParameter) GetLocation() int32 {
+	if x != nil {
+		return x.Location
+	}
+	return 0
+}
+
 type AlterFunctionStmt struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Objtype       ObjectType             `protobuf:"varint,1,opt,name=objtype,proto3,enum=pg_query.ObjectType" json:"objtype,omitempty"`
@@ -27947,7 +28535,7 @@ type AlterFunctionStmt struct {
 
 func (x *AlterFunctionStmt) Reset() {
 	*x = AlterFunctionStmt{}
-	mi := &file_pg_query_proto_msgTypes[215]
+	mi := &file_pg_query_proto_msgTypes[218]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27959,7 +28547,7 @@ func (x *AlterFunctionStmt) String() string {
 func (*AlterFunctionStmt) ProtoMessage() {}
 
 func (x *AlterFunctionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[215]
+	mi := &file_pg_query_proto_msgTypes[218]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27972,7 +28560,7 @@ func (x *AlterFunctionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterFunctionStmt.ProtoReflect.Descriptor instead.
 func (*AlterFunctionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{215}
+	return file_pg_query_proto_rawDescGZIP(), []int{218}
 }
 
 func (x *AlterFunctionStmt) GetObjtype() ObjectType {
@@ -28005,7 +28593,7 @@ type DoStmt struct {
 
 func (x *DoStmt) Reset() {
 	*x = DoStmt{}
-	mi := &file_pg_query_proto_msgTypes[216]
+	mi := &file_pg_query_proto_msgTypes[219]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28017,7 +28605,7 @@ func (x *DoStmt) String() string {
 func (*DoStmt) ProtoMessage() {}
 
 func (x *DoStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[216]
+	mi := &file_pg_query_proto_msgTypes[219]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28030,7 +28618,7 @@ func (x *DoStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DoStmt.ProtoReflect.Descriptor instead.
 func (*DoStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{216}
+	return file_pg_query_proto_rawDescGZIP(), []int{219}
 }
 
 func (x *DoStmt) GetArgs() []*Node {
@@ -28052,7 +28640,7 @@ type InlineCodeBlock struct {
 
 func (x *InlineCodeBlock) Reset() {
 	*x = InlineCodeBlock{}
-	mi := &file_pg_query_proto_msgTypes[217]
+	mi := &file_pg_query_proto_msgTypes[220]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28064,7 +28652,7 @@ func (x *InlineCodeBlock) String() string {
 func (*InlineCodeBlock) ProtoMessage() {}
 
 func (x *InlineCodeBlock) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[217]
+	mi := &file_pg_query_proto_msgTypes[220]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28077,7 +28665,7 @@ func (x *InlineCodeBlock) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InlineCodeBlock.ProtoReflect.Descriptor instead.
 func (*InlineCodeBlock) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{217}
+	return file_pg_query_proto_rawDescGZIP(), []int{220}
 }
 
 func (x *InlineCodeBlock) GetSourceText() string {
@@ -28119,7 +28707,7 @@ type CallStmt struct {
 
 func (x *CallStmt) Reset() {
 	*x = CallStmt{}
-	mi := &file_pg_query_proto_msgTypes[218]
+	mi := &file_pg_query_proto_msgTypes[221]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28131,7 +28719,7 @@ func (x *CallStmt) String() string {
 func (*CallStmt) ProtoMessage() {}
 
 func (x *CallStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[218]
+	mi := &file_pg_query_proto_msgTypes[221]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28144,7 +28732,7 @@ func (x *CallStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallStmt.ProtoReflect.Descriptor instead.
 func (*CallStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{218}
+	return file_pg_query_proto_rawDescGZIP(), []int{221}
 }
 
 func (x *CallStmt) GetFunccall() *FuncCall {
@@ -28177,7 +28765,7 @@ type CallContext struct {
 
 func (x *CallContext) Reset() {
 	*x = CallContext{}
-	mi := &file_pg_query_proto_msgTypes[219]
+	mi := &file_pg_query_proto_msgTypes[222]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28189,7 +28777,7 @@ func (x *CallContext) String() string {
 func (*CallContext) ProtoMessage() {}
 
 func (x *CallContext) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[219]
+	mi := &file_pg_query_proto_msgTypes[222]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28202,7 +28790,7 @@ func (x *CallContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallContext.ProtoReflect.Descriptor instead.
 func (*CallContext) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{219}
+	return file_pg_query_proto_rawDescGZIP(), []int{222}
 }
 
 func (x *CallContext) GetAtomic() bool {
@@ -28228,7 +28816,7 @@ type RenameStmt struct {
 
 func (x *RenameStmt) Reset() {
 	*x = RenameStmt{}
-	mi := &file_pg_query_proto_msgTypes[220]
+	mi := &file_pg_query_proto_msgTypes[223]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28240,7 +28828,7 @@ func (x *RenameStmt) String() string {
 func (*RenameStmt) ProtoMessage() {}
 
 func (x *RenameStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[220]
+	mi := &file_pg_query_proto_msgTypes[223]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28253,7 +28841,7 @@ func (x *RenameStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenameStmt.ProtoReflect.Descriptor instead.
 func (*RenameStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{220}
+	return file_pg_query_proto_rawDescGZIP(), []int{223}
 }
 
 func (x *RenameStmt) GetRenameType() ObjectType {
@@ -28325,7 +28913,7 @@ type AlterObjectDependsStmt struct {
 
 func (x *AlterObjectDependsStmt) Reset() {
 	*x = AlterObjectDependsStmt{}
-	mi := &file_pg_query_proto_msgTypes[221]
+	mi := &file_pg_query_proto_msgTypes[224]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28337,7 +28925,7 @@ func (x *AlterObjectDependsStmt) String() string {
 func (*AlterObjectDependsStmt) ProtoMessage() {}
 
 func (x *AlterObjectDependsStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[221]
+	mi := &file_pg_query_proto_msgTypes[224]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28350,7 +28938,7 @@ func (x *AlterObjectDependsStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterObjectDependsStmt.ProtoReflect.Descriptor instead.
 func (*AlterObjectDependsStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{221}
+	return file_pg_query_proto_rawDescGZIP(), []int{224}
 }
 
 func (x *AlterObjectDependsStmt) GetObjectType() ObjectType {
@@ -28401,7 +28989,7 @@ type AlterObjectSchemaStmt struct {
 
 func (x *AlterObjectSchemaStmt) Reset() {
 	*x = AlterObjectSchemaStmt{}
-	mi := &file_pg_query_proto_msgTypes[222]
+	mi := &file_pg_query_proto_msgTypes[225]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28413,7 +29001,7 @@ func (x *AlterObjectSchemaStmt) String() string {
 func (*AlterObjectSchemaStmt) ProtoMessage() {}
 
 func (x *AlterObjectSchemaStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[222]
+	mi := &file_pg_query_proto_msgTypes[225]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28426,7 +29014,7 @@ func (x *AlterObjectSchemaStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterObjectSchemaStmt.ProtoReflect.Descriptor instead.
 func (*AlterObjectSchemaStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{222}
+	return file_pg_query_proto_rawDescGZIP(), []int{225}
 }
 
 func (x *AlterObjectSchemaStmt) GetObjectType() ObjectType {
@@ -28476,7 +29064,7 @@ type AlterOwnerStmt struct {
 
 func (x *AlterOwnerStmt) Reset() {
 	*x = AlterOwnerStmt{}
-	mi := &file_pg_query_proto_msgTypes[223]
+	mi := &file_pg_query_proto_msgTypes[226]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28488,7 +29076,7 @@ func (x *AlterOwnerStmt) String() string {
 func (*AlterOwnerStmt) ProtoMessage() {}
 
 func (x *AlterOwnerStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[223]
+	mi := &file_pg_query_proto_msgTypes[226]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28501,7 +29089,7 @@ func (x *AlterOwnerStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterOwnerStmt.ProtoReflect.Descriptor instead.
 func (*AlterOwnerStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{223}
+	return file_pg_query_proto_rawDescGZIP(), []int{226}
 }
 
 func (x *AlterOwnerStmt) GetObjectType() ObjectType {
@@ -28542,7 +29130,7 @@ type AlterOperatorStmt struct {
 
 func (x *AlterOperatorStmt) Reset() {
 	*x = AlterOperatorStmt{}
-	mi := &file_pg_query_proto_msgTypes[224]
+	mi := &file_pg_query_proto_msgTypes[227]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28554,7 +29142,7 @@ func (x *AlterOperatorStmt) String() string {
 func (*AlterOperatorStmt) ProtoMessage() {}
 
 func (x *AlterOperatorStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[224]
+	mi := &file_pg_query_proto_msgTypes[227]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28567,7 +29155,7 @@ func (x *AlterOperatorStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterOperatorStmt.ProtoReflect.Descriptor instead.
 func (*AlterOperatorStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{224}
+	return file_pg_query_proto_rawDescGZIP(), []int{227}
 }
 
 func (x *AlterOperatorStmt) GetOpername() *ObjectWithArgs {
@@ -28594,7 +29182,7 @@ type AlterTypeStmt struct {
 
 func (x *AlterTypeStmt) Reset() {
 	*x = AlterTypeStmt{}
-	mi := &file_pg_query_proto_msgTypes[225]
+	mi := &file_pg_query_proto_msgTypes[228]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28606,7 +29194,7 @@ func (x *AlterTypeStmt) String() string {
 func (*AlterTypeStmt) ProtoMessage() {}
 
 func (x *AlterTypeStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[225]
+	mi := &file_pg_query_proto_msgTypes[228]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28619,7 +29207,7 @@ func (x *AlterTypeStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTypeStmt.ProtoReflect.Descriptor instead.
 func (*AlterTypeStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{225}
+	return file_pg_query_proto_rawDescGZIP(), []int{228}
 }
 
 func (x *AlterTypeStmt) GetTypeName() []*Node {
@@ -28651,7 +29239,7 @@ type RuleStmt struct {
 
 func (x *RuleStmt) Reset() {
 	*x = RuleStmt{}
-	mi := &file_pg_query_proto_msgTypes[226]
+	mi := &file_pg_query_proto_msgTypes[229]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28663,7 +29251,7 @@ func (x *RuleStmt) String() string {
 func (*RuleStmt) ProtoMessage() {}
 
 func (x *RuleStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[226]
+	mi := &file_pg_query_proto_msgTypes[229]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28676,7 +29264,7 @@ func (x *RuleStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuleStmt.ProtoReflect.Descriptor instead.
 func (*RuleStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{226}
+	return file_pg_query_proto_rawDescGZIP(), []int{229}
 }
 
 func (x *RuleStmt) GetRelation() *RangeVar {
@@ -28738,7 +29326,7 @@ type NotifyStmt struct {
 
 func (x *NotifyStmt) Reset() {
 	*x = NotifyStmt{}
-	mi := &file_pg_query_proto_msgTypes[227]
+	mi := &file_pg_query_proto_msgTypes[230]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28750,7 +29338,7 @@ func (x *NotifyStmt) String() string {
 func (*NotifyStmt) ProtoMessage() {}
 
 func (x *NotifyStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[227]
+	mi := &file_pg_query_proto_msgTypes[230]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28763,7 +29351,7 @@ func (x *NotifyStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyStmt.ProtoReflect.Descriptor instead.
 func (*NotifyStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{227}
+	return file_pg_query_proto_rawDescGZIP(), []int{230}
 }
 
 func (x *NotifyStmt) GetConditionname() string {
@@ -28789,7 +29377,7 @@ type ListenStmt struct {
 
 func (x *ListenStmt) Reset() {
 	*x = ListenStmt{}
-	mi := &file_pg_query_proto_msgTypes[228]
+	mi := &file_pg_query_proto_msgTypes[231]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28801,7 +29389,7 @@ func (x *ListenStmt) String() string {
 func (*ListenStmt) ProtoMessage() {}
 
 func (x *ListenStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[228]
+	mi := &file_pg_query_proto_msgTypes[231]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28814,7 +29402,7 @@ func (x *ListenStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenStmt.ProtoReflect.Descriptor instead.
 func (*ListenStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{228}
+	return file_pg_query_proto_rawDescGZIP(), []int{231}
 }
 
 func (x *ListenStmt) GetConditionname() string {
@@ -28833,7 +29421,7 @@ type UnlistenStmt struct {
 
 func (x *UnlistenStmt) Reset() {
 	*x = UnlistenStmt{}
-	mi := &file_pg_query_proto_msgTypes[229]
+	mi := &file_pg_query_proto_msgTypes[232]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28845,7 +29433,7 @@ func (x *UnlistenStmt) String() string {
 func (*UnlistenStmt) ProtoMessage() {}
 
 func (x *UnlistenStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[229]
+	mi := &file_pg_query_proto_msgTypes[232]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28858,7 +29446,7 @@ func (x *UnlistenStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnlistenStmt.ProtoReflect.Descriptor instead.
 func (*UnlistenStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{229}
+	return file_pg_query_proto_rawDescGZIP(), []int{232}
 }
 
 func (x *UnlistenStmt) GetConditionname() string {
@@ -28882,7 +29470,7 @@ type TransactionStmt struct {
 
 func (x *TransactionStmt) Reset() {
 	*x = TransactionStmt{}
-	mi := &file_pg_query_proto_msgTypes[230]
+	mi := &file_pg_query_proto_msgTypes[233]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28894,7 +29482,7 @@ func (x *TransactionStmt) String() string {
 func (*TransactionStmt) ProtoMessage() {}
 
 func (x *TransactionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[230]
+	mi := &file_pg_query_proto_msgTypes[233]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28907,7 +29495,7 @@ func (x *TransactionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransactionStmt.ProtoReflect.Descriptor instead.
 func (*TransactionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{230}
+	return file_pg_query_proto_rawDescGZIP(), []int{233}
 }
 
 func (x *TransactionStmt) GetKind() TransactionStmtKind {
@@ -28962,7 +29550,7 @@ type CompositeTypeStmt struct {
 
 func (x *CompositeTypeStmt) Reset() {
 	*x = CompositeTypeStmt{}
-	mi := &file_pg_query_proto_msgTypes[231]
+	mi := &file_pg_query_proto_msgTypes[234]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -28974,7 +29562,7 @@ func (x *CompositeTypeStmt) String() string {
 func (*CompositeTypeStmt) ProtoMessage() {}
 
 func (x *CompositeTypeStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[231]
+	mi := &file_pg_query_proto_msgTypes[234]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -28987,7 +29575,7 @@ func (x *CompositeTypeStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompositeTypeStmt.ProtoReflect.Descriptor instead.
 func (*CompositeTypeStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{231}
+	return file_pg_query_proto_rawDescGZIP(), []int{234}
 }
 
 func (x *CompositeTypeStmt) GetTypevar() *RangeVar {
@@ -29014,7 +29602,7 @@ type CreateEnumStmt struct {
 
 func (x *CreateEnumStmt) Reset() {
 	*x = CreateEnumStmt{}
-	mi := &file_pg_query_proto_msgTypes[232]
+	mi := &file_pg_query_proto_msgTypes[235]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29026,7 +29614,7 @@ func (x *CreateEnumStmt) String() string {
 func (*CreateEnumStmt) ProtoMessage() {}
 
 func (x *CreateEnumStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[232]
+	mi := &file_pg_query_proto_msgTypes[235]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29039,7 +29627,7 @@ func (x *CreateEnumStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateEnumStmt.ProtoReflect.Descriptor instead.
 func (*CreateEnumStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{232}
+	return file_pg_query_proto_rawDescGZIP(), []int{235}
 }
 
 func (x *CreateEnumStmt) GetTypeName() []*Node {
@@ -29066,7 +29654,7 @@ type CreateRangeStmt struct {
 
 func (x *CreateRangeStmt) Reset() {
 	*x = CreateRangeStmt{}
-	mi := &file_pg_query_proto_msgTypes[233]
+	mi := &file_pg_query_proto_msgTypes[236]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29078,7 +29666,7 @@ func (x *CreateRangeStmt) String() string {
 func (*CreateRangeStmt) ProtoMessage() {}
 
 func (x *CreateRangeStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[233]
+	mi := &file_pg_query_proto_msgTypes[236]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29091,7 +29679,7 @@ func (x *CreateRangeStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRangeStmt.ProtoReflect.Descriptor instead.
 func (*CreateRangeStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{233}
+	return file_pg_query_proto_rawDescGZIP(), []int{236}
 }
 
 func (x *CreateRangeStmt) GetTypeName() []*Node {
@@ -29122,7 +29710,7 @@ type AlterEnumStmt struct {
 
 func (x *AlterEnumStmt) Reset() {
 	*x = AlterEnumStmt{}
-	mi := &file_pg_query_proto_msgTypes[234]
+	mi := &file_pg_query_proto_msgTypes[237]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29134,7 +29722,7 @@ func (x *AlterEnumStmt) String() string {
 func (*AlterEnumStmt) ProtoMessage() {}
 
 func (x *AlterEnumStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[234]
+	mi := &file_pg_query_proto_msgTypes[237]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29147,7 +29735,7 @@ func (x *AlterEnumStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterEnumStmt.ProtoReflect.Descriptor instead.
 func (*AlterEnumStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{234}
+	return file_pg_query_proto_rawDescGZIP(), []int{237}
 }
 
 func (x *AlterEnumStmt) GetTypeName() []*Node {
@@ -29206,7 +29794,7 @@ type ViewStmt struct {
 
 func (x *ViewStmt) Reset() {
 	*x = ViewStmt{}
-	mi := &file_pg_query_proto_msgTypes[235]
+	mi := &file_pg_query_proto_msgTypes[238]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29218,7 +29806,7 @@ func (x *ViewStmt) String() string {
 func (*ViewStmt) ProtoMessage() {}
 
 func (x *ViewStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[235]
+	mi := &file_pg_query_proto_msgTypes[238]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29231,7 +29819,7 @@ func (x *ViewStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ViewStmt.ProtoReflect.Descriptor instead.
 func (*ViewStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{235}
+	return file_pg_query_proto_rawDescGZIP(), []int{238}
 }
 
 func (x *ViewStmt) GetView() *RangeVar {
@@ -29285,7 +29873,7 @@ type LoadStmt struct {
 
 func (x *LoadStmt) Reset() {
 	*x = LoadStmt{}
-	mi := &file_pg_query_proto_msgTypes[236]
+	mi := &file_pg_query_proto_msgTypes[239]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29297,7 +29885,7 @@ func (x *LoadStmt) String() string {
 func (*LoadStmt) ProtoMessage() {}
 
 func (x *LoadStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[236]
+	mi := &file_pg_query_proto_msgTypes[239]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29310,7 +29898,7 @@ func (x *LoadStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadStmt.ProtoReflect.Descriptor instead.
 func (*LoadStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{236}
+	return file_pg_query_proto_rawDescGZIP(), []int{239}
 }
 
 func (x *LoadStmt) GetFilename() string {
@@ -29330,7 +29918,7 @@ type CreatedbStmt struct {
 
 func (x *CreatedbStmt) Reset() {
 	*x = CreatedbStmt{}
-	mi := &file_pg_query_proto_msgTypes[237]
+	mi := &file_pg_query_proto_msgTypes[240]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29342,7 +29930,7 @@ func (x *CreatedbStmt) String() string {
 func (*CreatedbStmt) ProtoMessage() {}
 
 func (x *CreatedbStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[237]
+	mi := &file_pg_query_proto_msgTypes[240]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29355,7 +29943,7 @@ func (x *CreatedbStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatedbStmt.ProtoReflect.Descriptor instead.
 func (*CreatedbStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{237}
+	return file_pg_query_proto_rawDescGZIP(), []int{240}
 }
 
 func (x *CreatedbStmt) GetDbname() string {
@@ -29382,7 +29970,7 @@ type AlterDatabaseStmt struct {
 
 func (x *AlterDatabaseStmt) Reset() {
 	*x = AlterDatabaseStmt{}
-	mi := &file_pg_query_proto_msgTypes[238]
+	mi := &file_pg_query_proto_msgTypes[241]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29394,7 +29982,7 @@ func (x *AlterDatabaseStmt) String() string {
 func (*AlterDatabaseStmt) ProtoMessage() {}
 
 func (x *AlterDatabaseStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[238]
+	mi := &file_pg_query_proto_msgTypes[241]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29407,7 +29995,7 @@ func (x *AlterDatabaseStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterDatabaseStmt.ProtoReflect.Descriptor instead.
 func (*AlterDatabaseStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{238}
+	return file_pg_query_proto_rawDescGZIP(), []int{241}
 }
 
 func (x *AlterDatabaseStmt) GetDbname() string {
@@ -29433,7 +30021,7 @@ type AlterDatabaseRefreshCollStmt struct {
 
 func (x *AlterDatabaseRefreshCollStmt) Reset() {
 	*x = AlterDatabaseRefreshCollStmt{}
-	mi := &file_pg_query_proto_msgTypes[239]
+	mi := &file_pg_query_proto_msgTypes[242]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29445,7 +30033,7 @@ func (x *AlterDatabaseRefreshCollStmt) String() string {
 func (*AlterDatabaseRefreshCollStmt) ProtoMessage() {}
 
 func (x *AlterDatabaseRefreshCollStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[239]
+	mi := &file_pg_query_proto_msgTypes[242]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29458,7 +30046,7 @@ func (x *AlterDatabaseRefreshCollStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterDatabaseRefreshCollStmt.ProtoReflect.Descriptor instead.
 func (*AlterDatabaseRefreshCollStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{239}
+	return file_pg_query_proto_rawDescGZIP(), []int{242}
 }
 
 func (x *AlterDatabaseRefreshCollStmt) GetDbname() string {
@@ -29478,7 +30066,7 @@ type AlterDatabaseSetStmt struct {
 
 func (x *AlterDatabaseSetStmt) Reset() {
 	*x = AlterDatabaseSetStmt{}
-	mi := &file_pg_query_proto_msgTypes[240]
+	mi := &file_pg_query_proto_msgTypes[243]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29490,7 +30078,7 @@ func (x *AlterDatabaseSetStmt) String() string {
 func (*AlterDatabaseSetStmt) ProtoMessage() {}
 
 func (x *AlterDatabaseSetStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[240]
+	mi := &file_pg_query_proto_msgTypes[243]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29503,7 +30091,7 @@ func (x *AlterDatabaseSetStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterDatabaseSetStmt.ProtoReflect.Descriptor instead.
 func (*AlterDatabaseSetStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{240}
+	return file_pg_query_proto_rawDescGZIP(), []int{243}
 }
 
 func (x *AlterDatabaseSetStmt) GetDbname() string {
@@ -29531,7 +30119,7 @@ type DropdbStmt struct {
 
 func (x *DropdbStmt) Reset() {
 	*x = DropdbStmt{}
-	mi := &file_pg_query_proto_msgTypes[241]
+	mi := &file_pg_query_proto_msgTypes[244]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29543,7 +30131,7 @@ func (x *DropdbStmt) String() string {
 func (*DropdbStmt) ProtoMessage() {}
 
 func (x *DropdbStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[241]
+	mi := &file_pg_query_proto_msgTypes[244]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29556,7 +30144,7 @@ func (x *DropdbStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropdbStmt.ProtoReflect.Descriptor instead.
 func (*DropdbStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{241}
+	return file_pg_query_proto_rawDescGZIP(), []int{244}
 }
 
 func (x *DropdbStmt) GetDbname() string {
@@ -29589,7 +30177,7 @@ type AlterSystemStmt struct {
 
 func (x *AlterSystemStmt) Reset() {
 	*x = AlterSystemStmt{}
-	mi := &file_pg_query_proto_msgTypes[242]
+	mi := &file_pg_query_proto_msgTypes[245]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29601,7 +30189,7 @@ func (x *AlterSystemStmt) String() string {
 func (*AlterSystemStmt) ProtoMessage() {}
 
 func (x *AlterSystemStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[242]
+	mi := &file_pg_query_proto_msgTypes[245]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29614,7 +30202,7 @@ func (x *AlterSystemStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterSystemStmt.ProtoReflect.Descriptor instead.
 func (*AlterSystemStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{242}
+	return file_pg_query_proto_rawDescGZIP(), []int{245}
 }
 
 func (x *AlterSystemStmt) GetSetstmt() *VariableSetStmt {
@@ -29635,7 +30223,7 @@ type ClusterStmt struct {
 
 func (x *ClusterStmt) Reset() {
 	*x = ClusterStmt{}
-	mi := &file_pg_query_proto_msgTypes[243]
+	mi := &file_pg_query_proto_msgTypes[246]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29647,7 +30235,7 @@ func (x *ClusterStmt) String() string {
 func (*ClusterStmt) ProtoMessage() {}
 
 func (x *ClusterStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[243]
+	mi := &file_pg_query_proto_msgTypes[246]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29660,7 +30248,7 @@ func (x *ClusterStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterStmt.ProtoReflect.Descriptor instead.
 func (*ClusterStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{243}
+	return file_pg_query_proto_rawDescGZIP(), []int{246}
 }
 
 func (x *ClusterStmt) GetRelation() *RangeVar {
@@ -29695,7 +30283,7 @@ type VacuumStmt struct {
 
 func (x *VacuumStmt) Reset() {
 	*x = VacuumStmt{}
-	mi := &file_pg_query_proto_msgTypes[244]
+	mi := &file_pg_query_proto_msgTypes[247]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29707,7 +30295,7 @@ func (x *VacuumStmt) String() string {
 func (*VacuumStmt) ProtoMessage() {}
 
 func (x *VacuumStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[244]
+	mi := &file_pg_query_proto_msgTypes[247]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29720,7 +30308,7 @@ func (x *VacuumStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumStmt.ProtoReflect.Descriptor instead.
 func (*VacuumStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{244}
+	return file_pg_query_proto_rawDescGZIP(), []int{247}
 }
 
 func (x *VacuumStmt) GetOptions() []*Node {
@@ -29755,7 +30343,7 @@ type VacuumRelation struct {
 
 func (x *VacuumRelation) Reset() {
 	*x = VacuumRelation{}
-	mi := &file_pg_query_proto_msgTypes[245]
+	mi := &file_pg_query_proto_msgTypes[248]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29767,7 +30355,7 @@ func (x *VacuumRelation) String() string {
 func (*VacuumRelation) ProtoMessage() {}
 
 func (x *VacuumRelation) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[245]
+	mi := &file_pg_query_proto_msgTypes[248]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29780,7 +30368,7 @@ func (x *VacuumRelation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumRelation.ProtoReflect.Descriptor instead.
 func (*VacuumRelation) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{245}
+	return file_pg_query_proto_rawDescGZIP(), []int{248}
 }
 
 func (x *VacuumRelation) GetRelation() *RangeVar {
@@ -29814,7 +30402,7 @@ type ExplainStmt struct {
 
 func (x *ExplainStmt) Reset() {
 	*x = ExplainStmt{}
-	mi := &file_pg_query_proto_msgTypes[246]
+	mi := &file_pg_query_proto_msgTypes[249]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29826,7 +30414,7 @@ func (x *ExplainStmt) String() string {
 func (*ExplainStmt) ProtoMessage() {}
 
 func (x *ExplainStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[246]
+	mi := &file_pg_query_proto_msgTypes[249]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29839,7 +30427,7 @@ func (x *ExplainStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainStmt.ProtoReflect.Descriptor instead.
 func (*ExplainStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{246}
+	return file_pg_query_proto_rawDescGZIP(), []int{249}
 }
 
 func (x *ExplainStmt) GetQuery() *Node {
@@ -29869,7 +30457,7 @@ type CreateTableAsStmt struct {
 
 func (x *CreateTableAsStmt) Reset() {
 	*x = CreateTableAsStmt{}
-	mi := &file_pg_query_proto_msgTypes[247]
+	mi := &file_pg_query_proto_msgTypes[250]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29881,7 +30469,7 @@ func (x *CreateTableAsStmt) String() string {
 func (*CreateTableAsStmt) ProtoMessage() {}
 
 func (x *CreateTableAsStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[247]
+	mi := &file_pg_query_proto_msgTypes[250]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29894,7 +30482,7 @@ func (x *CreateTableAsStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTableAsStmt.ProtoReflect.Descriptor instead.
 func (*CreateTableAsStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{247}
+	return file_pg_query_proto_rawDescGZIP(), []int{250}
 }
 
 func (x *CreateTableAsStmt) GetQuery() *Node {
@@ -29943,7 +30531,7 @@ type RefreshMatViewStmt struct {
 
 func (x *RefreshMatViewStmt) Reset() {
 	*x = RefreshMatViewStmt{}
-	mi := &file_pg_query_proto_msgTypes[248]
+	mi := &file_pg_query_proto_msgTypes[251]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -29955,7 +30543,7 @@ func (x *RefreshMatViewStmt) String() string {
 func (*RefreshMatViewStmt) ProtoMessage() {}
 
 func (x *RefreshMatViewStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[248]
+	mi := &file_pg_query_proto_msgTypes[251]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -29968,7 +30556,7 @@ func (x *RefreshMatViewStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshMatViewStmt.ProtoReflect.Descriptor instead.
 func (*RefreshMatViewStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{248}
+	return file_pg_query_proto_rawDescGZIP(), []int{251}
 }
 
 func (x *RefreshMatViewStmt) GetConcurrent() bool {
@@ -30000,7 +30588,7 @@ type CheckPointStmt struct {
 
 func (x *CheckPointStmt) Reset() {
 	*x = CheckPointStmt{}
-	mi := &file_pg_query_proto_msgTypes[249]
+	mi := &file_pg_query_proto_msgTypes[252]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30012,7 +30600,7 @@ func (x *CheckPointStmt) String() string {
 func (*CheckPointStmt) ProtoMessage() {}
 
 func (x *CheckPointStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[249]
+	mi := &file_pg_query_proto_msgTypes[252]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30025,7 +30613,7 @@ func (x *CheckPointStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckPointStmt.ProtoReflect.Descriptor instead.
 func (*CheckPointStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{249}
+	return file_pg_query_proto_rawDescGZIP(), []int{252}
 }
 
 type DiscardStmt struct {
@@ -30037,7 +30625,7 @@ type DiscardStmt struct {
 
 func (x *DiscardStmt) Reset() {
 	*x = DiscardStmt{}
-	mi := &file_pg_query_proto_msgTypes[250]
+	mi := &file_pg_query_proto_msgTypes[253]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30049,7 +30637,7 @@ func (x *DiscardStmt) String() string {
 func (*DiscardStmt) ProtoMessage() {}
 
 func (x *DiscardStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[250]
+	mi := &file_pg_query_proto_msgTypes[253]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30062,7 +30650,7 @@ func (x *DiscardStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscardStmt.ProtoReflect.Descriptor instead.
 func (*DiscardStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{250}
+	return file_pg_query_proto_rawDescGZIP(), []int{253}
 }
 
 func (x *DiscardStmt) GetTarget() DiscardMode {
@@ -30083,7 +30671,7 @@ type LockStmt struct {
 
 func (x *LockStmt) Reset() {
 	*x = LockStmt{}
-	mi := &file_pg_query_proto_msgTypes[251]
+	mi := &file_pg_query_proto_msgTypes[254]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30095,7 +30683,7 @@ func (x *LockStmt) String() string {
 func (*LockStmt) ProtoMessage() {}
 
 func (x *LockStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[251]
+	mi := &file_pg_query_proto_msgTypes[254]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30108,7 +30696,7 @@ func (x *LockStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LockStmt.ProtoReflect.Descriptor instead.
 func (*LockStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{251}
+	return file_pg_query_proto_rawDescGZIP(), []int{254}
 }
 
 func (x *LockStmt) GetRelations() []*Node {
@@ -30142,7 +30730,7 @@ type ConstraintsSetStmt struct {
 
 func (x *ConstraintsSetStmt) Reset() {
 	*x = ConstraintsSetStmt{}
-	mi := &file_pg_query_proto_msgTypes[252]
+	mi := &file_pg_query_proto_msgTypes[255]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30154,7 +30742,7 @@ func (x *ConstraintsSetStmt) String() string {
 func (*ConstraintsSetStmt) ProtoMessage() {}
 
 func (x *ConstraintsSetStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[252]
+	mi := &file_pg_query_proto_msgTypes[255]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30167,7 +30755,7 @@ func (x *ConstraintsSetStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConstraintsSetStmt.ProtoReflect.Descriptor instead.
 func (*ConstraintsSetStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{252}
+	return file_pg_query_proto_rawDescGZIP(), []int{255}
 }
 
 func (x *ConstraintsSetStmt) GetConstraints() []*Node {
@@ -30196,7 +30784,7 @@ type ReindexStmt struct {
 
 func (x *ReindexStmt) Reset() {
 	*x = ReindexStmt{}
-	mi := &file_pg_query_proto_msgTypes[253]
+	mi := &file_pg_query_proto_msgTypes[256]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30208,7 +30796,7 @@ func (x *ReindexStmt) String() string {
 func (*ReindexStmt) ProtoMessage() {}
 
 func (x *ReindexStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[253]
+	mi := &file_pg_query_proto_msgTypes[256]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30221,7 +30809,7 @@ func (x *ReindexStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReindexStmt.ProtoReflect.Descriptor instead.
 func (*ReindexStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{253}
+	return file_pg_query_proto_rawDescGZIP(), []int{256}
 }
 
 func (x *ReindexStmt) GetKind() ReindexObjectType {
@@ -30265,7 +30853,7 @@ type CreateConversionStmt struct {
 
 func (x *CreateConversionStmt) Reset() {
 	*x = CreateConversionStmt{}
-	mi := &file_pg_query_proto_msgTypes[254]
+	mi := &file_pg_query_proto_msgTypes[257]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30277,7 +30865,7 @@ func (x *CreateConversionStmt) String() string {
 func (*CreateConversionStmt) ProtoMessage() {}
 
 func (x *CreateConversionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[254]
+	mi := &file_pg_query_proto_msgTypes[257]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30290,7 +30878,7 @@ func (x *CreateConversionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateConversionStmt.ProtoReflect.Descriptor instead.
 func (*CreateConversionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{254}
+	return file_pg_query_proto_rawDescGZIP(), []int{257}
 }
 
 func (x *CreateConversionStmt) GetConversionName() []*Node {
@@ -30341,7 +30929,7 @@ type CreateCastStmt struct {
 
 func (x *CreateCastStmt) Reset() {
 	*x = CreateCastStmt{}
-	mi := &file_pg_query_proto_msgTypes[255]
+	mi := &file_pg_query_proto_msgTypes[258]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30353,7 +30941,7 @@ func (x *CreateCastStmt) String() string {
 func (*CreateCastStmt) ProtoMessage() {}
 
 func (x *CreateCastStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[255]
+	mi := &file_pg_query_proto_msgTypes[258]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30366,7 +30954,7 @@ func (x *CreateCastStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCastStmt.ProtoReflect.Descriptor instead.
 func (*CreateCastStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{255}
+	return file_pg_query_proto_rawDescGZIP(), []int{258}
 }
 
 func (x *CreateCastStmt) GetSourcetype() *TypeName {
@@ -30417,7 +31005,7 @@ type CreateTransformStmt struct {
 
 func (x *CreateTransformStmt) Reset() {
 	*x = CreateTransformStmt{}
-	mi := &file_pg_query_proto_msgTypes[256]
+	mi := &file_pg_query_proto_msgTypes[259]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30429,7 +31017,7 @@ func (x *CreateTransformStmt) String() string {
 func (*CreateTransformStmt) ProtoMessage() {}
 
 func (x *CreateTransformStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[256]
+	mi := &file_pg_query_proto_msgTypes[259]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30442,7 +31030,7 @@ func (x *CreateTransformStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTransformStmt.ProtoReflect.Descriptor instead.
 func (*CreateTransformStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{256}
+	return file_pg_query_proto_rawDescGZIP(), []int{259}
 }
 
 func (x *CreateTransformStmt) GetReplace() bool {
@@ -30491,7 +31079,7 @@ type PrepareStmt struct {
 
 func (x *PrepareStmt) Reset() {
 	*x = PrepareStmt{}
-	mi := &file_pg_query_proto_msgTypes[257]
+	mi := &file_pg_query_proto_msgTypes[260]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30503,7 +31091,7 @@ func (x *PrepareStmt) String() string {
 func (*PrepareStmt) ProtoMessage() {}
 
 func (x *PrepareStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[257]
+	mi := &file_pg_query_proto_msgTypes[260]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30516,7 +31104,7 @@ func (x *PrepareStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareStmt.ProtoReflect.Descriptor instead.
 func (*PrepareStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{257}
+	return file_pg_query_proto_rawDescGZIP(), []int{260}
 }
 
 func (x *PrepareStmt) GetName() string {
@@ -30550,7 +31138,7 @@ type ExecuteStmt struct {
 
 func (x *ExecuteStmt) Reset() {
 	*x = ExecuteStmt{}
-	mi := &file_pg_query_proto_msgTypes[258]
+	mi := &file_pg_query_proto_msgTypes[261]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30562,7 +31150,7 @@ func (x *ExecuteStmt) String() string {
 func (*ExecuteStmt) ProtoMessage() {}
 
 func (x *ExecuteStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[258]
+	mi := &file_pg_query_proto_msgTypes[261]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30575,7 +31163,7 @@ func (x *ExecuteStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteStmt.ProtoReflect.Descriptor instead.
 func (*ExecuteStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{258}
+	return file_pg_query_proto_rawDescGZIP(), []int{261}
 }
 
 func (x *ExecuteStmt) GetName() string {
@@ -30603,7 +31191,7 @@ type DeallocateStmt struct {
 
 func (x *DeallocateStmt) Reset() {
 	*x = DeallocateStmt{}
-	mi := &file_pg_query_proto_msgTypes[259]
+	mi := &file_pg_query_proto_msgTypes[262]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30615,7 +31203,7 @@ func (x *DeallocateStmt) String() string {
 func (*DeallocateStmt) ProtoMessage() {}
 
 func (x *DeallocateStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[259]
+	mi := &file_pg_query_proto_msgTypes[262]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30628,7 +31216,7 @@ func (x *DeallocateStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeallocateStmt.ProtoReflect.Descriptor instead.
 func (*DeallocateStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{259}
+	return file_pg_query_proto_rawDescGZIP(), []int{262}
 }
 
 func (x *DeallocateStmt) GetName() string {
@@ -30662,7 +31250,7 @@ type DropOwnedStmt struct {
 
 func (x *DropOwnedStmt) Reset() {
 	*x = DropOwnedStmt{}
-	mi := &file_pg_query_proto_msgTypes[260]
+	mi := &file_pg_query_proto_msgTypes[263]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30674,7 +31262,7 @@ func (x *DropOwnedStmt) String() string {
 func (*DropOwnedStmt) ProtoMessage() {}
 
 func (x *DropOwnedStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[260]
+	mi := &file_pg_query_proto_msgTypes[263]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30687,7 +31275,7 @@ func (x *DropOwnedStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropOwnedStmt.ProtoReflect.Descriptor instead.
 func (*DropOwnedStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{260}
+	return file_pg_query_proto_rawDescGZIP(), []int{263}
 }
 
 func (x *DropOwnedStmt) GetRoles() []*Node {
@@ -30714,7 +31302,7 @@ type ReassignOwnedStmt struct {
 
 func (x *ReassignOwnedStmt) Reset() {
 	*x = ReassignOwnedStmt{}
-	mi := &file_pg_query_proto_msgTypes[261]
+	mi := &file_pg_query_proto_msgTypes[264]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30726,7 +31314,7 @@ func (x *ReassignOwnedStmt) String() string {
 func (*ReassignOwnedStmt) ProtoMessage() {}
 
 func (x *ReassignOwnedStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[261]
+	mi := &file_pg_query_proto_msgTypes[264]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30739,7 +31327,7 @@ func (x *ReassignOwnedStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReassignOwnedStmt.ProtoReflect.Descriptor instead.
 func (*ReassignOwnedStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{261}
+	return file_pg_query_proto_rawDescGZIP(), []int{264}
 }
 
 func (x *ReassignOwnedStmt) GetRoles() []*Node {
@@ -30766,7 +31354,7 @@ type AlterTSDictionaryStmt struct {
 
 func (x *AlterTSDictionaryStmt) Reset() {
 	*x = AlterTSDictionaryStmt{}
-	mi := &file_pg_query_proto_msgTypes[262]
+	mi := &file_pg_query_proto_msgTypes[265]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30778,7 +31366,7 @@ func (x *AlterTSDictionaryStmt) String() string {
 func (*AlterTSDictionaryStmt) ProtoMessage() {}
 
 func (x *AlterTSDictionaryStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[262]
+	mi := &file_pg_query_proto_msgTypes[265]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30791,7 +31379,7 @@ func (x *AlterTSDictionaryStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTSDictionaryStmt.ProtoReflect.Descriptor instead.
 func (*AlterTSDictionaryStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{262}
+	return file_pg_query_proto_rawDescGZIP(), []int{265}
 }
 
 func (x *AlterTSDictionaryStmt) GetDictname() []*Node {
@@ -30823,7 +31411,7 @@ type AlterTSConfigurationStmt struct {
 
 func (x *AlterTSConfigurationStmt) Reset() {
 	*x = AlterTSConfigurationStmt{}
-	mi := &file_pg_query_proto_msgTypes[263]
+	mi := &file_pg_query_proto_msgTypes[266]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30835,7 +31423,7 @@ func (x *AlterTSConfigurationStmt) String() string {
 func (*AlterTSConfigurationStmt) ProtoMessage() {}
 
 func (x *AlterTSConfigurationStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[263]
+	mi := &file_pg_query_proto_msgTypes[266]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30848,7 +31436,7 @@ func (x *AlterTSConfigurationStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterTSConfigurationStmt.ProtoReflect.Descriptor instead.
 func (*AlterTSConfigurationStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{263}
+	return file_pg_query_proto_rawDescGZIP(), []int{266}
 }
 
 func (x *AlterTSConfigurationStmt) GetKind() AlterTSConfigType {
@@ -30911,7 +31499,7 @@ type PublicationTable struct {
 
 func (x *PublicationTable) Reset() {
 	*x = PublicationTable{}
-	mi := &file_pg_query_proto_msgTypes[264]
+	mi := &file_pg_query_proto_msgTypes[267]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30923,7 +31511,7 @@ func (x *PublicationTable) String() string {
 func (*PublicationTable) ProtoMessage() {}
 
 func (x *PublicationTable) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[264]
+	mi := &file_pg_query_proto_msgTypes[267]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30936,7 +31524,7 @@ func (x *PublicationTable) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicationTable.ProtoReflect.Descriptor instead.
 func (*PublicationTable) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{264}
+	return file_pg_query_proto_rawDescGZIP(), []int{267}
 }
 
 func (x *PublicationTable) GetRelation() *RangeVar {
@@ -30972,7 +31560,7 @@ type PublicationObjSpec struct {
 
 func (x *PublicationObjSpec) Reset() {
 	*x = PublicationObjSpec{}
-	mi := &file_pg_query_proto_msgTypes[265]
+	mi := &file_pg_query_proto_msgTypes[268]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -30984,7 +31572,7 @@ func (x *PublicationObjSpec) String() string {
 func (*PublicationObjSpec) ProtoMessage() {}
 
 func (x *PublicationObjSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[265]
+	mi := &file_pg_query_proto_msgTypes[268]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -30997,7 +31585,7 @@ func (x *PublicationObjSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicationObjSpec.ProtoReflect.Descriptor instead.
 func (*PublicationObjSpec) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{265}
+	return file_pg_query_proto_rawDescGZIP(), []int{268}
 }
 
 func (x *PublicationObjSpec) GetPubobjtype() PublicationObjSpecType {
@@ -31040,7 +31628,7 @@ type CreatePublicationStmt struct {
 
 func (x *CreatePublicationStmt) Reset() {
 	*x = CreatePublicationStmt{}
-	mi := &file_pg_query_proto_msgTypes[266]
+	mi := &file_pg_query_proto_msgTypes[269]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31052,7 +31640,7 @@ func (x *CreatePublicationStmt) String() string {
 func (*CreatePublicationStmt) ProtoMessage() {}
 
 func (x *CreatePublicationStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[266]
+	mi := &file_pg_query_proto_msgTypes[269]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31065,7 +31653,7 @@ func (x *CreatePublicationStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePublicationStmt.ProtoReflect.Descriptor instead.
 func (*CreatePublicationStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{266}
+	return file_pg_query_proto_rawDescGZIP(), []int{269}
 }
 
 func (x *CreatePublicationStmt) GetPubname() string {
@@ -31109,7 +31697,7 @@ type AlterPublicationStmt struct {
 
 func (x *AlterPublicationStmt) Reset() {
 	*x = AlterPublicationStmt{}
-	mi := &file_pg_query_proto_msgTypes[267]
+	mi := &file_pg_query_proto_msgTypes[270]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31121,7 +31709,7 @@ func (x *AlterPublicationStmt) String() string {
 func (*AlterPublicationStmt) ProtoMessage() {}
 
 func (x *AlterPublicationStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[267]
+	mi := &file_pg_query_proto_msgTypes[270]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31134,7 +31722,7 @@ func (x *AlterPublicationStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterPublicationStmt.ProtoReflect.Descriptor instead.
 func (*AlterPublicationStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{267}
+	return file_pg_query_proto_rawDescGZIP(), []int{270}
 }
 
 func (x *AlterPublicationStmt) GetPubname() string {
@@ -31184,7 +31772,7 @@ type CreateSubscriptionStmt struct {
 
 func (x *CreateSubscriptionStmt) Reset() {
 	*x = CreateSubscriptionStmt{}
-	mi := &file_pg_query_proto_msgTypes[268]
+	mi := &file_pg_query_proto_msgTypes[271]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31196,7 +31784,7 @@ func (x *CreateSubscriptionStmt) String() string {
 func (*CreateSubscriptionStmt) ProtoMessage() {}
 
 func (x *CreateSubscriptionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[268]
+	mi := &file_pg_query_proto_msgTypes[271]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31209,7 +31797,7 @@ func (x *CreateSubscriptionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSubscriptionStmt.ProtoReflect.Descriptor instead.
 func (*CreateSubscriptionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{268}
+	return file_pg_query_proto_rawDescGZIP(), []int{271}
 }
 
 func (x *CreateSubscriptionStmt) GetSubname() string {
@@ -31253,7 +31841,7 @@ type AlterSubscriptionStmt struct {
 
 func (x *AlterSubscriptionStmt) Reset() {
 	*x = AlterSubscriptionStmt{}
-	mi := &file_pg_query_proto_msgTypes[269]
+	mi := &file_pg_query_proto_msgTypes[272]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31265,7 +31853,7 @@ func (x *AlterSubscriptionStmt) String() string {
 func (*AlterSubscriptionStmt) ProtoMessage() {}
 
 func (x *AlterSubscriptionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[269]
+	mi := &file_pg_query_proto_msgTypes[272]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31278,7 +31866,7 @@ func (x *AlterSubscriptionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlterSubscriptionStmt.ProtoReflect.Descriptor instead.
 func (*AlterSubscriptionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{269}
+	return file_pg_query_proto_rawDescGZIP(), []int{272}
 }
 
 func (x *AlterSubscriptionStmt) GetKind() AlterSubscriptionType {
@@ -31327,7 +31915,7 @@ type DropSubscriptionStmt struct {
 
 func (x *DropSubscriptionStmt) Reset() {
 	*x = DropSubscriptionStmt{}
-	mi := &file_pg_query_proto_msgTypes[270]
+	mi := &file_pg_query_proto_msgTypes[273]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31339,7 +31927,7 @@ func (x *DropSubscriptionStmt) String() string {
 func (*DropSubscriptionStmt) ProtoMessage() {}
 
 func (x *DropSubscriptionStmt) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[270]
+	mi := &file_pg_query_proto_msgTypes[273]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31352,7 +31940,7 @@ func (x *DropSubscriptionStmt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DropSubscriptionStmt.ProtoReflect.Descriptor instead.
 func (*DropSubscriptionStmt) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{270}
+	return file_pg_query_proto_rawDescGZIP(), []int{273}
 }
 
 func (x *DropSubscriptionStmt) GetSubname() string {
@@ -31388,7 +31976,7 @@ type ScanToken struct {
 
 func (x *ScanToken) Reset() {
 	*x = ScanToken{}
-	mi := &file_pg_query_proto_msgTypes[271]
+	mi := &file_pg_query_proto_msgTypes[274]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31400,7 +31988,7 @@ func (x *ScanToken) String() string {
 func (*ScanToken) ProtoMessage() {}
 
 func (x *ScanToken) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[271]
+	mi := &file_pg_query_proto_msgTypes[274]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31413,7 +32001,7 @@ func (x *ScanToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanToken.ProtoReflect.Descriptor instead.
 func (*ScanToken) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{271}
+	return file_pg_query_proto_rawDescGZIP(), []int{274}
 }
 
 func (x *ScanToken) GetStart() int32 {
@@ -31466,7 +32054,7 @@ type SummaryResult struct {
 
 func (x *SummaryResult) Reset() {
 	*x = SummaryResult{}
-	mi := &file_pg_query_proto_msgTypes[272]
+	mi := &file_pg_query_proto_msgTypes[275]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31478,7 +32066,7 @@ func (x *SummaryResult) String() string {
 func (*SummaryResult) ProtoMessage() {}
 
 func (x *SummaryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[272]
+	mi := &file_pg_query_proto_msgTypes[275]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31491,7 +32079,7 @@ func (x *SummaryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SummaryResult.ProtoReflect.Descriptor instead.
 func (*SummaryResult) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{272}
+	return file_pg_query_proto_rawDescGZIP(), []int{275}
 }
 
 func (x *SummaryResult) GetTables() []*SummaryResult_Table {
@@ -31555,7 +32143,7 @@ type SummaryResult_Table struct {
 
 func (x *SummaryResult_Table) Reset() {
 	*x = SummaryResult_Table{}
-	mi := &file_pg_query_proto_msgTypes[273]
+	mi := &file_pg_query_proto_msgTypes[276]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31567,7 +32155,7 @@ func (x *SummaryResult_Table) String() string {
 func (*SummaryResult_Table) ProtoMessage() {}
 
 func (x *SummaryResult_Table) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[273]
+	mi := &file_pg_query_proto_msgTypes[276]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31580,7 +32168,7 @@ func (x *SummaryResult_Table) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SummaryResult_Table.ProtoReflect.Descriptor instead.
 func (*SummaryResult_Table) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{272, 0}
+	return file_pg_query_proto_rawDescGZIP(), []int{275, 0}
 }
 
 func (x *SummaryResult_Table) GetName() string {
@@ -31623,7 +32211,7 @@ type SummaryResult_Function struct {
 
 func (x *SummaryResult_Function) Reset() {
 	*x = SummaryResult_Function{}
-	mi := &file_pg_query_proto_msgTypes[275]
+	mi := &file_pg_query_proto_msgTypes[278]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31635,7 +32223,7 @@ func (x *SummaryResult_Function) String() string {
 func (*SummaryResult_Function) ProtoMessage() {}
 
 func (x *SummaryResult_Function) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[275]
+	mi := &file_pg_query_proto_msgTypes[278]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31648,7 +32236,7 @@ func (x *SummaryResult_Function) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SummaryResult_Function.ProtoReflect.Descriptor instead.
 func (*SummaryResult_Function) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{272, 2}
+	return file_pg_query_proto_rawDescGZIP(), []int{275, 2}
 }
 
 func (x *SummaryResult_Function) GetName() string {
@@ -31690,7 +32278,7 @@ type SummaryResult_FilterColumn struct {
 
 func (x *SummaryResult_FilterColumn) Reset() {
 	*x = SummaryResult_FilterColumn{}
-	mi := &file_pg_query_proto_msgTypes[276]
+	mi := &file_pg_query_proto_msgTypes[279]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -31702,7 +32290,7 @@ func (x *SummaryResult_FilterColumn) String() string {
 func (*SummaryResult_FilterColumn) ProtoMessage() {}
 
 func (x *SummaryResult_FilterColumn) ProtoReflect() protoreflect.Message {
-	mi := &file_pg_query_proto_msgTypes[276]
+	mi := &file_pg_query_proto_msgTypes[279]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -31715,7 +32303,7 @@ func (x *SummaryResult_FilterColumn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SummaryResult_FilterColumn.ProtoReflect.Descriptor instead.
 func (*SummaryResult_FilterColumn) Descriptor() ([]byte, []int) {
-	return file_pg_query_proto_rawDescGZIP(), []int{272, 3}
+	return file_pg_query_proto_rawDescGZIP(), []int{275, 3}
 }
 
 func (x *SummaryResult_FilterColumn) GetSchemaName() string {
@@ -31750,7 +32338,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\n" +
 	"ScanResult\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12+\n" +
-	"\x06tokens\x18\x02 \x03(\v2\x13.pg_query.ScanTokenR\x06tokens\"Վ\x01\n" +
+	"\x06tokens\x18\x02 \x03(\v2\x13.pg_query.ScanTokenR\x06tokens\"\xa3\x90\x01\n" +
 	"\x04Node\x12'\n" +
 	"\x05alias\x18\x01 \x01(\v2\x0f.pg_query.AliasH\x00R\x05Alias\x121\n" +
 	"\trange_var\x18\x02 \x01(\v2\x12.pg_query.RangeVarH\x00R\bRangeVar\x124\n" +
@@ -31818,50 +32406,50 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x0eset_to_default\x187 \x01(\v2\x16.pg_query.SetToDefaultH\x00R\fSetToDefault\x12A\n" +
 	"\x0fcurrent_of_expr\x188 \x01(\v2\x17.pg_query.CurrentOfExprH\x00R\rCurrentOfExpr\x12A\n" +
 	"\x0fnext_value_expr\x189 \x01(\v2\x17.pg_query.NextValueExprH\x00R\rNextValueExpr\x12@\n" +
-	"\x0einference_elem\x18: \x01(\v2\x17.pg_query.InferenceElemH\x00R\rInferenceElem\x12:\n" +
-	"\ftarget_entry\x18; \x01(\v2\x15.pg_query.TargetEntryH\x00R\vTargetEntry\x12;\n" +
-	"\rrange_tbl_ref\x18< \x01(\v2\x15.pg_query.RangeTblRefH\x00R\vRangeTblRef\x121\n" +
-	"\tjoin_expr\x18= \x01(\v2\x12.pg_query.JoinExprH\x00R\bJoinExpr\x121\n" +
-	"\tfrom_expr\x18> \x01(\v2\x12.pg_query.FromExprH\x00R\bFromExpr\x12D\n" +
-	"\x10on_conflict_expr\x18? \x01(\v2\x18.pg_query.OnConflictExprH\x00R\x0eOnConflictExpr\x12'\n" +
-	"\x05query\x18@ \x01(\v2\x0f.pg_query.QueryH\x00R\x05Query\x121\n" +
-	"\ttype_name\x18A \x01(\v2\x12.pg_query.TypeNameH\x00R\bTypeName\x124\n" +
+	"\x0einference_elem\x18: \x01(\v2\x17.pg_query.InferenceElemH\x00R\rInferenceElem\x12@\n" +
+	"\x0ereturning_expr\x18; \x01(\v2\x17.pg_query.ReturningExprH\x00R\rReturningExpr\x12:\n" +
+	"\ftarget_entry\x18< \x01(\v2\x15.pg_query.TargetEntryH\x00R\vTargetEntry\x12;\n" +
+	"\rrange_tbl_ref\x18= \x01(\v2\x15.pg_query.RangeTblRefH\x00R\vRangeTblRef\x121\n" +
+	"\tjoin_expr\x18> \x01(\v2\x12.pg_query.JoinExprH\x00R\bJoinExpr\x121\n" +
+	"\tfrom_expr\x18? \x01(\v2\x12.pg_query.FromExprH\x00R\bFromExpr\x12D\n" +
+	"\x10on_conflict_expr\x18@ \x01(\v2\x18.pg_query.OnConflictExprH\x00R\x0eOnConflictExpr\x12'\n" +
+	"\x05query\x18A \x01(\v2\x0f.pg_query.QueryH\x00R\x05Query\x121\n" +
+	"\ttype_name\x18B \x01(\v2\x12.pg_query.TypeNameH\x00R\bTypeName\x124\n" +
 	"\n" +
-	"column_ref\x18B \x01(\v2\x13.pg_query.ColumnRefH\x00R\tColumnRef\x121\n" +
-	"\tparam_ref\x18C \x01(\v2\x12.pg_query.ParamRefH\x00R\bParamRef\x12*\n" +
-	"\x06a_expr\x18D \x01(\v2\x10.pg_query.A_ExprH\x00R\x06A_Expr\x121\n" +
-	"\ttype_cast\x18E \x01(\v2\x12.pg_query.TypeCastH\x00R\bTypeCast\x12@\n" +
-	"\x0ecollate_clause\x18F \x01(\v2\x17.pg_query.CollateClauseH\x00R\rCollateClause\x121\n" +
-	"\trole_spec\x18G \x01(\v2\x12.pg_query.RoleSpecH\x00R\bRoleSpec\x121\n" +
-	"\tfunc_call\x18H \x01(\v2\x12.pg_query.FuncCallH\x00R\bFuncCall\x12*\n" +
-	"\x06a_star\x18I \x01(\v2\x10.pg_query.A_StarH\x00R\x06A_Star\x123\n" +
-	"\ta_indices\x18J \x01(\v2\x13.pg_query.A_IndicesH\x00R\tA_Indices\x12?\n" +
-	"\ra_indirection\x18K \x01(\v2\x17.pg_query.A_IndirectionH\x00R\rA_Indirection\x12:\n" +
-	"\fa_array_expr\x18L \x01(\v2\x15.pg_query.A_ArrayExprH\x00R\vA_ArrayExpr\x124\n" +
+	"column_ref\x18C \x01(\v2\x13.pg_query.ColumnRefH\x00R\tColumnRef\x121\n" +
+	"\tparam_ref\x18D \x01(\v2\x12.pg_query.ParamRefH\x00R\bParamRef\x12*\n" +
+	"\x06a_expr\x18E \x01(\v2\x10.pg_query.A_ExprH\x00R\x06A_Expr\x121\n" +
+	"\ttype_cast\x18F \x01(\v2\x12.pg_query.TypeCastH\x00R\bTypeCast\x12@\n" +
+	"\x0ecollate_clause\x18G \x01(\v2\x17.pg_query.CollateClauseH\x00R\rCollateClause\x121\n" +
+	"\trole_spec\x18H \x01(\v2\x12.pg_query.RoleSpecH\x00R\bRoleSpec\x121\n" +
+	"\tfunc_call\x18I \x01(\v2\x12.pg_query.FuncCallH\x00R\bFuncCall\x12*\n" +
+	"\x06a_star\x18J \x01(\v2\x10.pg_query.A_StarH\x00R\x06A_Star\x123\n" +
+	"\ta_indices\x18K \x01(\v2\x13.pg_query.A_IndicesH\x00R\tA_Indices\x12?\n" +
+	"\ra_indirection\x18L \x01(\v2\x17.pg_query.A_IndirectionH\x00R\rA_Indirection\x12:\n" +
+	"\fa_array_expr\x18M \x01(\v2\x15.pg_query.A_ArrayExprH\x00R\vA_ArrayExpr\x124\n" +
 	"\n" +
-	"res_target\x18M \x01(\v2\x13.pg_query.ResTargetH\x00R\tResTarget\x12D\n" +
-	"\x10multi_assign_ref\x18N \x01(\v2\x18.pg_query.MultiAssignRefH\x00R\x0eMultiAssignRef\x12+\n" +
-	"\asort_by\x18O \x01(\v2\x10.pg_query.SortByH\x00R\x06SortBy\x124\n" +
+	"res_target\x18N \x01(\v2\x13.pg_query.ResTargetH\x00R\tResTarget\x12D\n" +
+	"\x10multi_assign_ref\x18O \x01(\v2\x18.pg_query.MultiAssignRefH\x00R\x0eMultiAssignRef\x12+\n" +
+	"\asort_by\x18P \x01(\v2\x10.pg_query.SortByH\x00R\x06SortBy\x124\n" +
 	"\n" +
-	"window_def\x18P \x01(\v2\x13.pg_query.WindowDefH\x00R\tWindowDef\x12C\n" +
-	"\x0frange_subselect\x18Q \x01(\v2\x18.pg_query.RangeSubselectH\x00R\x0eRangeSubselect\x12@\n" +
-	"\x0erange_function\x18R \x01(\v2\x17.pg_query.RangeFunctionH\x00R\rRangeFunction\x12D\n" +
-	"\x10range_table_func\x18S \x01(\v2\x18.pg_query.RangeTableFuncH\x00R\x0eRangeTableFunc\x12N\n" +
-	"\x14range_table_func_col\x18T \x01(\v2\x1b.pg_query.RangeTableFuncColH\x00R\x11RangeTableFuncCol\x12J\n" +
-	"\x12range_table_sample\x18U \x01(\v2\x1a.pg_query.RangeTableSampleH\x00R\x10RangeTableSample\x124\n" +
+	"window_def\x18Q \x01(\v2\x13.pg_query.WindowDefH\x00R\tWindowDef\x12C\n" +
+	"\x0frange_subselect\x18R \x01(\v2\x18.pg_query.RangeSubselectH\x00R\x0eRangeSubselect\x12@\n" +
+	"\x0erange_function\x18S \x01(\v2\x17.pg_query.RangeFunctionH\x00R\rRangeFunction\x12D\n" +
+	"\x10range_table_func\x18T \x01(\v2\x18.pg_query.RangeTableFuncH\x00R\x0eRangeTableFunc\x12N\n" +
+	"\x14range_table_func_col\x18U \x01(\v2\x1b.pg_query.RangeTableFuncColH\x00R\x11RangeTableFuncCol\x12J\n" +
+	"\x12range_table_sample\x18V \x01(\v2\x1a.pg_query.RangeTableSampleH\x00R\x10RangeTableSample\x124\n" +
 	"\n" +
-	"column_def\x18V \x01(\v2\x13.pg_query.ColumnDefH\x00R\tColumnDef\x12G\n" +
-	"\x11table_like_clause\x18W \x01(\v2\x19.pg_query.TableLikeClauseH\x00R\x0fTableLikeClause\x124\n" +
+	"column_def\x18W \x01(\v2\x13.pg_query.ColumnDefH\x00R\tColumnDef\x12G\n" +
+	"\x11table_like_clause\x18X \x01(\v2\x19.pg_query.TableLikeClauseH\x00R\x0fTableLikeClause\x124\n" +
 	"\n" +
-	"index_elem\x18X \x01(\v2\x13.pg_query.IndexElemH\x00R\tIndexElem\x12.\n" +
-	"\bdef_elem\x18Y \x01(\v2\x11.pg_query.DefElemH\x00R\aDefElem\x12@\n" +
-	"\x0elocking_clause\x18Z \x01(\v2\x17.pg_query.LockingClauseH\x00R\rLockingClause\x12=\n" +
-	"\rxml_serialize\x18[ \x01(\v2\x16.pg_query.XmlSerializeH\x00R\fXmlSerialize\x12@\n" +
-	"\x0epartition_elem\x18\\ \x01(\v2\x17.pg_query.PartitionElemH\x00R\rPartitionElem\x12@\n" +
-	"\x0epartition_spec\x18] \x01(\v2\x17.pg_query.PartitionSpecH\x00R\rPartitionSpec\x12P\n" +
-	"\x14partition_bound_spec\x18^ \x01(\v2\x1c.pg_query.PartitionBoundSpecH\x00R\x12PartitionBoundSpec\x12S\n" +
-	"\x15partition_range_datum\x18_ \x01(\v2\x1d.pg_query.PartitionRangeDatumH\x00R\x13PartitionRangeDatum\x12S\n" +
-	"\x15single_partition_spec\x18` \x01(\v2\x1d.pg_query.SinglePartitionSpecH\x00R\x13SinglePartitionSpec\x12=\n" +
+	"index_elem\x18Y \x01(\v2\x13.pg_query.IndexElemH\x00R\tIndexElem\x12.\n" +
+	"\bdef_elem\x18Z \x01(\v2\x11.pg_query.DefElemH\x00R\aDefElem\x12@\n" +
+	"\x0elocking_clause\x18[ \x01(\v2\x17.pg_query.LockingClauseH\x00R\rLockingClause\x12=\n" +
+	"\rxml_serialize\x18\\ \x01(\v2\x16.pg_query.XmlSerializeH\x00R\fXmlSerialize\x12@\n" +
+	"\x0epartition_elem\x18] \x01(\v2\x17.pg_query.PartitionElemH\x00R\rPartitionElem\x12@\n" +
+	"\x0epartition_spec\x18^ \x01(\v2\x17.pg_query.PartitionSpecH\x00R\rPartitionSpec\x12P\n" +
+	"\x14partition_bound_spec\x18_ \x01(\v2\x1c.pg_query.PartitionBoundSpecH\x00R\x12PartitionBoundSpec\x12S\n" +
+	"\x15partition_range_datum\x18` \x01(\v2\x1d.pg_query.PartitionRangeDatumH\x00R\x13PartitionRangeDatum\x12=\n" +
 	"\rpartition_cmd\x18a \x01(\v2\x16.pg_query.PartitionCmdH\x00R\fPartitionCmd\x12A\n" +
 	"\x0frange_tbl_entry\x18b \x01(\v2\x17.pg_query.RangeTblEntryH\x00R\rRangeTblEntry\x12L\n" +
 	"\x12rtepermission_info\x18c \x01(\v2\x1b.pg_query.RTEPermissionInfoH\x00R\x11RTEPermissionInfo\x12J\n" +
@@ -31879,185 +32467,188 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x10ctesearch_clause\x18n \x01(\v2\x19.pg_query.CTESearchClauseH\x00R\x0fCTESearchClause\x12C\n" +
 	"\x0fctecycle_clause\x18o \x01(\v2\x18.pg_query.CTECycleClauseH\x00R\x0eCTECycleClause\x12G\n" +
 	"\x11common_table_expr\x18p \x01(\v2\x19.pg_query.CommonTableExprH\x00R\x0fCommonTableExpr\x12G\n" +
-	"\x11merge_when_clause\x18q \x01(\v2\x19.pg_query.MergeWhenClauseH\x00R\x0fMergeWhenClause\x12L\n" +
-	"\x12trigger_transition\x18r \x01(\v2\x1b.pg_query.TriggerTransitionH\x00R\x11TriggerTransition\x127\n" +
-	"\vjson_output\x18s \x01(\v2\x14.pg_query.JsonOutputH\x00R\n" +
+	"\x11merge_when_clause\x18q \x01(\v2\x19.pg_query.MergeWhenClauseH\x00R\x0fMergeWhenClause\x12F\n" +
+	"\x10returning_option\x18r \x01(\v2\x19.pg_query.ReturningOptionH\x00R\x0fReturningOption\x12F\n" +
+	"\x10returning_clause\x18s \x01(\v2\x19.pg_query.ReturningClauseH\x00R\x0fReturningClause\x12L\n" +
+	"\x12trigger_transition\x18t \x01(\v2\x1b.pg_query.TriggerTransitionH\x00R\x11TriggerTransition\x127\n" +
+	"\vjson_output\x18u \x01(\v2\x14.pg_query.JsonOutputH\x00R\n" +
 	"JsonOutput\x12=\n" +
-	"\rjson_argument\x18t \x01(\v2\x16.pg_query.JsonArgumentH\x00R\fJsonArgument\x12>\n" +
-	"\x0ejson_func_expr\x18u \x01(\v2\x16.pg_query.JsonFuncExprH\x00R\fJsonFuncExpr\x12N\n" +
-	"\x14json_table_path_spec\x18v \x01(\v2\x1b.pg_query.JsonTablePathSpecH\x00R\x11JsonTablePathSpec\x124\n" +
+	"\rjson_argument\x18v \x01(\v2\x16.pg_query.JsonArgumentH\x00R\fJsonArgument\x12>\n" +
+	"\x0ejson_func_expr\x18w \x01(\v2\x16.pg_query.JsonFuncExprH\x00R\fJsonFuncExpr\x12N\n" +
+	"\x14json_table_path_spec\x18x \x01(\v2\x1b.pg_query.JsonTablePathSpecH\x00R\x11JsonTablePathSpec\x124\n" +
 	"\n" +
-	"json_table\x18w \x01(\v2\x13.pg_query.JsonTableH\x00R\tJsonTable\x12G\n" +
-	"\x11json_table_column\x18x \x01(\v2\x19.pg_query.JsonTableColumnH\x00R\x0fJsonTableColumn\x12>\n" +
-	"\x0ejson_key_value\x18y \x01(\v2\x16.pg_query.JsonKeyValueH\x00R\fJsonKeyValue\x12A\n" +
-	"\x0fjson_parse_expr\x18z \x01(\v2\x17.pg_query.JsonParseExprH\x00R\rJsonParseExpr\x12D\n" +
-	"\x10json_scalar_expr\x18{ \x01(\v2\x18.pg_query.JsonScalarExprH\x00R\x0eJsonScalarExpr\x12M\n" +
-	"\x13json_serialize_expr\x18| \x01(\v2\x1b.pg_query.JsonSerializeExprH\x00R\x11JsonSerializeExpr\x12Y\n" +
-	"\x17json_object_constructor\x18} \x01(\v2\x1f.pg_query.JsonObjectConstructorH\x00R\x15JsonObjectConstructor\x12V\n" +
-	"\x16json_array_constructor\x18~ \x01(\v2\x1e.pg_query.JsonArrayConstructorH\x00R\x14JsonArrayConstructor\x12f\n" +
-	"\x1cjson_array_query_constructor\x18\x7f \x01(\v2#.pg_query.JsonArrayQueryConstructorH\x00R\x19JsonArrayQueryConstructor\x12Q\n" +
-	"\x14json_agg_constructor\x18\x80\x01 \x01(\v2\x1c.pg_query.JsonAggConstructorH\x00R\x12JsonAggConstructor\x12B\n" +
-	"\x0fjson_object_agg\x18\x81\x01 \x01(\v2\x17.pg_query.JsonObjectAggH\x00R\rJsonObjectAgg\x12?\n" +
-	"\x0ejson_array_agg\x18\x82\x01 \x01(\v2\x16.pg_query.JsonArrayAggH\x00R\fJsonArrayAgg\x12/\n" +
-	"\braw_stmt\x18\x83\x01 \x01(\v2\x11.pg_query.RawStmtH\x00R\aRawStmt\x128\n" +
-	"\vinsert_stmt\x18\x84\x01 \x01(\v2\x14.pg_query.InsertStmtH\x00R\n" +
+	"json_table\x18y \x01(\v2\x13.pg_query.JsonTableH\x00R\tJsonTable\x12G\n" +
+	"\x11json_table_column\x18z \x01(\v2\x19.pg_query.JsonTableColumnH\x00R\x0fJsonTableColumn\x12>\n" +
+	"\x0ejson_key_value\x18{ \x01(\v2\x16.pg_query.JsonKeyValueH\x00R\fJsonKeyValue\x12A\n" +
+	"\x0fjson_parse_expr\x18| \x01(\v2\x17.pg_query.JsonParseExprH\x00R\rJsonParseExpr\x12D\n" +
+	"\x10json_scalar_expr\x18} \x01(\v2\x18.pg_query.JsonScalarExprH\x00R\x0eJsonScalarExpr\x12M\n" +
+	"\x13json_serialize_expr\x18~ \x01(\v2\x1b.pg_query.JsonSerializeExprH\x00R\x11JsonSerializeExpr\x12Y\n" +
+	"\x17json_object_constructor\x18\x7f \x01(\v2\x1f.pg_query.JsonObjectConstructorH\x00R\x15JsonObjectConstructor\x12W\n" +
+	"\x16json_array_constructor\x18\x80\x01 \x01(\v2\x1e.pg_query.JsonArrayConstructorH\x00R\x14JsonArrayConstructor\x12g\n" +
+	"\x1cjson_array_query_constructor\x18\x81\x01 \x01(\v2#.pg_query.JsonArrayQueryConstructorH\x00R\x19JsonArrayQueryConstructor\x12Q\n" +
+	"\x14json_agg_constructor\x18\x82\x01 \x01(\v2\x1c.pg_query.JsonAggConstructorH\x00R\x12JsonAggConstructor\x12B\n" +
+	"\x0fjson_object_agg\x18\x83\x01 \x01(\v2\x17.pg_query.JsonObjectAggH\x00R\rJsonObjectAgg\x12?\n" +
+	"\x0ejson_array_agg\x18\x84\x01 \x01(\v2\x16.pg_query.JsonArrayAggH\x00R\fJsonArrayAgg\x12/\n" +
+	"\braw_stmt\x18\x85\x01 \x01(\v2\x11.pg_query.RawStmtH\x00R\aRawStmt\x128\n" +
+	"\vinsert_stmt\x18\x86\x01 \x01(\v2\x14.pg_query.InsertStmtH\x00R\n" +
 	"InsertStmt\x128\n" +
-	"\vdelete_stmt\x18\x85\x01 \x01(\v2\x14.pg_query.DeleteStmtH\x00R\n" +
+	"\vdelete_stmt\x18\x87\x01 \x01(\v2\x14.pg_query.DeleteStmtH\x00R\n" +
 	"DeleteStmt\x128\n" +
-	"\vupdate_stmt\x18\x86\x01 \x01(\v2\x14.pg_query.UpdateStmtH\x00R\n" +
+	"\vupdate_stmt\x18\x88\x01 \x01(\v2\x14.pg_query.UpdateStmtH\x00R\n" +
 	"UpdateStmt\x125\n" +
 	"\n" +
-	"merge_stmt\x18\x87\x01 \x01(\v2\x13.pg_query.MergeStmtH\x00R\tMergeStmt\x128\n" +
-	"\vselect_stmt\x18\x88\x01 \x01(\v2\x14.pg_query.SelectStmtH\x00R\n" +
+	"merge_stmt\x18\x89\x01 \x01(\v2\x13.pg_query.MergeStmtH\x00R\tMergeStmt\x128\n" +
+	"\vselect_stmt\x18\x8a\x01 \x01(\v2\x14.pg_query.SelectStmtH\x00R\n" +
 	"SelectStmt\x12K\n" +
-	"\x12set_operation_stmt\x18\x89\x01 \x01(\v2\x1a.pg_query.SetOperationStmtH\x00R\x10SetOperationStmt\x128\n" +
-	"\vreturn_stmt\x18\x8a\x01 \x01(\v2\x14.pg_query.ReturnStmtH\x00R\n" +
+	"\x12set_operation_stmt\x18\x8b\x01 \x01(\v2\x1a.pg_query.SetOperationStmtH\x00R\x10SetOperationStmt\x128\n" +
+	"\vreturn_stmt\x18\x8c\x01 \x01(\v2\x14.pg_query.ReturnStmtH\x00R\n" +
 	"ReturnStmt\x12>\n" +
-	"\rplassign_stmt\x18\x8b\x01 \x01(\v2\x16.pg_query.PLAssignStmtH\x00R\fPLAssignStmt\x12K\n" +
-	"\x12create_schema_stmt\x18\x8c\x01 \x01(\v2\x1a.pg_query.CreateSchemaStmtH\x00R\x10CreateSchemaStmt\x12E\n" +
-	"\x10alter_table_stmt\x18\x8d\x01 \x01(\v2\x18.pg_query.AlterTableStmtH\x00R\x0eAlterTableStmt\x12T\n" +
-	"\x15replica_identity_stmt\x18\x8e\x01 \x01(\v2\x1d.pg_query.ReplicaIdentityStmtH\x00R\x13ReplicaIdentityStmt\x12B\n" +
-	"\x0falter_table_cmd\x18\x8f\x01 \x01(\v2\x17.pg_query.AlterTableCmdH\x00R\rAlterTableCmd\x12Q\n" +
-	"\x14alter_collation_stmt\x18\x90\x01 \x01(\v2\x1c.pg_query.AlterCollationStmtH\x00R\x12AlterCollationStmt\x12H\n" +
-	"\x11alter_domain_stmt\x18\x91\x01 \x01(\v2\x19.pg_query.AlterDomainStmtH\x00R\x0fAlterDomainStmt\x125\n" +
+	"\rplassign_stmt\x18\x8d\x01 \x01(\v2\x16.pg_query.PLAssignStmtH\x00R\fPLAssignStmt\x12K\n" +
+	"\x12create_schema_stmt\x18\x8e\x01 \x01(\v2\x1a.pg_query.CreateSchemaStmtH\x00R\x10CreateSchemaStmt\x12E\n" +
+	"\x10alter_table_stmt\x18\x8f\x01 \x01(\v2\x18.pg_query.AlterTableStmtH\x00R\x0eAlterTableStmt\x12B\n" +
+	"\x0falter_table_cmd\x18\x90\x01 \x01(\v2\x17.pg_query.AlterTableCmdH\x00R\rAlterTableCmd\x12M\n" +
+	"\x12atalter_constraint\x18\x91\x01 \x01(\v2\x1b.pg_query.ATAlterConstraintH\x00R\x11ATAlterConstraint\x12T\n" +
+	"\x15replica_identity_stmt\x18\x92\x01 \x01(\v2\x1d.pg_query.ReplicaIdentityStmtH\x00R\x13ReplicaIdentityStmt\x12Q\n" +
+	"\x14alter_collation_stmt\x18\x93\x01 \x01(\v2\x1c.pg_query.AlterCollationStmtH\x00R\x12AlterCollationStmt\x12H\n" +
+	"\x11alter_domain_stmt\x18\x94\x01 \x01(\v2\x19.pg_query.AlterDomainStmtH\x00R\x0fAlterDomainStmt\x125\n" +
 	"\n" +
-	"grant_stmt\x18\x92\x01 \x01(\v2\x13.pg_query.GrantStmtH\x00R\tGrantStmt\x12E\n" +
-	"\x10object_with_args\x18\x93\x01 \x01(\v2\x18.pg_query.ObjectWithArgsH\x00R\x0eObjectWithArgs\x128\n" +
-	"\vaccess_priv\x18\x94\x01 \x01(\v2\x14.pg_query.AccessPrivH\x00R\n" +
+	"grant_stmt\x18\x95\x01 \x01(\v2\x13.pg_query.GrantStmtH\x00R\tGrantStmt\x12E\n" +
+	"\x10object_with_args\x18\x96\x01 \x01(\v2\x18.pg_query.ObjectWithArgsH\x00R\x0eObjectWithArgs\x128\n" +
+	"\vaccess_priv\x18\x97\x01 \x01(\v2\x14.pg_query.AccessPrivH\x00R\n" +
 	"AccessPriv\x12B\n" +
-	"\x0fgrant_role_stmt\x18\x95\x01 \x01(\v2\x17.pg_query.GrantRoleStmtH\x00R\rGrantRoleStmt\x12j\n" +
-	"\x1dalter_default_privileges_stmt\x18\x96\x01 \x01(\v2$.pg_query.AlterDefaultPrivilegesStmtH\x00R\x1aAlterDefaultPrivilegesStmt\x122\n" +
-	"\tcopy_stmt\x18\x97\x01 \x01(\v2\x12.pg_query.CopyStmtH\x00R\bCopyStmt\x12H\n" +
-	"\x11variable_set_stmt\x18\x98\x01 \x01(\v2\x19.pg_query.VariableSetStmtH\x00R\x0fVariableSetStmt\x12K\n" +
-	"\x12variable_show_stmt\x18\x99\x01 \x01(\v2\x1a.pg_query.VariableShowStmtH\x00R\x10VariableShowStmt\x128\n" +
-	"\vcreate_stmt\x18\x9a\x01 \x01(\v2\x14.pg_query.CreateStmtH\x00R\n" +
+	"\x0fgrant_role_stmt\x18\x98\x01 \x01(\v2\x17.pg_query.GrantRoleStmtH\x00R\rGrantRoleStmt\x12j\n" +
+	"\x1dalter_default_privileges_stmt\x18\x99\x01 \x01(\v2$.pg_query.AlterDefaultPrivilegesStmtH\x00R\x1aAlterDefaultPrivilegesStmt\x122\n" +
+	"\tcopy_stmt\x18\x9a\x01 \x01(\v2\x12.pg_query.CopyStmtH\x00R\bCopyStmt\x12H\n" +
+	"\x11variable_set_stmt\x18\x9b\x01 \x01(\v2\x19.pg_query.VariableSetStmtH\x00R\x0fVariableSetStmt\x12K\n" +
+	"\x12variable_show_stmt\x18\x9c\x01 \x01(\v2\x1a.pg_query.VariableShowStmtH\x00R\x10VariableShowStmt\x128\n" +
+	"\vcreate_stmt\x18\x9d\x01 \x01(\v2\x14.pg_query.CreateStmtH\x00R\n" +
 	"CreateStmt\x127\n" +
 	"\n" +
-	"constraint\x18\x9b\x01 \x01(\v2\x14.pg_query.ConstraintH\x00R\n" +
+	"constraint\x18\x9e\x01 \x01(\v2\x14.pg_query.ConstraintH\x00R\n" +
 	"Constraint\x12X\n" +
-	"\x17create_table_space_stmt\x18\x9c\x01 \x01(\v2\x1e.pg_query.CreateTableSpaceStmtH\x00R\x14CreateTableSpaceStmt\x12R\n" +
-	"\x15drop_table_space_stmt\x18\x9d\x01 \x01(\v2\x1c.pg_query.DropTableSpaceStmtH\x00R\x12DropTableSpaceStmt\x12k\n" +
-	"\x1ealter_table_space_options_stmt\x18\x9e\x01 \x01(\v2$.pg_query.AlterTableSpaceOptionsStmtH\x00R\x1aAlterTableSpaceOptionsStmt\x12\\\n" +
-	"\x19alter_table_move_all_stmt\x18\x9f\x01 \x01(\v2\x1f.pg_query.AlterTableMoveAllStmtH\x00R\x15AlterTableMoveAllStmt\x12T\n" +
-	"\x15create_extension_stmt\x18\xa0\x01 \x01(\v2\x1d.pg_query.CreateExtensionStmtH\x00R\x13CreateExtensionStmt\x12Q\n" +
-	"\x14alter_extension_stmt\x18\xa1\x01 \x01(\v2\x1c.pg_query.AlterExtensionStmtH\x00R\x12AlterExtensionStmt\x12j\n" +
-	"\x1dalter_extension_contents_stmt\x18\xa2\x01 \x01(\v2$.pg_query.AlterExtensionContentsStmtH\x00R\x1aAlterExtensionContentsStmt\x12B\n" +
-	"\x0fcreate_fdw_stmt\x18\xa3\x01 \x01(\v2\x17.pg_query.CreateFdwStmtH\x00R\rCreateFdwStmt\x12?\n" +
-	"\x0ealter_fdw_stmt\x18\xa4\x01 \x01(\v2\x16.pg_query.AlterFdwStmtH\x00R\fAlterFdwStmt\x12a\n" +
-	"\x1acreate_foreign_server_stmt\x18\xa5\x01 \x01(\v2!.pg_query.CreateForeignServerStmtH\x00R\x17CreateForeignServerStmt\x12^\n" +
-	"\x19alter_foreign_server_stmt\x18\xa6\x01 \x01(\v2 .pg_query.AlterForeignServerStmtH\x00R\x16AlterForeignServerStmt\x12^\n" +
-	"\x19create_foreign_table_stmt\x18\xa7\x01 \x01(\v2 .pg_query.CreateForeignTableStmtH\x00R\x16CreateForeignTableStmt\x12[\n" +
-	"\x18create_user_mapping_stmt\x18\xa8\x01 \x01(\v2\x1f.pg_query.CreateUserMappingStmtH\x00R\x15CreateUserMappingStmt\x12X\n" +
-	"\x17alter_user_mapping_stmt\x18\xa9\x01 \x01(\v2\x1e.pg_query.AlterUserMappingStmtH\x00R\x14AlterUserMappingStmt\x12U\n" +
-	"\x16drop_user_mapping_stmt\x18\xaa\x01 \x01(\v2\x1d.pg_query.DropUserMappingStmtH\x00R\x13DropUserMappingStmt\x12a\n" +
-	"\x1aimport_foreign_schema_stmt\x18\xab\x01 \x01(\v2!.pg_query.ImportForeignSchemaStmtH\x00R\x17ImportForeignSchemaStmt\x12K\n" +
-	"\x12create_policy_stmt\x18\xac\x01 \x01(\v2\x1a.pg_query.CreatePolicyStmtH\x00R\x10CreatePolicyStmt\x12H\n" +
-	"\x11alter_policy_stmt\x18\xad\x01 \x01(\v2\x19.pg_query.AlterPolicyStmtH\x00R\x0fAlterPolicyStmt\x12?\n" +
-	"\x0ecreate_am_stmt\x18\xae\x01 \x01(\v2\x16.pg_query.CreateAmStmtH\x00R\fCreateAmStmt\x12E\n" +
-	"\x10create_trig_stmt\x18\xaf\x01 \x01(\v2\x18.pg_query.CreateTrigStmtH\x00R\x0eCreateTrigStmt\x12U\n" +
-	"\x16create_event_trig_stmt\x18\xb0\x01 \x01(\v2\x1d.pg_query.CreateEventTrigStmtH\x00R\x13CreateEventTrigStmt\x12R\n" +
-	"\x15alter_event_trig_stmt\x18\xb1\x01 \x01(\v2\x1c.pg_query.AlterEventTrigStmtH\x00R\x12AlterEventTrigStmt\x12H\n" +
-	"\x11create_plang_stmt\x18\xb2\x01 \x01(\v2\x19.pg_query.CreatePLangStmtH\x00R\x0fCreatePLangStmt\x12E\n" +
-	"\x10create_role_stmt\x18\xb3\x01 \x01(\v2\x18.pg_query.CreateRoleStmtH\x00R\x0eCreateRoleStmt\x12B\n" +
-	"\x0falter_role_stmt\x18\xb4\x01 \x01(\v2\x17.pg_query.AlterRoleStmtH\x00R\rAlterRoleStmt\x12L\n" +
-	"\x13alter_role_set_stmt\x18\xb5\x01 \x01(\v2\x1a.pg_query.AlterRoleSetStmtH\x00R\x10AlterRoleSetStmt\x12?\n" +
-	"\x0edrop_role_stmt\x18\xb6\x01 \x01(\v2\x16.pg_query.DropRoleStmtH\x00R\fDropRoleStmt\x12B\n" +
-	"\x0fcreate_seq_stmt\x18\xb7\x01 \x01(\v2\x17.pg_query.CreateSeqStmtH\x00R\rCreateSeqStmt\x12?\n" +
-	"\x0ealter_seq_stmt\x18\xb8\x01 \x01(\v2\x16.pg_query.AlterSeqStmtH\x00R\fAlterSeqStmt\x128\n" +
-	"\vdefine_stmt\x18\xb9\x01 \x01(\v2\x14.pg_query.DefineStmtH\x00R\n" +
+	"\x17create_table_space_stmt\x18\x9f\x01 \x01(\v2\x1e.pg_query.CreateTableSpaceStmtH\x00R\x14CreateTableSpaceStmt\x12R\n" +
+	"\x15drop_table_space_stmt\x18\xa0\x01 \x01(\v2\x1c.pg_query.DropTableSpaceStmtH\x00R\x12DropTableSpaceStmt\x12k\n" +
+	"\x1ealter_table_space_options_stmt\x18\xa1\x01 \x01(\v2$.pg_query.AlterTableSpaceOptionsStmtH\x00R\x1aAlterTableSpaceOptionsStmt\x12\\\n" +
+	"\x19alter_table_move_all_stmt\x18\xa2\x01 \x01(\v2\x1f.pg_query.AlterTableMoveAllStmtH\x00R\x15AlterTableMoveAllStmt\x12T\n" +
+	"\x15create_extension_stmt\x18\xa3\x01 \x01(\v2\x1d.pg_query.CreateExtensionStmtH\x00R\x13CreateExtensionStmt\x12Q\n" +
+	"\x14alter_extension_stmt\x18\xa4\x01 \x01(\v2\x1c.pg_query.AlterExtensionStmtH\x00R\x12AlterExtensionStmt\x12j\n" +
+	"\x1dalter_extension_contents_stmt\x18\xa5\x01 \x01(\v2$.pg_query.AlterExtensionContentsStmtH\x00R\x1aAlterExtensionContentsStmt\x12B\n" +
+	"\x0fcreate_fdw_stmt\x18\xa6\x01 \x01(\v2\x17.pg_query.CreateFdwStmtH\x00R\rCreateFdwStmt\x12?\n" +
+	"\x0ealter_fdw_stmt\x18\xa7\x01 \x01(\v2\x16.pg_query.AlterFdwStmtH\x00R\fAlterFdwStmt\x12a\n" +
+	"\x1acreate_foreign_server_stmt\x18\xa8\x01 \x01(\v2!.pg_query.CreateForeignServerStmtH\x00R\x17CreateForeignServerStmt\x12^\n" +
+	"\x19alter_foreign_server_stmt\x18\xa9\x01 \x01(\v2 .pg_query.AlterForeignServerStmtH\x00R\x16AlterForeignServerStmt\x12^\n" +
+	"\x19create_foreign_table_stmt\x18\xaa\x01 \x01(\v2 .pg_query.CreateForeignTableStmtH\x00R\x16CreateForeignTableStmt\x12[\n" +
+	"\x18create_user_mapping_stmt\x18\xab\x01 \x01(\v2\x1f.pg_query.CreateUserMappingStmtH\x00R\x15CreateUserMappingStmt\x12X\n" +
+	"\x17alter_user_mapping_stmt\x18\xac\x01 \x01(\v2\x1e.pg_query.AlterUserMappingStmtH\x00R\x14AlterUserMappingStmt\x12U\n" +
+	"\x16drop_user_mapping_stmt\x18\xad\x01 \x01(\v2\x1d.pg_query.DropUserMappingStmtH\x00R\x13DropUserMappingStmt\x12a\n" +
+	"\x1aimport_foreign_schema_stmt\x18\xae\x01 \x01(\v2!.pg_query.ImportForeignSchemaStmtH\x00R\x17ImportForeignSchemaStmt\x12K\n" +
+	"\x12create_policy_stmt\x18\xaf\x01 \x01(\v2\x1a.pg_query.CreatePolicyStmtH\x00R\x10CreatePolicyStmt\x12H\n" +
+	"\x11alter_policy_stmt\x18\xb0\x01 \x01(\v2\x19.pg_query.AlterPolicyStmtH\x00R\x0fAlterPolicyStmt\x12?\n" +
+	"\x0ecreate_am_stmt\x18\xb1\x01 \x01(\v2\x16.pg_query.CreateAmStmtH\x00R\fCreateAmStmt\x12E\n" +
+	"\x10create_trig_stmt\x18\xb2\x01 \x01(\v2\x18.pg_query.CreateTrigStmtH\x00R\x0eCreateTrigStmt\x12U\n" +
+	"\x16create_event_trig_stmt\x18\xb3\x01 \x01(\v2\x1d.pg_query.CreateEventTrigStmtH\x00R\x13CreateEventTrigStmt\x12R\n" +
+	"\x15alter_event_trig_stmt\x18\xb4\x01 \x01(\v2\x1c.pg_query.AlterEventTrigStmtH\x00R\x12AlterEventTrigStmt\x12H\n" +
+	"\x11create_plang_stmt\x18\xb5\x01 \x01(\v2\x19.pg_query.CreatePLangStmtH\x00R\x0fCreatePLangStmt\x12E\n" +
+	"\x10create_role_stmt\x18\xb6\x01 \x01(\v2\x18.pg_query.CreateRoleStmtH\x00R\x0eCreateRoleStmt\x12B\n" +
+	"\x0falter_role_stmt\x18\xb7\x01 \x01(\v2\x17.pg_query.AlterRoleStmtH\x00R\rAlterRoleStmt\x12L\n" +
+	"\x13alter_role_set_stmt\x18\xb8\x01 \x01(\v2\x1a.pg_query.AlterRoleSetStmtH\x00R\x10AlterRoleSetStmt\x12?\n" +
+	"\x0edrop_role_stmt\x18\xb9\x01 \x01(\v2\x16.pg_query.DropRoleStmtH\x00R\fDropRoleStmt\x12B\n" +
+	"\x0fcreate_seq_stmt\x18\xba\x01 \x01(\v2\x17.pg_query.CreateSeqStmtH\x00R\rCreateSeqStmt\x12?\n" +
+	"\x0ealter_seq_stmt\x18\xbb\x01 \x01(\v2\x16.pg_query.AlterSeqStmtH\x00R\fAlterSeqStmt\x128\n" +
+	"\vdefine_stmt\x18\xbc\x01 \x01(\v2\x14.pg_query.DefineStmtH\x00R\n" +
 	"DefineStmt\x12K\n" +
-	"\x12create_domain_stmt\x18\xba\x01 \x01(\v2\x1a.pg_query.CreateDomainStmtH\x00R\x10CreateDomainStmt\x12O\n" +
-	"\x14create_op_class_stmt\x18\xbb\x01 \x01(\v2\x1b.pg_query.CreateOpClassStmtH\x00R\x11CreateOpClassStmt\x12O\n" +
-	"\x14create_op_class_item\x18\xbc\x01 \x01(\v2\x1b.pg_query.CreateOpClassItemH\x00R\x11CreateOpClassItem\x12R\n" +
-	"\x15create_op_family_stmt\x18\xbd\x01 \x01(\v2\x1c.pg_query.CreateOpFamilyStmtH\x00R\x12CreateOpFamilyStmt\x12O\n" +
-	"\x14alter_op_family_stmt\x18\xbe\x01 \x01(\v2\x1b.pg_query.AlterOpFamilyStmtH\x00R\x11AlterOpFamilyStmt\x122\n" +
-	"\tdrop_stmt\x18\xbf\x01 \x01(\v2\x12.pg_query.DropStmtH\x00R\bDropStmt\x12>\n" +
-	"\rtruncate_stmt\x18\xc0\x01 \x01(\v2\x16.pg_query.TruncateStmtH\x00R\fTruncateStmt\x12;\n" +
-	"\fcomment_stmt\x18\xc1\x01 \x01(\v2\x15.pg_query.CommentStmtH\x00R\vCommentStmt\x12?\n" +
-	"\x0esec_label_stmt\x18\xc2\x01 \x01(\v2\x16.pg_query.SecLabelStmtH\x00R\fSecLabelStmt\x12N\n" +
-	"\x13declare_cursor_stmt\x18\xc3\x01 \x01(\v2\x1b.pg_query.DeclareCursorStmtH\x00R\x11DeclareCursorStmt\x12H\n" +
-	"\x11close_portal_stmt\x18\xc4\x01 \x01(\v2\x19.pg_query.ClosePortalStmtH\x00R\x0fClosePortalStmt\x125\n" +
+	"\x12create_domain_stmt\x18\xbd\x01 \x01(\v2\x1a.pg_query.CreateDomainStmtH\x00R\x10CreateDomainStmt\x12O\n" +
+	"\x14create_op_class_stmt\x18\xbe\x01 \x01(\v2\x1b.pg_query.CreateOpClassStmtH\x00R\x11CreateOpClassStmt\x12O\n" +
+	"\x14create_op_class_item\x18\xbf\x01 \x01(\v2\x1b.pg_query.CreateOpClassItemH\x00R\x11CreateOpClassItem\x12R\n" +
+	"\x15create_op_family_stmt\x18\xc0\x01 \x01(\v2\x1c.pg_query.CreateOpFamilyStmtH\x00R\x12CreateOpFamilyStmt\x12O\n" +
+	"\x14alter_op_family_stmt\x18\xc1\x01 \x01(\v2\x1b.pg_query.AlterOpFamilyStmtH\x00R\x11AlterOpFamilyStmt\x122\n" +
+	"\tdrop_stmt\x18\xc2\x01 \x01(\v2\x12.pg_query.DropStmtH\x00R\bDropStmt\x12>\n" +
+	"\rtruncate_stmt\x18\xc3\x01 \x01(\v2\x16.pg_query.TruncateStmtH\x00R\fTruncateStmt\x12;\n" +
+	"\fcomment_stmt\x18\xc4\x01 \x01(\v2\x15.pg_query.CommentStmtH\x00R\vCommentStmt\x12?\n" +
+	"\x0esec_label_stmt\x18\xc5\x01 \x01(\v2\x16.pg_query.SecLabelStmtH\x00R\fSecLabelStmt\x12N\n" +
+	"\x13declare_cursor_stmt\x18\xc6\x01 \x01(\v2\x1b.pg_query.DeclareCursorStmtH\x00R\x11DeclareCursorStmt\x12H\n" +
+	"\x11close_portal_stmt\x18\xc7\x01 \x01(\v2\x19.pg_query.ClosePortalStmtH\x00R\x0fClosePortalStmt\x125\n" +
 	"\n" +
-	"fetch_stmt\x18\xc5\x01 \x01(\v2\x13.pg_query.FetchStmtH\x00R\tFetchStmt\x125\n" +
+	"fetch_stmt\x18\xc8\x01 \x01(\v2\x13.pg_query.FetchStmtH\x00R\tFetchStmt\x125\n" +
 	"\n" +
-	"index_stmt\x18\xc6\x01 \x01(\v2\x13.pg_query.IndexStmtH\x00R\tIndexStmt\x12H\n" +
-	"\x11create_stats_stmt\x18\xc7\x01 \x01(\v2\x19.pg_query.CreateStatsStmtH\x00R\x0fCreateStatsStmt\x125\n" +
+	"index_stmt\x18\xc9\x01 \x01(\v2\x13.pg_query.IndexStmtH\x00R\tIndexStmt\x12H\n" +
+	"\x11create_stats_stmt\x18\xca\x01 \x01(\v2\x19.pg_query.CreateStatsStmtH\x00R\x0fCreateStatsStmt\x125\n" +
 	"\n" +
-	"stats_elem\x18\xc8\x01 \x01(\v2\x13.pg_query.StatsElemH\x00R\tStatsElem\x12E\n" +
-	"\x10alter_stats_stmt\x18\xc9\x01 \x01(\v2\x18.pg_query.AlterStatsStmtH\x00R\x0eAlterStatsStmt\x12Q\n" +
-	"\x14create_function_stmt\x18\xca\x01 \x01(\v2\x1c.pg_query.CreateFunctionStmtH\x00R\x12CreateFunctionStmt\x12M\n" +
-	"\x12function_parameter\x18\xcb\x01 \x01(\v2\x1b.pg_query.FunctionParameterH\x00R\x11FunctionParameter\x12N\n" +
-	"\x13alter_function_stmt\x18\xcc\x01 \x01(\v2\x1b.pg_query.AlterFunctionStmtH\x00R\x11AlterFunctionStmt\x12,\n" +
-	"\ado_stmt\x18\xcd\x01 \x01(\v2\x10.pg_query.DoStmtH\x00R\x06DoStmt\x12H\n" +
-	"\x11inline_code_block\x18\xce\x01 \x01(\v2\x19.pg_query.InlineCodeBlockH\x00R\x0fInlineCodeBlock\x122\n" +
-	"\tcall_stmt\x18\xcf\x01 \x01(\v2\x12.pg_query.CallStmtH\x00R\bCallStmt\x12;\n" +
-	"\fcall_context\x18\xd0\x01 \x01(\v2\x15.pg_query.CallContextH\x00R\vCallContext\x128\n" +
-	"\vrename_stmt\x18\xd1\x01 \x01(\v2\x14.pg_query.RenameStmtH\x00R\n" +
+	"stats_elem\x18\xcb\x01 \x01(\v2\x13.pg_query.StatsElemH\x00R\tStatsElem\x12E\n" +
+	"\x10alter_stats_stmt\x18\xcc\x01 \x01(\v2\x18.pg_query.AlterStatsStmtH\x00R\x0eAlterStatsStmt\x12Q\n" +
+	"\x14create_function_stmt\x18\xcd\x01 \x01(\v2\x1c.pg_query.CreateFunctionStmtH\x00R\x12CreateFunctionStmt\x12M\n" +
+	"\x12function_parameter\x18\xce\x01 \x01(\v2\x1b.pg_query.FunctionParameterH\x00R\x11FunctionParameter\x12N\n" +
+	"\x13alter_function_stmt\x18\xcf\x01 \x01(\v2\x1b.pg_query.AlterFunctionStmtH\x00R\x11AlterFunctionStmt\x12,\n" +
+	"\ado_stmt\x18\xd0\x01 \x01(\v2\x10.pg_query.DoStmtH\x00R\x06DoStmt\x12H\n" +
+	"\x11inline_code_block\x18\xd1\x01 \x01(\v2\x19.pg_query.InlineCodeBlockH\x00R\x0fInlineCodeBlock\x122\n" +
+	"\tcall_stmt\x18\xd2\x01 \x01(\v2\x12.pg_query.CallStmtH\x00R\bCallStmt\x12;\n" +
+	"\fcall_context\x18\xd3\x01 \x01(\v2\x15.pg_query.CallContextH\x00R\vCallContext\x128\n" +
+	"\vrename_stmt\x18\xd4\x01 \x01(\v2\x14.pg_query.RenameStmtH\x00R\n" +
 	"RenameStmt\x12^\n" +
-	"\x19alter_object_depends_stmt\x18\xd2\x01 \x01(\v2 .pg_query.AlterObjectDependsStmtH\x00R\x16AlterObjectDependsStmt\x12[\n" +
-	"\x18alter_object_schema_stmt\x18\xd3\x01 \x01(\v2\x1f.pg_query.AlterObjectSchemaStmtH\x00R\x15AlterObjectSchemaStmt\x12E\n" +
-	"\x10alter_owner_stmt\x18\xd4\x01 \x01(\v2\x18.pg_query.AlterOwnerStmtH\x00R\x0eAlterOwnerStmt\x12N\n" +
-	"\x13alter_operator_stmt\x18\xd5\x01 \x01(\v2\x1b.pg_query.AlterOperatorStmtH\x00R\x11AlterOperatorStmt\x12B\n" +
-	"\x0falter_type_stmt\x18\xd6\x01 \x01(\v2\x17.pg_query.AlterTypeStmtH\x00R\rAlterTypeStmt\x122\n" +
-	"\trule_stmt\x18\xd7\x01 \x01(\v2\x12.pg_query.RuleStmtH\x00R\bRuleStmt\x128\n" +
-	"\vnotify_stmt\x18\xd8\x01 \x01(\v2\x14.pg_query.NotifyStmtH\x00R\n" +
+	"\x19alter_object_depends_stmt\x18\xd5\x01 \x01(\v2 .pg_query.AlterObjectDependsStmtH\x00R\x16AlterObjectDependsStmt\x12[\n" +
+	"\x18alter_object_schema_stmt\x18\xd6\x01 \x01(\v2\x1f.pg_query.AlterObjectSchemaStmtH\x00R\x15AlterObjectSchemaStmt\x12E\n" +
+	"\x10alter_owner_stmt\x18\xd7\x01 \x01(\v2\x18.pg_query.AlterOwnerStmtH\x00R\x0eAlterOwnerStmt\x12N\n" +
+	"\x13alter_operator_stmt\x18\xd8\x01 \x01(\v2\x1b.pg_query.AlterOperatorStmtH\x00R\x11AlterOperatorStmt\x12B\n" +
+	"\x0falter_type_stmt\x18\xd9\x01 \x01(\v2\x17.pg_query.AlterTypeStmtH\x00R\rAlterTypeStmt\x122\n" +
+	"\trule_stmt\x18\xda\x01 \x01(\v2\x12.pg_query.RuleStmtH\x00R\bRuleStmt\x128\n" +
+	"\vnotify_stmt\x18\xdb\x01 \x01(\v2\x14.pg_query.NotifyStmtH\x00R\n" +
 	"NotifyStmt\x128\n" +
-	"\vlisten_stmt\x18\xd9\x01 \x01(\v2\x14.pg_query.ListenStmtH\x00R\n" +
+	"\vlisten_stmt\x18\xdc\x01 \x01(\v2\x14.pg_query.ListenStmtH\x00R\n" +
 	"ListenStmt\x12>\n" +
-	"\runlisten_stmt\x18\xda\x01 \x01(\v2\x16.pg_query.UnlistenStmtH\x00R\fUnlistenStmt\x12G\n" +
-	"\x10transaction_stmt\x18\xdb\x01 \x01(\v2\x19.pg_query.TransactionStmtH\x00R\x0fTransactionStmt\x12N\n" +
-	"\x13composite_type_stmt\x18\xdc\x01 \x01(\v2\x1b.pg_query.CompositeTypeStmtH\x00R\x11CompositeTypeStmt\x12E\n" +
-	"\x10create_enum_stmt\x18\xdd\x01 \x01(\v2\x18.pg_query.CreateEnumStmtH\x00R\x0eCreateEnumStmt\x12H\n" +
-	"\x11create_range_stmt\x18\xde\x01 \x01(\v2\x19.pg_query.CreateRangeStmtH\x00R\x0fCreateRangeStmt\x12B\n" +
-	"\x0falter_enum_stmt\x18\xdf\x01 \x01(\v2\x17.pg_query.AlterEnumStmtH\x00R\rAlterEnumStmt\x122\n" +
-	"\tview_stmt\x18\xe0\x01 \x01(\v2\x12.pg_query.ViewStmtH\x00R\bViewStmt\x122\n" +
-	"\tload_stmt\x18\xe1\x01 \x01(\v2\x12.pg_query.LoadStmtH\x00R\bLoadStmt\x12>\n" +
-	"\rcreatedb_stmt\x18\xe2\x01 \x01(\v2\x16.pg_query.CreatedbStmtH\x00R\fCreatedbStmt\x12N\n" +
-	"\x13alter_database_stmt\x18\xe3\x01 \x01(\v2\x1b.pg_query.AlterDatabaseStmtH\x00R\x11AlterDatabaseStmt\x12q\n" +
-	" alter_database_refresh_coll_stmt\x18\xe4\x01 \x01(\v2&.pg_query.AlterDatabaseRefreshCollStmtH\x00R\x1cAlterDatabaseRefreshCollStmt\x12X\n" +
-	"\x17alter_database_set_stmt\x18\xe5\x01 \x01(\v2\x1e.pg_query.AlterDatabaseSetStmtH\x00R\x14AlterDatabaseSetStmt\x128\n" +
-	"\vdropdb_stmt\x18\xe6\x01 \x01(\v2\x14.pg_query.DropdbStmtH\x00R\n" +
+	"\runlisten_stmt\x18\xdd\x01 \x01(\v2\x16.pg_query.UnlistenStmtH\x00R\fUnlistenStmt\x12G\n" +
+	"\x10transaction_stmt\x18\xde\x01 \x01(\v2\x19.pg_query.TransactionStmtH\x00R\x0fTransactionStmt\x12N\n" +
+	"\x13composite_type_stmt\x18\xdf\x01 \x01(\v2\x1b.pg_query.CompositeTypeStmtH\x00R\x11CompositeTypeStmt\x12E\n" +
+	"\x10create_enum_stmt\x18\xe0\x01 \x01(\v2\x18.pg_query.CreateEnumStmtH\x00R\x0eCreateEnumStmt\x12H\n" +
+	"\x11create_range_stmt\x18\xe1\x01 \x01(\v2\x19.pg_query.CreateRangeStmtH\x00R\x0fCreateRangeStmt\x12B\n" +
+	"\x0falter_enum_stmt\x18\xe2\x01 \x01(\v2\x17.pg_query.AlterEnumStmtH\x00R\rAlterEnumStmt\x122\n" +
+	"\tview_stmt\x18\xe3\x01 \x01(\v2\x12.pg_query.ViewStmtH\x00R\bViewStmt\x122\n" +
+	"\tload_stmt\x18\xe4\x01 \x01(\v2\x12.pg_query.LoadStmtH\x00R\bLoadStmt\x12>\n" +
+	"\rcreatedb_stmt\x18\xe5\x01 \x01(\v2\x16.pg_query.CreatedbStmtH\x00R\fCreatedbStmt\x12N\n" +
+	"\x13alter_database_stmt\x18\xe6\x01 \x01(\v2\x1b.pg_query.AlterDatabaseStmtH\x00R\x11AlterDatabaseStmt\x12q\n" +
+	" alter_database_refresh_coll_stmt\x18\xe7\x01 \x01(\v2&.pg_query.AlterDatabaseRefreshCollStmtH\x00R\x1cAlterDatabaseRefreshCollStmt\x12X\n" +
+	"\x17alter_database_set_stmt\x18\xe8\x01 \x01(\v2\x1e.pg_query.AlterDatabaseSetStmtH\x00R\x14AlterDatabaseSetStmt\x128\n" +
+	"\vdropdb_stmt\x18\xe9\x01 \x01(\v2\x14.pg_query.DropdbStmtH\x00R\n" +
 	"DropdbStmt\x12H\n" +
-	"\x11alter_system_stmt\x18\xe7\x01 \x01(\v2\x19.pg_query.AlterSystemStmtH\x00R\x0fAlterSystemStmt\x12;\n" +
-	"\fcluster_stmt\x18\xe8\x01 \x01(\v2\x15.pg_query.ClusterStmtH\x00R\vClusterStmt\x128\n" +
-	"\vvacuum_stmt\x18\xe9\x01 \x01(\v2\x14.pg_query.VacuumStmtH\x00R\n" +
+	"\x11alter_system_stmt\x18\xea\x01 \x01(\v2\x19.pg_query.AlterSystemStmtH\x00R\x0fAlterSystemStmt\x12;\n" +
+	"\fcluster_stmt\x18\xeb\x01 \x01(\v2\x15.pg_query.ClusterStmtH\x00R\vClusterStmt\x128\n" +
+	"\vvacuum_stmt\x18\xec\x01 \x01(\v2\x14.pg_query.VacuumStmtH\x00R\n" +
 	"VacuumStmt\x12D\n" +
-	"\x0fvacuum_relation\x18\xea\x01 \x01(\v2\x18.pg_query.VacuumRelationH\x00R\x0eVacuumRelation\x12;\n" +
-	"\fexplain_stmt\x18\xeb\x01 \x01(\v2\x15.pg_query.ExplainStmtH\x00R\vExplainStmt\x12O\n" +
-	"\x14create_table_as_stmt\x18\xec\x01 \x01(\v2\x1b.pg_query.CreateTableAsStmtH\x00R\x11CreateTableAsStmt\x12R\n" +
-	"\x15refresh_mat_view_stmt\x18\xed\x01 \x01(\v2\x1c.pg_query.RefreshMatViewStmtH\x00R\x12RefreshMatViewStmt\x12E\n" +
-	"\x10check_point_stmt\x18\xee\x01 \x01(\v2\x18.pg_query.CheckPointStmtH\x00R\x0eCheckPointStmt\x12;\n" +
-	"\fdiscard_stmt\x18\xef\x01 \x01(\v2\x15.pg_query.DiscardStmtH\x00R\vDiscardStmt\x122\n" +
-	"\tlock_stmt\x18\xf0\x01 \x01(\v2\x12.pg_query.LockStmtH\x00R\bLockStmt\x12Q\n" +
-	"\x14constraints_set_stmt\x18\xf1\x01 \x01(\v2\x1c.pg_query.ConstraintsSetStmtH\x00R\x12ConstraintsSetStmt\x12;\n" +
-	"\freindex_stmt\x18\xf2\x01 \x01(\v2\x15.pg_query.ReindexStmtH\x00R\vReindexStmt\x12W\n" +
-	"\x16create_conversion_stmt\x18\xf3\x01 \x01(\v2\x1e.pg_query.CreateConversionStmtH\x00R\x14CreateConversionStmt\x12E\n" +
-	"\x10create_cast_stmt\x18\xf4\x01 \x01(\v2\x18.pg_query.CreateCastStmtH\x00R\x0eCreateCastStmt\x12T\n" +
-	"\x15create_transform_stmt\x18\xf5\x01 \x01(\v2\x1d.pg_query.CreateTransformStmtH\x00R\x13CreateTransformStmt\x12;\n" +
-	"\fprepare_stmt\x18\xf6\x01 \x01(\v2\x15.pg_query.PrepareStmtH\x00R\vPrepareStmt\x12;\n" +
-	"\fexecute_stmt\x18\xf7\x01 \x01(\v2\x15.pg_query.ExecuteStmtH\x00R\vExecuteStmt\x12D\n" +
-	"\x0fdeallocate_stmt\x18\xf8\x01 \x01(\v2\x18.pg_query.DeallocateStmtH\x00R\x0eDeallocateStmt\x12B\n" +
-	"\x0fdrop_owned_stmt\x18\xf9\x01 \x01(\v2\x17.pg_query.DropOwnedStmtH\x00R\rDropOwnedStmt\x12N\n" +
-	"\x13reassign_owned_stmt\x18\xfa\x01 \x01(\v2\x1b.pg_query.ReassignOwnedStmtH\x00R\x11ReassignOwnedStmt\x12Z\n" +
-	"\x17alter_tsdictionary_stmt\x18\xfb\x01 \x01(\v2\x1f.pg_query.AlterTSDictionaryStmtH\x00R\x15AlterTSDictionaryStmt\x12c\n" +
-	"\x1aalter_tsconfiguration_stmt\x18\xfc\x01 \x01(\v2\".pg_query.AlterTSConfigurationStmtH\x00R\x18AlterTSConfigurationStmt\x12J\n" +
-	"\x11publication_table\x18\xfd\x01 \x01(\v2\x1a.pg_query.PublicationTableH\x00R\x10PublicationTable\x12Q\n" +
-	"\x14publication_obj_spec\x18\xfe\x01 \x01(\v2\x1c.pg_query.PublicationObjSpecH\x00R\x12PublicationObjSpec\x12Z\n" +
-	"\x17create_publication_stmt\x18\xff\x01 \x01(\v2\x1f.pg_query.CreatePublicationStmtH\x00R\x15CreatePublicationStmt\x12W\n" +
-	"\x16alter_publication_stmt\x18\x80\x02 \x01(\v2\x1e.pg_query.AlterPublicationStmtH\x00R\x14AlterPublicationStmt\x12]\n" +
-	"\x18create_subscription_stmt\x18\x81\x02 \x01(\v2 .pg_query.CreateSubscriptionStmtH\x00R\x16CreateSubscriptionStmt\x12Z\n" +
-	"\x17alter_subscription_stmt\x18\x82\x02 \x01(\v2\x1f.pg_query.AlterSubscriptionStmtH\x00R\x15AlterSubscriptionStmt\x12W\n" +
-	"\x16drop_subscription_stmt\x18\x83\x02 \x01(\v2\x1e.pg_query.DropSubscriptionStmtH\x00R\x14DropSubscriptionStmt\x12.\n" +
-	"\ainteger\x18\x84\x02 \x01(\v2\x11.pg_query.IntegerH\x00R\aInteger\x12(\n" +
-	"\x05float\x18\x85\x02 \x01(\v2\x0f.pg_query.FloatH\x00R\x05Float\x12.\n" +
-	"\aboolean\x18\x86\x02 \x01(\v2\x11.pg_query.BooleanH\x00R\aBoolean\x12+\n" +
-	"\x06string\x18\x87\x02 \x01(\v2\x10.pg_query.StringH\x00R\x06String\x125\n" +
+	"\x0fvacuum_relation\x18\xed\x01 \x01(\v2\x18.pg_query.VacuumRelationH\x00R\x0eVacuumRelation\x12;\n" +
+	"\fexplain_stmt\x18\xee\x01 \x01(\v2\x15.pg_query.ExplainStmtH\x00R\vExplainStmt\x12O\n" +
+	"\x14create_table_as_stmt\x18\xef\x01 \x01(\v2\x1b.pg_query.CreateTableAsStmtH\x00R\x11CreateTableAsStmt\x12R\n" +
+	"\x15refresh_mat_view_stmt\x18\xf0\x01 \x01(\v2\x1c.pg_query.RefreshMatViewStmtH\x00R\x12RefreshMatViewStmt\x12E\n" +
+	"\x10check_point_stmt\x18\xf1\x01 \x01(\v2\x18.pg_query.CheckPointStmtH\x00R\x0eCheckPointStmt\x12;\n" +
+	"\fdiscard_stmt\x18\xf2\x01 \x01(\v2\x15.pg_query.DiscardStmtH\x00R\vDiscardStmt\x122\n" +
+	"\tlock_stmt\x18\xf3\x01 \x01(\v2\x12.pg_query.LockStmtH\x00R\bLockStmt\x12Q\n" +
+	"\x14constraints_set_stmt\x18\xf4\x01 \x01(\v2\x1c.pg_query.ConstraintsSetStmtH\x00R\x12ConstraintsSetStmt\x12;\n" +
+	"\freindex_stmt\x18\xf5\x01 \x01(\v2\x15.pg_query.ReindexStmtH\x00R\vReindexStmt\x12W\n" +
+	"\x16create_conversion_stmt\x18\xf6\x01 \x01(\v2\x1e.pg_query.CreateConversionStmtH\x00R\x14CreateConversionStmt\x12E\n" +
+	"\x10create_cast_stmt\x18\xf7\x01 \x01(\v2\x18.pg_query.CreateCastStmtH\x00R\x0eCreateCastStmt\x12T\n" +
+	"\x15create_transform_stmt\x18\xf8\x01 \x01(\v2\x1d.pg_query.CreateTransformStmtH\x00R\x13CreateTransformStmt\x12;\n" +
+	"\fprepare_stmt\x18\xf9\x01 \x01(\v2\x15.pg_query.PrepareStmtH\x00R\vPrepareStmt\x12;\n" +
+	"\fexecute_stmt\x18\xfa\x01 \x01(\v2\x15.pg_query.ExecuteStmtH\x00R\vExecuteStmt\x12D\n" +
+	"\x0fdeallocate_stmt\x18\xfb\x01 \x01(\v2\x18.pg_query.DeallocateStmtH\x00R\x0eDeallocateStmt\x12B\n" +
+	"\x0fdrop_owned_stmt\x18\xfc\x01 \x01(\v2\x17.pg_query.DropOwnedStmtH\x00R\rDropOwnedStmt\x12N\n" +
+	"\x13reassign_owned_stmt\x18\xfd\x01 \x01(\v2\x1b.pg_query.ReassignOwnedStmtH\x00R\x11ReassignOwnedStmt\x12Z\n" +
+	"\x17alter_tsdictionary_stmt\x18\xfe\x01 \x01(\v2\x1f.pg_query.AlterTSDictionaryStmtH\x00R\x15AlterTSDictionaryStmt\x12c\n" +
+	"\x1aalter_tsconfiguration_stmt\x18\xff\x01 \x01(\v2\".pg_query.AlterTSConfigurationStmtH\x00R\x18AlterTSConfigurationStmt\x12J\n" +
+	"\x11publication_table\x18\x80\x02 \x01(\v2\x1a.pg_query.PublicationTableH\x00R\x10PublicationTable\x12Q\n" +
+	"\x14publication_obj_spec\x18\x81\x02 \x01(\v2\x1c.pg_query.PublicationObjSpecH\x00R\x12PublicationObjSpec\x12Z\n" +
+	"\x17create_publication_stmt\x18\x82\x02 \x01(\v2\x1f.pg_query.CreatePublicationStmtH\x00R\x15CreatePublicationStmt\x12W\n" +
+	"\x16alter_publication_stmt\x18\x83\x02 \x01(\v2\x1e.pg_query.AlterPublicationStmtH\x00R\x14AlterPublicationStmt\x12]\n" +
+	"\x18create_subscription_stmt\x18\x84\x02 \x01(\v2 .pg_query.CreateSubscriptionStmtH\x00R\x16CreateSubscriptionStmt\x12Z\n" +
+	"\x17alter_subscription_stmt\x18\x85\x02 \x01(\v2\x1f.pg_query.AlterSubscriptionStmtH\x00R\x15AlterSubscriptionStmt\x12W\n" +
+	"\x16drop_subscription_stmt\x18\x86\x02 \x01(\v2\x1e.pg_query.DropSubscriptionStmtH\x00R\x14DropSubscriptionStmt\x12.\n" +
+	"\ainteger\x18\x87\x02 \x01(\v2\x11.pg_query.IntegerH\x00R\aInteger\x12(\n" +
+	"\x05float\x18\x88\x02 \x01(\v2\x0f.pg_query.FloatH\x00R\x05Float\x12.\n" +
+	"\aboolean\x18\x89\x02 \x01(\v2\x11.pg_query.BooleanH\x00R\aBoolean\x12+\n" +
+	"\x06string\x18\x8a\x02 \x01(\v2\x10.pg_query.StringH\x00R\x06String\x125\n" +
 	"\n" +
-	"bit_string\x18\x88\x02 \x01(\v2\x13.pg_query.BitStringH\x00R\tBitString\x12%\n" +
-	"\x04list\x18\x89\x02 \x01(\v2\x0e.pg_query.ListH\x00R\x04List\x12/\n" +
-	"\bint_list\x18\x8a\x02 \x01(\v2\x11.pg_query.IntListH\x00R\aIntList\x12/\n" +
-	"\boid_list\x18\x8b\x02 \x01(\v2\x11.pg_query.OidListH\x00R\aOidList\x12.\n" +
-	"\aa_const\x18\x8c\x02 \x01(\v2\x11.pg_query.A_ConstH\x00R\aA_ConstB\x06\n" +
+	"bit_string\x18\x8b\x02 \x01(\v2\x13.pg_query.BitStringH\x00R\tBitString\x12%\n" +
+	"\x04list\x18\x8c\x02 \x01(\v2\x0e.pg_query.ListH\x00R\x04List\x12/\n" +
+	"\bint_list\x18\x8d\x02 \x01(\v2\x11.pg_query.IntListH\x00R\aIntList\x12/\n" +
+	"\boid_list\x18\x8e\x02 \x01(\v2\x11.pg_query.OidListH\x00R\aOidList\x12.\n" +
+	"\aa_const\x18\x8f\x02 \x01(\v2\x11.pg_query.A_ConstH\x00R\aA_ConstB\x06\n" +
 	"\x04node\"\x1d\n" +
 	"\aInteger\x12\x12\n" +
 	"\x04ival\x18\x01 \x01(\x05R\x04ival\"\x1b\n" +
@@ -32118,7 +32709,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\bnotnulls\x18\x0e \x03(\x04R\bnotnulls\x12\"\n" +
 	"\x04plan\x18\x0f \x01(\v2\x0e.pg_query.NodeR\x04plan\x12$\n" +
 	"\rordinalitycol\x18\x10 \x01(\x05R\rordinalitycol\x12\x1a\n" +
-	"\blocation\x18\x11 \x01(\x05R\blocation\"\xdb\x02\n" +
+	"\blocation\x18\x11 \x01(\x05R\blocation\"\xdc\x02\n" +
 	"\n" +
 	"IntoClause\x12$\n" +
 	"\x03rel\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\x03rel\x12+\n" +
@@ -32126,10 +32717,10 @@ const file_pg_query_proto_rawDesc = "" +
 	"\raccess_method\x18\x03 \x01(\tR\faccessMethod\x12(\n" +
 	"\aoptions\x18\x04 \x03(\v2\x0e.pg_query.NodeR\aoptions\x125\n" +
 	"\ton_commit\x18\x05 \x01(\x0e2\x18.pg_query.OnCommitActionR\bonCommit\x12(\n" +
-	"\x10table_space_name\x18\x06 \x01(\tR\x0etableSpaceName\x12-\n" +
+	"\x10table_space_name\x18\x06 \x01(\tR\x0etableSpaceName\x12.\n" +
 	"\n" +
-	"view_query\x18\a \x01(\v2\x0e.pg_query.NodeR\tviewQuery\x12\x1b\n" +
-	"\tskip_data\x18\b \x01(\bR\bskipData\"\x95\x02\n" +
+	"view_query\x18\a \x01(\v2\x0f.pg_query.QueryR\tviewQuery\x12\x1b\n" +
+	"\tskip_data\x18\b \x01(\bR\bskipData\"\xdd\x02\n" +
 	"\x03Var\x12 \n" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12\x14\n" +
 	"\x05varno\x18\x02 \x01(\x05R\x05varno\x12\x1a\n" +
@@ -32138,8 +32729,10 @@ const file_pg_query_proto_rawDesc = "" +
 	"\tvartypmod\x18\x05 \x01(\x05R\tvartypmod\x12\x1c\n" +
 	"\tvarcollid\x18\x06 \x01(\rR\tvarcollid\x12&\n" +
 	"\x0evarnullingrels\x18\a \x03(\x04R\x0evarnullingrels\x12 \n" +
-	"\vvarlevelsup\x18\b \x01(\rR\vvarlevelsup\x12\x1a\n" +
-	"\blocation\x18\t \x01(\x05R\blocation\"\xf4\x01\n" +
+	"\vvarlevelsup\x18\b \x01(\rR\vvarlevelsup\x12F\n" +
+	"\x10varreturningtype\x18\t \x01(\x0e2\x1a.pg_query.VarReturningTypeR\x10varreturningtype\x12\x1a\n" +
+	"\blocation\x18\n" +
+	" \x01(\x05R\blocation\"\xf4\x01\n" +
 	"\x05Param\x12 \n" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x121\n" +
 	"\tparamkind\x18\x02 \x01(\x0e2\x13.pg_query.ParamKindR\tparamkind\x12\x18\n" +
@@ -32393,15 +32986,19 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12\x17\n" +
 	"\atype_id\x18\x02 \x01(\rR\x06typeId\x12\x19\n" +
 	"\btype_mod\x18\x03 \x01(\x05R\atypeMod\x12\x1c\n" +
-	"\tcollation\x18\x04 \x01(\rR\tcollation\"\x83\x02\n" +
+	"\tcollation\x18\x04 \x01(\rR\tcollation\"\xbf\x02\n" +
 	"\tArrayExpr\x12 \n" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12\"\n" +
 	"\farray_typeid\x18\x02 \x01(\rR\farray_typeid\x12\"\n" +
 	"\farray_collid\x18\x03 \x01(\rR\farray_collid\x12&\n" +
 	"\x0eelement_typeid\x18\x04 \x01(\rR\x0eelement_typeid\x12*\n" +
 	"\belements\x18\x05 \x03(\v2\x0e.pg_query.NodeR\belements\x12\x1c\n" +
-	"\tmultidims\x18\x06 \x01(\bR\tmultidims\x12\x1a\n" +
-	"\blocation\x18\a \x01(\x05R\blocation\"\xef\x01\n" +
+	"\tmultidims\x18\x06 \x01(\bR\tmultidims\x12\x1e\n" +
+	"\n" +
+	"list_start\x18\a \x01(\x05R\n" +
+	"list_start\x12\x1a\n" +
+	"\blist_end\x18\b \x01(\x05R\blist_end\x12\x1a\n" +
+	"\blocation\x18\t \x01(\x05R\blocation\"\xef\x01\n" +
 	"\aRowExpr\x12 \n" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12\"\n" +
 	"\x04args\x18\x02 \x03(\v2\x0e.pg_query.NodeR\x04args\x12\x1e\n" +
@@ -32412,10 +33009,10 @@ const file_pg_query_proto_rawDesc = "" +
 	"row_format\x18\x04 \x01(\x0e2\x16.pg_query.CoercionFormR\n" +
 	"row_format\x12*\n" +
 	"\bcolnames\x18\x05 \x03(\v2\x0e.pg_query.NodeR\bcolnames\x12\x1a\n" +
-	"\blocation\x18\x06 \x01(\x05R\blocation\"\xba\x02\n" +
+	"\blocation\x18\x06 \x01(\x05R\blocation\"\xb9\x02\n" +
 	"\x0eRowCompareExpr\x12 \n" +
-	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x120\n" +
-	"\x06rctype\x18\x02 \x01(\x0e2\x18.pg_query.RowCompareTypeR\x06rctype\x12$\n" +
+	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12/\n" +
+	"\acmptype\x18\x02 \x01(\x0e2\x15.pg_query.CompareTypeR\acmptype\x12$\n" +
 	"\x05opnos\x18\x03 \x03(\v2\x0e.pg_query.NodeR\x05opnos\x12.\n" +
 	"\n" +
 	"opfamilies\x18\x04 \x03(\v2\x0e.pg_query.NodeR\n" +
@@ -32582,7 +33179,12 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12\"\n" +
 	"\x04expr\x18\x02 \x01(\v2\x0e.pg_query.NodeR\x04expr\x12 \n" +
 	"\vinfercollid\x18\x03 \x01(\rR\vinfercollid\x12\"\n" +
-	"\finferopclass\x18\x04 \x01(\rR\finferopclass\"\x87\x02\n" +
+	"\finferopclass\x18\x04 \x01(\rR\finferopclass\"\x95\x01\n" +
+	"\rReturningExpr\x12 \n" +
+	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12 \n" +
+	"\vretlevelsup\x18\x02 \x01(\x05R\vretlevelsup\x12\x16\n" +
+	"\x06retold\x18\x03 \x01(\bR\x06retold\x12(\n" +
+	"\aretexpr\x18\x04 \x01(\v2\x0e.pg_query.NodeR\aretexpr\"\x87\x02\n" +
 	"\vTargetEntry\x12 \n" +
 	"\x03xpr\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03xpr\x12\"\n" +
 	"\x04expr\x18\x02 \x01(\v2\x0e.pg_query.NodeR\x04expr\x12\x14\n" +
@@ -32622,7 +33224,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x0fon_conflict_set\x18\x05 \x03(\v2\x0e.pg_query.NodeR\ronConflictSet\x12:\n" +
 	"\x11on_conflict_where\x18\x06 \x01(\v2\x0e.pg_query.NodeR\x0fonConflictWhere\x12$\n" +
 	"\x0eexcl_rel_index\x18\a \x01(\x05R\fexclRelIndex\x124\n" +
-	"\x0eexcl_rel_tlist\x18\b \x03(\v2\x0e.pg_query.NodeR\fexclRelTlist\"\xc6\x0f\n" +
+	"\x0eexcl_rel_tlist\x18\b \x03(\v2\x0e.pg_query.NodeR\fexclRelTlist\"\xca\x10\n" +
 	"\x05Query\x124\n" +
 	"\fcommand_type\x18\x01 \x01(\x0e2\x11.pg_query.CmdTypeR\vcommandType\x128\n" +
 	"\fquery_source\x18\x02 \x01(\x0e2\x15.pg_query.QuerySourceR\vquerySource\x12\x1e\n" +
@@ -32638,40 +33240,43 @@ const file_pg_query_proto_rawDesc = "" +
 	"\rhas_recursive\x18\v \x01(\bR\fhasRecursive\x12*\n" +
 	"\x11has_modifying_cte\x18\f \x01(\bR\x0fhasModifyingCTE\x12$\n" +
 	"\x0ehas_for_update\x18\r \x01(\bR\fhasForUpdate\x12(\n" +
-	"\x10has_row_security\x18\x0e \x01(\bR\x0ehasRowSecurity\x12\x1b\n" +
-	"\tis_return\x18\x0f \x01(\bR\bisReturn\x12)\n" +
-	"\bcte_list\x18\x10 \x03(\v2\x0e.pg_query.NodeR\acteList\x12&\n" +
-	"\x06rtable\x18\x11 \x03(\v2\x0e.pg_query.NodeR\x06rtable\x122\n" +
-	"\frteperminfos\x18\x12 \x03(\v2\x0e.pg_query.NodeR\frteperminfos\x12.\n" +
-	"\bjointree\x18\x13 \x01(\v2\x12.pg_query.FromExprR\bjointree\x12:\n" +
-	"\x11merge_action_list\x18\x14 \x03(\v2\x0e.pg_query.NodeR\x0fmergeActionList\x122\n" +
-	"\x15merge_target_relation\x18\x15 \x01(\x05R\x13mergeTargetRelation\x12@\n" +
-	"\x14merge_join_condition\x18\x16 \x01(\v2\x0e.pg_query.NodeR\x12mergeJoinCondition\x12/\n" +
-	"\vtarget_list\x18\x17 \x03(\v2\x0e.pg_query.NodeR\n" +
+	"\x10has_row_security\x18\x0e \x01(\bR\x0ehasRowSecurity\x12\"\n" +
+	"\rhas_group_rte\x18\x0f \x01(\bR\vhasGroupRTE\x12\x1b\n" +
+	"\tis_return\x18\x10 \x01(\bR\bisReturn\x12)\n" +
+	"\bcte_list\x18\x11 \x03(\v2\x0e.pg_query.NodeR\acteList\x12&\n" +
+	"\x06rtable\x18\x12 \x03(\v2\x0e.pg_query.NodeR\x06rtable\x122\n" +
+	"\frteperminfos\x18\x13 \x03(\v2\x0e.pg_query.NodeR\frteperminfos\x12.\n" +
+	"\bjointree\x18\x14 \x01(\v2\x12.pg_query.FromExprR\bjointree\x12:\n" +
+	"\x11merge_action_list\x18\x15 \x03(\v2\x0e.pg_query.NodeR\x0fmergeActionList\x122\n" +
+	"\x15merge_target_relation\x18\x16 \x01(\x05R\x13mergeTargetRelation\x12@\n" +
+	"\x14merge_join_condition\x18\x17 \x01(\v2\x0e.pg_query.NodeR\x12mergeJoinCondition\x12/\n" +
+	"\vtarget_list\x18\x18 \x03(\v2\x0e.pg_query.NodeR\n" +
 	"targetList\x124\n" +
-	"\boverride\x18\x18 \x01(\x0e2\x18.pg_query.OverridingKindR\boverride\x129\n" +
-	"\von_conflict\x18\x19 \x01(\v2\x18.pg_query.OnConflictExprR\n" +
-	"onConflict\x125\n" +
-	"\x0ereturning_list\x18\x1a \x03(\v2\x0e.pg_query.NodeR\rreturningList\x121\n" +
-	"\fgroup_clause\x18\x1b \x03(\v2\x0e.pg_query.NodeR\vgroupClause\x12%\n" +
-	"\x0egroup_distinct\x18\x1c \x01(\bR\rgroupDistinct\x123\n" +
-	"\rgrouping_sets\x18\x1d \x03(\v2\x0e.pg_query.NodeR\fgroupingSets\x12/\n" +
-	"\vhaving_qual\x18\x1e \x01(\v2\x0e.pg_query.NodeR\n" +
+	"\boverride\x18\x19 \x01(\x0e2\x18.pg_query.OverridingKindR\boverride\x129\n" +
+	"\von_conflict\x18\x1a \x01(\v2\x18.pg_query.OnConflictExprR\n" +
+	"onConflict\x12.\n" +
+	"\x13returning_old_alias\x18\x1b \x01(\tR\x11returningOldAlias\x12.\n" +
+	"\x13returning_new_alias\x18\x1c \x01(\tR\x11returningNewAlias\x125\n" +
+	"\x0ereturning_list\x18\x1d \x03(\v2\x0e.pg_query.NodeR\rreturningList\x121\n" +
+	"\fgroup_clause\x18\x1e \x03(\v2\x0e.pg_query.NodeR\vgroupClause\x12%\n" +
+	"\x0egroup_distinct\x18\x1f \x01(\bR\rgroupDistinct\x123\n" +
+	"\rgrouping_sets\x18  \x03(\v2\x0e.pg_query.NodeR\fgroupingSets\x12/\n" +
+	"\vhaving_qual\x18! \x01(\v2\x0e.pg_query.NodeR\n" +
 	"havingQual\x123\n" +
-	"\rwindow_clause\x18\x1f \x03(\v2\x0e.pg_query.NodeR\fwindowClause\x127\n" +
-	"\x0fdistinct_clause\x18  \x03(\v2\x0e.pg_query.NodeR\x0edistinctClause\x12/\n" +
-	"\vsort_clause\x18! \x03(\v2\x0e.pg_query.NodeR\n" +
+	"\rwindow_clause\x18\" \x03(\v2\x0e.pg_query.NodeR\fwindowClause\x127\n" +
+	"\x0fdistinct_clause\x18# \x03(\v2\x0e.pg_query.NodeR\x0edistinctClause\x12/\n" +
+	"\vsort_clause\x18$ \x03(\v2\x0e.pg_query.NodeR\n" +
 	"sortClause\x121\n" +
-	"\flimit_offset\x18\" \x01(\v2\x0e.pg_query.NodeR\vlimitOffset\x12/\n" +
-	"\vlimit_count\x18# \x01(\v2\x0e.pg_query.NodeR\n" +
+	"\flimit_offset\x18% \x01(\v2\x0e.pg_query.NodeR\vlimitOffset\x12/\n" +
+	"\vlimit_count\x18& \x01(\v2\x0e.pg_query.NodeR\n" +
 	"limitCount\x128\n" +
-	"\flimit_option\x18$ \x01(\x0e2\x15.pg_query.LimitOptionR\vlimitOption\x12+\n" +
-	"\trow_marks\x18% \x03(\v2\x0e.pg_query.NodeR\browMarks\x125\n" +
-	"\x0eset_operations\x18& \x01(\v2\x0e.pg_query.NodeR\rsetOperations\x127\n" +
-	"\x0fconstraint_deps\x18' \x03(\v2\x0e.pg_query.NodeR\x0econstraintDeps\x12<\n" +
-	"\x12with_check_options\x18( \x03(\v2\x0e.pg_query.NodeR\x10withCheckOptions\x12$\n" +
-	"\rstmt_location\x18) \x01(\x05R\rstmt_location\x12\x1a\n" +
-	"\bstmt_len\x18* \x01(\x05R\bstmt_len\"\x90\x02\n" +
+	"\flimit_option\x18' \x01(\x0e2\x15.pg_query.LimitOptionR\vlimitOption\x12+\n" +
+	"\trow_marks\x18( \x03(\v2\x0e.pg_query.NodeR\browMarks\x125\n" +
+	"\x0eset_operations\x18) \x01(\v2\x0e.pg_query.NodeR\rsetOperations\x127\n" +
+	"\x0fconstraint_deps\x18* \x03(\v2\x0e.pg_query.NodeR\x0econstraintDeps\x12<\n" +
+	"\x12with_check_options\x18+ \x03(\v2\x0e.pg_query.NodeR\x10withCheckOptions\x12$\n" +
+	"\rstmt_location\x18, \x01(\x05R\rstmt_location\x12\x1a\n" +
+	"\bstmt_len\x18- \x01(\x05R\bstmt_len\"\x90\x02\n" +
 	"\bTypeName\x12$\n" +
 	"\x05names\x18\x01 \x03(\v2\x0e.pg_query.NodeR\x05names\x12\x19\n" +
 	"\btype_oid\x18\x02 \x01(\rR\atypeOid\x12\x14\n" +
@@ -32686,13 +33291,15 @@ const file_pg_query_proto_rawDesc = "" +
 	"\blocation\x18\x02 \x01(\x05R\blocation\">\n" +
 	"\bParamRef\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\x05R\x06number\x12\x1a\n" +
-	"\blocation\x18\x02 \x01(\x05R\blocation\"\xbf\x01\n" +
+	"\blocation\x18\x02 \x01(\x05R\blocation\"\x93\x02\n" +
 	"\x06A_Expr\x12)\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x15.pg_query.A_Expr_KindR\x04kind\x12\"\n" +
 	"\x04name\x18\x02 \x03(\v2\x0e.pg_query.NodeR\x04name\x12$\n" +
 	"\x05lexpr\x18\x03 \x01(\v2\x0e.pg_query.NodeR\x05lexpr\x12$\n" +
-	"\x05rexpr\x18\x04 \x01(\v2\x0e.pg_query.NodeR\x05rexpr\x12\x1a\n" +
-	"\blocation\x18\x05 \x01(\x05R\blocation\"y\n" +
+	"\x05rexpr\x18\x04 \x01(\v2\x0e.pg_query.NodeR\x05rexpr\x12*\n" +
+	"\x10rexpr_list_start\x18\x05 \x01(\x05R\x10rexpr_list_start\x12&\n" +
+	"\x0erexpr_list_end\x18\x06 \x01(\x05R\x0erexpr_list_end\x12\x1a\n" +
+	"\blocation\x18\a \x01(\x05R\blocation\"y\n" +
 	"\bTypeCast\x12 \n" +
 	"\x03arg\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03arg\x12/\n" +
 	"\ttype_name\x18\x02 \x01(\v2\x12.pg_query.TypeNameR\btypeName\x12\x1a\n" +
@@ -32729,10 +33336,14 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x04uidx\x18\x03 \x01(\v2\x0e.pg_query.NodeR\x04uidx\"c\n" +
 	"\rA_Indirection\x12 \n" +
 	"\x03arg\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x03arg\x120\n" +
-	"\vindirection\x18\x02 \x03(\v2\x0e.pg_query.NodeR\vindirection\"U\n" +
+	"\vindirection\x18\x02 \x03(\v2\x0e.pg_query.NodeR\vindirection\"\x91\x01\n" +
 	"\vA_ArrayExpr\x12*\n" +
-	"\belements\x18\x01 \x03(\v2\x0e.pg_query.NodeR\belements\x12\x1a\n" +
-	"\blocation\x18\x02 \x01(\x05R\blocation\"\x8f\x01\n" +
+	"\belements\x18\x01 \x03(\v2\x0e.pg_query.NodeR\belements\x12\x1e\n" +
+	"\n" +
+	"list_start\x18\x02 \x01(\x05R\n" +
+	"list_start\x12\x1a\n" +
+	"\blist_end\x18\x03 \x01(\x05R\blist_end\x12\x1a\n" +
+	"\blocation\x18\x04 \x01(\x05R\blocation\"\x8f\x01\n" +
 	"\tResTarget\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x120\n" +
 	"\vindirection\x18\x02 \x03(\v2\x0e.pg_query.NodeR\vindirection\x12 \n" +
@@ -32885,14 +33496,13 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x13PartitionRangeDatum\x125\n" +
 	"\x04kind\x18\x01 \x01(\x0e2!.pg_query.PartitionRangeDatumKindR\x04kind\x12$\n" +
 	"\x05value\x18\x02 \x01(\v2\x0e.pg_query.NodeR\x05value\x12\x1a\n" +
-	"\blocation\x18\x03 \x01(\x05R\blocation\"\x15\n" +
-	"\x13SinglePartitionSpec\"\x8a\x01\n" +
+	"\blocation\x18\x03 \x01(\x05R\blocation\"\x8a\x01\n" +
 	"\fPartitionCmd\x12&\n" +
 	"\x04name\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\x04name\x122\n" +
 	"\x05bound\x18\x02 \x01(\v2\x1c.pg_query.PartitionBoundSpecR\x05bound\x12\x1e\n" +
 	"\n" +
 	"concurrent\x18\x03 \x01(\bR\n" +
-	"concurrent\"\xb9\n" +
+	"concurrent\"\xe9\n" +
 	"\n" +
 	"\rRangeTblEntry\x12%\n" +
 	"\x05alias\x18\x01 \x01(\v2\x0f.pg_query.AliasR\x05alias\x12#\n" +
@@ -32926,11 +33536,14 @@ const file_pg_query_proto_rawDesc = "" +
 	"coltypmods\x124\n" +
 	"\rcolcollations\x18\x1b \x03(\v2\x0e.pg_query.NodeR\rcolcollations\x12\x18\n" +
 	"\aenrname\x18\x1c \x01(\tR\aenrname\x12\x1c\n" +
-	"\tenrtuples\x18\x1d \x01(\x01R\tenrtuples\x12\x18\n" +
-	"\alateral\x18\x1e \x01(\bR\alateral\x12\x1c\n" +
+	"\tenrtuples\x18\x1d \x01(\x01R\tenrtuples\x12.\n" +
 	"\n" +
-	"in_from_cl\x18\x1f \x01(\bR\binFromCl\x125\n" +
-	"\x0esecurity_quals\x18  \x03(\v2\x0e.pg_query.NodeR\rsecurityQuals\"\xf3\x01\n" +
+	"groupexprs\x18\x1e \x03(\v2\x0e.pg_query.NodeR\n" +
+	"groupexprs\x12\x18\n" +
+	"\alateral\x18\x1f \x01(\bR\alateral\x12\x1c\n" +
+	"\n" +
+	"in_from_cl\x18  \x01(\bR\binFromCl\x125\n" +
+	"\x0esecurity_quals\x18! \x03(\v2\x0e.pg_query.NodeR\rsecurityQuals\"\xf3\x01\n" +
 	"\x11RTEPermissionInfo\x12\x14\n" +
 	"\x05relid\x18\x01 \x01(\rR\x05relid\x12\x10\n" +
 	"\x03inh\x18\x02 \x01(\bR\x03inh\x12%\n" +
@@ -32962,13 +33575,14 @@ const file_pg_query_proto_rawDesc = "" +
 	"\arelname\x18\x02 \x01(\tR\arelname\x12\x18\n" +
 	"\apolname\x18\x03 \x01(\tR\apolname\x12\"\n" +
 	"\x04qual\x18\x04 \x01(\v2\x0e.pg_query.NodeR\x04qual\x12\x1a\n" +
-	"\bcascaded\x18\x05 \x01(\bR\bcascaded\"\xa8\x01\n" +
+	"\bcascaded\x18\x05 \x01(\bR\bcascaded\"\xcc\x01\n" +
 	"\x0fSortGroupClause\x12+\n" +
 	"\x12tle_sort_group_ref\x18\x01 \x01(\rR\x0ftleSortGroupRef\x12\x12\n" +
 	"\x04eqop\x18\x02 \x01(\rR\x04eqop\x12\x16\n" +
-	"\x06sortop\x18\x03 \x01(\rR\x06sortop\x12 \n" +
-	"\vnulls_first\x18\x04 \x01(\bR\vnulls_first\x12\x1a\n" +
-	"\bhashable\x18\x05 \x01(\bR\bhashable\"\x82\x01\n" +
+	"\x06sortop\x18\x03 \x01(\rR\x06sortop\x12\"\n" +
+	"\freverse_sort\x18\x04 \x01(\bR\freverse_sort\x12 \n" +
+	"\vnulls_first\x18\x05 \x01(\bR\vnulls_first\x12\x1a\n" +
+	"\bhashable\x18\x06 \x01(\bR\bhashable\"\x82\x01\n" +
 	"\vGroupingSet\x12-\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x19.pg_query.GroupingSetKindR\x04kind\x12(\n" +
 	"\acontent\x18\x02 \x03(\v2\x0e.pg_query.NodeR\acontent\x12\x1a\n" +
@@ -33056,7 +33670,14 @@ const file_pg_query_proto_rawDesc = "" +
 	"\tcondition\x18\x04 \x01(\v2\x0e.pg_query.NodeR\tcondition\x12/\n" +
 	"\vtarget_list\x18\x05 \x03(\v2\x0e.pg_query.NodeR\n" +
 	"targetList\x12&\n" +
-	"\x06values\x18\x06 \x03(\v2\x0e.pg_query.NodeR\x06values\"Y\n" +
+	"\x06values\x18\x06 \x03(\v2\x0e.pg_query.NodeR\x06values\"z\n" +
+	"\x0fReturningOption\x125\n" +
+	"\x06option\x18\x01 \x01(\x0e2\x1d.pg_query.ReturningOptionKindR\x06option\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x12\x1a\n" +
+	"\blocation\x18\x03 \x01(\x05R\blocation\"a\n" +
+	"\x0fReturningClause\x12(\n" +
+	"\aoptions\x18\x01 \x03(\v2\x0e.pg_query.NodeR\aoptions\x12$\n" +
+	"\x05exprs\x18\x02 \x03(\v2\x0e.pg_query.NodeR\x05exprs\"Y\n" +
 	"\x11TriggerTransition\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x15\n" +
 	"\x06is_new\x18\x02 \x01(\bR\x05isNew\x12\x19\n" +
@@ -33161,26 +33782,26 @@ const file_pg_query_proto_rawDesc = "" +
 	"\aRawStmt\x12\"\n" +
 	"\x04stmt\x18\x01 \x01(\v2\x0e.pg_query.NodeR\x04stmt\x12$\n" +
 	"\rstmt_location\x18\x02 \x01(\x05R\rstmt_location\x12\x1a\n" +
-	"\bstmt_len\x18\x03 \x01(\x05R\bstmt_len\"\xff\x02\n" +
+	"\bstmt_len\x18\x03 \x01(\x05R\bstmt_len\"\x8e\x03\n" +
 	"\n" +
 	"InsertStmt\x12.\n" +
 	"\brelation\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\brelation\x12\"\n" +
 	"\x04cols\x18\x02 \x03(\v2\x0e.pg_query.NodeR\x04cols\x12/\n" +
 	"\vselect_stmt\x18\x03 \x01(\v2\x0e.pg_query.NodeR\n" +
 	"selectStmt\x12H\n" +
-	"\x12on_conflict_clause\x18\x04 \x01(\v2\x1a.pg_query.OnConflictClauseR\x10onConflictClause\x125\n" +
-	"\x0ereturning_list\x18\x05 \x03(\v2\x0e.pg_query.NodeR\rreturningList\x125\n" +
+	"\x12on_conflict_clause\x18\x04 \x01(\v2\x1a.pg_query.OnConflictClauseR\x10onConflictClause\x12D\n" +
+	"\x10returning_clause\x18\x05 \x01(\v2\x19.pg_query.ReturningClauseR\x0freturningClause\x125\n" +
 	"\vwith_clause\x18\x06 \x01(\v2\x14.pg_query.WithClauseR\n" +
 	"withClause\x124\n" +
-	"\boverride\x18\a \x01(\x0e2\x18.pg_query.OverridingKindR\boverride\"\x90\x02\n" +
+	"\boverride\x18\a \x01(\x0e2\x18.pg_query.OverridingKindR\boverride\"\x9f\x02\n" +
 	"\n" +
 	"DeleteStmt\x12.\n" +
 	"\brelation\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\brelation\x121\n" +
 	"\fusing_clause\x18\x02 \x03(\v2\x0e.pg_query.NodeR\vusingClause\x121\n" +
-	"\fwhere_clause\x18\x03 \x01(\v2\x0e.pg_query.NodeR\vwhereClause\x125\n" +
-	"\x0ereturning_list\x18\x04 \x03(\v2\x0e.pg_query.NodeR\rreturningList\x125\n" +
+	"\fwhere_clause\x18\x03 \x01(\v2\x0e.pg_query.NodeR\vwhereClause\x12D\n" +
+	"\x10returning_clause\x18\x04 \x01(\v2\x19.pg_query.ReturningClauseR\x0freturningClause\x125\n" +
 	"\vwith_clause\x18\x05 \x01(\v2\x14.pg_query.WithClauseR\n" +
-	"withClause\"\xbf\x02\n" +
+	"withClause\"\xce\x02\n" +
 	"\n" +
 	"UpdateStmt\x12.\n" +
 	"\brelation\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\brelation\x12/\n" +
@@ -33188,16 +33809,16 @@ const file_pg_query_proto_rawDesc = "" +
 	"targetList\x121\n" +
 	"\fwhere_clause\x18\x03 \x01(\v2\x0e.pg_query.NodeR\vwhereClause\x12/\n" +
 	"\vfrom_clause\x18\x04 \x03(\v2\x0e.pg_query.NodeR\n" +
-	"fromClause\x125\n" +
-	"\x0ereturning_list\x18\x05 \x03(\v2\x0e.pg_query.NodeR\rreturningList\x125\n" +
+	"fromClause\x12D\n" +
+	"\x10returning_clause\x18\x05 \x01(\v2\x19.pg_query.ReturningClauseR\x0freturningClause\x125\n" +
 	"\vwith_clause\x18\x06 \x01(\v2\x14.pg_query.WithClauseR\n" +
-	"withClause\"\xd7\x02\n" +
+	"withClause\"\xe6\x02\n" +
 	"\tMergeStmt\x12.\n" +
 	"\brelation\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\brelation\x127\n" +
 	"\x0fsource_relation\x18\x02 \x01(\v2\x0e.pg_query.NodeR\x0esourceRelation\x125\n" +
 	"\x0ejoin_condition\x18\x03 \x01(\v2\x0e.pg_query.NodeR\rjoinCondition\x12<\n" +
-	"\x12merge_when_clauses\x18\x04 \x03(\v2\x0e.pg_query.NodeR\x10mergeWhenClauses\x125\n" +
-	"\x0ereturning_list\x18\x05 \x03(\v2\x0e.pg_query.NodeR\rreturningList\x125\n" +
+	"\x12merge_when_clauses\x18\x04 \x03(\v2\x0e.pg_query.NodeR\x10mergeWhenClauses\x12D\n" +
+	"\x10returning_clause\x18\x05 \x01(\v2\x19.pg_query.ReturningClauseR\x0freturningClause\x125\n" +
 	"\vwith_clause\x18\x06 \x01(\v2\x14.pg_query.WithClauseR\n" +
 	"withClause\"\xd3\a\n" +
 	"\n" +
@@ -33262,10 +33883,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\aobjtype\x18\x03 \x01(\x0e2\x14.pg_query.ObjectTypeR\aobjtype\x12\x1e\n" +
 	"\n" +
 	"missing_ok\x18\x04 \x01(\bR\n" +
-	"missing_ok\"O\n" +
-	"\x13ReplicaIdentityStmt\x12$\n" +
-	"\ridentity_type\x18\x01 \x01(\tR\ridentity_type\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\xa9\x02\n" +
+	"missing_ok\"\xa9\x02\n" +
 	"\rAlterTableCmd\x122\n" +
 	"\asubtype\x18\x01 \x01(\x0e2\x18.pg_query.AlterTableTypeR\asubtype\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
@@ -33276,7 +33894,21 @@ const file_pg_query_proto_rawDesc = "" +
 	"\n" +
 	"missing_ok\x18\a \x01(\bR\n" +
 	"missing_ok\x12\x18\n" +
-	"\arecurse\x18\b \x01(\bR\arecurse\"@\n" +
+	"\arecurse\x18\b \x01(\bR\arecurse\"\xc8\x02\n" +
+	"\x11ATAlterConstraint\x12\x18\n" +
+	"\aconname\x18\x01 \x01(\tR\aconname\x121\n" +
+	"\x14alter_enforceability\x18\x02 \x01(\bR\x13alterEnforceability\x12 \n" +
+	"\vis_enforced\x18\x03 \x01(\bR\vis_enforced\x12/\n" +
+	"\x13alter_deferrability\x18\x04 \x01(\bR\x12alterDeferrability\x12\x1e\n" +
+	"\n" +
+	"deferrable\x18\x05 \x01(\bR\n" +
+	"deferrable\x12\"\n" +
+	"\finitdeferred\x18\x06 \x01(\bR\finitdeferred\x121\n" +
+	"\x14alter_inheritability\x18\a \x01(\bR\x13alterInheritability\x12\x1c\n" +
+	"\tnoinherit\x18\b \x01(\bR\tnoinherit\"O\n" +
+	"\x13ReplicaIdentityStmt\x12$\n" +
+	"\ridentity_type\x18\x01 \x01(\tR\ridentity_type\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"@\n" +
 	"\x12AlterCollationStmt\x12*\n" +
 	"\bcollname\x18\x01 \x03(\v2\x0e.pg_query.NodeR\bcollname\"\xe2\x01\n" +
 	"\x0fAlterDomainStmt\x12\x18\n" +
@@ -33329,14 +33961,16 @@ const file_pg_query_proto_rawDesc = "" +
 	"is_program\x12\x1a\n" +
 	"\bfilename\x18\x06 \x01(\tR\bfilename\x12(\n" +
 	"\aoptions\x18\a \x03(\v2\x0e.pg_query.NodeR\aoptions\x121\n" +
-	"\fwhere_clause\x18\b \x01(\v2\x0e.pg_query.NodeR\vwhereClause\"\x94\x01\n" +
+	"\fwhere_clause\x18\b \x01(\v2\x0e.pg_query.NodeR\vwhereClause\"\xd2\x01\n" +
 	"\x0fVariableSetStmt\x12-\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x19.pg_query.VariableSetKindR\x04kind\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\"\n" +
-	"\x04args\x18\x03 \x03(\v2\x0e.pg_query.NodeR\x04args\x12\x1a\n" +
-	"\bis_local\x18\x04 \x01(\bR\bis_local\"&\n" +
+	"\x04args\x18\x03 \x03(\v2\x0e.pg_query.NodeR\x04args\x12 \n" +
+	"\vjumble_args\x18\x04 \x01(\bR\vjumble_args\x12\x1a\n" +
+	"\bis_local\x18\x05 \x01(\bR\bis_local\x12\x1a\n" +
+	"\blocation\x18\x06 \x01(\x05R\blocation\"&\n" +
 	"\x10VariableShowStmt\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\xcb\x04\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"\x81\x05\n" +
 	"\n" +
 	"CreateStmt\x12.\n" +
 	"\brelation\x18\x01 \x01(\v2\x12.pg_query.RangeVarR\brelation\x12-\n" +
@@ -33347,13 +33981,14 @@ const file_pg_query_proto_rawDesc = "" +
 	"\bpartspec\x18\x05 \x01(\v2\x17.pg_query.PartitionSpecR\bpartspec\x123\n" +
 	"\vof_typename\x18\x06 \x01(\v2\x12.pg_query.TypeNameR\n" +
 	"ofTypename\x120\n" +
-	"\vconstraints\x18\a \x03(\v2\x0e.pg_query.NodeR\vconstraints\x12(\n" +
-	"\aoptions\x18\b \x03(\v2\x0e.pg_query.NodeR\aoptions\x124\n" +
-	"\boncommit\x18\t \x01(\x0e2\x18.pg_query.OnCommitActionR\boncommit\x12&\n" +
-	"\x0etablespacename\x18\n" +
-	" \x01(\tR\x0etablespacename\x12#\n" +
-	"\raccess_method\x18\v \x01(\tR\faccessMethod\x12$\n" +
-	"\rif_not_exists\x18\f \x01(\bR\rif_not_exists\"\xfa\t\n" +
+	"\vconstraints\x18\a \x03(\v2\x0e.pg_query.NodeR\vconstraints\x124\n" +
+	"\rnnconstraints\x18\b \x03(\v2\x0e.pg_query.NodeR\rnnconstraints\x12(\n" +
+	"\aoptions\x18\t \x03(\v2\x0e.pg_query.NodeR\aoptions\x124\n" +
+	"\boncommit\x18\n" +
+	" \x01(\x0e2\x18.pg_query.OnCommitActionR\boncommit\x12&\n" +
+	"\x0etablespacename\x18\v \x01(\tR\x0etablespacename\x12#\n" +
+	"\raccess_method\x18\f \x01(\tR\faccessMethod\x12$\n" +
+	"\rif_not_exists\x18\r \x01(\bR\rif_not_exists\"\xa4\v\n" +
 	"\n" +
 	"Constraint\x12.\n" +
 	"\acontype\x18\x01 \x01(\x0e2\x14.pg_query.ConstrTypeR\acontype\x12\x18\n" +
@@ -33361,39 +33996,43 @@ const file_pg_query_proto_rawDesc = "" +
 	"\n" +
 	"deferrable\x18\x03 \x01(\bR\n" +
 	"deferrable\x12\"\n" +
-	"\finitdeferred\x18\x04 \x01(\bR\finitdeferred\x12(\n" +
-	"\x0fskip_validation\x18\x05 \x01(\bR\x0fskip_validation\x12(\n" +
-	"\x0finitially_valid\x18\x06 \x01(\bR\x0finitially_valid\x12$\n" +
-	"\ris_no_inherit\x18\a \x01(\bR\ris_no_inherit\x12*\n" +
-	"\braw_expr\x18\b \x01(\v2\x0e.pg_query.NodeR\braw_expr\x12 \n" +
-	"\vcooked_expr\x18\t \x01(\tR\vcooked_expr\x12&\n" +
-	"\x0egenerated_when\x18\n" +
-	" \x01(\tR\x0egenerated_when\x12\x1a\n" +
-	"\binhcount\x18\v \x01(\x05R\binhcount\x12.\n" +
-	"\x12nulls_not_distinct\x18\f \x01(\bR\x12nulls_not_distinct\x12\"\n" +
-	"\x04keys\x18\r \x03(\v2\x0e.pg_query.NodeR\x04keys\x12,\n" +
-	"\tincluding\x18\x0e \x03(\v2\x0e.pg_query.NodeR\tincluding\x12.\n" +
+	"\finitdeferred\x18\x04 \x01(\bR\finitdeferred\x12 \n" +
+	"\vis_enforced\x18\x05 \x01(\bR\vis_enforced\x12(\n" +
+	"\x0fskip_validation\x18\x06 \x01(\bR\x0fskip_validation\x12(\n" +
+	"\x0finitially_valid\x18\a \x01(\bR\x0finitially_valid\x12$\n" +
+	"\ris_no_inherit\x18\b \x01(\bR\ris_no_inherit\x12*\n" +
+	"\braw_expr\x18\t \x01(\v2\x0e.pg_query.NodeR\braw_expr\x12 \n" +
+	"\vcooked_expr\x18\n" +
+	" \x01(\tR\vcooked_expr\x12&\n" +
+	"\x0egenerated_when\x18\v \x01(\tR\x0egenerated_when\x12&\n" +
+	"\x0egenerated_kind\x18\f \x01(\tR\x0egenerated_kind\x12.\n" +
+	"\x12nulls_not_distinct\x18\r \x01(\bR\x12nulls_not_distinct\x12\"\n" +
+	"\x04keys\x18\x0e \x03(\v2\x0e.pg_query.NodeR\x04keys\x12*\n" +
+	"\x10without_overlaps\x18\x0f \x01(\bR\x10without_overlaps\x12,\n" +
+	"\tincluding\x18\x10 \x03(\v2\x0e.pg_query.NodeR\tincluding\x12.\n" +
 	"\n" +
-	"exclusions\x18\x0f \x03(\v2\x0e.pg_query.NodeR\n" +
+	"exclusions\x18\x11 \x03(\v2\x0e.pg_query.NodeR\n" +
 	"exclusions\x12(\n" +
-	"\aoptions\x18\x10 \x03(\v2\x0e.pg_query.NodeR\aoptions\x12\x1c\n" +
-	"\tindexname\x18\x11 \x01(\tR\tindexname\x12\x1e\n" +
+	"\aoptions\x18\x12 \x03(\v2\x0e.pg_query.NodeR\aoptions\x12\x1c\n" +
+	"\tindexname\x18\x13 \x01(\tR\tindexname\x12\x1e\n" +
 	"\n" +
-	"indexspace\x18\x12 \x01(\tR\n" +
+	"indexspace\x18\x14 \x01(\tR\n" +
 	"indexspace\x122\n" +
-	"\x14reset_default_tblspc\x18\x13 \x01(\bR\x14reset_default_tblspc\x12$\n" +
-	"\raccess_method\x18\x14 \x01(\tR\raccess_method\x122\n" +
-	"\fwhere_clause\x18\x15 \x01(\v2\x0e.pg_query.NodeR\fwhere_clause\x12,\n" +
-	"\apktable\x18\x16 \x01(\v2\x12.pg_query.RangeVarR\apktable\x12*\n" +
-	"\bfk_attrs\x18\x17 \x03(\v2\x0e.pg_query.NodeR\bfk_attrs\x12*\n" +
-	"\bpk_attrs\x18\x18 \x03(\v2\x0e.pg_query.NodeR\bpk_attrs\x12\"\n" +
-	"\ffk_matchtype\x18\x19 \x01(\tR\ffk_matchtype\x12$\n" +
-	"\rfk_upd_action\x18\x1a \x01(\tR\rfk_upd_action\x12$\n" +
-	"\rfk_del_action\x18\x1b \x01(\tR\rfk_del_action\x128\n" +
-	"\x0ffk_del_set_cols\x18\x1c \x03(\v2\x0e.pg_query.NodeR\x0ffk_del_set_cols\x124\n" +
-	"\rold_conpfeqop\x18\x1d \x03(\v2\x0e.pg_query.NodeR\rold_conpfeqop\x12(\n" +
-	"\x0fold_pktable_oid\x18\x1e \x01(\rR\x0fold_pktable_oid\x12\x1a\n" +
-	"\blocation\x18\x1f \x01(\x05R\blocation\"\xae\x01\n" +
+	"\x14reset_default_tblspc\x18\x15 \x01(\bR\x14reset_default_tblspc\x12$\n" +
+	"\raccess_method\x18\x16 \x01(\tR\raccess_method\x122\n" +
+	"\fwhere_clause\x18\x17 \x01(\v2\x0e.pg_query.NodeR\fwhere_clause\x12,\n" +
+	"\apktable\x18\x18 \x01(\v2\x12.pg_query.RangeVarR\apktable\x12*\n" +
+	"\bfk_attrs\x18\x19 \x03(\v2\x0e.pg_query.NodeR\bfk_attrs\x12*\n" +
+	"\bpk_attrs\x18\x1a \x03(\v2\x0e.pg_query.NodeR\bpk_attrs\x12&\n" +
+	"\x0efk_with_period\x18\x1b \x01(\bR\x0efk_with_period\x12&\n" +
+	"\x0epk_with_period\x18\x1c \x01(\bR\x0epk_with_period\x12\"\n" +
+	"\ffk_matchtype\x18\x1d \x01(\tR\ffk_matchtype\x12$\n" +
+	"\rfk_upd_action\x18\x1e \x01(\tR\rfk_upd_action\x12$\n" +
+	"\rfk_del_action\x18\x1f \x01(\tR\rfk_del_action\x128\n" +
+	"\x0ffk_del_set_cols\x18  \x03(\v2\x0e.pg_query.NodeR\x0ffk_del_set_cols\x124\n" +
+	"\rold_conpfeqop\x18! \x03(\v2\x0e.pg_query.NodeR\rold_conpfeqop\x12(\n" +
+	"\x0fold_pktable_oid\x18\" \x01(\rR\x0fold_pktable_oid\x12\x1a\n" +
+	"\blocation\x18# \x01(\x05R\blocation\"\xae\x01\n" +
 	"\x14CreateTableSpaceStmt\x12&\n" +
 	"\x0etablespacename\x18\x01 \x01(\tR\x0etablespacename\x12(\n" +
 	"\x05owner\x18\x02 \x01(\v2\x12.pg_query.RoleSpecR\x05owner\x12\x1a\n" +
@@ -33665,7 +34304,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\n" +
 	"portalname\x18\x03 \x01(\tR\n" +
 	"portalname\x12\x16\n" +
-	"\x06ismove\x18\x04 \x01(\bR\x06ismove\"\xdc\a\n" +
+	"\x06ismove\x18\x04 \x01(\bR\x06ismove\"\x8a\b\n" +
 	"\tIndexStmt\x12\x18\n" +
 	"\aidxname\x18\x01 \x01(\tR\aidxname\x12.\n" +
 	"\brelation\x18\x02 \x01(\v2\x12.pg_query.RangeVarR\brelation\x12#\n" +
@@ -33689,17 +34328,18 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x06unique\x18\x0f \x01(\bR\x06unique\x12.\n" +
 	"\x12nulls_not_distinct\x18\x10 \x01(\bR\x12nulls_not_distinct\x12\x18\n" +
 	"\aprimary\x18\x11 \x01(\bR\aprimary\x12\"\n" +
-	"\fisconstraint\x18\x12 \x01(\bR\fisconstraint\x12\x1e\n" +
+	"\fisconstraint\x18\x12 \x01(\bR\fisconstraint\x12,\n" +
+	"\x11iswithoutoverlaps\x18\x13 \x01(\bR\x11iswithoutoverlaps\x12\x1e\n" +
 	"\n" +
-	"deferrable\x18\x13 \x01(\bR\n" +
+	"deferrable\x18\x14 \x01(\bR\n" +
 	"deferrable\x12\"\n" +
-	"\finitdeferred\x18\x14 \x01(\bR\finitdeferred\x12 \n" +
-	"\vtransformed\x18\x15 \x01(\bR\vtransformed\x12\x1e\n" +
+	"\finitdeferred\x18\x15 \x01(\bR\finitdeferred\x12 \n" +
+	"\vtransformed\x18\x16 \x01(\bR\vtransformed\x12\x1e\n" +
 	"\n" +
-	"concurrent\x18\x16 \x01(\bR\n" +
+	"concurrent\x18\x17 \x01(\bR\n" +
 	"concurrent\x12$\n" +
-	"\rif_not_exists\x18\x17 \x01(\bR\rif_not_exists\x122\n" +
-	"\x14reset_default_tblspc\x18\x18 \x01(\bR\x14reset_default_tblspc\"\xa9\x02\n" +
+	"\rif_not_exists\x18\x18 \x01(\bR\rif_not_exists\x122\n" +
+	"\x14reset_default_tblspc\x18\x19 \x01(\bR\x14reset_default_tblspc\"\xa9\x02\n" +
 	"\x0fCreateStatsStmt\x12*\n" +
 	"\bdefnames\x18\x01 \x03(\v2\x0e.pg_query.NodeR\bdefnames\x12.\n" +
 	"\n" +
@@ -33731,12 +34371,13 @@ const file_pg_query_proto_rawDesc = "" +
 	"\vreturn_type\x18\x05 \x01(\v2\x12.pg_query.TypeNameR\n" +
 	"returnType\x12(\n" +
 	"\aoptions\x18\x06 \x03(\v2\x0e.pg_query.NodeR\aoptions\x12*\n" +
-	"\bsql_body\x18\a \x01(\v2\x0e.pg_query.NodeR\bsql_body\"\xb5\x01\n" +
+	"\bsql_body\x18\a \x01(\v2\x0e.pg_query.NodeR\bsql_body\"\xd1\x01\n" +
 	"\x11FunctionParameter\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12-\n" +
 	"\barg_type\x18\x02 \x01(\v2\x12.pg_query.TypeNameR\aargType\x123\n" +
 	"\x04mode\x18\x03 \x01(\x0e2\x1f.pg_query.FunctionParameterModeR\x04mode\x12(\n" +
-	"\adefexpr\x18\x04 \x01(\v2\x0e.pg_query.NodeR\adefexpr\"\x9b\x01\n" +
+	"\adefexpr\x18\x04 \x01(\v2\x0e.pg_query.NodeR\adefexpr\x12\x1a\n" +
+	"\blocation\x18\x05 \x01(\x05R\blocation\"\x9b\x01\n" +
 	"\x11AlterFunctionStmt\x12.\n" +
 	"\aobjtype\x18\x01 \x01(\x0e2\x14.pg_query.ObjectTypeR\aobjtype\x12,\n" +
 	"\x04func\x18\x02 \x01(\v2\x18.pg_query.ObjectWithArgsR\x04func\x12(\n" +
@@ -34123,7 +34764,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"$PARTITION_RANGE_DATUM_KIND_UNDEFINED\x10\x00\x12\"\n" +
 	"\x1ePARTITION_RANGE_DATUM_MINVALUE\x10\x01\x12\x1f\n" +
 	"\x1bPARTITION_RANGE_DATUM_VALUE\x10\x02\x12\"\n" +
-	"\x1ePARTITION_RANGE_DATUM_MAXVALUE\x10\x03*\xbd\x01\n" +
+	"\x1ePARTITION_RANGE_DATUM_MAXVALUE\x10\x03*\xcc\x01\n" +
 	"\aRTEKind\x12\x15\n" +
 	"\x11RTEKIND_UNDEFINED\x10\x00\x12\x10\n" +
 	"\fRTE_RELATION\x10\x01\x12\x10\n" +
@@ -34136,7 +34777,9 @@ const file_pg_query_proto_rawDesc = "" +
 	"\aRTE_CTE\x10\a\x12\x17\n" +
 	"\x13RTE_NAMEDTUPLESTORE\x10\b\x12\x0e\n" +
 	"\n" +
-	"RTE_RESULT\x10\t*\xc4\x01\n" +
+	"RTE_RESULT\x10\t\x12\r\n" +
+	"\tRTE_GROUP\x10\n" +
+	"*\xc4\x01\n" +
 	"\aWCOKind\x12\x15\n" +
 	"\x11WCOKIND_UNDEFINED\x10\x00\x12\x12\n" +
 	"\x0eWCO_VIEW_CHECK\x10\x01\x12\x18\n" +
@@ -34156,7 +34799,11 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x18CTEMATERIALIZE_UNDEFINED\x10\x00\x12\x19\n" +
 	"\x15CTEMaterializeDefault\x10\x01\x12\x18\n" +
 	"\x14CTEMaterializeAlways\x10\x02\x12\x17\n" +
-	"\x13CTEMaterializeNever\x10\x03*e\n" +
+	"\x13CTEMaterializeNever\x10\x03*n\n" +
+	"\x13ReturningOptionKind\x12#\n" +
+	"\x1fRETURNING_OPTION_KIND_UNDEFINED\x10\x00\x12\x18\n" +
+	"\x14RETURNING_OPTION_OLD\x10\x01\x12\x18\n" +
+	"\x14RETURNING_OPTION_NEW\x10\x02*e\n" +
 	"\n" +
 	"JsonQuotes\x12\x19\n" +
 	"\x15JSON_QUOTES_UNDEFINED\x10\x00\x12\x14\n" +
@@ -34239,7 +34886,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\fDropBehavior\x12\x1b\n" +
 	"\x17DROP_BEHAVIOR_UNDEFINED\x10\x00\x12\x11\n" +
 	"\rDROP_RESTRICT\x10\x01\x12\x10\n" +
-	"\fDROP_CASCADE\x10\x02*\x8c\f\n" +
+	"\fDROP_CASCADE\x10\x02*\xf7\v\n" +
 	"\x0eAlterTableType\x12\x1e\n" +
 	"\x1aALTER_TABLE_TYPE_UNDEFINED\x10\x00\x12\x10\n" +
 	"\fAT_AddColumn\x10\x01\x12\x16\n" +
@@ -34249,67 +34896,66 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x0eAT_DropNotNull\x10\x05\x12\x11\n" +
 	"\rAT_SetNotNull\x10\x06\x12\x14\n" +
 	"\x10AT_SetExpression\x10\a\x12\x15\n" +
-	"\x11AT_DropExpression\x10\b\x12\x13\n" +
-	"\x0fAT_CheckNotNull\x10\t\x12\x14\n" +
-	"\x10AT_SetStatistics\x10\n" +
-	"\x12\x11\n" +
-	"\rAT_SetOptions\x10\v\x12\x13\n" +
-	"\x0fAT_ResetOptions\x10\f\x12\x11\n" +
-	"\rAT_SetStorage\x10\r\x12\x15\n" +
-	"\x11AT_SetCompression\x10\x0e\x12\x11\n" +
-	"\rAT_DropColumn\x10\x0f\x12\x0f\n" +
-	"\vAT_AddIndex\x10\x10\x12\x11\n" +
-	"\rAT_ReAddIndex\x10\x11\x12\x14\n" +
-	"\x10AT_AddConstraint\x10\x12\x12\x16\n" +
-	"\x12AT_ReAddConstraint\x10\x13\x12\x1c\n" +
-	"\x18AT_ReAddDomainConstraint\x10\x14\x12\x16\n" +
-	"\x12AT_AlterConstraint\x10\x15\x12\x19\n" +
-	"\x15AT_ValidateConstraint\x10\x16\x12\x19\n" +
-	"\x15AT_AddIndexConstraint\x10\x17\x12\x15\n" +
-	"\x11AT_DropConstraint\x10\x18\x12\x13\n" +
-	"\x0fAT_ReAddComment\x10\x19\x12\x16\n" +
-	"\x12AT_AlterColumnType\x10\x1a\x12 \n" +
-	"\x1cAT_AlterColumnGenericOptions\x10\x1b\x12\x12\n" +
-	"\x0eAT_ChangeOwner\x10\x1c\x12\x10\n" +
-	"\fAT_ClusterOn\x10\x1d\x12\x12\n" +
-	"\x0eAT_DropCluster\x10\x1e\x12\x10\n" +
-	"\fAT_SetLogged\x10\x1f\x12\x12\n" +
-	"\x0eAT_SetUnLogged\x10 \x12\x0f\n" +
-	"\vAT_DropOids\x10!\x12\x16\n" +
-	"\x12AT_SetAccessMethod\x10\"\x12\x14\n" +
-	"\x10AT_SetTableSpace\x10#\x12\x14\n" +
-	"\x10AT_SetRelOptions\x10$\x12\x16\n" +
-	"\x12AT_ResetRelOptions\x10%\x12\x18\n" +
-	"\x14AT_ReplaceRelOptions\x10&\x12\x11\n" +
-	"\rAT_EnableTrig\x10'\x12\x17\n" +
-	"\x13AT_EnableAlwaysTrig\x10(\x12\x18\n" +
-	"\x14AT_EnableReplicaTrig\x10)\x12\x12\n" +
-	"\x0eAT_DisableTrig\x10*\x12\x14\n" +
-	"\x10AT_EnableTrigAll\x10+\x12\x15\n" +
-	"\x11AT_DisableTrigAll\x10,\x12\x15\n" +
-	"\x11AT_EnableTrigUser\x10-\x12\x16\n" +
-	"\x12AT_DisableTrigUser\x10.\x12\x11\n" +
-	"\rAT_EnableRule\x10/\x12\x17\n" +
-	"\x13AT_EnableAlwaysRule\x100\x12\x18\n" +
-	"\x14AT_EnableReplicaRule\x101\x12\x12\n" +
-	"\x0eAT_DisableRule\x102\x12\x11\n" +
-	"\rAT_AddInherit\x103\x12\x12\n" +
-	"\x0eAT_DropInherit\x104\x12\f\n" +
-	"\bAT_AddOf\x105\x12\r\n" +
-	"\tAT_DropOf\x106\x12\x16\n" +
-	"\x12AT_ReplicaIdentity\x107\x12\x18\n" +
-	"\x14AT_EnableRowSecurity\x108\x12\x19\n" +
-	"\x15AT_DisableRowSecurity\x109\x12\x17\n" +
-	"\x13AT_ForceRowSecurity\x10:\x12\x19\n" +
-	"\x15AT_NoForceRowSecurity\x10;\x12\x15\n" +
-	"\x11AT_GenericOptions\x10<\x12\x16\n" +
-	"\x12AT_AttachPartition\x10=\x12\x16\n" +
-	"\x12AT_DetachPartition\x10>\x12\x1e\n" +
-	"\x1aAT_DetachPartitionFinalize\x10?\x12\x12\n" +
-	"\x0eAT_AddIdentity\x10@\x12\x12\n" +
-	"\x0eAT_SetIdentity\x10A\x12\x13\n" +
-	"\x0fAT_DropIdentity\x10B\x12\x16\n" +
-	"\x12AT_ReAddStatistics\x10C*\x80\x01\n" +
+	"\x11AT_DropExpression\x10\b\x12\x14\n" +
+	"\x10AT_SetStatistics\x10\t\x12\x11\n" +
+	"\rAT_SetOptions\x10\n" +
+	"\x12\x13\n" +
+	"\x0fAT_ResetOptions\x10\v\x12\x11\n" +
+	"\rAT_SetStorage\x10\f\x12\x15\n" +
+	"\x11AT_SetCompression\x10\r\x12\x11\n" +
+	"\rAT_DropColumn\x10\x0e\x12\x0f\n" +
+	"\vAT_AddIndex\x10\x0f\x12\x11\n" +
+	"\rAT_ReAddIndex\x10\x10\x12\x14\n" +
+	"\x10AT_AddConstraint\x10\x11\x12\x16\n" +
+	"\x12AT_ReAddConstraint\x10\x12\x12\x1c\n" +
+	"\x18AT_ReAddDomainConstraint\x10\x13\x12\x16\n" +
+	"\x12AT_AlterConstraint\x10\x14\x12\x19\n" +
+	"\x15AT_ValidateConstraint\x10\x15\x12\x19\n" +
+	"\x15AT_AddIndexConstraint\x10\x16\x12\x15\n" +
+	"\x11AT_DropConstraint\x10\x17\x12\x13\n" +
+	"\x0fAT_ReAddComment\x10\x18\x12\x16\n" +
+	"\x12AT_AlterColumnType\x10\x19\x12 \n" +
+	"\x1cAT_AlterColumnGenericOptions\x10\x1a\x12\x12\n" +
+	"\x0eAT_ChangeOwner\x10\x1b\x12\x10\n" +
+	"\fAT_ClusterOn\x10\x1c\x12\x12\n" +
+	"\x0eAT_DropCluster\x10\x1d\x12\x10\n" +
+	"\fAT_SetLogged\x10\x1e\x12\x12\n" +
+	"\x0eAT_SetUnLogged\x10\x1f\x12\x0f\n" +
+	"\vAT_DropOids\x10 \x12\x16\n" +
+	"\x12AT_SetAccessMethod\x10!\x12\x14\n" +
+	"\x10AT_SetTableSpace\x10\"\x12\x14\n" +
+	"\x10AT_SetRelOptions\x10#\x12\x16\n" +
+	"\x12AT_ResetRelOptions\x10$\x12\x18\n" +
+	"\x14AT_ReplaceRelOptions\x10%\x12\x11\n" +
+	"\rAT_EnableTrig\x10&\x12\x17\n" +
+	"\x13AT_EnableAlwaysTrig\x10'\x12\x18\n" +
+	"\x14AT_EnableReplicaTrig\x10(\x12\x12\n" +
+	"\x0eAT_DisableTrig\x10)\x12\x14\n" +
+	"\x10AT_EnableTrigAll\x10*\x12\x15\n" +
+	"\x11AT_DisableTrigAll\x10+\x12\x15\n" +
+	"\x11AT_EnableTrigUser\x10,\x12\x16\n" +
+	"\x12AT_DisableTrigUser\x10-\x12\x11\n" +
+	"\rAT_EnableRule\x10.\x12\x17\n" +
+	"\x13AT_EnableAlwaysRule\x10/\x12\x18\n" +
+	"\x14AT_EnableReplicaRule\x100\x12\x12\n" +
+	"\x0eAT_DisableRule\x101\x12\x11\n" +
+	"\rAT_AddInherit\x102\x12\x12\n" +
+	"\x0eAT_DropInherit\x103\x12\f\n" +
+	"\bAT_AddOf\x104\x12\r\n" +
+	"\tAT_DropOf\x105\x12\x16\n" +
+	"\x12AT_ReplicaIdentity\x106\x12\x18\n" +
+	"\x14AT_EnableRowSecurity\x107\x12\x19\n" +
+	"\x15AT_DisableRowSecurity\x108\x12\x17\n" +
+	"\x13AT_ForceRowSecurity\x109\x12\x19\n" +
+	"\x15AT_NoForceRowSecurity\x10:\x12\x15\n" +
+	"\x11AT_GenericOptions\x10;\x12\x16\n" +
+	"\x12AT_AttachPartition\x10<\x12\x16\n" +
+	"\x12AT_DetachPartition\x10=\x12\x1e\n" +
+	"\x1aAT_DetachPartitionFinalize\x10>\x12\x12\n" +
+	"\x0eAT_AddIdentity\x10?\x12\x12\n" +
+	"\x0eAT_SetIdentity\x10@\x12\x13\n" +
+	"\x0fAT_DropIdentity\x10A\x12\x16\n" +
+	"\x12AT_ReAddStatistics\x10B*\x80\x01\n" +
 	"\x0fGrantTargetType\x12\x1f\n" +
 	"\x1bGRANT_TARGET_TYPE_UNDEFINED\x10\x00\x12\x15\n" +
 	"\x11ACL_TARGET_OBJECT\x10\x01\x12\x1c\n" +
@@ -34322,7 +34968,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x0fVAR_SET_CURRENT\x10\x03\x12\x11\n" +
 	"\rVAR_SET_MULTI\x10\x04\x12\r\n" +
 	"\tVAR_RESET\x10\x05\x12\x11\n" +
-	"\rVAR_RESET_ALL\x10\x06*\xdf\x02\n" +
+	"\rVAR_RESET_ALL\x10\x06*\x97\x03\n" +
 	"\n" +
 	"ConstrType\x12\x19\n" +
 	"\x15CONSTR_TYPE_UNDEFINED\x10\x00\x12\x0f\n" +
@@ -34340,7 +34986,9 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x16CONSTR_ATTR_DEFERRABLE\x10\v\x12\x1e\n" +
 	"\x1aCONSTR_ATTR_NOT_DEFERRABLE\x10\f\x12\x18\n" +
 	"\x14CONSTR_ATTR_DEFERRED\x10\r\x12\x19\n" +
-	"\x15CONSTR_ATTR_IMMEDIATE\x10\x0e*\x9c\x01\n" +
+	"\x15CONSTR_ATTR_IMMEDIATE\x10\x0e\x12\x18\n" +
+	"\x14CONSTR_ATTR_ENFORCED\x10\x0f\x12\x1c\n" +
+	"\x18CONSTR_ATTR_NOT_ENFORCED\x10\x10*\x9c\x01\n" +
 	"\x17ImportForeignSchemaType\x12(\n" +
 	"$IMPORT_FOREIGN_SCHEMA_TYPE_UNDEFINED\x10\x00\x12\x19\n" +
 	"\x15FDW_IMPORT_SCHEMA_ALL\x10\x01\x12\x1e\n" +
@@ -34438,7 +35086,12 @@ const file_pg_query_proto_rawDesc = "" +
 	"\rTableFuncType\x12\x1d\n" +
 	"\x19TABLE_FUNC_TYPE_UNDEFINED\x10\x00\x12\x10\n" +
 	"\fTFT_XMLTABLE\x10\x01\x12\x12\n" +
-	"\x0eTFT_JSON_TABLE\x10\x02*o\n" +
+	"\x0eTFT_JSON_TABLE\x10\x02*}\n" +
+	"\x10VarReturningType\x12 \n" +
+	"\x1cVAR_RETURNING_TYPE_UNDEFINED\x10\x00\x12\x19\n" +
+	"\x15VAR_RETURNING_DEFAULT\x10\x01\x12\x15\n" +
+	"\x11VAR_RETURNING_OLD\x10\x02\x12\x15\n" +
+	"\x11VAR_RETURNING_NEW\x10\x03*o\n" +
 	"\tParamKind\x12\x18\n" +
 	"\x14PARAM_KIND_UNDEFINED\x10\x00\x12\x10\n" +
 	"\fPARAM_EXTERN\x10\x01\x12\x0e\n" +
@@ -34472,15 +35125,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"\fEXPR_SUBLINK\x10\x05\x12\x15\n" +
 	"\x11MULTIEXPR_SUBLINK\x10\x06\x12\x11\n" +
 	"\rARRAY_SUBLINK\x10\a\x12\x0f\n" +
-	"\vCTE_SUBLINK\x10\b*\xa2\x01\n" +
-	"\x0eRowCompareType\x12\x1e\n" +
-	"\x1aROW_COMPARE_TYPE_UNDEFINED\x10\x00\x12\x11\n" +
-	"\rROWCOMPARE_LT\x10\x01\x12\x11\n" +
-	"\rROWCOMPARE_LE\x10\x02\x12\x11\n" +
-	"\rROWCOMPARE_EQ\x10\x03\x12\x11\n" +
-	"\rROWCOMPARE_GE\x10\x04\x12\x11\n" +
-	"\rROWCOMPARE_GT\x10\x05\x12\x11\n" +
-	"\rROWCOMPARE_NE\x10\x06*C\n" +
+	"\vCTE_SUBLINK\x10\b*C\n" +
 	"\bMinMaxOp\x12\x18\n" +
 	"\x14MIN_MAX_OP_UNDEFINED\x10\x00\x12\x0f\n" +
 	"\vIS_GREATEST\x10\x01\x12\f\n" +
@@ -34601,7 +35246,7 @@ const file_pg_query_proto_rawDesc = "" +
 	"CMD_DELETE\x10\x05\x12\r\n" +
 	"\tCMD_MERGE\x10\x06\x12\x0f\n" +
 	"\vCMD_UTILITY\x10\a\x12\x0f\n" +
-	"\vCMD_NOTHING\x10\b*\xc2\x01\n" +
+	"\vCMD_NOTHING\x10\b*\xd7\x01\n" +
 	"\bJoinType\x12\x17\n" +
 	"\x13JOIN_TYPE_UNDEFINED\x10\x00\x12\x0e\n" +
 	"\n" +
@@ -34612,9 +35257,11 @@ const file_pg_query_proto_rawDesc = "" +
 	"JOIN_RIGHT\x10\x04\x12\r\n" +
 	"\tJOIN_SEMI\x10\x05\x12\r\n" +
 	"\tJOIN_ANTI\x10\x06\x12\x13\n" +
-	"\x0fJOIN_RIGHT_ANTI\x10\a\x12\x15\n" +
-	"\x11JOIN_UNIQUE_OUTER\x10\b\x12\x15\n" +
-	"\x11JOIN_UNIQUE_INNER\x10\t*g\n" +
+	"\x0fJOIN_RIGHT_SEMI\x10\a\x12\x13\n" +
+	"\x0fJOIN_RIGHT_ANTI\x10\b\x12\x15\n" +
+	"\x11JOIN_UNIQUE_OUTER\x10\t\x12\x15\n" +
+	"\x11JOIN_UNIQUE_INNER\x10\n" +
+	"*g\n" +
 	"\vAggStrategy\x12\x1a\n" +
 	"\x16AGG_STRATEGY_UNDEFINED\x10\x00\x12\r\n" +
 	"\tAGG_PLAIN\x10\x01\x12\x0e\n" +
@@ -34665,14 +35312,31 @@ const file_pg_query_proto_rawDesc = "" +
 	"\x11LockTupleKeyShare\x10\x01\x12\x12\n" +
 	"\x0eLockTupleShare\x10\x02\x12\x1b\n" +
 	"\x17LockTupleNoKeyExclusive\x10\x03\x12\x16\n" +
-	"\x12LockTupleExclusive\x10\x04*}\n" +
+	"\x12LockTupleExclusive\x10\x04*\xcd\x01\n" +
+	"\vCompareType\x12\x1a\n" +
+	"\x16COMPARE_TYPE_UNDEFINED\x10\x00\x12\x13\n" +
+	"\x0fCOMPARE_INVALID\x10\x01\x12\x0e\n" +
+	"\n" +
+	"COMPARE_LT\x10\x02\x12\x0e\n" +
+	"\n" +
+	"COMPARE_LE\x10\x03\x12\x0e\n" +
+	"\n" +
+	"COMPARE_EQ\x10\x04\x12\x0e\n" +
+	"\n" +
+	"COMPARE_GE\x10\x05\x12\x0e\n" +
+	"\n" +
+	"COMPARE_GT\x10\x06\x12\x0e\n" +
+	"\n" +
+	"COMPARE_NE\x10\a\x12\x13\n" +
+	"\x0fCOMPARE_OVERLAP\x10\b\x12\x18\n" +
+	"\x14COMPARE_CONTAINED_BY\x10\t*}\n" +
 	"\vKeywordKind\x12\x0e\n" +
 	"\n" +
 	"NO_KEYWORD\x10\x00\x12\x16\n" +
 	"\x12UNRESERVED_KEYWORD\x10\x01\x12\x14\n" +
 	"\x10COL_NAME_KEYWORD\x10\x02\x12\x1a\n" +
 	"\x16TYPE_FUNC_NAME_KEYWORD\x10\x03\x12\x14\n" +
-	"\x10RESERVED_KEYWORD\x10\x04*\xe8;\n" +
+	"\x10RESERVED_KEYWORD\x10\x04*\x94<\n" +
 	"\x05Token\x12\a\n" +
 	"\x03NUL\x10\x00\x12\f\n" +
 	"\bASCII_36\x10$\x12\f\n" +
@@ -34872,447 +35536,450 @@ const file_pg_query_proto_rawDesc = "" +
 	"\bENCODING\x10\x92\x03\x12\x0e\n" +
 	"\tENCRYPTED\x10\x93\x03\x12\n" +
 	"\n" +
-	"\x05END_P\x10\x94\x03\x12\v\n" +
-	"\x06ENUM_P\x10\x95\x03\x12\f\n" +
-	"\aERROR_P\x10\x96\x03\x12\v\n" +
-	"\x06ESCAPE\x10\x97\x03\x12\n" +
-	"\n" +
-	"\x05EVENT\x10\x98\x03\x12\v\n" +
-	"\x06EXCEPT\x10\x99\x03\x12\f\n" +
-	"\aEXCLUDE\x10\x9a\x03\x12\x0e\n" +
-	"\tEXCLUDING\x10\x9b\x03\x12\x0e\n" +
-	"\tEXCLUSIVE\x10\x9c\x03\x12\f\n" +
-	"\aEXECUTE\x10\x9d\x03\x12\v\n" +
-	"\x06EXISTS\x10\x9e\x03\x12\f\n" +
-	"\aEXPLAIN\x10\x9f\x03\x12\x0f\n" +
-	"\n" +
-	"EXPRESSION\x10\xa0\x03\x12\x0e\n" +
-	"\tEXTENSION\x10\xa1\x03\x12\r\n" +
-	"\bEXTERNAL\x10\xa2\x03\x12\f\n" +
-	"\aEXTRACT\x10\xa3\x03\x12\f\n" +
-	"\aFALSE_P\x10\xa4\x03\x12\v\n" +
-	"\x06FAMILY\x10\xa5\x03\x12\n" +
-	"\n" +
-	"\x05FETCH\x10\xa6\x03\x12\v\n" +
-	"\x06FILTER\x10\xa7\x03\x12\r\n" +
-	"\bFINALIZE\x10\xa8\x03\x12\f\n" +
-	"\aFIRST_P\x10\xa9\x03\x12\f\n" +
-	"\aFLOAT_P\x10\xaa\x03\x12\x0e\n" +
-	"\tFOLLOWING\x10\xab\x03\x12\b\n" +
-	"\x03FOR\x10\xac\x03\x12\n" +
-	"\n" +
-	"\x05FORCE\x10\xad\x03\x12\f\n" +
-	"\aFOREIGN\x10\xae\x03\x12\v\n" +
-	"\x06FORMAT\x10\xaf\x03\x12\f\n" +
-	"\aFORWARD\x10\xb0\x03\x12\v\n" +
-	"\x06FREEZE\x10\xb1\x03\x12\t\n" +
-	"\x04FROM\x10\xb2\x03\x12\t\n" +
-	"\x04FULL\x10\xb3\x03\x12\r\n" +
-	"\bFUNCTION\x10\xb4\x03\x12\x0e\n" +
-	"\tFUNCTIONS\x10\xb5\x03\x12\x0e\n" +
-	"\tGENERATED\x10\xb6\x03\x12\v\n" +
-	"\x06GLOBAL\x10\xb7\x03\x12\n" +
-	"\n" +
-	"\x05GRANT\x10\xb8\x03\x12\f\n" +
-	"\aGRANTED\x10\xb9\x03\x12\r\n" +
-	"\bGREATEST\x10\xba\x03\x12\f\n" +
-	"\aGROUP_P\x10\xbb\x03\x12\r\n" +
-	"\bGROUPING\x10\xbc\x03\x12\v\n" +
-	"\x06GROUPS\x10\xbd\x03\x12\f\n" +
-	"\aHANDLER\x10\xbe\x03\x12\v\n" +
-	"\x06HAVING\x10\xbf\x03\x12\r\n" +
-	"\bHEADER_P\x10\xc0\x03\x12\t\n" +
-	"\x04HOLD\x10\xc1\x03\x12\v\n" +
-	"\x06HOUR_P\x10\xc2\x03\x12\x0f\n" +
-	"\n" +
-	"IDENTITY_P\x10\xc3\x03\x12\t\n" +
-	"\x04IF_P\x10\xc4\x03\x12\n" +
-	"\n" +
-	"\x05ILIKE\x10\xc5\x03\x12\x0e\n" +
-	"\tIMMEDIATE\x10\xc6\x03\x12\x0e\n" +
-	"\tIMMUTABLE\x10\xc7\x03\x12\x0f\n" +
-	"\n" +
-	"IMPLICIT_P\x10\xc8\x03\x12\r\n" +
-	"\bIMPORT_P\x10\xc9\x03\x12\t\n" +
-	"\x04IN_P\x10\xca\x03\x12\f\n" +
-	"\aINCLUDE\x10\xcb\x03\x12\x0e\n" +
-	"\tINCLUDING\x10\xcc\x03\x12\x0e\n" +
-	"\tINCREMENT\x10\xcd\x03\x12\v\n" +
-	"\x06INDENT\x10\xce\x03\x12\n" +
-	"\n" +
-	"\x05INDEX\x10\xcf\x03\x12\f\n" +
-	"\aINDEXES\x10\xd0\x03\x12\f\n" +
-	"\aINHERIT\x10\xd1\x03\x12\r\n" +
-	"\bINHERITS\x10\xd2\x03\x12\x0e\n" +
-	"\tINITIALLY\x10\xd3\x03\x12\r\n" +
-	"\bINLINE_P\x10\xd4\x03\x12\f\n" +
-	"\aINNER_P\x10\xd5\x03\x12\n" +
-	"\n" +
-	"\x05INOUT\x10\xd6\x03\x12\f\n" +
-	"\aINPUT_P\x10\xd7\x03\x12\x10\n" +
-	"\vINSENSITIVE\x10\xd8\x03\x12\v\n" +
-	"\x06INSERT\x10\xd9\x03\x12\f\n" +
-	"\aINSTEAD\x10\xda\x03\x12\n" +
-	"\n" +
-	"\x05INT_P\x10\xdb\x03\x12\f\n" +
-	"\aINTEGER\x10\xdc\x03\x12\x0e\n" +
-	"\tINTERSECT\x10\xdd\x03\x12\r\n" +
-	"\bINTERVAL\x10\xde\x03\x12\t\n" +
-	"\x04INTO\x10\xdf\x03\x12\f\n" +
-	"\aINVOKER\x10\xe0\x03\x12\a\n" +
-	"\x02IS\x10\xe1\x03\x12\v\n" +
-	"\x06ISNULL\x10\xe2\x03\x12\x0e\n" +
-	"\tISOLATION\x10\xe3\x03\x12\t\n" +
-	"\x04JOIN\x10\xe4\x03\x12\t\n" +
-	"\x04JSON\x10\xe5\x03\x12\x0f\n" +
-	"\n" +
-	"JSON_ARRAY\x10\xe6\x03\x12\x12\n" +
-	"\rJSON_ARRAYAGG\x10\xe7\x03\x12\x10\n" +
-	"\vJSON_EXISTS\x10\xe8\x03\x12\x10\n" +
-	"\vJSON_OBJECT\x10\xe9\x03\x12\x13\n" +
-	"\x0eJSON_OBJECTAGG\x10\xea\x03\x12\x0f\n" +
-	"\n" +
-	"JSON_QUERY\x10\xeb\x03\x12\x10\n" +
-	"\vJSON_SCALAR\x10\xec\x03\x12\x13\n" +
-	"\x0eJSON_SERIALIZE\x10\xed\x03\x12\x0f\n" +
-	"\n" +
-	"JSON_TABLE\x10\xee\x03\x12\x0f\n" +
-	"\n" +
-	"JSON_VALUE\x10\xef\x03\x12\t\n" +
-	"\x04KEEP\x10\xf0\x03\x12\b\n" +
-	"\x03KEY\x10\xf1\x03\x12\t\n" +
-	"\x04KEYS\x10\xf2\x03\x12\n" +
-	"\n" +
-	"\x05LABEL\x10\xf3\x03\x12\r\n" +
-	"\bLANGUAGE\x10\xf4\x03\x12\f\n" +
-	"\aLARGE_P\x10\xf5\x03\x12\v\n" +
-	"\x06LAST_P\x10\xf6\x03\x12\x0e\n" +
-	"\tLATERAL_P\x10\xf7\x03\x12\f\n" +
-	"\aLEADING\x10\xf8\x03\x12\x0e\n" +
-	"\tLEAKPROOF\x10\xf9\x03\x12\n" +
-	"\n" +
-	"\x05LEAST\x10\xfa\x03\x12\t\n" +
-	"\x04LEFT\x10\xfb\x03\x12\n" +
-	"\n" +
-	"\x05LEVEL\x10\xfc\x03\x12\t\n" +
-	"\x04LIKE\x10\xfd\x03\x12\n" +
-	"\n" +
-	"\x05LIMIT\x10\xfe\x03\x12\v\n" +
-	"\x06LISTEN\x10\xff\x03\x12\t\n" +
-	"\x04LOAD\x10\x80\x04\x12\n" +
-	"\n" +
-	"\x05LOCAL\x10\x81\x04\x12\x0e\n" +
-	"\tLOCALTIME\x10\x82\x04\x12\x13\n" +
-	"\x0eLOCALTIMESTAMP\x10\x83\x04\x12\r\n" +
-	"\bLOCATION\x10\x84\x04\x12\v\n" +
-	"\x06LOCK_P\x10\x85\x04\x12\v\n" +
-	"\x06LOCKED\x10\x86\x04\x12\v\n" +
-	"\x06LOGGED\x10\x87\x04\x12\f\n" +
-	"\aMAPPING\x10\x88\x04\x12\n" +
-	"\n" +
-	"\x05MATCH\x10\x89\x04\x12\f\n" +
-	"\aMATCHED\x10\x8a\x04\x12\x11\n" +
-	"\fMATERIALIZED\x10\x8b\x04\x12\r\n" +
-	"\bMAXVALUE\x10\x8c\x04\x12\n" +
-	"\n" +
-	"\x05MERGE\x10\x8d\x04\x12\x11\n" +
-	"\fMERGE_ACTION\x10\x8e\x04\x12\v\n" +
-	"\x06METHOD\x10\x8f\x04\x12\r\n" +
-	"\bMINUTE_P\x10\x90\x04\x12\r\n" +
-	"\bMINVALUE\x10\x91\x04\x12\t\n" +
-	"\x04MODE\x10\x92\x04\x12\f\n" +
-	"\aMONTH_P\x10\x93\x04\x12\t\n" +
-	"\x04MOVE\x10\x94\x04\x12\v\n" +
-	"\x06NAME_P\x10\x95\x04\x12\n" +
-	"\n" +
-	"\x05NAMES\x10\x96\x04\x12\r\n" +
-	"\bNATIONAL\x10\x97\x04\x12\f\n" +
-	"\aNATURAL\x10\x98\x04\x12\n" +
-	"\n" +
-	"\x05NCHAR\x10\x99\x04\x12\v\n" +
-	"\x06NESTED\x10\x9a\x04\x12\b\n" +
-	"\x03NEW\x10\x9b\x04\x12\t\n" +
-	"\x04NEXT\x10\x9c\x04\x12\b\n" +
-	"\x03NFC\x10\x9d\x04\x12\b\n" +
-	"\x03NFD\x10\x9e\x04\x12\t\n" +
-	"\x04NFKC\x10\x9f\x04\x12\t\n" +
-	"\x04NFKD\x10\xa0\x04\x12\a\n" +
-	"\x02NO\x10\xa1\x04\x12\t\n" +
-	"\x04NONE\x10\xa2\x04\x12\x0e\n" +
-	"\tNORMALIZE\x10\xa3\x04\x12\x0f\n" +
-	"\n" +
-	"NORMALIZED\x10\xa4\x04\x12\b\n" +
-	"\x03NOT\x10\xa5\x04\x12\f\n" +
-	"\aNOTHING\x10\xa6\x04\x12\v\n" +
-	"\x06NOTIFY\x10\xa7\x04\x12\f\n" +
-	"\aNOTNULL\x10\xa8\x04\x12\v\n" +
-	"\x06NOWAIT\x10\xa9\x04\x12\v\n" +
-	"\x06NULL_P\x10\xaa\x04\x12\v\n" +
-	"\x06NULLIF\x10\xab\x04\x12\f\n" +
-	"\aNULLS_P\x10\xac\x04\x12\f\n" +
-	"\aNUMERIC\x10\xad\x04\x12\r\n" +
-	"\bOBJECT_P\x10\xae\x04\x12\a\n" +
-	"\x02OF\x10\xaf\x04\x12\b\n" +
-	"\x03OFF\x10\xb0\x04\x12\v\n" +
-	"\x06OFFSET\x10\xb1\x04\x12\t\n" +
-	"\x04OIDS\x10\xb2\x04\x12\b\n" +
-	"\x03OLD\x10\xb3\x04\x12\t\n" +
-	"\x04OMIT\x10\xb4\x04\x12\a\n" +
-	"\x02ON\x10\xb5\x04\x12\t\n" +
-	"\x04ONLY\x10\xb6\x04\x12\r\n" +
-	"\bOPERATOR\x10\xb7\x04\x12\v\n" +
-	"\x06OPTION\x10\xb8\x04\x12\f\n" +
-	"\aOPTIONS\x10\xb9\x04\x12\a\n" +
-	"\x02OR\x10\xba\x04\x12\n" +
-	"\n" +
-	"\x05ORDER\x10\xbb\x04\x12\x0f\n" +
-	"\n" +
-	"ORDINALITY\x10\xbc\x04\x12\v\n" +
-	"\x06OTHERS\x10\xbd\x04\x12\n" +
-	"\n" +
-	"\x05OUT_P\x10\xbe\x04\x12\f\n" +
-	"\aOUTER_P\x10\xbf\x04\x12\t\n" +
-	"\x04OVER\x10\xc0\x04\x12\r\n" +
-	"\bOVERLAPS\x10\xc1\x04\x12\f\n" +
-	"\aOVERLAY\x10\xc2\x04\x12\x0f\n" +
-	"\n" +
-	"OVERRIDING\x10\xc3\x04\x12\n" +
-	"\n" +
-	"\x05OWNED\x10\xc4\x04\x12\n" +
-	"\n" +
-	"\x05OWNER\x10\xc5\x04\x12\r\n" +
-	"\bPARALLEL\x10\xc6\x04\x12\x0e\n" +
-	"\tPARAMETER\x10\xc7\x04\x12\v\n" +
-	"\x06PARSER\x10\xc8\x04\x12\f\n" +
-	"\aPARTIAL\x10\xc9\x04\x12\x0e\n" +
-	"\tPARTITION\x10\xca\x04\x12\f\n" +
-	"\aPASSING\x10\xcb\x04\x12\r\n" +
-	"\bPASSWORD\x10\xcc\x04\x12\t\n" +
-	"\x04PATH\x10\xcd\x04\x12\f\n" +
-	"\aPLACING\x10\xce\x04\x12\t\n" +
-	"\x04PLAN\x10\xcf\x04\x12\n" +
-	"\n" +
-	"\x05PLANS\x10\xd0\x04\x12\v\n" +
-	"\x06POLICY\x10\xd1\x04\x12\r\n" +
-	"\bPOSITION\x10\xd2\x04\x12\x0e\n" +
-	"\tPRECEDING\x10\xd3\x04\x12\x0e\n" +
-	"\tPRECISION\x10\xd4\x04\x12\r\n" +
-	"\bPRESERVE\x10\xd5\x04\x12\f\n" +
-	"\aPREPARE\x10\xd6\x04\x12\r\n" +
-	"\bPREPARED\x10\xd7\x04\x12\f\n" +
-	"\aPRIMARY\x10\xd8\x04\x12\n" +
-	"\n" +
-	"\x05PRIOR\x10\xd9\x04\x12\x0f\n" +
-	"\n" +
-	"PRIVILEGES\x10\xda\x04\x12\x0f\n" +
-	"\n" +
-	"PROCEDURAL\x10\xdb\x04\x12\x0e\n" +
-	"\tPROCEDURE\x10\xdc\x04\x12\x0f\n" +
-	"\n" +
-	"PROCEDURES\x10\xdd\x04\x12\f\n" +
-	"\aPROGRAM\x10\xde\x04\x12\x10\n" +
-	"\vPUBLICATION\x10\xdf\x04\x12\n" +
-	"\n" +
-	"\x05QUOTE\x10\xe0\x04\x12\v\n" +
-	"\x06QUOTES\x10\xe1\x04\x12\n" +
-	"\n" +
-	"\x05RANGE\x10\xe2\x04\x12\t\n" +
-	"\x04READ\x10\xe3\x04\x12\t\n" +
-	"\x04REAL\x10\xe4\x04\x12\r\n" +
-	"\bREASSIGN\x10\xe5\x04\x12\f\n" +
-	"\aRECHECK\x10\xe6\x04\x12\x0e\n" +
-	"\tRECURSIVE\x10\xe7\x04\x12\n" +
-	"\n" +
-	"\x05REF_P\x10\xe8\x04\x12\x0f\n" +
-	"\n" +
-	"REFERENCES\x10\xe9\x04\x12\x10\n" +
-	"\vREFERENCING\x10\xea\x04\x12\f\n" +
-	"\aREFRESH\x10\xeb\x04\x12\f\n" +
-	"\aREINDEX\x10\xec\x04\x12\x0f\n" +
-	"\n" +
-	"RELATIVE_P\x10\xed\x04\x12\f\n" +
-	"\aRELEASE\x10\xee\x04\x12\v\n" +
-	"\x06RENAME\x10\xef\x04\x12\x0f\n" +
-	"\n" +
-	"REPEATABLE\x10\xf0\x04\x12\f\n" +
-	"\aREPLACE\x10\xf1\x04\x12\f\n" +
-	"\aREPLICA\x10\xf2\x04\x12\n" +
-	"\n" +
-	"\x05RESET\x10\xf3\x04\x12\f\n" +
-	"\aRESTART\x10\xf4\x04\x12\r\n" +
-	"\bRESTRICT\x10\xf5\x04\x12\v\n" +
-	"\x06RETURN\x10\xf6\x04\x12\x0e\n" +
-	"\tRETURNING\x10\xf7\x04\x12\f\n" +
-	"\aRETURNS\x10\xf8\x04\x12\v\n" +
-	"\x06REVOKE\x10\xf9\x04\x12\n" +
-	"\n" +
-	"\x05RIGHT\x10\xfa\x04\x12\t\n" +
-	"\x04ROLE\x10\xfb\x04\x12\r\n" +
-	"\bROLLBACK\x10\xfc\x04\x12\v\n" +
-	"\x06ROLLUP\x10\xfd\x04\x12\f\n" +
-	"\aROUTINE\x10\xfe\x04\x12\r\n" +
-	"\bROUTINES\x10\xff\x04\x12\b\n" +
-	"\x03ROW\x10\x80\x05\x12\t\n" +
-	"\x04ROWS\x10\x81\x05\x12\t\n" +
-	"\x04RULE\x10\x82\x05\x12\x0e\n" +
-	"\tSAVEPOINT\x10\x83\x05\x12\v\n" +
-	"\x06SCALAR\x10\x84\x05\x12\v\n" +
-	"\x06SCHEMA\x10\x85\x05\x12\f\n" +
-	"\aSCHEMAS\x10\x86\x05\x12\v\n" +
-	"\x06SCROLL\x10\x87\x05\x12\v\n" +
-	"\x06SEARCH\x10\x88\x05\x12\r\n" +
-	"\bSECOND_P\x10\x89\x05\x12\r\n" +
-	"\bSECURITY\x10\x8a\x05\x12\v\n" +
-	"\x06SELECT\x10\x8b\x05\x12\r\n" +
-	"\bSEQUENCE\x10\x8c\x05\x12\x0e\n" +
-	"\tSEQUENCES\x10\x8d\x05\x12\x11\n" +
-	"\fSERIALIZABLE\x10\x8e\x05\x12\v\n" +
-	"\x06SERVER\x10\x8f\x05\x12\f\n" +
-	"\aSESSION\x10\x90\x05\x12\x11\n" +
-	"\fSESSION_USER\x10\x91\x05\x12\b\n" +
-	"\x03SET\x10\x92\x05\x12\t\n" +
-	"\x04SETS\x10\x93\x05\x12\n" +
-	"\n" +
-	"\x05SETOF\x10\x94\x05\x12\n" +
-	"\n" +
-	"\x05SHARE\x10\x95\x05\x12\t\n" +
-	"\x04SHOW\x10\x96\x05\x12\f\n" +
-	"\aSIMILAR\x10\x97\x05\x12\v\n" +
-	"\x06SIMPLE\x10\x98\x05\x12\t\n" +
-	"\x04SKIP\x10\x99\x05\x12\r\n" +
-	"\bSMALLINT\x10\x9a\x05\x12\r\n" +
-	"\bSNAPSHOT\x10\x9b\x05\x12\t\n" +
-	"\x04SOME\x10\x9c\x05\x12\v\n" +
-	"\x06SOURCE\x10\x9d\x05\x12\n" +
-	"\n" +
-	"\x05SQL_P\x10\x9e\x05\x12\v\n" +
-	"\x06STABLE\x10\x9f\x05\x12\x11\n" +
-	"\fSTANDALONE_P\x10\xa0\x05\x12\n" +
-	"\n" +
-	"\x05START\x10\xa1\x05\x12\x0e\n" +
-	"\tSTATEMENT\x10\xa2\x05\x12\x0f\n" +
-	"\n" +
-	"STATISTICS\x10\xa3\x05\x12\n" +
-	"\n" +
-	"\x05STDIN\x10\xa4\x05\x12\v\n" +
-	"\x06STDOUT\x10\xa5\x05\x12\f\n" +
-	"\aSTORAGE\x10\xa6\x05\x12\v\n" +
-	"\x06STORED\x10\xa7\x05\x12\r\n" +
-	"\bSTRICT_P\x10\xa8\x05\x12\r\n" +
-	"\bSTRING_P\x10\xa9\x05\x12\f\n" +
-	"\aSTRIP_P\x10\xaa\x05\x12\x11\n" +
-	"\fSUBSCRIPTION\x10\xab\x05\x12\x0e\n" +
-	"\tSUBSTRING\x10\xac\x05\x12\f\n" +
-	"\aSUPPORT\x10\xad\x05\x12\x0e\n" +
-	"\tSYMMETRIC\x10\xae\x05\x12\n" +
-	"\n" +
-	"\x05SYSID\x10\xaf\x05\x12\r\n" +
-	"\bSYSTEM_P\x10\xb0\x05\x12\x10\n" +
-	"\vSYSTEM_USER\x10\xb1\x05\x12\n" +
-	"\n" +
-	"\x05TABLE\x10\xb2\x05\x12\v\n" +
-	"\x06TABLES\x10\xb3\x05\x12\x10\n" +
-	"\vTABLESAMPLE\x10\xb4\x05\x12\x0f\n" +
-	"\n" +
-	"TABLESPACE\x10\xb5\x05\x12\v\n" +
-	"\x06TARGET\x10\xb6\x05\x12\t\n" +
-	"\x04TEMP\x10\xb7\x05\x12\r\n" +
-	"\bTEMPLATE\x10\xb8\x05\x12\x0e\n" +
-	"\tTEMPORARY\x10\xb9\x05\x12\v\n" +
-	"\x06TEXT_P\x10\xba\x05\x12\t\n" +
-	"\x04THEN\x10\xbb\x05\x12\t\n" +
-	"\x04TIES\x10\xbc\x05\x12\t\n" +
-	"\x04TIME\x10\xbd\x05\x12\x0e\n" +
-	"\tTIMESTAMP\x10\xbe\x05\x12\a\n" +
-	"\x02TO\x10\xbf\x05\x12\r\n" +
-	"\bTRAILING\x10\xc0\x05\x12\x10\n" +
-	"\vTRANSACTION\x10\xc1\x05\x12\x0e\n" +
-	"\tTRANSFORM\x10\xc2\x05\x12\n" +
-	"\n" +
-	"\x05TREAT\x10\xc3\x05\x12\f\n" +
-	"\aTRIGGER\x10\xc4\x05\x12\t\n" +
-	"\x04TRIM\x10\xc5\x05\x12\v\n" +
-	"\x06TRUE_P\x10\xc6\x05\x12\r\n" +
-	"\bTRUNCATE\x10\xc7\x05\x12\f\n" +
-	"\aTRUSTED\x10\xc8\x05\x12\v\n" +
-	"\x06TYPE_P\x10\xc9\x05\x12\f\n" +
-	"\aTYPES_P\x10\xca\x05\x12\f\n" +
-	"\aUESCAPE\x10\xcb\x05\x12\x0e\n" +
-	"\tUNBOUNDED\x10\xcc\x05\x12\x12\n" +
-	"\rUNCONDITIONAL\x10\xcd\x05\x12\x10\n" +
-	"\vUNCOMMITTED\x10\xce\x05\x12\x10\n" +
-	"\vUNENCRYPTED\x10\xcf\x05\x12\n" +
-	"\n" +
-	"\x05UNION\x10\xd0\x05\x12\v\n" +
-	"\x06UNIQUE\x10\xd1\x05\x12\f\n" +
-	"\aUNKNOWN\x10\xd2\x05\x12\r\n" +
-	"\bUNLISTEN\x10\xd3\x05\x12\r\n" +
-	"\bUNLOGGED\x10\xd4\x05\x12\n" +
-	"\n" +
-	"\x05UNTIL\x10\xd5\x05\x12\v\n" +
-	"\x06UPDATE\x10\xd6\x05\x12\t\n" +
-	"\x04USER\x10\xd7\x05\x12\n" +
-	"\n" +
-	"\x05USING\x10\xd8\x05\x12\v\n" +
-	"\x06VACUUM\x10\xd9\x05\x12\n" +
-	"\n" +
-	"\x05VALID\x10\xda\x05\x12\r\n" +
-	"\bVALIDATE\x10\xdb\x05\x12\x0e\n" +
-	"\tVALIDATOR\x10\xdc\x05\x12\f\n" +
-	"\aVALUE_P\x10\xdd\x05\x12\v\n" +
-	"\x06VALUES\x10\xde\x05\x12\f\n" +
-	"\aVARCHAR\x10\xdf\x05\x12\r\n" +
-	"\bVARIADIC\x10\xe0\x05\x12\f\n" +
-	"\aVARYING\x10\xe1\x05\x12\f\n" +
-	"\aVERBOSE\x10\xe2\x05\x12\x0e\n" +
-	"\tVERSION_P\x10\xe3\x05\x12\t\n" +
-	"\x04VIEW\x10\xe4\x05\x12\n" +
-	"\n" +
-	"\x05VIEWS\x10\xe5\x05\x12\r\n" +
-	"\bVOLATILE\x10\xe6\x05\x12\t\n" +
-	"\x04WHEN\x10\xe7\x05\x12\n" +
-	"\n" +
-	"\x05WHERE\x10\xe8\x05\x12\x11\n" +
-	"\fWHITESPACE_P\x10\xe9\x05\x12\v\n" +
-	"\x06WINDOW\x10\xea\x05\x12\t\n" +
-	"\x04WITH\x10\xeb\x05\x12\v\n" +
-	"\x06WITHIN\x10\xec\x05\x12\f\n" +
-	"\aWITHOUT\x10\xed\x05\x12\t\n" +
-	"\x04WORK\x10\xee\x05\x12\f\n" +
-	"\aWRAPPER\x10\xef\x05\x12\n" +
-	"\n" +
-	"\x05WRITE\x10\xf0\x05\x12\n" +
-	"\n" +
-	"\x05XML_P\x10\xf1\x05\x12\x12\n" +
-	"\rXMLATTRIBUTES\x10\xf2\x05\x12\x0e\n" +
-	"\tXMLCONCAT\x10\xf3\x05\x12\x0f\n" +
-	"\n" +
-	"XMLELEMENT\x10\xf4\x05\x12\x0e\n" +
-	"\tXMLEXISTS\x10\xf5\x05\x12\x0e\n" +
-	"\tXMLFOREST\x10\xf6\x05\x12\x12\n" +
-	"\rXMLNAMESPACES\x10\xf7\x05\x12\r\n" +
-	"\bXMLPARSE\x10\xf8\x05\x12\n" +
-	"\n" +
-	"\x05XMLPI\x10\xf9\x05\x12\f\n" +
-	"\aXMLROOT\x10\xfa\x05\x12\x11\n" +
-	"\fXMLSERIALIZE\x10\xfb\x05\x12\r\n" +
-	"\bXMLTABLE\x10\xfc\x05\x12\v\n" +
-	"\x06YEAR_P\x10\xfd\x05\x12\n" +
-	"\n" +
-	"\x05YES_P\x10\xfe\x05\x12\t\n" +
-	"\x04ZONE\x10\xff\x05\x12\x0e\n" +
-	"\tFORMAT_LA\x10\x80\x06\x12\v\n" +
-	"\x06NOT_LA\x10\x81\x06\x12\r\n" +
-	"\bNULLS_LA\x10\x82\x06\x12\f\n" +
-	"\aWITH_LA\x10\x83\x06\x12\x0f\n" +
-	"\n" +
-	"WITHOUT_LA\x10\x84\x06\x12\x13\n" +
-	"\x0eMODE_TYPE_NAME\x10\x85\x06\x12\x16\n" +
-	"\x11MODE_PLPGSQL_EXPR\x10\x86\x06\x12\x19\n" +
-	"\x14MODE_PLPGSQL_ASSIGN1\x10\x87\x06\x12\x19\n" +
-	"\x14MODE_PLPGSQL_ASSIGN2\x10\x88\x06\x12\x19\n" +
-	"\x14MODE_PLPGSQL_ASSIGN3\x10\x89\x06\x12\v\n" +
-	"\x06UMINUS\x10\x8a\x06b\x06proto3"
+	"\x05END_P\x10\x94\x03\x12\r\n" +
+	"\bENFORCED\x10\x95\x03\x12\v\n" +
+	"\x06ENUM_P\x10\x96\x03\x12\f\n" +
+	"\aERROR_P\x10\x97\x03\x12\v\n" +
+	"\x06ESCAPE\x10\x98\x03\x12\n" +
+	"\n" +
+	"\x05EVENT\x10\x99\x03\x12\v\n" +
+	"\x06EXCEPT\x10\x9a\x03\x12\f\n" +
+	"\aEXCLUDE\x10\x9b\x03\x12\x0e\n" +
+	"\tEXCLUDING\x10\x9c\x03\x12\x0e\n" +
+	"\tEXCLUSIVE\x10\x9d\x03\x12\f\n" +
+	"\aEXECUTE\x10\x9e\x03\x12\v\n" +
+	"\x06EXISTS\x10\x9f\x03\x12\f\n" +
+	"\aEXPLAIN\x10\xa0\x03\x12\x0f\n" +
+	"\n" +
+	"EXPRESSION\x10\xa1\x03\x12\x0e\n" +
+	"\tEXTENSION\x10\xa2\x03\x12\r\n" +
+	"\bEXTERNAL\x10\xa3\x03\x12\f\n" +
+	"\aEXTRACT\x10\xa4\x03\x12\f\n" +
+	"\aFALSE_P\x10\xa5\x03\x12\v\n" +
+	"\x06FAMILY\x10\xa6\x03\x12\n" +
+	"\n" +
+	"\x05FETCH\x10\xa7\x03\x12\v\n" +
+	"\x06FILTER\x10\xa8\x03\x12\r\n" +
+	"\bFINALIZE\x10\xa9\x03\x12\f\n" +
+	"\aFIRST_P\x10\xaa\x03\x12\f\n" +
+	"\aFLOAT_P\x10\xab\x03\x12\x0e\n" +
+	"\tFOLLOWING\x10\xac\x03\x12\b\n" +
+	"\x03FOR\x10\xad\x03\x12\n" +
+	"\n" +
+	"\x05FORCE\x10\xae\x03\x12\f\n" +
+	"\aFOREIGN\x10\xaf\x03\x12\v\n" +
+	"\x06FORMAT\x10\xb0\x03\x12\f\n" +
+	"\aFORWARD\x10\xb1\x03\x12\v\n" +
+	"\x06FREEZE\x10\xb2\x03\x12\t\n" +
+	"\x04FROM\x10\xb3\x03\x12\t\n" +
+	"\x04FULL\x10\xb4\x03\x12\r\n" +
+	"\bFUNCTION\x10\xb5\x03\x12\x0e\n" +
+	"\tFUNCTIONS\x10\xb6\x03\x12\x0e\n" +
+	"\tGENERATED\x10\xb7\x03\x12\v\n" +
+	"\x06GLOBAL\x10\xb8\x03\x12\n" +
+	"\n" +
+	"\x05GRANT\x10\xb9\x03\x12\f\n" +
+	"\aGRANTED\x10\xba\x03\x12\r\n" +
+	"\bGREATEST\x10\xbb\x03\x12\f\n" +
+	"\aGROUP_P\x10\xbc\x03\x12\r\n" +
+	"\bGROUPING\x10\xbd\x03\x12\v\n" +
+	"\x06GROUPS\x10\xbe\x03\x12\f\n" +
+	"\aHANDLER\x10\xbf\x03\x12\v\n" +
+	"\x06HAVING\x10\xc0\x03\x12\r\n" +
+	"\bHEADER_P\x10\xc1\x03\x12\t\n" +
+	"\x04HOLD\x10\xc2\x03\x12\v\n" +
+	"\x06HOUR_P\x10\xc3\x03\x12\x0f\n" +
+	"\n" +
+	"IDENTITY_P\x10\xc4\x03\x12\t\n" +
+	"\x04IF_P\x10\xc5\x03\x12\n" +
+	"\n" +
+	"\x05ILIKE\x10\xc6\x03\x12\x0e\n" +
+	"\tIMMEDIATE\x10\xc7\x03\x12\x0e\n" +
+	"\tIMMUTABLE\x10\xc8\x03\x12\x0f\n" +
+	"\n" +
+	"IMPLICIT_P\x10\xc9\x03\x12\r\n" +
+	"\bIMPORT_P\x10\xca\x03\x12\t\n" +
+	"\x04IN_P\x10\xcb\x03\x12\f\n" +
+	"\aINCLUDE\x10\xcc\x03\x12\x0e\n" +
+	"\tINCLUDING\x10\xcd\x03\x12\x0e\n" +
+	"\tINCREMENT\x10\xce\x03\x12\v\n" +
+	"\x06INDENT\x10\xcf\x03\x12\n" +
+	"\n" +
+	"\x05INDEX\x10\xd0\x03\x12\f\n" +
+	"\aINDEXES\x10\xd1\x03\x12\f\n" +
+	"\aINHERIT\x10\xd2\x03\x12\r\n" +
+	"\bINHERITS\x10\xd3\x03\x12\x0e\n" +
+	"\tINITIALLY\x10\xd4\x03\x12\r\n" +
+	"\bINLINE_P\x10\xd5\x03\x12\f\n" +
+	"\aINNER_P\x10\xd6\x03\x12\n" +
+	"\n" +
+	"\x05INOUT\x10\xd7\x03\x12\f\n" +
+	"\aINPUT_P\x10\xd8\x03\x12\x10\n" +
+	"\vINSENSITIVE\x10\xd9\x03\x12\v\n" +
+	"\x06INSERT\x10\xda\x03\x12\f\n" +
+	"\aINSTEAD\x10\xdb\x03\x12\n" +
+	"\n" +
+	"\x05INT_P\x10\xdc\x03\x12\f\n" +
+	"\aINTEGER\x10\xdd\x03\x12\x0e\n" +
+	"\tINTERSECT\x10\xde\x03\x12\r\n" +
+	"\bINTERVAL\x10\xdf\x03\x12\t\n" +
+	"\x04INTO\x10\xe0\x03\x12\f\n" +
+	"\aINVOKER\x10\xe1\x03\x12\a\n" +
+	"\x02IS\x10\xe2\x03\x12\v\n" +
+	"\x06ISNULL\x10\xe3\x03\x12\x0e\n" +
+	"\tISOLATION\x10\xe4\x03\x12\t\n" +
+	"\x04JOIN\x10\xe5\x03\x12\t\n" +
+	"\x04JSON\x10\xe6\x03\x12\x0f\n" +
+	"\n" +
+	"JSON_ARRAY\x10\xe7\x03\x12\x12\n" +
+	"\rJSON_ARRAYAGG\x10\xe8\x03\x12\x10\n" +
+	"\vJSON_EXISTS\x10\xe9\x03\x12\x10\n" +
+	"\vJSON_OBJECT\x10\xea\x03\x12\x13\n" +
+	"\x0eJSON_OBJECTAGG\x10\xeb\x03\x12\x0f\n" +
+	"\n" +
+	"JSON_QUERY\x10\xec\x03\x12\x10\n" +
+	"\vJSON_SCALAR\x10\xed\x03\x12\x13\n" +
+	"\x0eJSON_SERIALIZE\x10\xee\x03\x12\x0f\n" +
+	"\n" +
+	"JSON_TABLE\x10\xef\x03\x12\x0f\n" +
+	"\n" +
+	"JSON_VALUE\x10\xf0\x03\x12\t\n" +
+	"\x04KEEP\x10\xf1\x03\x12\b\n" +
+	"\x03KEY\x10\xf2\x03\x12\t\n" +
+	"\x04KEYS\x10\xf3\x03\x12\n" +
+	"\n" +
+	"\x05LABEL\x10\xf4\x03\x12\r\n" +
+	"\bLANGUAGE\x10\xf5\x03\x12\f\n" +
+	"\aLARGE_P\x10\xf6\x03\x12\v\n" +
+	"\x06LAST_P\x10\xf7\x03\x12\x0e\n" +
+	"\tLATERAL_P\x10\xf8\x03\x12\f\n" +
+	"\aLEADING\x10\xf9\x03\x12\x0e\n" +
+	"\tLEAKPROOF\x10\xfa\x03\x12\n" +
+	"\n" +
+	"\x05LEAST\x10\xfb\x03\x12\t\n" +
+	"\x04LEFT\x10\xfc\x03\x12\n" +
+	"\n" +
+	"\x05LEVEL\x10\xfd\x03\x12\t\n" +
+	"\x04LIKE\x10\xfe\x03\x12\n" +
+	"\n" +
+	"\x05LIMIT\x10\xff\x03\x12\v\n" +
+	"\x06LISTEN\x10\x80\x04\x12\t\n" +
+	"\x04LOAD\x10\x81\x04\x12\n" +
+	"\n" +
+	"\x05LOCAL\x10\x82\x04\x12\x0e\n" +
+	"\tLOCALTIME\x10\x83\x04\x12\x13\n" +
+	"\x0eLOCALTIMESTAMP\x10\x84\x04\x12\r\n" +
+	"\bLOCATION\x10\x85\x04\x12\v\n" +
+	"\x06LOCK_P\x10\x86\x04\x12\v\n" +
+	"\x06LOCKED\x10\x87\x04\x12\v\n" +
+	"\x06LOGGED\x10\x88\x04\x12\f\n" +
+	"\aMAPPING\x10\x89\x04\x12\n" +
+	"\n" +
+	"\x05MATCH\x10\x8a\x04\x12\f\n" +
+	"\aMATCHED\x10\x8b\x04\x12\x11\n" +
+	"\fMATERIALIZED\x10\x8c\x04\x12\r\n" +
+	"\bMAXVALUE\x10\x8d\x04\x12\n" +
+	"\n" +
+	"\x05MERGE\x10\x8e\x04\x12\x11\n" +
+	"\fMERGE_ACTION\x10\x8f\x04\x12\v\n" +
+	"\x06METHOD\x10\x90\x04\x12\r\n" +
+	"\bMINUTE_P\x10\x91\x04\x12\r\n" +
+	"\bMINVALUE\x10\x92\x04\x12\t\n" +
+	"\x04MODE\x10\x93\x04\x12\f\n" +
+	"\aMONTH_P\x10\x94\x04\x12\t\n" +
+	"\x04MOVE\x10\x95\x04\x12\v\n" +
+	"\x06NAME_P\x10\x96\x04\x12\n" +
+	"\n" +
+	"\x05NAMES\x10\x97\x04\x12\r\n" +
+	"\bNATIONAL\x10\x98\x04\x12\f\n" +
+	"\aNATURAL\x10\x99\x04\x12\n" +
+	"\n" +
+	"\x05NCHAR\x10\x9a\x04\x12\v\n" +
+	"\x06NESTED\x10\x9b\x04\x12\b\n" +
+	"\x03NEW\x10\x9c\x04\x12\t\n" +
+	"\x04NEXT\x10\x9d\x04\x12\b\n" +
+	"\x03NFC\x10\x9e\x04\x12\b\n" +
+	"\x03NFD\x10\x9f\x04\x12\t\n" +
+	"\x04NFKC\x10\xa0\x04\x12\t\n" +
+	"\x04NFKD\x10\xa1\x04\x12\a\n" +
+	"\x02NO\x10\xa2\x04\x12\t\n" +
+	"\x04NONE\x10\xa3\x04\x12\x0e\n" +
+	"\tNORMALIZE\x10\xa4\x04\x12\x0f\n" +
+	"\n" +
+	"NORMALIZED\x10\xa5\x04\x12\b\n" +
+	"\x03NOT\x10\xa6\x04\x12\f\n" +
+	"\aNOTHING\x10\xa7\x04\x12\v\n" +
+	"\x06NOTIFY\x10\xa8\x04\x12\f\n" +
+	"\aNOTNULL\x10\xa9\x04\x12\v\n" +
+	"\x06NOWAIT\x10\xaa\x04\x12\v\n" +
+	"\x06NULL_P\x10\xab\x04\x12\v\n" +
+	"\x06NULLIF\x10\xac\x04\x12\f\n" +
+	"\aNULLS_P\x10\xad\x04\x12\f\n" +
+	"\aNUMERIC\x10\xae\x04\x12\r\n" +
+	"\bOBJECT_P\x10\xaf\x04\x12\x0e\n" +
+	"\tOBJECTS_P\x10\xb0\x04\x12\a\n" +
+	"\x02OF\x10\xb1\x04\x12\b\n" +
+	"\x03OFF\x10\xb2\x04\x12\v\n" +
+	"\x06OFFSET\x10\xb3\x04\x12\t\n" +
+	"\x04OIDS\x10\xb4\x04\x12\b\n" +
+	"\x03OLD\x10\xb5\x04\x12\t\n" +
+	"\x04OMIT\x10\xb6\x04\x12\a\n" +
+	"\x02ON\x10\xb7\x04\x12\t\n" +
+	"\x04ONLY\x10\xb8\x04\x12\r\n" +
+	"\bOPERATOR\x10\xb9\x04\x12\v\n" +
+	"\x06OPTION\x10\xba\x04\x12\f\n" +
+	"\aOPTIONS\x10\xbb\x04\x12\a\n" +
+	"\x02OR\x10\xbc\x04\x12\n" +
+	"\n" +
+	"\x05ORDER\x10\xbd\x04\x12\x0f\n" +
+	"\n" +
+	"ORDINALITY\x10\xbe\x04\x12\v\n" +
+	"\x06OTHERS\x10\xbf\x04\x12\n" +
+	"\n" +
+	"\x05OUT_P\x10\xc0\x04\x12\f\n" +
+	"\aOUTER_P\x10\xc1\x04\x12\t\n" +
+	"\x04OVER\x10\xc2\x04\x12\r\n" +
+	"\bOVERLAPS\x10\xc3\x04\x12\f\n" +
+	"\aOVERLAY\x10\xc4\x04\x12\x0f\n" +
+	"\n" +
+	"OVERRIDING\x10\xc5\x04\x12\n" +
+	"\n" +
+	"\x05OWNED\x10\xc6\x04\x12\n" +
+	"\n" +
+	"\x05OWNER\x10\xc7\x04\x12\r\n" +
+	"\bPARALLEL\x10\xc8\x04\x12\x0e\n" +
+	"\tPARAMETER\x10\xc9\x04\x12\v\n" +
+	"\x06PARSER\x10\xca\x04\x12\f\n" +
+	"\aPARTIAL\x10\xcb\x04\x12\x0e\n" +
+	"\tPARTITION\x10\xcc\x04\x12\f\n" +
+	"\aPASSING\x10\xcd\x04\x12\r\n" +
+	"\bPASSWORD\x10\xce\x04\x12\t\n" +
+	"\x04PATH\x10\xcf\x04\x12\v\n" +
+	"\x06PERIOD\x10\xd0\x04\x12\f\n" +
+	"\aPLACING\x10\xd1\x04\x12\t\n" +
+	"\x04PLAN\x10\xd2\x04\x12\n" +
+	"\n" +
+	"\x05PLANS\x10\xd3\x04\x12\v\n" +
+	"\x06POLICY\x10\xd4\x04\x12\r\n" +
+	"\bPOSITION\x10\xd5\x04\x12\x0e\n" +
+	"\tPRECEDING\x10\xd6\x04\x12\x0e\n" +
+	"\tPRECISION\x10\xd7\x04\x12\r\n" +
+	"\bPRESERVE\x10\xd8\x04\x12\f\n" +
+	"\aPREPARE\x10\xd9\x04\x12\r\n" +
+	"\bPREPARED\x10\xda\x04\x12\f\n" +
+	"\aPRIMARY\x10\xdb\x04\x12\n" +
+	"\n" +
+	"\x05PRIOR\x10\xdc\x04\x12\x0f\n" +
+	"\n" +
+	"PRIVILEGES\x10\xdd\x04\x12\x0f\n" +
+	"\n" +
+	"PROCEDURAL\x10\xde\x04\x12\x0e\n" +
+	"\tPROCEDURE\x10\xdf\x04\x12\x0f\n" +
+	"\n" +
+	"PROCEDURES\x10\xe0\x04\x12\f\n" +
+	"\aPROGRAM\x10\xe1\x04\x12\x10\n" +
+	"\vPUBLICATION\x10\xe2\x04\x12\n" +
+	"\n" +
+	"\x05QUOTE\x10\xe3\x04\x12\v\n" +
+	"\x06QUOTES\x10\xe4\x04\x12\n" +
+	"\n" +
+	"\x05RANGE\x10\xe5\x04\x12\t\n" +
+	"\x04READ\x10\xe6\x04\x12\t\n" +
+	"\x04REAL\x10\xe7\x04\x12\r\n" +
+	"\bREASSIGN\x10\xe8\x04\x12\x0e\n" +
+	"\tRECURSIVE\x10\xe9\x04\x12\n" +
+	"\n" +
+	"\x05REF_P\x10\xea\x04\x12\x0f\n" +
+	"\n" +
+	"REFERENCES\x10\xeb\x04\x12\x10\n" +
+	"\vREFERENCING\x10\xec\x04\x12\f\n" +
+	"\aREFRESH\x10\xed\x04\x12\f\n" +
+	"\aREINDEX\x10\xee\x04\x12\x0f\n" +
+	"\n" +
+	"RELATIVE_P\x10\xef\x04\x12\f\n" +
+	"\aRELEASE\x10\xf0\x04\x12\v\n" +
+	"\x06RENAME\x10\xf1\x04\x12\x0f\n" +
+	"\n" +
+	"REPEATABLE\x10\xf2\x04\x12\f\n" +
+	"\aREPLACE\x10\xf3\x04\x12\f\n" +
+	"\aREPLICA\x10\xf4\x04\x12\n" +
+	"\n" +
+	"\x05RESET\x10\xf5\x04\x12\f\n" +
+	"\aRESTART\x10\xf6\x04\x12\r\n" +
+	"\bRESTRICT\x10\xf7\x04\x12\v\n" +
+	"\x06RETURN\x10\xf8\x04\x12\x0e\n" +
+	"\tRETURNING\x10\xf9\x04\x12\f\n" +
+	"\aRETURNS\x10\xfa\x04\x12\v\n" +
+	"\x06REVOKE\x10\xfb\x04\x12\n" +
+	"\n" +
+	"\x05RIGHT\x10\xfc\x04\x12\t\n" +
+	"\x04ROLE\x10\xfd\x04\x12\r\n" +
+	"\bROLLBACK\x10\xfe\x04\x12\v\n" +
+	"\x06ROLLUP\x10\xff\x04\x12\f\n" +
+	"\aROUTINE\x10\x80\x05\x12\r\n" +
+	"\bROUTINES\x10\x81\x05\x12\b\n" +
+	"\x03ROW\x10\x82\x05\x12\t\n" +
+	"\x04ROWS\x10\x83\x05\x12\t\n" +
+	"\x04RULE\x10\x84\x05\x12\x0e\n" +
+	"\tSAVEPOINT\x10\x85\x05\x12\v\n" +
+	"\x06SCALAR\x10\x86\x05\x12\v\n" +
+	"\x06SCHEMA\x10\x87\x05\x12\f\n" +
+	"\aSCHEMAS\x10\x88\x05\x12\v\n" +
+	"\x06SCROLL\x10\x89\x05\x12\v\n" +
+	"\x06SEARCH\x10\x8a\x05\x12\r\n" +
+	"\bSECOND_P\x10\x8b\x05\x12\r\n" +
+	"\bSECURITY\x10\x8c\x05\x12\v\n" +
+	"\x06SELECT\x10\x8d\x05\x12\r\n" +
+	"\bSEQUENCE\x10\x8e\x05\x12\x0e\n" +
+	"\tSEQUENCES\x10\x8f\x05\x12\x11\n" +
+	"\fSERIALIZABLE\x10\x90\x05\x12\v\n" +
+	"\x06SERVER\x10\x91\x05\x12\f\n" +
+	"\aSESSION\x10\x92\x05\x12\x11\n" +
+	"\fSESSION_USER\x10\x93\x05\x12\b\n" +
+	"\x03SET\x10\x94\x05\x12\t\n" +
+	"\x04SETS\x10\x95\x05\x12\n" +
+	"\n" +
+	"\x05SETOF\x10\x96\x05\x12\n" +
+	"\n" +
+	"\x05SHARE\x10\x97\x05\x12\t\n" +
+	"\x04SHOW\x10\x98\x05\x12\f\n" +
+	"\aSIMILAR\x10\x99\x05\x12\v\n" +
+	"\x06SIMPLE\x10\x9a\x05\x12\t\n" +
+	"\x04SKIP\x10\x9b\x05\x12\r\n" +
+	"\bSMALLINT\x10\x9c\x05\x12\r\n" +
+	"\bSNAPSHOT\x10\x9d\x05\x12\t\n" +
+	"\x04SOME\x10\x9e\x05\x12\v\n" +
+	"\x06SOURCE\x10\x9f\x05\x12\n" +
+	"\n" +
+	"\x05SQL_P\x10\xa0\x05\x12\v\n" +
+	"\x06STABLE\x10\xa1\x05\x12\x11\n" +
+	"\fSTANDALONE_P\x10\xa2\x05\x12\n" +
+	"\n" +
+	"\x05START\x10\xa3\x05\x12\x0e\n" +
+	"\tSTATEMENT\x10\xa4\x05\x12\x0f\n" +
+	"\n" +
+	"STATISTICS\x10\xa5\x05\x12\n" +
+	"\n" +
+	"\x05STDIN\x10\xa6\x05\x12\v\n" +
+	"\x06STDOUT\x10\xa7\x05\x12\f\n" +
+	"\aSTORAGE\x10\xa8\x05\x12\v\n" +
+	"\x06STORED\x10\xa9\x05\x12\r\n" +
+	"\bSTRICT_P\x10\xaa\x05\x12\r\n" +
+	"\bSTRING_P\x10\xab\x05\x12\f\n" +
+	"\aSTRIP_P\x10\xac\x05\x12\x11\n" +
+	"\fSUBSCRIPTION\x10\xad\x05\x12\x0e\n" +
+	"\tSUBSTRING\x10\xae\x05\x12\f\n" +
+	"\aSUPPORT\x10\xaf\x05\x12\x0e\n" +
+	"\tSYMMETRIC\x10\xb0\x05\x12\n" +
+	"\n" +
+	"\x05SYSID\x10\xb1\x05\x12\r\n" +
+	"\bSYSTEM_P\x10\xb2\x05\x12\x10\n" +
+	"\vSYSTEM_USER\x10\xb3\x05\x12\n" +
+	"\n" +
+	"\x05TABLE\x10\xb4\x05\x12\v\n" +
+	"\x06TABLES\x10\xb5\x05\x12\x10\n" +
+	"\vTABLESAMPLE\x10\xb6\x05\x12\x0f\n" +
+	"\n" +
+	"TABLESPACE\x10\xb7\x05\x12\v\n" +
+	"\x06TARGET\x10\xb8\x05\x12\t\n" +
+	"\x04TEMP\x10\xb9\x05\x12\r\n" +
+	"\bTEMPLATE\x10\xba\x05\x12\x0e\n" +
+	"\tTEMPORARY\x10\xbb\x05\x12\v\n" +
+	"\x06TEXT_P\x10\xbc\x05\x12\t\n" +
+	"\x04THEN\x10\xbd\x05\x12\t\n" +
+	"\x04TIES\x10\xbe\x05\x12\t\n" +
+	"\x04TIME\x10\xbf\x05\x12\x0e\n" +
+	"\tTIMESTAMP\x10\xc0\x05\x12\a\n" +
+	"\x02TO\x10\xc1\x05\x12\r\n" +
+	"\bTRAILING\x10\xc2\x05\x12\x10\n" +
+	"\vTRANSACTION\x10\xc3\x05\x12\x0e\n" +
+	"\tTRANSFORM\x10\xc4\x05\x12\n" +
+	"\n" +
+	"\x05TREAT\x10\xc5\x05\x12\f\n" +
+	"\aTRIGGER\x10\xc6\x05\x12\t\n" +
+	"\x04TRIM\x10\xc7\x05\x12\v\n" +
+	"\x06TRUE_P\x10\xc8\x05\x12\r\n" +
+	"\bTRUNCATE\x10\xc9\x05\x12\f\n" +
+	"\aTRUSTED\x10\xca\x05\x12\v\n" +
+	"\x06TYPE_P\x10\xcb\x05\x12\f\n" +
+	"\aTYPES_P\x10\xcc\x05\x12\f\n" +
+	"\aUESCAPE\x10\xcd\x05\x12\x0e\n" +
+	"\tUNBOUNDED\x10\xce\x05\x12\x12\n" +
+	"\rUNCONDITIONAL\x10\xcf\x05\x12\x10\n" +
+	"\vUNCOMMITTED\x10\xd0\x05\x12\x10\n" +
+	"\vUNENCRYPTED\x10\xd1\x05\x12\n" +
+	"\n" +
+	"\x05UNION\x10\xd2\x05\x12\v\n" +
+	"\x06UNIQUE\x10\xd3\x05\x12\f\n" +
+	"\aUNKNOWN\x10\xd4\x05\x12\r\n" +
+	"\bUNLISTEN\x10\xd5\x05\x12\r\n" +
+	"\bUNLOGGED\x10\xd6\x05\x12\n" +
+	"\n" +
+	"\x05UNTIL\x10\xd7\x05\x12\v\n" +
+	"\x06UPDATE\x10\xd8\x05\x12\t\n" +
+	"\x04USER\x10\xd9\x05\x12\n" +
+	"\n" +
+	"\x05USING\x10\xda\x05\x12\v\n" +
+	"\x06VACUUM\x10\xdb\x05\x12\n" +
+	"\n" +
+	"\x05VALID\x10\xdc\x05\x12\r\n" +
+	"\bVALIDATE\x10\xdd\x05\x12\x0e\n" +
+	"\tVALIDATOR\x10\xde\x05\x12\f\n" +
+	"\aVALUE_P\x10\xdf\x05\x12\v\n" +
+	"\x06VALUES\x10\xe0\x05\x12\f\n" +
+	"\aVARCHAR\x10\xe1\x05\x12\r\n" +
+	"\bVARIADIC\x10\xe2\x05\x12\f\n" +
+	"\aVARYING\x10\xe3\x05\x12\f\n" +
+	"\aVERBOSE\x10\xe4\x05\x12\x0e\n" +
+	"\tVERSION_P\x10\xe5\x05\x12\t\n" +
+	"\x04VIEW\x10\xe6\x05\x12\n" +
+	"\n" +
+	"\x05VIEWS\x10\xe7\x05\x12\f\n" +
+	"\aVIRTUAL\x10\xe8\x05\x12\r\n" +
+	"\bVOLATILE\x10\xe9\x05\x12\t\n" +
+	"\x04WHEN\x10\xea\x05\x12\n" +
+	"\n" +
+	"\x05WHERE\x10\xeb\x05\x12\x11\n" +
+	"\fWHITESPACE_P\x10\xec\x05\x12\v\n" +
+	"\x06WINDOW\x10\xed\x05\x12\t\n" +
+	"\x04WITH\x10\xee\x05\x12\v\n" +
+	"\x06WITHIN\x10\xef\x05\x12\f\n" +
+	"\aWITHOUT\x10\xf0\x05\x12\t\n" +
+	"\x04WORK\x10\xf1\x05\x12\f\n" +
+	"\aWRAPPER\x10\xf2\x05\x12\n" +
+	"\n" +
+	"\x05WRITE\x10\xf3\x05\x12\n" +
+	"\n" +
+	"\x05XML_P\x10\xf4\x05\x12\x12\n" +
+	"\rXMLATTRIBUTES\x10\xf5\x05\x12\x0e\n" +
+	"\tXMLCONCAT\x10\xf6\x05\x12\x0f\n" +
+	"\n" +
+	"XMLELEMENT\x10\xf7\x05\x12\x0e\n" +
+	"\tXMLEXISTS\x10\xf8\x05\x12\x0e\n" +
+	"\tXMLFOREST\x10\xf9\x05\x12\x12\n" +
+	"\rXMLNAMESPACES\x10\xfa\x05\x12\r\n" +
+	"\bXMLPARSE\x10\xfb\x05\x12\n" +
+	"\n" +
+	"\x05XMLPI\x10\xfc\x05\x12\f\n" +
+	"\aXMLROOT\x10\xfd\x05\x12\x11\n" +
+	"\fXMLSERIALIZE\x10\xfe\x05\x12\r\n" +
+	"\bXMLTABLE\x10\xff\x05\x12\v\n" +
+	"\x06YEAR_P\x10\x80\x06\x12\n" +
+	"\n" +
+	"\x05YES_P\x10\x81\x06\x12\t\n" +
+	"\x04ZONE\x10\x82\x06\x12\x0e\n" +
+	"\tFORMAT_LA\x10\x83\x06\x12\v\n" +
+	"\x06NOT_LA\x10\x84\x06\x12\r\n" +
+	"\bNULLS_LA\x10\x85\x06\x12\f\n" +
+	"\aWITH_LA\x10\x86\x06\x12\x0f\n" +
+	"\n" +
+	"WITHOUT_LA\x10\x87\x06\x12\x13\n" +
+	"\x0eMODE_TYPE_NAME\x10\x88\x06\x12\x16\n" +
+	"\x11MODE_PLPGSQL_EXPR\x10\x89\x06\x12\x19\n" +
+	"\x14MODE_PLPGSQL_ASSIGN1\x10\x8a\x06\x12\x19\n" +
+	"\x14MODE_PLPGSQL_ASSIGN2\x10\x8b\x06\x12\x19\n" +
+	"\x14MODE_PLPGSQL_ASSIGN3\x10\x8c\x06\x12\v\n" +
+	"\x06UMINUS\x10\x8d\x06b\x06proto3"
 
 var (
 	file_pg_query_proto_rawDescOnce sync.Once
@@ -35326,8 +35993,8 @@ func file_pg_query_proto_rawDescGZIP() []byte {
 	return file_pg_query_proto_rawDescData
 }
 
-var file_pg_query_proto_enumTypes = make([]protoimpl.EnumInfo, 72)
-var file_pg_query_proto_msgTypes = make([]protoimpl.MessageInfo, 277)
+var file_pg_query_proto_enumTypes = make([]protoimpl.EnumInfo, 74)
+var file_pg_query_proto_msgTypes = make([]protoimpl.MessageInfo, 280)
 var file_pg_query_proto_goTypes = []any{
 	(QuerySource)(0),                     // 0: pg_query.QuerySource
 	(SortByDir)(0),                       // 1: pg_query.SortByDir
@@ -35343,1387 +36010,1403 @@ var file_pg_query_proto_goTypes = []any{
 	(WCOKind)(0),                         // 11: pg_query.WCOKind
 	(GroupingSetKind)(0),                 // 12: pg_query.GroupingSetKind
 	(CTEMaterialize)(0),                  // 13: pg_query.CTEMaterialize
-	(JsonQuotes)(0),                      // 14: pg_query.JsonQuotes
-	(JsonTableColumnType)(0),             // 15: pg_query.JsonTableColumnType
-	(SetOperation)(0),                    // 16: pg_query.SetOperation
-	(ObjectType)(0),                      // 17: pg_query.ObjectType
-	(DropBehavior)(0),                    // 18: pg_query.DropBehavior
-	(AlterTableType)(0),                  // 19: pg_query.AlterTableType
-	(GrantTargetType)(0),                 // 20: pg_query.GrantTargetType
-	(VariableSetKind)(0),                 // 21: pg_query.VariableSetKind
-	(ConstrType)(0),                      // 22: pg_query.ConstrType
-	(ImportForeignSchemaType)(0),         // 23: pg_query.ImportForeignSchemaType
-	(RoleStmtType)(0),                    // 24: pg_query.RoleStmtType
-	(FetchDirection)(0),                  // 25: pg_query.FetchDirection
-	(FunctionParameterMode)(0),           // 26: pg_query.FunctionParameterMode
-	(TransactionStmtKind)(0),             // 27: pg_query.TransactionStmtKind
-	(ViewCheckOption)(0),                 // 28: pg_query.ViewCheckOption
-	(DiscardMode)(0),                     // 29: pg_query.DiscardMode
-	(ReindexObjectType)(0),               // 30: pg_query.ReindexObjectType
-	(AlterTSConfigType)(0),               // 31: pg_query.AlterTSConfigType
-	(PublicationObjSpecType)(0),          // 32: pg_query.PublicationObjSpecType
-	(AlterPublicationAction)(0),          // 33: pg_query.AlterPublicationAction
-	(AlterSubscriptionType)(0),           // 34: pg_query.AlterSubscriptionType
-	(OverridingKind)(0),                  // 35: pg_query.OverridingKind
-	(OnCommitAction)(0),                  // 36: pg_query.OnCommitAction
-	(TableFuncType)(0),                   // 37: pg_query.TableFuncType
-	(ParamKind)(0),                       // 38: pg_query.ParamKind
-	(CoercionContext)(0),                 // 39: pg_query.CoercionContext
-	(CoercionForm)(0),                    // 40: pg_query.CoercionForm
-	(BoolExprType)(0),                    // 41: pg_query.BoolExprType
-	(SubLinkType)(0),                     // 42: pg_query.SubLinkType
-	(RowCompareType)(0),                  // 43: pg_query.RowCompareType
-	(MinMaxOp)(0),                        // 44: pg_query.MinMaxOp
-	(SQLValueFunctionOp)(0),              // 45: pg_query.SQLValueFunctionOp
-	(XmlExprOp)(0),                       // 46: pg_query.XmlExprOp
-	(XmlOptionType)(0),                   // 47: pg_query.XmlOptionType
-	(JsonEncoding)(0),                    // 48: pg_query.JsonEncoding
-	(JsonFormatType)(0),                  // 49: pg_query.JsonFormatType
-	(JsonConstructorType)(0),             // 50: pg_query.JsonConstructorType
-	(JsonValueType)(0),                   // 51: pg_query.JsonValueType
-	(JsonWrapper)(0),                     // 52: pg_query.JsonWrapper
-	(JsonBehaviorType)(0),                // 53: pg_query.JsonBehaviorType
-	(JsonExprOp)(0),                      // 54: pg_query.JsonExprOp
-	(NullTestType)(0),                    // 55: pg_query.NullTestType
-	(BoolTestType)(0),                    // 56: pg_query.BoolTestType
-	(MergeMatchKind)(0),                  // 57: pg_query.MergeMatchKind
-	(CmdType)(0),                         // 58: pg_query.CmdType
-	(JoinType)(0),                        // 59: pg_query.JoinType
-	(AggStrategy)(0),                     // 60: pg_query.AggStrategy
-	(AggSplit)(0),                        // 61: pg_query.AggSplit
-	(SetOpCmd)(0),                        // 62: pg_query.SetOpCmd
-	(SetOpStrategy)(0),                   // 63: pg_query.SetOpStrategy
-	(OnConflictAction)(0),                // 64: pg_query.OnConflictAction
-	(LimitOption)(0),                     // 65: pg_query.LimitOption
-	(LockClauseStrength)(0),              // 66: pg_query.LockClauseStrength
-	(LockWaitPolicy)(0),                  // 67: pg_query.LockWaitPolicy
-	(LockTupleMode)(0),                   // 68: pg_query.LockTupleMode
-	(KeywordKind)(0),                     // 69: pg_query.KeywordKind
-	(Token)(0),                           // 70: pg_query.Token
-	(SummaryResult_Context)(0),           // 71: pg_query.SummaryResult.Context
-	(*ParseResult)(nil),                  // 72: pg_query.ParseResult
-	(*ScanResult)(nil),                   // 73: pg_query.ScanResult
-	(*Node)(nil),                         // 74: pg_query.Node
-	(*Integer)(nil),                      // 75: pg_query.Integer
-	(*Float)(nil),                        // 76: pg_query.Float
-	(*Boolean)(nil),                      // 77: pg_query.Boolean
-	(*String)(nil),                       // 78: pg_query.String
-	(*BitString)(nil),                    // 79: pg_query.BitString
-	(*List)(nil),                         // 80: pg_query.List
-	(*OidList)(nil),                      // 81: pg_query.OidList
-	(*IntList)(nil),                      // 82: pg_query.IntList
-	(*A_Const)(nil),                      // 83: pg_query.A_Const
-	(*Alias)(nil),                        // 84: pg_query.Alias
-	(*RangeVar)(nil),                     // 85: pg_query.RangeVar
-	(*TableFunc)(nil),                    // 86: pg_query.TableFunc
-	(*IntoClause)(nil),                   // 87: pg_query.IntoClause
-	(*Var)(nil),                          // 88: pg_query.Var
-	(*Param)(nil),                        // 89: pg_query.Param
-	(*Aggref)(nil),                       // 90: pg_query.Aggref
-	(*GroupingFunc)(nil),                 // 91: pg_query.GroupingFunc
-	(*WindowFunc)(nil),                   // 92: pg_query.WindowFunc
-	(*WindowFuncRunCondition)(nil),       // 93: pg_query.WindowFuncRunCondition
-	(*MergeSupportFunc)(nil),             // 94: pg_query.MergeSupportFunc
-	(*SubscriptingRef)(nil),              // 95: pg_query.SubscriptingRef
-	(*FuncExpr)(nil),                     // 96: pg_query.FuncExpr
-	(*NamedArgExpr)(nil),                 // 97: pg_query.NamedArgExpr
-	(*OpExpr)(nil),                       // 98: pg_query.OpExpr
-	(*DistinctExpr)(nil),                 // 99: pg_query.DistinctExpr
-	(*NullIfExpr)(nil),                   // 100: pg_query.NullIfExpr
-	(*ScalarArrayOpExpr)(nil),            // 101: pg_query.ScalarArrayOpExpr
-	(*BoolExpr)(nil),                     // 102: pg_query.BoolExpr
-	(*SubLink)(nil),                      // 103: pg_query.SubLink
-	(*SubPlan)(nil),                      // 104: pg_query.SubPlan
-	(*AlternativeSubPlan)(nil),           // 105: pg_query.AlternativeSubPlan
-	(*FieldSelect)(nil),                  // 106: pg_query.FieldSelect
-	(*FieldStore)(nil),                   // 107: pg_query.FieldStore
-	(*RelabelType)(nil),                  // 108: pg_query.RelabelType
-	(*CoerceViaIO)(nil),                  // 109: pg_query.CoerceViaIO
-	(*ArrayCoerceExpr)(nil),              // 110: pg_query.ArrayCoerceExpr
-	(*ConvertRowtypeExpr)(nil),           // 111: pg_query.ConvertRowtypeExpr
-	(*CollateExpr)(nil),                  // 112: pg_query.CollateExpr
-	(*CaseExpr)(nil),                     // 113: pg_query.CaseExpr
-	(*CaseWhen)(nil),                     // 114: pg_query.CaseWhen
-	(*CaseTestExpr)(nil),                 // 115: pg_query.CaseTestExpr
-	(*ArrayExpr)(nil),                    // 116: pg_query.ArrayExpr
-	(*RowExpr)(nil),                      // 117: pg_query.RowExpr
-	(*RowCompareExpr)(nil),               // 118: pg_query.RowCompareExpr
-	(*CoalesceExpr)(nil),                 // 119: pg_query.CoalesceExpr
-	(*MinMaxExpr)(nil),                   // 120: pg_query.MinMaxExpr
-	(*SQLValueFunction)(nil),             // 121: pg_query.SQLValueFunction
-	(*XmlExpr)(nil),                      // 122: pg_query.XmlExpr
-	(*JsonFormat)(nil),                   // 123: pg_query.JsonFormat
-	(*JsonReturning)(nil),                // 124: pg_query.JsonReturning
-	(*JsonValueExpr)(nil),                // 125: pg_query.JsonValueExpr
-	(*JsonConstructorExpr)(nil),          // 126: pg_query.JsonConstructorExpr
-	(*JsonIsPredicate)(nil),              // 127: pg_query.JsonIsPredicate
-	(*JsonBehavior)(nil),                 // 128: pg_query.JsonBehavior
-	(*JsonExpr)(nil),                     // 129: pg_query.JsonExpr
-	(*JsonTablePath)(nil),                // 130: pg_query.JsonTablePath
-	(*JsonTablePathScan)(nil),            // 131: pg_query.JsonTablePathScan
-	(*JsonTableSiblingJoin)(nil),         // 132: pg_query.JsonTableSiblingJoin
-	(*NullTest)(nil),                     // 133: pg_query.NullTest
-	(*BooleanTest)(nil),                  // 134: pg_query.BooleanTest
-	(*MergeAction)(nil),                  // 135: pg_query.MergeAction
-	(*CoerceToDomain)(nil),               // 136: pg_query.CoerceToDomain
-	(*CoerceToDomainValue)(nil),          // 137: pg_query.CoerceToDomainValue
-	(*SetToDefault)(nil),                 // 138: pg_query.SetToDefault
-	(*CurrentOfExpr)(nil),                // 139: pg_query.CurrentOfExpr
-	(*NextValueExpr)(nil),                // 140: pg_query.NextValueExpr
-	(*InferenceElem)(nil),                // 141: pg_query.InferenceElem
-	(*TargetEntry)(nil),                  // 142: pg_query.TargetEntry
-	(*RangeTblRef)(nil),                  // 143: pg_query.RangeTblRef
-	(*JoinExpr)(nil),                     // 144: pg_query.JoinExpr
-	(*FromExpr)(nil),                     // 145: pg_query.FromExpr
-	(*OnConflictExpr)(nil),               // 146: pg_query.OnConflictExpr
-	(*Query)(nil),                        // 147: pg_query.Query
-	(*TypeName)(nil),                     // 148: pg_query.TypeName
-	(*ColumnRef)(nil),                    // 149: pg_query.ColumnRef
-	(*ParamRef)(nil),                     // 150: pg_query.ParamRef
-	(*A_Expr)(nil),                       // 151: pg_query.A_Expr
-	(*TypeCast)(nil),                     // 152: pg_query.TypeCast
-	(*CollateClause)(nil),                // 153: pg_query.CollateClause
-	(*RoleSpec)(nil),                     // 154: pg_query.RoleSpec
-	(*FuncCall)(nil),                     // 155: pg_query.FuncCall
-	(*A_Star)(nil),                       // 156: pg_query.A_Star
-	(*A_Indices)(nil),                    // 157: pg_query.A_Indices
-	(*A_Indirection)(nil),                // 158: pg_query.A_Indirection
-	(*A_ArrayExpr)(nil),                  // 159: pg_query.A_ArrayExpr
-	(*ResTarget)(nil),                    // 160: pg_query.ResTarget
-	(*MultiAssignRef)(nil),               // 161: pg_query.MultiAssignRef
-	(*SortBy)(nil),                       // 162: pg_query.SortBy
-	(*WindowDef)(nil),                    // 163: pg_query.WindowDef
-	(*RangeSubselect)(nil),               // 164: pg_query.RangeSubselect
-	(*RangeFunction)(nil),                // 165: pg_query.RangeFunction
-	(*RangeTableFunc)(nil),               // 166: pg_query.RangeTableFunc
-	(*RangeTableFuncCol)(nil),            // 167: pg_query.RangeTableFuncCol
-	(*RangeTableSample)(nil),             // 168: pg_query.RangeTableSample
-	(*ColumnDef)(nil),                    // 169: pg_query.ColumnDef
-	(*TableLikeClause)(nil),              // 170: pg_query.TableLikeClause
-	(*IndexElem)(nil),                    // 171: pg_query.IndexElem
-	(*DefElem)(nil),                      // 172: pg_query.DefElem
-	(*LockingClause)(nil),                // 173: pg_query.LockingClause
-	(*XmlSerialize)(nil),                 // 174: pg_query.XmlSerialize
-	(*PartitionElem)(nil),                // 175: pg_query.PartitionElem
-	(*PartitionSpec)(nil),                // 176: pg_query.PartitionSpec
-	(*PartitionBoundSpec)(nil),           // 177: pg_query.PartitionBoundSpec
-	(*PartitionRangeDatum)(nil),          // 178: pg_query.PartitionRangeDatum
-	(*SinglePartitionSpec)(nil),          // 179: pg_query.SinglePartitionSpec
-	(*PartitionCmd)(nil),                 // 180: pg_query.PartitionCmd
-	(*RangeTblEntry)(nil),                // 181: pg_query.RangeTblEntry
-	(*RTEPermissionInfo)(nil),            // 182: pg_query.RTEPermissionInfo
-	(*RangeTblFunction)(nil),             // 183: pg_query.RangeTblFunction
-	(*TableSampleClause)(nil),            // 184: pg_query.TableSampleClause
-	(*WithCheckOption)(nil),              // 185: pg_query.WithCheckOption
-	(*SortGroupClause)(nil),              // 186: pg_query.SortGroupClause
-	(*GroupingSet)(nil),                  // 187: pg_query.GroupingSet
-	(*WindowClause)(nil),                 // 188: pg_query.WindowClause
-	(*RowMarkClause)(nil),                // 189: pg_query.RowMarkClause
-	(*WithClause)(nil),                   // 190: pg_query.WithClause
-	(*InferClause)(nil),                  // 191: pg_query.InferClause
-	(*OnConflictClause)(nil),             // 192: pg_query.OnConflictClause
-	(*CTESearchClause)(nil),              // 193: pg_query.CTESearchClause
-	(*CTECycleClause)(nil),               // 194: pg_query.CTECycleClause
-	(*CommonTableExpr)(nil),              // 195: pg_query.CommonTableExpr
-	(*MergeWhenClause)(nil),              // 196: pg_query.MergeWhenClause
-	(*TriggerTransition)(nil),            // 197: pg_query.TriggerTransition
-	(*JsonOutput)(nil),                   // 198: pg_query.JsonOutput
-	(*JsonArgument)(nil),                 // 199: pg_query.JsonArgument
-	(*JsonFuncExpr)(nil),                 // 200: pg_query.JsonFuncExpr
-	(*JsonTablePathSpec)(nil),            // 201: pg_query.JsonTablePathSpec
-	(*JsonTable)(nil),                    // 202: pg_query.JsonTable
-	(*JsonTableColumn)(nil),              // 203: pg_query.JsonTableColumn
-	(*JsonKeyValue)(nil),                 // 204: pg_query.JsonKeyValue
-	(*JsonParseExpr)(nil),                // 205: pg_query.JsonParseExpr
-	(*JsonScalarExpr)(nil),               // 206: pg_query.JsonScalarExpr
-	(*JsonSerializeExpr)(nil),            // 207: pg_query.JsonSerializeExpr
-	(*JsonObjectConstructor)(nil),        // 208: pg_query.JsonObjectConstructor
-	(*JsonArrayConstructor)(nil),         // 209: pg_query.JsonArrayConstructor
-	(*JsonArrayQueryConstructor)(nil),    // 210: pg_query.JsonArrayQueryConstructor
-	(*JsonAggConstructor)(nil),           // 211: pg_query.JsonAggConstructor
-	(*JsonObjectAgg)(nil),                // 212: pg_query.JsonObjectAgg
-	(*JsonArrayAgg)(nil),                 // 213: pg_query.JsonArrayAgg
-	(*RawStmt)(nil),                      // 214: pg_query.RawStmt
-	(*InsertStmt)(nil),                   // 215: pg_query.InsertStmt
-	(*DeleteStmt)(nil),                   // 216: pg_query.DeleteStmt
-	(*UpdateStmt)(nil),                   // 217: pg_query.UpdateStmt
-	(*MergeStmt)(nil),                    // 218: pg_query.MergeStmt
-	(*SelectStmt)(nil),                   // 219: pg_query.SelectStmt
-	(*SetOperationStmt)(nil),             // 220: pg_query.SetOperationStmt
-	(*ReturnStmt)(nil),                   // 221: pg_query.ReturnStmt
-	(*PLAssignStmt)(nil),                 // 222: pg_query.PLAssignStmt
-	(*CreateSchemaStmt)(nil),             // 223: pg_query.CreateSchemaStmt
-	(*AlterTableStmt)(nil),               // 224: pg_query.AlterTableStmt
-	(*ReplicaIdentityStmt)(nil),          // 225: pg_query.ReplicaIdentityStmt
-	(*AlterTableCmd)(nil),                // 226: pg_query.AlterTableCmd
-	(*AlterCollationStmt)(nil),           // 227: pg_query.AlterCollationStmt
-	(*AlterDomainStmt)(nil),              // 228: pg_query.AlterDomainStmt
-	(*GrantStmt)(nil),                    // 229: pg_query.GrantStmt
-	(*ObjectWithArgs)(nil),               // 230: pg_query.ObjectWithArgs
-	(*AccessPriv)(nil),                   // 231: pg_query.AccessPriv
-	(*GrantRoleStmt)(nil),                // 232: pg_query.GrantRoleStmt
-	(*AlterDefaultPrivilegesStmt)(nil),   // 233: pg_query.AlterDefaultPrivilegesStmt
-	(*CopyStmt)(nil),                     // 234: pg_query.CopyStmt
-	(*VariableSetStmt)(nil),              // 235: pg_query.VariableSetStmt
-	(*VariableShowStmt)(nil),             // 236: pg_query.VariableShowStmt
-	(*CreateStmt)(nil),                   // 237: pg_query.CreateStmt
-	(*Constraint)(nil),                   // 238: pg_query.Constraint
-	(*CreateTableSpaceStmt)(nil),         // 239: pg_query.CreateTableSpaceStmt
-	(*DropTableSpaceStmt)(nil),           // 240: pg_query.DropTableSpaceStmt
-	(*AlterTableSpaceOptionsStmt)(nil),   // 241: pg_query.AlterTableSpaceOptionsStmt
-	(*AlterTableMoveAllStmt)(nil),        // 242: pg_query.AlterTableMoveAllStmt
-	(*CreateExtensionStmt)(nil),          // 243: pg_query.CreateExtensionStmt
-	(*AlterExtensionStmt)(nil),           // 244: pg_query.AlterExtensionStmt
-	(*AlterExtensionContentsStmt)(nil),   // 245: pg_query.AlterExtensionContentsStmt
-	(*CreateFdwStmt)(nil),                // 246: pg_query.CreateFdwStmt
-	(*AlterFdwStmt)(nil),                 // 247: pg_query.AlterFdwStmt
-	(*CreateForeignServerStmt)(nil),      // 248: pg_query.CreateForeignServerStmt
-	(*AlterForeignServerStmt)(nil),       // 249: pg_query.AlterForeignServerStmt
-	(*CreateForeignTableStmt)(nil),       // 250: pg_query.CreateForeignTableStmt
-	(*CreateUserMappingStmt)(nil),        // 251: pg_query.CreateUserMappingStmt
-	(*AlterUserMappingStmt)(nil),         // 252: pg_query.AlterUserMappingStmt
-	(*DropUserMappingStmt)(nil),          // 253: pg_query.DropUserMappingStmt
-	(*ImportForeignSchemaStmt)(nil),      // 254: pg_query.ImportForeignSchemaStmt
-	(*CreatePolicyStmt)(nil),             // 255: pg_query.CreatePolicyStmt
-	(*AlterPolicyStmt)(nil),              // 256: pg_query.AlterPolicyStmt
-	(*CreateAmStmt)(nil),                 // 257: pg_query.CreateAmStmt
-	(*CreateTrigStmt)(nil),               // 258: pg_query.CreateTrigStmt
-	(*CreateEventTrigStmt)(nil),          // 259: pg_query.CreateEventTrigStmt
-	(*AlterEventTrigStmt)(nil),           // 260: pg_query.AlterEventTrigStmt
-	(*CreatePLangStmt)(nil),              // 261: pg_query.CreatePLangStmt
-	(*CreateRoleStmt)(nil),               // 262: pg_query.CreateRoleStmt
-	(*AlterRoleStmt)(nil),                // 263: pg_query.AlterRoleStmt
-	(*AlterRoleSetStmt)(nil),             // 264: pg_query.AlterRoleSetStmt
-	(*DropRoleStmt)(nil),                 // 265: pg_query.DropRoleStmt
-	(*CreateSeqStmt)(nil),                // 266: pg_query.CreateSeqStmt
-	(*AlterSeqStmt)(nil),                 // 267: pg_query.AlterSeqStmt
-	(*DefineStmt)(nil),                   // 268: pg_query.DefineStmt
-	(*CreateDomainStmt)(nil),             // 269: pg_query.CreateDomainStmt
-	(*CreateOpClassStmt)(nil),            // 270: pg_query.CreateOpClassStmt
-	(*CreateOpClassItem)(nil),            // 271: pg_query.CreateOpClassItem
-	(*CreateOpFamilyStmt)(nil),           // 272: pg_query.CreateOpFamilyStmt
-	(*AlterOpFamilyStmt)(nil),            // 273: pg_query.AlterOpFamilyStmt
-	(*DropStmt)(nil),                     // 274: pg_query.DropStmt
-	(*TruncateStmt)(nil),                 // 275: pg_query.TruncateStmt
-	(*CommentStmt)(nil),                  // 276: pg_query.CommentStmt
-	(*SecLabelStmt)(nil),                 // 277: pg_query.SecLabelStmt
-	(*DeclareCursorStmt)(nil),            // 278: pg_query.DeclareCursorStmt
-	(*ClosePortalStmt)(nil),              // 279: pg_query.ClosePortalStmt
-	(*FetchStmt)(nil),                    // 280: pg_query.FetchStmt
-	(*IndexStmt)(nil),                    // 281: pg_query.IndexStmt
-	(*CreateStatsStmt)(nil),              // 282: pg_query.CreateStatsStmt
-	(*StatsElem)(nil),                    // 283: pg_query.StatsElem
-	(*AlterStatsStmt)(nil),               // 284: pg_query.AlterStatsStmt
-	(*CreateFunctionStmt)(nil),           // 285: pg_query.CreateFunctionStmt
-	(*FunctionParameter)(nil),            // 286: pg_query.FunctionParameter
-	(*AlterFunctionStmt)(nil),            // 287: pg_query.AlterFunctionStmt
-	(*DoStmt)(nil),                       // 288: pg_query.DoStmt
-	(*InlineCodeBlock)(nil),              // 289: pg_query.InlineCodeBlock
-	(*CallStmt)(nil),                     // 290: pg_query.CallStmt
-	(*CallContext)(nil),                  // 291: pg_query.CallContext
-	(*RenameStmt)(nil),                   // 292: pg_query.RenameStmt
-	(*AlterObjectDependsStmt)(nil),       // 293: pg_query.AlterObjectDependsStmt
-	(*AlterObjectSchemaStmt)(nil),        // 294: pg_query.AlterObjectSchemaStmt
-	(*AlterOwnerStmt)(nil),               // 295: pg_query.AlterOwnerStmt
-	(*AlterOperatorStmt)(nil),            // 296: pg_query.AlterOperatorStmt
-	(*AlterTypeStmt)(nil),                // 297: pg_query.AlterTypeStmt
-	(*RuleStmt)(nil),                     // 298: pg_query.RuleStmt
-	(*NotifyStmt)(nil),                   // 299: pg_query.NotifyStmt
-	(*ListenStmt)(nil),                   // 300: pg_query.ListenStmt
-	(*UnlistenStmt)(nil),                 // 301: pg_query.UnlistenStmt
-	(*TransactionStmt)(nil),              // 302: pg_query.TransactionStmt
-	(*CompositeTypeStmt)(nil),            // 303: pg_query.CompositeTypeStmt
-	(*CreateEnumStmt)(nil),               // 304: pg_query.CreateEnumStmt
-	(*CreateRangeStmt)(nil),              // 305: pg_query.CreateRangeStmt
-	(*AlterEnumStmt)(nil),                // 306: pg_query.AlterEnumStmt
-	(*ViewStmt)(nil),                     // 307: pg_query.ViewStmt
-	(*LoadStmt)(nil),                     // 308: pg_query.LoadStmt
-	(*CreatedbStmt)(nil),                 // 309: pg_query.CreatedbStmt
-	(*AlterDatabaseStmt)(nil),            // 310: pg_query.AlterDatabaseStmt
-	(*AlterDatabaseRefreshCollStmt)(nil), // 311: pg_query.AlterDatabaseRefreshCollStmt
-	(*AlterDatabaseSetStmt)(nil),         // 312: pg_query.AlterDatabaseSetStmt
-	(*DropdbStmt)(nil),                   // 313: pg_query.DropdbStmt
-	(*AlterSystemStmt)(nil),              // 314: pg_query.AlterSystemStmt
-	(*ClusterStmt)(nil),                  // 315: pg_query.ClusterStmt
-	(*VacuumStmt)(nil),                   // 316: pg_query.VacuumStmt
-	(*VacuumRelation)(nil),               // 317: pg_query.VacuumRelation
-	(*ExplainStmt)(nil),                  // 318: pg_query.ExplainStmt
-	(*CreateTableAsStmt)(nil),            // 319: pg_query.CreateTableAsStmt
-	(*RefreshMatViewStmt)(nil),           // 320: pg_query.RefreshMatViewStmt
-	(*CheckPointStmt)(nil),               // 321: pg_query.CheckPointStmt
-	(*DiscardStmt)(nil),                  // 322: pg_query.DiscardStmt
-	(*LockStmt)(nil),                     // 323: pg_query.LockStmt
-	(*ConstraintsSetStmt)(nil),           // 324: pg_query.ConstraintsSetStmt
-	(*ReindexStmt)(nil),                  // 325: pg_query.ReindexStmt
-	(*CreateConversionStmt)(nil),         // 326: pg_query.CreateConversionStmt
-	(*CreateCastStmt)(nil),               // 327: pg_query.CreateCastStmt
-	(*CreateTransformStmt)(nil),          // 328: pg_query.CreateTransformStmt
-	(*PrepareStmt)(nil),                  // 329: pg_query.PrepareStmt
-	(*ExecuteStmt)(nil),                  // 330: pg_query.ExecuteStmt
-	(*DeallocateStmt)(nil),               // 331: pg_query.DeallocateStmt
-	(*DropOwnedStmt)(nil),                // 332: pg_query.DropOwnedStmt
-	(*ReassignOwnedStmt)(nil),            // 333: pg_query.ReassignOwnedStmt
-	(*AlterTSDictionaryStmt)(nil),        // 334: pg_query.AlterTSDictionaryStmt
-	(*AlterTSConfigurationStmt)(nil),     // 335: pg_query.AlterTSConfigurationStmt
-	(*PublicationTable)(nil),             // 336: pg_query.PublicationTable
-	(*PublicationObjSpec)(nil),           // 337: pg_query.PublicationObjSpec
-	(*CreatePublicationStmt)(nil),        // 338: pg_query.CreatePublicationStmt
-	(*AlterPublicationStmt)(nil),         // 339: pg_query.AlterPublicationStmt
-	(*CreateSubscriptionStmt)(nil),       // 340: pg_query.CreateSubscriptionStmt
-	(*AlterSubscriptionStmt)(nil),        // 341: pg_query.AlterSubscriptionStmt
-	(*DropSubscriptionStmt)(nil),         // 342: pg_query.DropSubscriptionStmt
-	(*ScanToken)(nil),                    // 343: pg_query.ScanToken
-	(*SummaryResult)(nil),                // 344: pg_query.SummaryResult
-	(*SummaryResult_Table)(nil),          // 345: pg_query.SummaryResult.Table
-	nil,                                  // 346: pg_query.SummaryResult.AliasesEntry
-	(*SummaryResult_Function)(nil),       // 347: pg_query.SummaryResult.Function
-	(*SummaryResult_FilterColumn)(nil),   // 348: pg_query.SummaryResult.FilterColumn
+	(ReturningOptionKind)(0),             // 14: pg_query.ReturningOptionKind
+	(JsonQuotes)(0),                      // 15: pg_query.JsonQuotes
+	(JsonTableColumnType)(0),             // 16: pg_query.JsonTableColumnType
+	(SetOperation)(0),                    // 17: pg_query.SetOperation
+	(ObjectType)(0),                      // 18: pg_query.ObjectType
+	(DropBehavior)(0),                    // 19: pg_query.DropBehavior
+	(AlterTableType)(0),                  // 20: pg_query.AlterTableType
+	(GrantTargetType)(0),                 // 21: pg_query.GrantTargetType
+	(VariableSetKind)(0),                 // 22: pg_query.VariableSetKind
+	(ConstrType)(0),                      // 23: pg_query.ConstrType
+	(ImportForeignSchemaType)(0),         // 24: pg_query.ImportForeignSchemaType
+	(RoleStmtType)(0),                    // 25: pg_query.RoleStmtType
+	(FetchDirection)(0),                  // 26: pg_query.FetchDirection
+	(FunctionParameterMode)(0),           // 27: pg_query.FunctionParameterMode
+	(TransactionStmtKind)(0),             // 28: pg_query.TransactionStmtKind
+	(ViewCheckOption)(0),                 // 29: pg_query.ViewCheckOption
+	(DiscardMode)(0),                     // 30: pg_query.DiscardMode
+	(ReindexObjectType)(0),               // 31: pg_query.ReindexObjectType
+	(AlterTSConfigType)(0),               // 32: pg_query.AlterTSConfigType
+	(PublicationObjSpecType)(0),          // 33: pg_query.PublicationObjSpecType
+	(AlterPublicationAction)(0),          // 34: pg_query.AlterPublicationAction
+	(AlterSubscriptionType)(0),           // 35: pg_query.AlterSubscriptionType
+	(OverridingKind)(0),                  // 36: pg_query.OverridingKind
+	(OnCommitAction)(0),                  // 37: pg_query.OnCommitAction
+	(TableFuncType)(0),                   // 38: pg_query.TableFuncType
+	(VarReturningType)(0),                // 39: pg_query.VarReturningType
+	(ParamKind)(0),                       // 40: pg_query.ParamKind
+	(CoercionContext)(0),                 // 41: pg_query.CoercionContext
+	(CoercionForm)(0),                    // 42: pg_query.CoercionForm
+	(BoolExprType)(0),                    // 43: pg_query.BoolExprType
+	(SubLinkType)(0),                     // 44: pg_query.SubLinkType
+	(MinMaxOp)(0),                        // 45: pg_query.MinMaxOp
+	(SQLValueFunctionOp)(0),              // 46: pg_query.SQLValueFunctionOp
+	(XmlExprOp)(0),                       // 47: pg_query.XmlExprOp
+	(XmlOptionType)(0),                   // 48: pg_query.XmlOptionType
+	(JsonEncoding)(0),                    // 49: pg_query.JsonEncoding
+	(JsonFormatType)(0),                  // 50: pg_query.JsonFormatType
+	(JsonConstructorType)(0),             // 51: pg_query.JsonConstructorType
+	(JsonValueType)(0),                   // 52: pg_query.JsonValueType
+	(JsonWrapper)(0),                     // 53: pg_query.JsonWrapper
+	(JsonBehaviorType)(0),                // 54: pg_query.JsonBehaviorType
+	(JsonExprOp)(0),                      // 55: pg_query.JsonExprOp
+	(NullTestType)(0),                    // 56: pg_query.NullTestType
+	(BoolTestType)(0),                    // 57: pg_query.BoolTestType
+	(MergeMatchKind)(0),                  // 58: pg_query.MergeMatchKind
+	(CmdType)(0),                         // 59: pg_query.CmdType
+	(JoinType)(0),                        // 60: pg_query.JoinType
+	(AggStrategy)(0),                     // 61: pg_query.AggStrategy
+	(AggSplit)(0),                        // 62: pg_query.AggSplit
+	(SetOpCmd)(0),                        // 63: pg_query.SetOpCmd
+	(SetOpStrategy)(0),                   // 64: pg_query.SetOpStrategy
+	(OnConflictAction)(0),                // 65: pg_query.OnConflictAction
+	(LimitOption)(0),                     // 66: pg_query.LimitOption
+	(LockClauseStrength)(0),              // 67: pg_query.LockClauseStrength
+	(LockWaitPolicy)(0),                  // 68: pg_query.LockWaitPolicy
+	(LockTupleMode)(0),                   // 69: pg_query.LockTupleMode
+	(CompareType)(0),                     // 70: pg_query.CompareType
+	(KeywordKind)(0),                     // 71: pg_query.KeywordKind
+	(Token)(0),                           // 72: pg_query.Token
+	(SummaryResult_Context)(0),           // 73: pg_query.SummaryResult.Context
+	(*ParseResult)(nil),                  // 74: pg_query.ParseResult
+	(*ScanResult)(nil),                   // 75: pg_query.ScanResult
+	(*Node)(nil),                         // 76: pg_query.Node
+	(*Integer)(nil),                      // 77: pg_query.Integer
+	(*Float)(nil),                        // 78: pg_query.Float
+	(*Boolean)(nil),                      // 79: pg_query.Boolean
+	(*String)(nil),                       // 80: pg_query.String
+	(*BitString)(nil),                    // 81: pg_query.BitString
+	(*List)(nil),                         // 82: pg_query.List
+	(*OidList)(nil),                      // 83: pg_query.OidList
+	(*IntList)(nil),                      // 84: pg_query.IntList
+	(*A_Const)(nil),                      // 85: pg_query.A_Const
+	(*Alias)(nil),                        // 86: pg_query.Alias
+	(*RangeVar)(nil),                     // 87: pg_query.RangeVar
+	(*TableFunc)(nil),                    // 88: pg_query.TableFunc
+	(*IntoClause)(nil),                   // 89: pg_query.IntoClause
+	(*Var)(nil),                          // 90: pg_query.Var
+	(*Param)(nil),                        // 91: pg_query.Param
+	(*Aggref)(nil),                       // 92: pg_query.Aggref
+	(*GroupingFunc)(nil),                 // 93: pg_query.GroupingFunc
+	(*WindowFunc)(nil),                   // 94: pg_query.WindowFunc
+	(*WindowFuncRunCondition)(nil),       // 95: pg_query.WindowFuncRunCondition
+	(*MergeSupportFunc)(nil),             // 96: pg_query.MergeSupportFunc
+	(*SubscriptingRef)(nil),              // 97: pg_query.SubscriptingRef
+	(*FuncExpr)(nil),                     // 98: pg_query.FuncExpr
+	(*NamedArgExpr)(nil),                 // 99: pg_query.NamedArgExpr
+	(*OpExpr)(nil),                       // 100: pg_query.OpExpr
+	(*DistinctExpr)(nil),                 // 101: pg_query.DistinctExpr
+	(*NullIfExpr)(nil),                   // 102: pg_query.NullIfExpr
+	(*ScalarArrayOpExpr)(nil),            // 103: pg_query.ScalarArrayOpExpr
+	(*BoolExpr)(nil),                     // 104: pg_query.BoolExpr
+	(*SubLink)(nil),                      // 105: pg_query.SubLink
+	(*SubPlan)(nil),                      // 106: pg_query.SubPlan
+	(*AlternativeSubPlan)(nil),           // 107: pg_query.AlternativeSubPlan
+	(*FieldSelect)(nil),                  // 108: pg_query.FieldSelect
+	(*FieldStore)(nil),                   // 109: pg_query.FieldStore
+	(*RelabelType)(nil),                  // 110: pg_query.RelabelType
+	(*CoerceViaIO)(nil),                  // 111: pg_query.CoerceViaIO
+	(*ArrayCoerceExpr)(nil),              // 112: pg_query.ArrayCoerceExpr
+	(*ConvertRowtypeExpr)(nil),           // 113: pg_query.ConvertRowtypeExpr
+	(*CollateExpr)(nil),                  // 114: pg_query.CollateExpr
+	(*CaseExpr)(nil),                     // 115: pg_query.CaseExpr
+	(*CaseWhen)(nil),                     // 116: pg_query.CaseWhen
+	(*CaseTestExpr)(nil),                 // 117: pg_query.CaseTestExpr
+	(*ArrayExpr)(nil),                    // 118: pg_query.ArrayExpr
+	(*RowExpr)(nil),                      // 119: pg_query.RowExpr
+	(*RowCompareExpr)(nil),               // 120: pg_query.RowCompareExpr
+	(*CoalesceExpr)(nil),                 // 121: pg_query.CoalesceExpr
+	(*MinMaxExpr)(nil),                   // 122: pg_query.MinMaxExpr
+	(*SQLValueFunction)(nil),             // 123: pg_query.SQLValueFunction
+	(*XmlExpr)(nil),                      // 124: pg_query.XmlExpr
+	(*JsonFormat)(nil),                   // 125: pg_query.JsonFormat
+	(*JsonReturning)(nil),                // 126: pg_query.JsonReturning
+	(*JsonValueExpr)(nil),                // 127: pg_query.JsonValueExpr
+	(*JsonConstructorExpr)(nil),          // 128: pg_query.JsonConstructorExpr
+	(*JsonIsPredicate)(nil),              // 129: pg_query.JsonIsPredicate
+	(*JsonBehavior)(nil),                 // 130: pg_query.JsonBehavior
+	(*JsonExpr)(nil),                     // 131: pg_query.JsonExpr
+	(*JsonTablePath)(nil),                // 132: pg_query.JsonTablePath
+	(*JsonTablePathScan)(nil),            // 133: pg_query.JsonTablePathScan
+	(*JsonTableSiblingJoin)(nil),         // 134: pg_query.JsonTableSiblingJoin
+	(*NullTest)(nil),                     // 135: pg_query.NullTest
+	(*BooleanTest)(nil),                  // 136: pg_query.BooleanTest
+	(*MergeAction)(nil),                  // 137: pg_query.MergeAction
+	(*CoerceToDomain)(nil),               // 138: pg_query.CoerceToDomain
+	(*CoerceToDomainValue)(nil),          // 139: pg_query.CoerceToDomainValue
+	(*SetToDefault)(nil),                 // 140: pg_query.SetToDefault
+	(*CurrentOfExpr)(nil),                // 141: pg_query.CurrentOfExpr
+	(*NextValueExpr)(nil),                // 142: pg_query.NextValueExpr
+	(*InferenceElem)(nil),                // 143: pg_query.InferenceElem
+	(*ReturningExpr)(nil),                // 144: pg_query.ReturningExpr
+	(*TargetEntry)(nil),                  // 145: pg_query.TargetEntry
+	(*RangeTblRef)(nil),                  // 146: pg_query.RangeTblRef
+	(*JoinExpr)(nil),                     // 147: pg_query.JoinExpr
+	(*FromExpr)(nil),                     // 148: pg_query.FromExpr
+	(*OnConflictExpr)(nil),               // 149: pg_query.OnConflictExpr
+	(*Query)(nil),                        // 150: pg_query.Query
+	(*TypeName)(nil),                     // 151: pg_query.TypeName
+	(*ColumnRef)(nil),                    // 152: pg_query.ColumnRef
+	(*ParamRef)(nil),                     // 153: pg_query.ParamRef
+	(*A_Expr)(nil),                       // 154: pg_query.A_Expr
+	(*TypeCast)(nil),                     // 155: pg_query.TypeCast
+	(*CollateClause)(nil),                // 156: pg_query.CollateClause
+	(*RoleSpec)(nil),                     // 157: pg_query.RoleSpec
+	(*FuncCall)(nil),                     // 158: pg_query.FuncCall
+	(*A_Star)(nil),                       // 159: pg_query.A_Star
+	(*A_Indices)(nil),                    // 160: pg_query.A_Indices
+	(*A_Indirection)(nil),                // 161: pg_query.A_Indirection
+	(*A_ArrayExpr)(nil),                  // 162: pg_query.A_ArrayExpr
+	(*ResTarget)(nil),                    // 163: pg_query.ResTarget
+	(*MultiAssignRef)(nil),               // 164: pg_query.MultiAssignRef
+	(*SortBy)(nil),                       // 165: pg_query.SortBy
+	(*WindowDef)(nil),                    // 166: pg_query.WindowDef
+	(*RangeSubselect)(nil),               // 167: pg_query.RangeSubselect
+	(*RangeFunction)(nil),                // 168: pg_query.RangeFunction
+	(*RangeTableFunc)(nil),               // 169: pg_query.RangeTableFunc
+	(*RangeTableFuncCol)(nil),            // 170: pg_query.RangeTableFuncCol
+	(*RangeTableSample)(nil),             // 171: pg_query.RangeTableSample
+	(*ColumnDef)(nil),                    // 172: pg_query.ColumnDef
+	(*TableLikeClause)(nil),              // 173: pg_query.TableLikeClause
+	(*IndexElem)(nil),                    // 174: pg_query.IndexElem
+	(*DefElem)(nil),                      // 175: pg_query.DefElem
+	(*LockingClause)(nil),                // 176: pg_query.LockingClause
+	(*XmlSerialize)(nil),                 // 177: pg_query.XmlSerialize
+	(*PartitionElem)(nil),                // 178: pg_query.PartitionElem
+	(*PartitionSpec)(nil),                // 179: pg_query.PartitionSpec
+	(*PartitionBoundSpec)(nil),           // 180: pg_query.PartitionBoundSpec
+	(*PartitionRangeDatum)(nil),          // 181: pg_query.PartitionRangeDatum
+	(*PartitionCmd)(nil),                 // 182: pg_query.PartitionCmd
+	(*RangeTblEntry)(nil),                // 183: pg_query.RangeTblEntry
+	(*RTEPermissionInfo)(nil),            // 184: pg_query.RTEPermissionInfo
+	(*RangeTblFunction)(nil),             // 185: pg_query.RangeTblFunction
+	(*TableSampleClause)(nil),            // 186: pg_query.TableSampleClause
+	(*WithCheckOption)(nil),              // 187: pg_query.WithCheckOption
+	(*SortGroupClause)(nil),              // 188: pg_query.SortGroupClause
+	(*GroupingSet)(nil),                  // 189: pg_query.GroupingSet
+	(*WindowClause)(nil),                 // 190: pg_query.WindowClause
+	(*RowMarkClause)(nil),                // 191: pg_query.RowMarkClause
+	(*WithClause)(nil),                   // 192: pg_query.WithClause
+	(*InferClause)(nil),                  // 193: pg_query.InferClause
+	(*OnConflictClause)(nil),             // 194: pg_query.OnConflictClause
+	(*CTESearchClause)(nil),              // 195: pg_query.CTESearchClause
+	(*CTECycleClause)(nil),               // 196: pg_query.CTECycleClause
+	(*CommonTableExpr)(nil),              // 197: pg_query.CommonTableExpr
+	(*MergeWhenClause)(nil),              // 198: pg_query.MergeWhenClause
+	(*ReturningOption)(nil),              // 199: pg_query.ReturningOption
+	(*ReturningClause)(nil),              // 200: pg_query.ReturningClause
+	(*TriggerTransition)(nil),            // 201: pg_query.TriggerTransition
+	(*JsonOutput)(nil),                   // 202: pg_query.JsonOutput
+	(*JsonArgument)(nil),                 // 203: pg_query.JsonArgument
+	(*JsonFuncExpr)(nil),                 // 204: pg_query.JsonFuncExpr
+	(*JsonTablePathSpec)(nil),            // 205: pg_query.JsonTablePathSpec
+	(*JsonTable)(nil),                    // 206: pg_query.JsonTable
+	(*JsonTableColumn)(nil),              // 207: pg_query.JsonTableColumn
+	(*JsonKeyValue)(nil),                 // 208: pg_query.JsonKeyValue
+	(*JsonParseExpr)(nil),                // 209: pg_query.JsonParseExpr
+	(*JsonScalarExpr)(nil),               // 210: pg_query.JsonScalarExpr
+	(*JsonSerializeExpr)(nil),            // 211: pg_query.JsonSerializeExpr
+	(*JsonObjectConstructor)(nil),        // 212: pg_query.JsonObjectConstructor
+	(*JsonArrayConstructor)(nil),         // 213: pg_query.JsonArrayConstructor
+	(*JsonArrayQueryConstructor)(nil),    // 214: pg_query.JsonArrayQueryConstructor
+	(*JsonAggConstructor)(nil),           // 215: pg_query.JsonAggConstructor
+	(*JsonObjectAgg)(nil),                // 216: pg_query.JsonObjectAgg
+	(*JsonArrayAgg)(nil),                 // 217: pg_query.JsonArrayAgg
+	(*RawStmt)(nil),                      // 218: pg_query.RawStmt
+	(*InsertStmt)(nil),                   // 219: pg_query.InsertStmt
+	(*DeleteStmt)(nil),                   // 220: pg_query.DeleteStmt
+	(*UpdateStmt)(nil),                   // 221: pg_query.UpdateStmt
+	(*MergeStmt)(nil),                    // 222: pg_query.MergeStmt
+	(*SelectStmt)(nil),                   // 223: pg_query.SelectStmt
+	(*SetOperationStmt)(nil),             // 224: pg_query.SetOperationStmt
+	(*ReturnStmt)(nil),                   // 225: pg_query.ReturnStmt
+	(*PLAssignStmt)(nil),                 // 226: pg_query.PLAssignStmt
+	(*CreateSchemaStmt)(nil),             // 227: pg_query.CreateSchemaStmt
+	(*AlterTableStmt)(nil),               // 228: pg_query.AlterTableStmt
+	(*AlterTableCmd)(nil),                // 229: pg_query.AlterTableCmd
+	(*ATAlterConstraint)(nil),            // 230: pg_query.ATAlterConstraint
+	(*ReplicaIdentityStmt)(nil),          // 231: pg_query.ReplicaIdentityStmt
+	(*AlterCollationStmt)(nil),           // 232: pg_query.AlterCollationStmt
+	(*AlterDomainStmt)(nil),              // 233: pg_query.AlterDomainStmt
+	(*GrantStmt)(nil),                    // 234: pg_query.GrantStmt
+	(*ObjectWithArgs)(nil),               // 235: pg_query.ObjectWithArgs
+	(*AccessPriv)(nil),                   // 236: pg_query.AccessPriv
+	(*GrantRoleStmt)(nil),                // 237: pg_query.GrantRoleStmt
+	(*AlterDefaultPrivilegesStmt)(nil),   // 238: pg_query.AlterDefaultPrivilegesStmt
+	(*CopyStmt)(nil),                     // 239: pg_query.CopyStmt
+	(*VariableSetStmt)(nil),              // 240: pg_query.VariableSetStmt
+	(*VariableShowStmt)(nil),             // 241: pg_query.VariableShowStmt
+	(*CreateStmt)(nil),                   // 242: pg_query.CreateStmt
+	(*Constraint)(nil),                   // 243: pg_query.Constraint
+	(*CreateTableSpaceStmt)(nil),         // 244: pg_query.CreateTableSpaceStmt
+	(*DropTableSpaceStmt)(nil),           // 245: pg_query.DropTableSpaceStmt
+	(*AlterTableSpaceOptionsStmt)(nil),   // 246: pg_query.AlterTableSpaceOptionsStmt
+	(*AlterTableMoveAllStmt)(nil),        // 247: pg_query.AlterTableMoveAllStmt
+	(*CreateExtensionStmt)(nil),          // 248: pg_query.CreateExtensionStmt
+	(*AlterExtensionStmt)(nil),           // 249: pg_query.AlterExtensionStmt
+	(*AlterExtensionContentsStmt)(nil),   // 250: pg_query.AlterExtensionContentsStmt
+	(*CreateFdwStmt)(nil),                // 251: pg_query.CreateFdwStmt
+	(*AlterFdwStmt)(nil),                 // 252: pg_query.AlterFdwStmt
+	(*CreateForeignServerStmt)(nil),      // 253: pg_query.CreateForeignServerStmt
+	(*AlterForeignServerStmt)(nil),       // 254: pg_query.AlterForeignServerStmt
+	(*CreateForeignTableStmt)(nil),       // 255: pg_query.CreateForeignTableStmt
+	(*CreateUserMappingStmt)(nil),        // 256: pg_query.CreateUserMappingStmt
+	(*AlterUserMappingStmt)(nil),         // 257: pg_query.AlterUserMappingStmt
+	(*DropUserMappingStmt)(nil),          // 258: pg_query.DropUserMappingStmt
+	(*ImportForeignSchemaStmt)(nil),      // 259: pg_query.ImportForeignSchemaStmt
+	(*CreatePolicyStmt)(nil),             // 260: pg_query.CreatePolicyStmt
+	(*AlterPolicyStmt)(nil),              // 261: pg_query.AlterPolicyStmt
+	(*CreateAmStmt)(nil),                 // 262: pg_query.CreateAmStmt
+	(*CreateTrigStmt)(nil),               // 263: pg_query.CreateTrigStmt
+	(*CreateEventTrigStmt)(nil),          // 264: pg_query.CreateEventTrigStmt
+	(*AlterEventTrigStmt)(nil),           // 265: pg_query.AlterEventTrigStmt
+	(*CreatePLangStmt)(nil),              // 266: pg_query.CreatePLangStmt
+	(*CreateRoleStmt)(nil),               // 267: pg_query.CreateRoleStmt
+	(*AlterRoleStmt)(nil),                // 268: pg_query.AlterRoleStmt
+	(*AlterRoleSetStmt)(nil),             // 269: pg_query.AlterRoleSetStmt
+	(*DropRoleStmt)(nil),                 // 270: pg_query.DropRoleStmt
+	(*CreateSeqStmt)(nil),                // 271: pg_query.CreateSeqStmt
+	(*AlterSeqStmt)(nil),                 // 272: pg_query.AlterSeqStmt
+	(*DefineStmt)(nil),                   // 273: pg_query.DefineStmt
+	(*CreateDomainStmt)(nil),             // 274: pg_query.CreateDomainStmt
+	(*CreateOpClassStmt)(nil),            // 275: pg_query.CreateOpClassStmt
+	(*CreateOpClassItem)(nil),            // 276: pg_query.CreateOpClassItem
+	(*CreateOpFamilyStmt)(nil),           // 277: pg_query.CreateOpFamilyStmt
+	(*AlterOpFamilyStmt)(nil),            // 278: pg_query.AlterOpFamilyStmt
+	(*DropStmt)(nil),                     // 279: pg_query.DropStmt
+	(*TruncateStmt)(nil),                 // 280: pg_query.TruncateStmt
+	(*CommentStmt)(nil),                  // 281: pg_query.CommentStmt
+	(*SecLabelStmt)(nil),                 // 282: pg_query.SecLabelStmt
+	(*DeclareCursorStmt)(nil),            // 283: pg_query.DeclareCursorStmt
+	(*ClosePortalStmt)(nil),              // 284: pg_query.ClosePortalStmt
+	(*FetchStmt)(nil),                    // 285: pg_query.FetchStmt
+	(*IndexStmt)(nil),                    // 286: pg_query.IndexStmt
+	(*CreateStatsStmt)(nil),              // 287: pg_query.CreateStatsStmt
+	(*StatsElem)(nil),                    // 288: pg_query.StatsElem
+	(*AlterStatsStmt)(nil),               // 289: pg_query.AlterStatsStmt
+	(*CreateFunctionStmt)(nil),           // 290: pg_query.CreateFunctionStmt
+	(*FunctionParameter)(nil),            // 291: pg_query.FunctionParameter
+	(*AlterFunctionStmt)(nil),            // 292: pg_query.AlterFunctionStmt
+	(*DoStmt)(nil),                       // 293: pg_query.DoStmt
+	(*InlineCodeBlock)(nil),              // 294: pg_query.InlineCodeBlock
+	(*CallStmt)(nil),                     // 295: pg_query.CallStmt
+	(*CallContext)(nil),                  // 296: pg_query.CallContext
+	(*RenameStmt)(nil),                   // 297: pg_query.RenameStmt
+	(*AlterObjectDependsStmt)(nil),       // 298: pg_query.AlterObjectDependsStmt
+	(*AlterObjectSchemaStmt)(nil),        // 299: pg_query.AlterObjectSchemaStmt
+	(*AlterOwnerStmt)(nil),               // 300: pg_query.AlterOwnerStmt
+	(*AlterOperatorStmt)(nil),            // 301: pg_query.AlterOperatorStmt
+	(*AlterTypeStmt)(nil),                // 302: pg_query.AlterTypeStmt
+	(*RuleStmt)(nil),                     // 303: pg_query.RuleStmt
+	(*NotifyStmt)(nil),                   // 304: pg_query.NotifyStmt
+	(*ListenStmt)(nil),                   // 305: pg_query.ListenStmt
+	(*UnlistenStmt)(nil),                 // 306: pg_query.UnlistenStmt
+	(*TransactionStmt)(nil),              // 307: pg_query.TransactionStmt
+	(*CompositeTypeStmt)(nil),            // 308: pg_query.CompositeTypeStmt
+	(*CreateEnumStmt)(nil),               // 309: pg_query.CreateEnumStmt
+	(*CreateRangeStmt)(nil),              // 310: pg_query.CreateRangeStmt
+	(*AlterEnumStmt)(nil),                // 311: pg_query.AlterEnumStmt
+	(*ViewStmt)(nil),                     // 312: pg_query.ViewStmt
+	(*LoadStmt)(nil),                     // 313: pg_query.LoadStmt
+	(*CreatedbStmt)(nil),                 // 314: pg_query.CreatedbStmt
+	(*AlterDatabaseStmt)(nil),            // 315: pg_query.AlterDatabaseStmt
+	(*AlterDatabaseRefreshCollStmt)(nil), // 316: pg_query.AlterDatabaseRefreshCollStmt
+	(*AlterDatabaseSetStmt)(nil),         // 317: pg_query.AlterDatabaseSetStmt
+	(*DropdbStmt)(nil),                   // 318: pg_query.DropdbStmt
+	(*AlterSystemStmt)(nil),              // 319: pg_query.AlterSystemStmt
+	(*ClusterStmt)(nil),                  // 320: pg_query.ClusterStmt
+	(*VacuumStmt)(nil),                   // 321: pg_query.VacuumStmt
+	(*VacuumRelation)(nil),               // 322: pg_query.VacuumRelation
+	(*ExplainStmt)(nil),                  // 323: pg_query.ExplainStmt
+	(*CreateTableAsStmt)(nil),            // 324: pg_query.CreateTableAsStmt
+	(*RefreshMatViewStmt)(nil),           // 325: pg_query.RefreshMatViewStmt
+	(*CheckPointStmt)(nil),               // 326: pg_query.CheckPointStmt
+	(*DiscardStmt)(nil),                  // 327: pg_query.DiscardStmt
+	(*LockStmt)(nil),                     // 328: pg_query.LockStmt
+	(*ConstraintsSetStmt)(nil),           // 329: pg_query.ConstraintsSetStmt
+	(*ReindexStmt)(nil),                  // 330: pg_query.ReindexStmt
+	(*CreateConversionStmt)(nil),         // 331: pg_query.CreateConversionStmt
+	(*CreateCastStmt)(nil),               // 332: pg_query.CreateCastStmt
+	(*CreateTransformStmt)(nil),          // 333: pg_query.CreateTransformStmt
+	(*PrepareStmt)(nil),                  // 334: pg_query.PrepareStmt
+	(*ExecuteStmt)(nil),                  // 335: pg_query.ExecuteStmt
+	(*DeallocateStmt)(nil),               // 336: pg_query.DeallocateStmt
+	(*DropOwnedStmt)(nil),                // 337: pg_query.DropOwnedStmt
+	(*ReassignOwnedStmt)(nil),            // 338: pg_query.ReassignOwnedStmt
+	(*AlterTSDictionaryStmt)(nil),        // 339: pg_query.AlterTSDictionaryStmt
+	(*AlterTSConfigurationStmt)(nil),     // 340: pg_query.AlterTSConfigurationStmt
+	(*PublicationTable)(nil),             // 341: pg_query.PublicationTable
+	(*PublicationObjSpec)(nil),           // 342: pg_query.PublicationObjSpec
+	(*CreatePublicationStmt)(nil),        // 343: pg_query.CreatePublicationStmt
+	(*AlterPublicationStmt)(nil),         // 344: pg_query.AlterPublicationStmt
+	(*CreateSubscriptionStmt)(nil),       // 345: pg_query.CreateSubscriptionStmt
+	(*AlterSubscriptionStmt)(nil),        // 346: pg_query.AlterSubscriptionStmt
+	(*DropSubscriptionStmt)(nil),         // 347: pg_query.DropSubscriptionStmt
+	(*ScanToken)(nil),                    // 348: pg_query.ScanToken
+	(*SummaryResult)(nil),                // 349: pg_query.SummaryResult
+	(*SummaryResult_Table)(nil),          // 350: pg_query.SummaryResult.Table
+	nil,                                  // 351: pg_query.SummaryResult.AliasesEntry
+	(*SummaryResult_Function)(nil),       // 352: pg_query.SummaryResult.Function
+	(*SummaryResult_FilterColumn)(nil),   // 353: pg_query.SummaryResult.FilterColumn
 }
 var file_pg_query_proto_depIdxs = []int32{
-	214,  // 0: pg_query.ParseResult.stmts:type_name -> pg_query.RawStmt
-	343,  // 1: pg_query.ScanResult.tokens:type_name -> pg_query.ScanToken
-	84,   // 2: pg_query.Node.alias:type_name -> pg_query.Alias
-	85,   // 3: pg_query.Node.range_var:type_name -> pg_query.RangeVar
-	86,   // 4: pg_query.Node.table_func:type_name -> pg_query.TableFunc
-	87,   // 5: pg_query.Node.into_clause:type_name -> pg_query.IntoClause
-	88,   // 6: pg_query.Node.var:type_name -> pg_query.Var
-	89,   // 7: pg_query.Node.param:type_name -> pg_query.Param
-	90,   // 8: pg_query.Node.aggref:type_name -> pg_query.Aggref
-	91,   // 9: pg_query.Node.grouping_func:type_name -> pg_query.GroupingFunc
-	92,   // 10: pg_query.Node.window_func:type_name -> pg_query.WindowFunc
-	93,   // 11: pg_query.Node.window_func_run_condition:type_name -> pg_query.WindowFuncRunCondition
-	94,   // 12: pg_query.Node.merge_support_func:type_name -> pg_query.MergeSupportFunc
-	95,   // 13: pg_query.Node.subscripting_ref:type_name -> pg_query.SubscriptingRef
-	96,   // 14: pg_query.Node.func_expr:type_name -> pg_query.FuncExpr
-	97,   // 15: pg_query.Node.named_arg_expr:type_name -> pg_query.NamedArgExpr
-	98,   // 16: pg_query.Node.op_expr:type_name -> pg_query.OpExpr
-	99,   // 17: pg_query.Node.distinct_expr:type_name -> pg_query.DistinctExpr
-	100,  // 18: pg_query.Node.null_if_expr:type_name -> pg_query.NullIfExpr
-	101,  // 19: pg_query.Node.scalar_array_op_expr:type_name -> pg_query.ScalarArrayOpExpr
-	102,  // 20: pg_query.Node.bool_expr:type_name -> pg_query.BoolExpr
-	103,  // 21: pg_query.Node.sub_link:type_name -> pg_query.SubLink
-	104,  // 22: pg_query.Node.sub_plan:type_name -> pg_query.SubPlan
-	105,  // 23: pg_query.Node.alternative_sub_plan:type_name -> pg_query.AlternativeSubPlan
-	106,  // 24: pg_query.Node.field_select:type_name -> pg_query.FieldSelect
-	107,  // 25: pg_query.Node.field_store:type_name -> pg_query.FieldStore
-	108,  // 26: pg_query.Node.relabel_type:type_name -> pg_query.RelabelType
-	109,  // 27: pg_query.Node.coerce_via_io:type_name -> pg_query.CoerceViaIO
-	110,  // 28: pg_query.Node.array_coerce_expr:type_name -> pg_query.ArrayCoerceExpr
-	111,  // 29: pg_query.Node.convert_rowtype_expr:type_name -> pg_query.ConvertRowtypeExpr
-	112,  // 30: pg_query.Node.collate_expr:type_name -> pg_query.CollateExpr
-	113,  // 31: pg_query.Node.case_expr:type_name -> pg_query.CaseExpr
-	114,  // 32: pg_query.Node.case_when:type_name -> pg_query.CaseWhen
-	115,  // 33: pg_query.Node.case_test_expr:type_name -> pg_query.CaseTestExpr
-	116,  // 34: pg_query.Node.array_expr:type_name -> pg_query.ArrayExpr
-	117,  // 35: pg_query.Node.row_expr:type_name -> pg_query.RowExpr
-	118,  // 36: pg_query.Node.row_compare_expr:type_name -> pg_query.RowCompareExpr
-	119,  // 37: pg_query.Node.coalesce_expr:type_name -> pg_query.CoalesceExpr
-	120,  // 38: pg_query.Node.min_max_expr:type_name -> pg_query.MinMaxExpr
-	121,  // 39: pg_query.Node.sqlvalue_function:type_name -> pg_query.SQLValueFunction
-	122,  // 40: pg_query.Node.xml_expr:type_name -> pg_query.XmlExpr
-	123,  // 41: pg_query.Node.json_format:type_name -> pg_query.JsonFormat
-	124,  // 42: pg_query.Node.json_returning:type_name -> pg_query.JsonReturning
-	125,  // 43: pg_query.Node.json_value_expr:type_name -> pg_query.JsonValueExpr
-	126,  // 44: pg_query.Node.json_constructor_expr:type_name -> pg_query.JsonConstructorExpr
-	127,  // 45: pg_query.Node.json_is_predicate:type_name -> pg_query.JsonIsPredicate
-	128,  // 46: pg_query.Node.json_behavior:type_name -> pg_query.JsonBehavior
-	129,  // 47: pg_query.Node.json_expr:type_name -> pg_query.JsonExpr
-	130,  // 48: pg_query.Node.json_table_path:type_name -> pg_query.JsonTablePath
-	131,  // 49: pg_query.Node.json_table_path_scan:type_name -> pg_query.JsonTablePathScan
-	132,  // 50: pg_query.Node.json_table_sibling_join:type_name -> pg_query.JsonTableSiblingJoin
-	133,  // 51: pg_query.Node.null_test:type_name -> pg_query.NullTest
-	134,  // 52: pg_query.Node.boolean_test:type_name -> pg_query.BooleanTest
-	135,  // 53: pg_query.Node.merge_action:type_name -> pg_query.MergeAction
-	136,  // 54: pg_query.Node.coerce_to_domain:type_name -> pg_query.CoerceToDomain
-	137,  // 55: pg_query.Node.coerce_to_domain_value:type_name -> pg_query.CoerceToDomainValue
-	138,  // 56: pg_query.Node.set_to_default:type_name -> pg_query.SetToDefault
-	139,  // 57: pg_query.Node.current_of_expr:type_name -> pg_query.CurrentOfExpr
-	140,  // 58: pg_query.Node.next_value_expr:type_name -> pg_query.NextValueExpr
-	141,  // 59: pg_query.Node.inference_elem:type_name -> pg_query.InferenceElem
-	142,  // 60: pg_query.Node.target_entry:type_name -> pg_query.TargetEntry
-	143,  // 61: pg_query.Node.range_tbl_ref:type_name -> pg_query.RangeTblRef
-	144,  // 62: pg_query.Node.join_expr:type_name -> pg_query.JoinExpr
-	145,  // 63: pg_query.Node.from_expr:type_name -> pg_query.FromExpr
-	146,  // 64: pg_query.Node.on_conflict_expr:type_name -> pg_query.OnConflictExpr
-	147,  // 65: pg_query.Node.query:type_name -> pg_query.Query
-	148,  // 66: pg_query.Node.type_name:type_name -> pg_query.TypeName
-	149,  // 67: pg_query.Node.column_ref:type_name -> pg_query.ColumnRef
-	150,  // 68: pg_query.Node.param_ref:type_name -> pg_query.ParamRef
-	151,  // 69: pg_query.Node.a_expr:type_name -> pg_query.A_Expr
-	152,  // 70: pg_query.Node.type_cast:type_name -> pg_query.TypeCast
-	153,  // 71: pg_query.Node.collate_clause:type_name -> pg_query.CollateClause
-	154,  // 72: pg_query.Node.role_spec:type_name -> pg_query.RoleSpec
-	155,  // 73: pg_query.Node.func_call:type_name -> pg_query.FuncCall
-	156,  // 74: pg_query.Node.a_star:type_name -> pg_query.A_Star
-	157,  // 75: pg_query.Node.a_indices:type_name -> pg_query.A_Indices
-	158,  // 76: pg_query.Node.a_indirection:type_name -> pg_query.A_Indirection
-	159,  // 77: pg_query.Node.a_array_expr:type_name -> pg_query.A_ArrayExpr
-	160,  // 78: pg_query.Node.res_target:type_name -> pg_query.ResTarget
-	161,  // 79: pg_query.Node.multi_assign_ref:type_name -> pg_query.MultiAssignRef
-	162,  // 80: pg_query.Node.sort_by:type_name -> pg_query.SortBy
-	163,  // 81: pg_query.Node.window_def:type_name -> pg_query.WindowDef
-	164,  // 82: pg_query.Node.range_subselect:type_name -> pg_query.RangeSubselect
-	165,  // 83: pg_query.Node.range_function:type_name -> pg_query.RangeFunction
-	166,  // 84: pg_query.Node.range_table_func:type_name -> pg_query.RangeTableFunc
-	167,  // 85: pg_query.Node.range_table_func_col:type_name -> pg_query.RangeTableFuncCol
-	168,  // 86: pg_query.Node.range_table_sample:type_name -> pg_query.RangeTableSample
-	169,  // 87: pg_query.Node.column_def:type_name -> pg_query.ColumnDef
-	170,  // 88: pg_query.Node.table_like_clause:type_name -> pg_query.TableLikeClause
-	171,  // 89: pg_query.Node.index_elem:type_name -> pg_query.IndexElem
-	172,  // 90: pg_query.Node.def_elem:type_name -> pg_query.DefElem
-	173,  // 91: pg_query.Node.locking_clause:type_name -> pg_query.LockingClause
-	174,  // 92: pg_query.Node.xml_serialize:type_name -> pg_query.XmlSerialize
-	175,  // 93: pg_query.Node.partition_elem:type_name -> pg_query.PartitionElem
-	176,  // 94: pg_query.Node.partition_spec:type_name -> pg_query.PartitionSpec
-	177,  // 95: pg_query.Node.partition_bound_spec:type_name -> pg_query.PartitionBoundSpec
-	178,  // 96: pg_query.Node.partition_range_datum:type_name -> pg_query.PartitionRangeDatum
-	179,  // 97: pg_query.Node.single_partition_spec:type_name -> pg_query.SinglePartitionSpec
-	180,  // 98: pg_query.Node.partition_cmd:type_name -> pg_query.PartitionCmd
-	181,  // 99: pg_query.Node.range_tbl_entry:type_name -> pg_query.RangeTblEntry
-	182,  // 100: pg_query.Node.rtepermission_info:type_name -> pg_query.RTEPermissionInfo
-	183,  // 101: pg_query.Node.range_tbl_function:type_name -> pg_query.RangeTblFunction
-	184,  // 102: pg_query.Node.table_sample_clause:type_name -> pg_query.TableSampleClause
-	185,  // 103: pg_query.Node.with_check_option:type_name -> pg_query.WithCheckOption
-	186,  // 104: pg_query.Node.sort_group_clause:type_name -> pg_query.SortGroupClause
-	187,  // 105: pg_query.Node.grouping_set:type_name -> pg_query.GroupingSet
-	188,  // 106: pg_query.Node.window_clause:type_name -> pg_query.WindowClause
-	189,  // 107: pg_query.Node.row_mark_clause:type_name -> pg_query.RowMarkClause
-	190,  // 108: pg_query.Node.with_clause:type_name -> pg_query.WithClause
-	191,  // 109: pg_query.Node.infer_clause:type_name -> pg_query.InferClause
-	192,  // 110: pg_query.Node.on_conflict_clause:type_name -> pg_query.OnConflictClause
-	193,  // 111: pg_query.Node.ctesearch_clause:type_name -> pg_query.CTESearchClause
-	194,  // 112: pg_query.Node.ctecycle_clause:type_name -> pg_query.CTECycleClause
-	195,  // 113: pg_query.Node.common_table_expr:type_name -> pg_query.CommonTableExpr
-	196,  // 114: pg_query.Node.merge_when_clause:type_name -> pg_query.MergeWhenClause
-	197,  // 115: pg_query.Node.trigger_transition:type_name -> pg_query.TriggerTransition
-	198,  // 116: pg_query.Node.json_output:type_name -> pg_query.JsonOutput
-	199,  // 117: pg_query.Node.json_argument:type_name -> pg_query.JsonArgument
-	200,  // 118: pg_query.Node.json_func_expr:type_name -> pg_query.JsonFuncExpr
-	201,  // 119: pg_query.Node.json_table_path_spec:type_name -> pg_query.JsonTablePathSpec
-	202,  // 120: pg_query.Node.json_table:type_name -> pg_query.JsonTable
-	203,  // 121: pg_query.Node.json_table_column:type_name -> pg_query.JsonTableColumn
-	204,  // 122: pg_query.Node.json_key_value:type_name -> pg_query.JsonKeyValue
-	205,  // 123: pg_query.Node.json_parse_expr:type_name -> pg_query.JsonParseExpr
-	206,  // 124: pg_query.Node.json_scalar_expr:type_name -> pg_query.JsonScalarExpr
-	207,  // 125: pg_query.Node.json_serialize_expr:type_name -> pg_query.JsonSerializeExpr
-	208,  // 126: pg_query.Node.json_object_constructor:type_name -> pg_query.JsonObjectConstructor
-	209,  // 127: pg_query.Node.json_array_constructor:type_name -> pg_query.JsonArrayConstructor
-	210,  // 128: pg_query.Node.json_array_query_constructor:type_name -> pg_query.JsonArrayQueryConstructor
-	211,  // 129: pg_query.Node.json_agg_constructor:type_name -> pg_query.JsonAggConstructor
-	212,  // 130: pg_query.Node.json_object_agg:type_name -> pg_query.JsonObjectAgg
-	213,  // 131: pg_query.Node.json_array_agg:type_name -> pg_query.JsonArrayAgg
-	214,  // 132: pg_query.Node.raw_stmt:type_name -> pg_query.RawStmt
-	215,  // 133: pg_query.Node.insert_stmt:type_name -> pg_query.InsertStmt
-	216,  // 134: pg_query.Node.delete_stmt:type_name -> pg_query.DeleteStmt
-	217,  // 135: pg_query.Node.update_stmt:type_name -> pg_query.UpdateStmt
-	218,  // 136: pg_query.Node.merge_stmt:type_name -> pg_query.MergeStmt
-	219,  // 137: pg_query.Node.select_stmt:type_name -> pg_query.SelectStmt
-	220,  // 138: pg_query.Node.set_operation_stmt:type_name -> pg_query.SetOperationStmt
-	221,  // 139: pg_query.Node.return_stmt:type_name -> pg_query.ReturnStmt
-	222,  // 140: pg_query.Node.plassign_stmt:type_name -> pg_query.PLAssignStmt
-	223,  // 141: pg_query.Node.create_schema_stmt:type_name -> pg_query.CreateSchemaStmt
-	224,  // 142: pg_query.Node.alter_table_stmt:type_name -> pg_query.AlterTableStmt
-	225,  // 143: pg_query.Node.replica_identity_stmt:type_name -> pg_query.ReplicaIdentityStmt
-	226,  // 144: pg_query.Node.alter_table_cmd:type_name -> pg_query.AlterTableCmd
-	227,  // 145: pg_query.Node.alter_collation_stmt:type_name -> pg_query.AlterCollationStmt
-	228,  // 146: pg_query.Node.alter_domain_stmt:type_name -> pg_query.AlterDomainStmt
-	229,  // 147: pg_query.Node.grant_stmt:type_name -> pg_query.GrantStmt
-	230,  // 148: pg_query.Node.object_with_args:type_name -> pg_query.ObjectWithArgs
-	231,  // 149: pg_query.Node.access_priv:type_name -> pg_query.AccessPriv
-	232,  // 150: pg_query.Node.grant_role_stmt:type_name -> pg_query.GrantRoleStmt
-	233,  // 151: pg_query.Node.alter_default_privileges_stmt:type_name -> pg_query.AlterDefaultPrivilegesStmt
-	234,  // 152: pg_query.Node.copy_stmt:type_name -> pg_query.CopyStmt
-	235,  // 153: pg_query.Node.variable_set_stmt:type_name -> pg_query.VariableSetStmt
-	236,  // 154: pg_query.Node.variable_show_stmt:type_name -> pg_query.VariableShowStmt
-	237,  // 155: pg_query.Node.create_stmt:type_name -> pg_query.CreateStmt
-	238,  // 156: pg_query.Node.constraint:type_name -> pg_query.Constraint
-	239,  // 157: pg_query.Node.create_table_space_stmt:type_name -> pg_query.CreateTableSpaceStmt
-	240,  // 158: pg_query.Node.drop_table_space_stmt:type_name -> pg_query.DropTableSpaceStmt
-	241,  // 159: pg_query.Node.alter_table_space_options_stmt:type_name -> pg_query.AlterTableSpaceOptionsStmt
-	242,  // 160: pg_query.Node.alter_table_move_all_stmt:type_name -> pg_query.AlterTableMoveAllStmt
-	243,  // 161: pg_query.Node.create_extension_stmt:type_name -> pg_query.CreateExtensionStmt
-	244,  // 162: pg_query.Node.alter_extension_stmt:type_name -> pg_query.AlterExtensionStmt
-	245,  // 163: pg_query.Node.alter_extension_contents_stmt:type_name -> pg_query.AlterExtensionContentsStmt
-	246,  // 164: pg_query.Node.create_fdw_stmt:type_name -> pg_query.CreateFdwStmt
-	247,  // 165: pg_query.Node.alter_fdw_stmt:type_name -> pg_query.AlterFdwStmt
-	248,  // 166: pg_query.Node.create_foreign_server_stmt:type_name -> pg_query.CreateForeignServerStmt
-	249,  // 167: pg_query.Node.alter_foreign_server_stmt:type_name -> pg_query.AlterForeignServerStmt
-	250,  // 168: pg_query.Node.create_foreign_table_stmt:type_name -> pg_query.CreateForeignTableStmt
-	251,  // 169: pg_query.Node.create_user_mapping_stmt:type_name -> pg_query.CreateUserMappingStmt
-	252,  // 170: pg_query.Node.alter_user_mapping_stmt:type_name -> pg_query.AlterUserMappingStmt
-	253,  // 171: pg_query.Node.drop_user_mapping_stmt:type_name -> pg_query.DropUserMappingStmt
-	254,  // 172: pg_query.Node.import_foreign_schema_stmt:type_name -> pg_query.ImportForeignSchemaStmt
-	255,  // 173: pg_query.Node.create_policy_stmt:type_name -> pg_query.CreatePolicyStmt
-	256,  // 174: pg_query.Node.alter_policy_stmt:type_name -> pg_query.AlterPolicyStmt
-	257,  // 175: pg_query.Node.create_am_stmt:type_name -> pg_query.CreateAmStmt
-	258,  // 176: pg_query.Node.create_trig_stmt:type_name -> pg_query.CreateTrigStmt
-	259,  // 177: pg_query.Node.create_event_trig_stmt:type_name -> pg_query.CreateEventTrigStmt
-	260,  // 178: pg_query.Node.alter_event_trig_stmt:type_name -> pg_query.AlterEventTrigStmt
-	261,  // 179: pg_query.Node.create_plang_stmt:type_name -> pg_query.CreatePLangStmt
-	262,  // 180: pg_query.Node.create_role_stmt:type_name -> pg_query.CreateRoleStmt
-	263,  // 181: pg_query.Node.alter_role_stmt:type_name -> pg_query.AlterRoleStmt
-	264,  // 182: pg_query.Node.alter_role_set_stmt:type_name -> pg_query.AlterRoleSetStmt
-	265,  // 183: pg_query.Node.drop_role_stmt:type_name -> pg_query.DropRoleStmt
-	266,  // 184: pg_query.Node.create_seq_stmt:type_name -> pg_query.CreateSeqStmt
-	267,  // 185: pg_query.Node.alter_seq_stmt:type_name -> pg_query.AlterSeqStmt
-	268,  // 186: pg_query.Node.define_stmt:type_name -> pg_query.DefineStmt
-	269,  // 187: pg_query.Node.create_domain_stmt:type_name -> pg_query.CreateDomainStmt
-	270,  // 188: pg_query.Node.create_op_class_stmt:type_name -> pg_query.CreateOpClassStmt
-	271,  // 189: pg_query.Node.create_op_class_item:type_name -> pg_query.CreateOpClassItem
-	272,  // 190: pg_query.Node.create_op_family_stmt:type_name -> pg_query.CreateOpFamilyStmt
-	273,  // 191: pg_query.Node.alter_op_family_stmt:type_name -> pg_query.AlterOpFamilyStmt
-	274,  // 192: pg_query.Node.drop_stmt:type_name -> pg_query.DropStmt
-	275,  // 193: pg_query.Node.truncate_stmt:type_name -> pg_query.TruncateStmt
-	276,  // 194: pg_query.Node.comment_stmt:type_name -> pg_query.CommentStmt
-	277,  // 195: pg_query.Node.sec_label_stmt:type_name -> pg_query.SecLabelStmt
-	278,  // 196: pg_query.Node.declare_cursor_stmt:type_name -> pg_query.DeclareCursorStmt
-	279,  // 197: pg_query.Node.close_portal_stmt:type_name -> pg_query.ClosePortalStmt
-	280,  // 198: pg_query.Node.fetch_stmt:type_name -> pg_query.FetchStmt
-	281,  // 199: pg_query.Node.index_stmt:type_name -> pg_query.IndexStmt
-	282,  // 200: pg_query.Node.create_stats_stmt:type_name -> pg_query.CreateStatsStmt
-	283,  // 201: pg_query.Node.stats_elem:type_name -> pg_query.StatsElem
-	284,  // 202: pg_query.Node.alter_stats_stmt:type_name -> pg_query.AlterStatsStmt
-	285,  // 203: pg_query.Node.create_function_stmt:type_name -> pg_query.CreateFunctionStmt
-	286,  // 204: pg_query.Node.function_parameter:type_name -> pg_query.FunctionParameter
-	287,  // 205: pg_query.Node.alter_function_stmt:type_name -> pg_query.AlterFunctionStmt
-	288,  // 206: pg_query.Node.do_stmt:type_name -> pg_query.DoStmt
-	289,  // 207: pg_query.Node.inline_code_block:type_name -> pg_query.InlineCodeBlock
-	290,  // 208: pg_query.Node.call_stmt:type_name -> pg_query.CallStmt
-	291,  // 209: pg_query.Node.call_context:type_name -> pg_query.CallContext
-	292,  // 210: pg_query.Node.rename_stmt:type_name -> pg_query.RenameStmt
-	293,  // 211: pg_query.Node.alter_object_depends_stmt:type_name -> pg_query.AlterObjectDependsStmt
-	294,  // 212: pg_query.Node.alter_object_schema_stmt:type_name -> pg_query.AlterObjectSchemaStmt
-	295,  // 213: pg_query.Node.alter_owner_stmt:type_name -> pg_query.AlterOwnerStmt
-	296,  // 214: pg_query.Node.alter_operator_stmt:type_name -> pg_query.AlterOperatorStmt
-	297,  // 215: pg_query.Node.alter_type_stmt:type_name -> pg_query.AlterTypeStmt
-	298,  // 216: pg_query.Node.rule_stmt:type_name -> pg_query.RuleStmt
-	299,  // 217: pg_query.Node.notify_stmt:type_name -> pg_query.NotifyStmt
-	300,  // 218: pg_query.Node.listen_stmt:type_name -> pg_query.ListenStmt
-	301,  // 219: pg_query.Node.unlisten_stmt:type_name -> pg_query.UnlistenStmt
-	302,  // 220: pg_query.Node.transaction_stmt:type_name -> pg_query.TransactionStmt
-	303,  // 221: pg_query.Node.composite_type_stmt:type_name -> pg_query.CompositeTypeStmt
-	304,  // 222: pg_query.Node.create_enum_stmt:type_name -> pg_query.CreateEnumStmt
-	305,  // 223: pg_query.Node.create_range_stmt:type_name -> pg_query.CreateRangeStmt
-	306,  // 224: pg_query.Node.alter_enum_stmt:type_name -> pg_query.AlterEnumStmt
-	307,  // 225: pg_query.Node.view_stmt:type_name -> pg_query.ViewStmt
-	308,  // 226: pg_query.Node.load_stmt:type_name -> pg_query.LoadStmt
-	309,  // 227: pg_query.Node.createdb_stmt:type_name -> pg_query.CreatedbStmt
-	310,  // 228: pg_query.Node.alter_database_stmt:type_name -> pg_query.AlterDatabaseStmt
-	311,  // 229: pg_query.Node.alter_database_refresh_coll_stmt:type_name -> pg_query.AlterDatabaseRefreshCollStmt
-	312,  // 230: pg_query.Node.alter_database_set_stmt:type_name -> pg_query.AlterDatabaseSetStmt
-	313,  // 231: pg_query.Node.dropdb_stmt:type_name -> pg_query.DropdbStmt
-	314,  // 232: pg_query.Node.alter_system_stmt:type_name -> pg_query.AlterSystemStmt
-	315,  // 233: pg_query.Node.cluster_stmt:type_name -> pg_query.ClusterStmt
-	316,  // 234: pg_query.Node.vacuum_stmt:type_name -> pg_query.VacuumStmt
-	317,  // 235: pg_query.Node.vacuum_relation:type_name -> pg_query.VacuumRelation
-	318,  // 236: pg_query.Node.explain_stmt:type_name -> pg_query.ExplainStmt
-	319,  // 237: pg_query.Node.create_table_as_stmt:type_name -> pg_query.CreateTableAsStmt
-	320,  // 238: pg_query.Node.refresh_mat_view_stmt:type_name -> pg_query.RefreshMatViewStmt
-	321,  // 239: pg_query.Node.check_point_stmt:type_name -> pg_query.CheckPointStmt
-	322,  // 240: pg_query.Node.discard_stmt:type_name -> pg_query.DiscardStmt
-	323,  // 241: pg_query.Node.lock_stmt:type_name -> pg_query.LockStmt
-	324,  // 242: pg_query.Node.constraints_set_stmt:type_name -> pg_query.ConstraintsSetStmt
-	325,  // 243: pg_query.Node.reindex_stmt:type_name -> pg_query.ReindexStmt
-	326,  // 244: pg_query.Node.create_conversion_stmt:type_name -> pg_query.CreateConversionStmt
-	327,  // 245: pg_query.Node.create_cast_stmt:type_name -> pg_query.CreateCastStmt
-	328,  // 246: pg_query.Node.create_transform_stmt:type_name -> pg_query.CreateTransformStmt
-	329,  // 247: pg_query.Node.prepare_stmt:type_name -> pg_query.PrepareStmt
-	330,  // 248: pg_query.Node.execute_stmt:type_name -> pg_query.ExecuteStmt
-	331,  // 249: pg_query.Node.deallocate_stmt:type_name -> pg_query.DeallocateStmt
-	332,  // 250: pg_query.Node.drop_owned_stmt:type_name -> pg_query.DropOwnedStmt
-	333,  // 251: pg_query.Node.reassign_owned_stmt:type_name -> pg_query.ReassignOwnedStmt
-	334,  // 252: pg_query.Node.alter_tsdictionary_stmt:type_name -> pg_query.AlterTSDictionaryStmt
-	335,  // 253: pg_query.Node.alter_tsconfiguration_stmt:type_name -> pg_query.AlterTSConfigurationStmt
-	336,  // 254: pg_query.Node.publication_table:type_name -> pg_query.PublicationTable
-	337,  // 255: pg_query.Node.publication_obj_spec:type_name -> pg_query.PublicationObjSpec
-	338,  // 256: pg_query.Node.create_publication_stmt:type_name -> pg_query.CreatePublicationStmt
-	339,  // 257: pg_query.Node.alter_publication_stmt:type_name -> pg_query.AlterPublicationStmt
-	340,  // 258: pg_query.Node.create_subscription_stmt:type_name -> pg_query.CreateSubscriptionStmt
-	341,  // 259: pg_query.Node.alter_subscription_stmt:type_name -> pg_query.AlterSubscriptionStmt
-	342,  // 260: pg_query.Node.drop_subscription_stmt:type_name -> pg_query.DropSubscriptionStmt
-	75,   // 261: pg_query.Node.integer:type_name -> pg_query.Integer
-	76,   // 262: pg_query.Node.float:type_name -> pg_query.Float
-	77,   // 263: pg_query.Node.boolean:type_name -> pg_query.Boolean
-	78,   // 264: pg_query.Node.string:type_name -> pg_query.String
-	79,   // 265: pg_query.Node.bit_string:type_name -> pg_query.BitString
-	80,   // 266: pg_query.Node.list:type_name -> pg_query.List
-	82,   // 267: pg_query.Node.int_list:type_name -> pg_query.IntList
-	81,   // 268: pg_query.Node.oid_list:type_name -> pg_query.OidList
-	83,   // 269: pg_query.Node.a_const:type_name -> pg_query.A_Const
-	74,   // 270: pg_query.List.items:type_name -> pg_query.Node
-	74,   // 271: pg_query.OidList.items:type_name -> pg_query.Node
-	74,   // 272: pg_query.IntList.items:type_name -> pg_query.Node
-	75,   // 273: pg_query.A_Const.ival:type_name -> pg_query.Integer
-	76,   // 274: pg_query.A_Const.fval:type_name -> pg_query.Float
-	77,   // 275: pg_query.A_Const.boolval:type_name -> pg_query.Boolean
-	78,   // 276: pg_query.A_Const.sval:type_name -> pg_query.String
-	79,   // 277: pg_query.A_Const.bsval:type_name -> pg_query.BitString
-	74,   // 278: pg_query.Alias.colnames:type_name -> pg_query.Node
-	84,   // 279: pg_query.RangeVar.alias:type_name -> pg_query.Alias
-	37,   // 280: pg_query.TableFunc.functype:type_name -> pg_query.TableFuncType
-	74,   // 281: pg_query.TableFunc.ns_uris:type_name -> pg_query.Node
-	74,   // 282: pg_query.TableFunc.ns_names:type_name -> pg_query.Node
-	74,   // 283: pg_query.TableFunc.docexpr:type_name -> pg_query.Node
-	74,   // 284: pg_query.TableFunc.rowexpr:type_name -> pg_query.Node
-	74,   // 285: pg_query.TableFunc.colnames:type_name -> pg_query.Node
-	74,   // 286: pg_query.TableFunc.coltypes:type_name -> pg_query.Node
-	74,   // 287: pg_query.TableFunc.coltypmods:type_name -> pg_query.Node
-	74,   // 288: pg_query.TableFunc.colcollations:type_name -> pg_query.Node
-	74,   // 289: pg_query.TableFunc.colexprs:type_name -> pg_query.Node
-	74,   // 290: pg_query.TableFunc.coldefexprs:type_name -> pg_query.Node
-	74,   // 291: pg_query.TableFunc.colvalexprs:type_name -> pg_query.Node
-	74,   // 292: pg_query.TableFunc.passingvalexprs:type_name -> pg_query.Node
-	74,   // 293: pg_query.TableFunc.plan:type_name -> pg_query.Node
-	85,   // 294: pg_query.IntoClause.rel:type_name -> pg_query.RangeVar
-	74,   // 295: pg_query.IntoClause.col_names:type_name -> pg_query.Node
-	74,   // 296: pg_query.IntoClause.options:type_name -> pg_query.Node
-	36,   // 297: pg_query.IntoClause.on_commit:type_name -> pg_query.OnCommitAction
-	74,   // 298: pg_query.IntoClause.view_query:type_name -> pg_query.Node
-	74,   // 299: pg_query.Var.xpr:type_name -> pg_query.Node
-	74,   // 300: pg_query.Param.xpr:type_name -> pg_query.Node
-	38,   // 301: pg_query.Param.paramkind:type_name -> pg_query.ParamKind
-	74,   // 302: pg_query.Aggref.xpr:type_name -> pg_query.Node
-	74,   // 303: pg_query.Aggref.aggargtypes:type_name -> pg_query.Node
-	74,   // 304: pg_query.Aggref.aggdirectargs:type_name -> pg_query.Node
-	74,   // 305: pg_query.Aggref.args:type_name -> pg_query.Node
-	74,   // 306: pg_query.Aggref.aggorder:type_name -> pg_query.Node
-	74,   // 307: pg_query.Aggref.aggdistinct:type_name -> pg_query.Node
-	74,   // 308: pg_query.Aggref.aggfilter:type_name -> pg_query.Node
-	61,   // 309: pg_query.Aggref.aggsplit:type_name -> pg_query.AggSplit
-	74,   // 310: pg_query.GroupingFunc.xpr:type_name -> pg_query.Node
-	74,   // 311: pg_query.GroupingFunc.args:type_name -> pg_query.Node
-	74,   // 312: pg_query.GroupingFunc.refs:type_name -> pg_query.Node
-	74,   // 313: pg_query.WindowFunc.xpr:type_name -> pg_query.Node
-	74,   // 314: pg_query.WindowFunc.args:type_name -> pg_query.Node
-	74,   // 315: pg_query.WindowFunc.aggfilter:type_name -> pg_query.Node
-	74,   // 316: pg_query.WindowFunc.run_condition:type_name -> pg_query.Node
-	74,   // 317: pg_query.WindowFuncRunCondition.xpr:type_name -> pg_query.Node
-	74,   // 318: pg_query.WindowFuncRunCondition.arg:type_name -> pg_query.Node
-	74,   // 319: pg_query.MergeSupportFunc.xpr:type_name -> pg_query.Node
-	74,   // 320: pg_query.SubscriptingRef.xpr:type_name -> pg_query.Node
-	74,   // 321: pg_query.SubscriptingRef.refupperindexpr:type_name -> pg_query.Node
-	74,   // 322: pg_query.SubscriptingRef.reflowerindexpr:type_name -> pg_query.Node
-	74,   // 323: pg_query.SubscriptingRef.refexpr:type_name -> pg_query.Node
-	74,   // 324: pg_query.SubscriptingRef.refassgnexpr:type_name -> pg_query.Node
-	74,   // 325: pg_query.FuncExpr.xpr:type_name -> pg_query.Node
-	40,   // 326: pg_query.FuncExpr.funcformat:type_name -> pg_query.CoercionForm
-	74,   // 327: pg_query.FuncExpr.args:type_name -> pg_query.Node
-	74,   // 328: pg_query.NamedArgExpr.xpr:type_name -> pg_query.Node
-	74,   // 329: pg_query.NamedArgExpr.arg:type_name -> pg_query.Node
-	74,   // 330: pg_query.OpExpr.xpr:type_name -> pg_query.Node
-	74,   // 331: pg_query.OpExpr.args:type_name -> pg_query.Node
-	74,   // 332: pg_query.DistinctExpr.xpr:type_name -> pg_query.Node
-	74,   // 333: pg_query.DistinctExpr.args:type_name -> pg_query.Node
-	74,   // 334: pg_query.NullIfExpr.xpr:type_name -> pg_query.Node
-	74,   // 335: pg_query.NullIfExpr.args:type_name -> pg_query.Node
-	74,   // 336: pg_query.ScalarArrayOpExpr.xpr:type_name -> pg_query.Node
-	74,   // 337: pg_query.ScalarArrayOpExpr.args:type_name -> pg_query.Node
-	74,   // 338: pg_query.BoolExpr.xpr:type_name -> pg_query.Node
-	41,   // 339: pg_query.BoolExpr.boolop:type_name -> pg_query.BoolExprType
-	74,   // 340: pg_query.BoolExpr.args:type_name -> pg_query.Node
-	74,   // 341: pg_query.SubLink.xpr:type_name -> pg_query.Node
-	42,   // 342: pg_query.SubLink.sub_link_type:type_name -> pg_query.SubLinkType
-	74,   // 343: pg_query.SubLink.testexpr:type_name -> pg_query.Node
-	74,   // 344: pg_query.SubLink.oper_name:type_name -> pg_query.Node
-	74,   // 345: pg_query.SubLink.subselect:type_name -> pg_query.Node
-	74,   // 346: pg_query.SubPlan.xpr:type_name -> pg_query.Node
-	42,   // 347: pg_query.SubPlan.sub_link_type:type_name -> pg_query.SubLinkType
-	74,   // 348: pg_query.SubPlan.testexpr:type_name -> pg_query.Node
-	74,   // 349: pg_query.SubPlan.param_ids:type_name -> pg_query.Node
-	74,   // 350: pg_query.SubPlan.set_param:type_name -> pg_query.Node
-	74,   // 351: pg_query.SubPlan.par_param:type_name -> pg_query.Node
-	74,   // 352: pg_query.SubPlan.args:type_name -> pg_query.Node
-	74,   // 353: pg_query.AlternativeSubPlan.xpr:type_name -> pg_query.Node
-	74,   // 354: pg_query.AlternativeSubPlan.subplans:type_name -> pg_query.Node
-	74,   // 355: pg_query.FieldSelect.xpr:type_name -> pg_query.Node
-	74,   // 356: pg_query.FieldSelect.arg:type_name -> pg_query.Node
-	74,   // 357: pg_query.FieldStore.xpr:type_name -> pg_query.Node
-	74,   // 358: pg_query.FieldStore.arg:type_name -> pg_query.Node
-	74,   // 359: pg_query.FieldStore.newvals:type_name -> pg_query.Node
-	74,   // 360: pg_query.FieldStore.fieldnums:type_name -> pg_query.Node
-	74,   // 361: pg_query.RelabelType.xpr:type_name -> pg_query.Node
-	74,   // 362: pg_query.RelabelType.arg:type_name -> pg_query.Node
-	40,   // 363: pg_query.RelabelType.relabelformat:type_name -> pg_query.CoercionForm
-	74,   // 364: pg_query.CoerceViaIO.xpr:type_name -> pg_query.Node
-	74,   // 365: pg_query.CoerceViaIO.arg:type_name -> pg_query.Node
-	40,   // 366: pg_query.CoerceViaIO.coerceformat:type_name -> pg_query.CoercionForm
-	74,   // 367: pg_query.ArrayCoerceExpr.xpr:type_name -> pg_query.Node
-	74,   // 368: pg_query.ArrayCoerceExpr.arg:type_name -> pg_query.Node
-	74,   // 369: pg_query.ArrayCoerceExpr.elemexpr:type_name -> pg_query.Node
-	40,   // 370: pg_query.ArrayCoerceExpr.coerceformat:type_name -> pg_query.CoercionForm
-	74,   // 371: pg_query.ConvertRowtypeExpr.xpr:type_name -> pg_query.Node
-	74,   // 372: pg_query.ConvertRowtypeExpr.arg:type_name -> pg_query.Node
-	40,   // 373: pg_query.ConvertRowtypeExpr.convertformat:type_name -> pg_query.CoercionForm
-	74,   // 374: pg_query.CollateExpr.xpr:type_name -> pg_query.Node
-	74,   // 375: pg_query.CollateExpr.arg:type_name -> pg_query.Node
-	74,   // 376: pg_query.CaseExpr.xpr:type_name -> pg_query.Node
-	74,   // 377: pg_query.CaseExpr.arg:type_name -> pg_query.Node
-	74,   // 378: pg_query.CaseExpr.args:type_name -> pg_query.Node
-	74,   // 379: pg_query.CaseExpr.defresult:type_name -> pg_query.Node
-	74,   // 380: pg_query.CaseWhen.xpr:type_name -> pg_query.Node
-	74,   // 381: pg_query.CaseWhen.expr:type_name -> pg_query.Node
-	74,   // 382: pg_query.CaseWhen.result:type_name -> pg_query.Node
-	74,   // 383: pg_query.CaseTestExpr.xpr:type_name -> pg_query.Node
-	74,   // 384: pg_query.ArrayExpr.xpr:type_name -> pg_query.Node
-	74,   // 385: pg_query.ArrayExpr.elements:type_name -> pg_query.Node
-	74,   // 386: pg_query.RowExpr.xpr:type_name -> pg_query.Node
-	74,   // 387: pg_query.RowExpr.args:type_name -> pg_query.Node
-	40,   // 388: pg_query.RowExpr.row_format:type_name -> pg_query.CoercionForm
-	74,   // 389: pg_query.RowExpr.colnames:type_name -> pg_query.Node
-	74,   // 390: pg_query.RowCompareExpr.xpr:type_name -> pg_query.Node
-	43,   // 391: pg_query.RowCompareExpr.rctype:type_name -> pg_query.RowCompareType
-	74,   // 392: pg_query.RowCompareExpr.opnos:type_name -> pg_query.Node
-	74,   // 393: pg_query.RowCompareExpr.opfamilies:type_name -> pg_query.Node
-	74,   // 394: pg_query.RowCompareExpr.inputcollids:type_name -> pg_query.Node
-	74,   // 395: pg_query.RowCompareExpr.largs:type_name -> pg_query.Node
-	74,   // 396: pg_query.RowCompareExpr.rargs:type_name -> pg_query.Node
-	74,   // 397: pg_query.CoalesceExpr.xpr:type_name -> pg_query.Node
-	74,   // 398: pg_query.CoalesceExpr.args:type_name -> pg_query.Node
-	74,   // 399: pg_query.MinMaxExpr.xpr:type_name -> pg_query.Node
-	44,   // 400: pg_query.MinMaxExpr.op:type_name -> pg_query.MinMaxOp
-	74,   // 401: pg_query.MinMaxExpr.args:type_name -> pg_query.Node
-	74,   // 402: pg_query.SQLValueFunction.xpr:type_name -> pg_query.Node
-	45,   // 403: pg_query.SQLValueFunction.op:type_name -> pg_query.SQLValueFunctionOp
-	74,   // 404: pg_query.XmlExpr.xpr:type_name -> pg_query.Node
-	46,   // 405: pg_query.XmlExpr.op:type_name -> pg_query.XmlExprOp
-	74,   // 406: pg_query.XmlExpr.named_args:type_name -> pg_query.Node
-	74,   // 407: pg_query.XmlExpr.arg_names:type_name -> pg_query.Node
-	74,   // 408: pg_query.XmlExpr.args:type_name -> pg_query.Node
-	47,   // 409: pg_query.XmlExpr.xmloption:type_name -> pg_query.XmlOptionType
-	49,   // 410: pg_query.JsonFormat.format_type:type_name -> pg_query.JsonFormatType
-	48,   // 411: pg_query.JsonFormat.encoding:type_name -> pg_query.JsonEncoding
-	123,  // 412: pg_query.JsonReturning.format:type_name -> pg_query.JsonFormat
-	74,   // 413: pg_query.JsonValueExpr.raw_expr:type_name -> pg_query.Node
-	74,   // 414: pg_query.JsonValueExpr.formatted_expr:type_name -> pg_query.Node
-	123,  // 415: pg_query.JsonValueExpr.format:type_name -> pg_query.JsonFormat
-	74,   // 416: pg_query.JsonConstructorExpr.xpr:type_name -> pg_query.Node
-	50,   // 417: pg_query.JsonConstructorExpr.type:type_name -> pg_query.JsonConstructorType
-	74,   // 418: pg_query.JsonConstructorExpr.args:type_name -> pg_query.Node
-	74,   // 419: pg_query.JsonConstructorExpr.func:type_name -> pg_query.Node
-	74,   // 420: pg_query.JsonConstructorExpr.coercion:type_name -> pg_query.Node
-	124,  // 421: pg_query.JsonConstructorExpr.returning:type_name -> pg_query.JsonReturning
-	74,   // 422: pg_query.JsonIsPredicate.expr:type_name -> pg_query.Node
-	123,  // 423: pg_query.JsonIsPredicate.format:type_name -> pg_query.JsonFormat
-	51,   // 424: pg_query.JsonIsPredicate.item_type:type_name -> pg_query.JsonValueType
-	53,   // 425: pg_query.JsonBehavior.btype:type_name -> pg_query.JsonBehaviorType
-	74,   // 426: pg_query.JsonBehavior.expr:type_name -> pg_query.Node
-	74,   // 427: pg_query.JsonExpr.xpr:type_name -> pg_query.Node
-	54,   // 428: pg_query.JsonExpr.op:type_name -> pg_query.JsonExprOp
-	74,   // 429: pg_query.JsonExpr.formatted_expr:type_name -> pg_query.Node
-	123,  // 430: pg_query.JsonExpr.format:type_name -> pg_query.JsonFormat
-	74,   // 431: pg_query.JsonExpr.path_spec:type_name -> pg_query.Node
-	124,  // 432: pg_query.JsonExpr.returning:type_name -> pg_query.JsonReturning
-	74,   // 433: pg_query.JsonExpr.passing_names:type_name -> pg_query.Node
-	74,   // 434: pg_query.JsonExpr.passing_values:type_name -> pg_query.Node
-	128,  // 435: pg_query.JsonExpr.on_empty:type_name -> pg_query.JsonBehavior
-	128,  // 436: pg_query.JsonExpr.on_error:type_name -> pg_query.JsonBehavior
-	52,   // 437: pg_query.JsonExpr.wrapper:type_name -> pg_query.JsonWrapper
-	74,   // 438: pg_query.JsonTablePathScan.plan:type_name -> pg_query.Node
-	130,  // 439: pg_query.JsonTablePathScan.path:type_name -> pg_query.JsonTablePath
-	74,   // 440: pg_query.JsonTablePathScan.child:type_name -> pg_query.Node
-	74,   // 441: pg_query.JsonTableSiblingJoin.plan:type_name -> pg_query.Node
-	74,   // 442: pg_query.JsonTableSiblingJoin.lplan:type_name -> pg_query.Node
-	74,   // 443: pg_query.JsonTableSiblingJoin.rplan:type_name -> pg_query.Node
-	74,   // 444: pg_query.NullTest.xpr:type_name -> pg_query.Node
-	74,   // 445: pg_query.NullTest.arg:type_name -> pg_query.Node
-	55,   // 446: pg_query.NullTest.nulltesttype:type_name -> pg_query.NullTestType
-	74,   // 447: pg_query.BooleanTest.xpr:type_name -> pg_query.Node
-	74,   // 448: pg_query.BooleanTest.arg:type_name -> pg_query.Node
-	56,   // 449: pg_query.BooleanTest.booltesttype:type_name -> pg_query.BoolTestType
-	57,   // 450: pg_query.MergeAction.match_kind:type_name -> pg_query.MergeMatchKind
-	58,   // 451: pg_query.MergeAction.command_type:type_name -> pg_query.CmdType
-	35,   // 452: pg_query.MergeAction.override:type_name -> pg_query.OverridingKind
-	74,   // 453: pg_query.MergeAction.qual:type_name -> pg_query.Node
-	74,   // 454: pg_query.MergeAction.target_list:type_name -> pg_query.Node
-	74,   // 455: pg_query.MergeAction.update_colnos:type_name -> pg_query.Node
-	74,   // 456: pg_query.CoerceToDomain.xpr:type_name -> pg_query.Node
-	74,   // 457: pg_query.CoerceToDomain.arg:type_name -> pg_query.Node
-	40,   // 458: pg_query.CoerceToDomain.coercionformat:type_name -> pg_query.CoercionForm
-	74,   // 459: pg_query.CoerceToDomainValue.xpr:type_name -> pg_query.Node
-	74,   // 460: pg_query.SetToDefault.xpr:type_name -> pg_query.Node
-	74,   // 461: pg_query.CurrentOfExpr.xpr:type_name -> pg_query.Node
-	74,   // 462: pg_query.NextValueExpr.xpr:type_name -> pg_query.Node
-	74,   // 463: pg_query.InferenceElem.xpr:type_name -> pg_query.Node
-	74,   // 464: pg_query.InferenceElem.expr:type_name -> pg_query.Node
-	74,   // 465: pg_query.TargetEntry.xpr:type_name -> pg_query.Node
-	74,   // 466: pg_query.TargetEntry.expr:type_name -> pg_query.Node
-	59,   // 467: pg_query.JoinExpr.jointype:type_name -> pg_query.JoinType
-	74,   // 468: pg_query.JoinExpr.larg:type_name -> pg_query.Node
-	74,   // 469: pg_query.JoinExpr.rarg:type_name -> pg_query.Node
-	74,   // 470: pg_query.JoinExpr.using_clause:type_name -> pg_query.Node
-	84,   // 471: pg_query.JoinExpr.join_using_alias:type_name -> pg_query.Alias
-	74,   // 472: pg_query.JoinExpr.quals:type_name -> pg_query.Node
-	84,   // 473: pg_query.JoinExpr.alias:type_name -> pg_query.Alias
-	74,   // 474: pg_query.FromExpr.fromlist:type_name -> pg_query.Node
-	74,   // 475: pg_query.FromExpr.quals:type_name -> pg_query.Node
-	64,   // 476: pg_query.OnConflictExpr.action:type_name -> pg_query.OnConflictAction
-	74,   // 477: pg_query.OnConflictExpr.arbiter_elems:type_name -> pg_query.Node
-	74,   // 478: pg_query.OnConflictExpr.arbiter_where:type_name -> pg_query.Node
-	74,   // 479: pg_query.OnConflictExpr.on_conflict_set:type_name -> pg_query.Node
-	74,   // 480: pg_query.OnConflictExpr.on_conflict_where:type_name -> pg_query.Node
-	74,   // 481: pg_query.OnConflictExpr.excl_rel_tlist:type_name -> pg_query.Node
-	58,   // 482: pg_query.Query.command_type:type_name -> pg_query.CmdType
-	0,    // 483: pg_query.Query.query_source:type_name -> pg_query.QuerySource
-	74,   // 484: pg_query.Query.utility_stmt:type_name -> pg_query.Node
-	74,   // 485: pg_query.Query.cte_list:type_name -> pg_query.Node
-	74,   // 486: pg_query.Query.rtable:type_name -> pg_query.Node
-	74,   // 487: pg_query.Query.rteperminfos:type_name -> pg_query.Node
-	145,  // 488: pg_query.Query.jointree:type_name -> pg_query.FromExpr
-	74,   // 489: pg_query.Query.merge_action_list:type_name -> pg_query.Node
-	74,   // 490: pg_query.Query.merge_join_condition:type_name -> pg_query.Node
-	74,   // 491: pg_query.Query.target_list:type_name -> pg_query.Node
-	35,   // 492: pg_query.Query.override:type_name -> pg_query.OverridingKind
-	146,  // 493: pg_query.Query.on_conflict:type_name -> pg_query.OnConflictExpr
-	74,   // 494: pg_query.Query.returning_list:type_name -> pg_query.Node
-	74,   // 495: pg_query.Query.group_clause:type_name -> pg_query.Node
-	74,   // 496: pg_query.Query.grouping_sets:type_name -> pg_query.Node
-	74,   // 497: pg_query.Query.having_qual:type_name -> pg_query.Node
-	74,   // 498: pg_query.Query.window_clause:type_name -> pg_query.Node
-	74,   // 499: pg_query.Query.distinct_clause:type_name -> pg_query.Node
-	74,   // 500: pg_query.Query.sort_clause:type_name -> pg_query.Node
-	74,   // 501: pg_query.Query.limit_offset:type_name -> pg_query.Node
-	74,   // 502: pg_query.Query.limit_count:type_name -> pg_query.Node
-	65,   // 503: pg_query.Query.limit_option:type_name -> pg_query.LimitOption
-	74,   // 504: pg_query.Query.row_marks:type_name -> pg_query.Node
-	74,   // 505: pg_query.Query.set_operations:type_name -> pg_query.Node
-	74,   // 506: pg_query.Query.constraint_deps:type_name -> pg_query.Node
-	74,   // 507: pg_query.Query.with_check_options:type_name -> pg_query.Node
-	74,   // 508: pg_query.TypeName.names:type_name -> pg_query.Node
-	74,   // 509: pg_query.TypeName.typmods:type_name -> pg_query.Node
-	74,   // 510: pg_query.TypeName.array_bounds:type_name -> pg_query.Node
-	74,   // 511: pg_query.ColumnRef.fields:type_name -> pg_query.Node
-	4,    // 512: pg_query.A_Expr.kind:type_name -> pg_query.A_Expr_Kind
-	74,   // 513: pg_query.A_Expr.name:type_name -> pg_query.Node
-	74,   // 514: pg_query.A_Expr.lexpr:type_name -> pg_query.Node
-	74,   // 515: pg_query.A_Expr.rexpr:type_name -> pg_query.Node
-	74,   // 516: pg_query.TypeCast.arg:type_name -> pg_query.Node
-	148,  // 517: pg_query.TypeCast.type_name:type_name -> pg_query.TypeName
-	74,   // 518: pg_query.CollateClause.arg:type_name -> pg_query.Node
-	74,   // 519: pg_query.CollateClause.collname:type_name -> pg_query.Node
-	5,    // 520: pg_query.RoleSpec.roletype:type_name -> pg_query.RoleSpecType
-	74,   // 521: pg_query.FuncCall.funcname:type_name -> pg_query.Node
-	74,   // 522: pg_query.FuncCall.args:type_name -> pg_query.Node
-	74,   // 523: pg_query.FuncCall.agg_order:type_name -> pg_query.Node
-	74,   // 524: pg_query.FuncCall.agg_filter:type_name -> pg_query.Node
-	163,  // 525: pg_query.FuncCall.over:type_name -> pg_query.WindowDef
-	40,   // 526: pg_query.FuncCall.funcformat:type_name -> pg_query.CoercionForm
-	74,   // 527: pg_query.A_Indices.lidx:type_name -> pg_query.Node
-	74,   // 528: pg_query.A_Indices.uidx:type_name -> pg_query.Node
-	74,   // 529: pg_query.A_Indirection.arg:type_name -> pg_query.Node
-	74,   // 530: pg_query.A_Indirection.indirection:type_name -> pg_query.Node
-	74,   // 531: pg_query.A_ArrayExpr.elements:type_name -> pg_query.Node
-	74,   // 532: pg_query.ResTarget.indirection:type_name -> pg_query.Node
-	74,   // 533: pg_query.ResTarget.val:type_name -> pg_query.Node
-	74,   // 534: pg_query.MultiAssignRef.source:type_name -> pg_query.Node
-	74,   // 535: pg_query.SortBy.node:type_name -> pg_query.Node
-	1,    // 536: pg_query.SortBy.sortby_dir:type_name -> pg_query.SortByDir
-	2,    // 537: pg_query.SortBy.sortby_nulls:type_name -> pg_query.SortByNulls
-	74,   // 538: pg_query.SortBy.use_op:type_name -> pg_query.Node
-	74,   // 539: pg_query.WindowDef.partition_clause:type_name -> pg_query.Node
-	74,   // 540: pg_query.WindowDef.order_clause:type_name -> pg_query.Node
-	74,   // 541: pg_query.WindowDef.start_offset:type_name -> pg_query.Node
-	74,   // 542: pg_query.WindowDef.end_offset:type_name -> pg_query.Node
-	74,   // 543: pg_query.RangeSubselect.subquery:type_name -> pg_query.Node
-	84,   // 544: pg_query.RangeSubselect.alias:type_name -> pg_query.Alias
-	74,   // 545: pg_query.RangeFunction.functions:type_name -> pg_query.Node
-	84,   // 546: pg_query.RangeFunction.alias:type_name -> pg_query.Alias
-	74,   // 547: pg_query.RangeFunction.coldeflist:type_name -> pg_query.Node
-	74,   // 548: pg_query.RangeTableFunc.docexpr:type_name -> pg_query.Node
-	74,   // 549: pg_query.RangeTableFunc.rowexpr:type_name -> pg_query.Node
-	74,   // 550: pg_query.RangeTableFunc.namespaces:type_name -> pg_query.Node
-	74,   // 551: pg_query.RangeTableFunc.columns:type_name -> pg_query.Node
-	84,   // 552: pg_query.RangeTableFunc.alias:type_name -> pg_query.Alias
-	148,  // 553: pg_query.RangeTableFuncCol.type_name:type_name -> pg_query.TypeName
-	74,   // 554: pg_query.RangeTableFuncCol.colexpr:type_name -> pg_query.Node
-	74,   // 555: pg_query.RangeTableFuncCol.coldefexpr:type_name -> pg_query.Node
-	74,   // 556: pg_query.RangeTableSample.relation:type_name -> pg_query.Node
-	74,   // 557: pg_query.RangeTableSample.method:type_name -> pg_query.Node
-	74,   // 558: pg_query.RangeTableSample.args:type_name -> pg_query.Node
-	74,   // 559: pg_query.RangeTableSample.repeatable:type_name -> pg_query.Node
-	148,  // 560: pg_query.ColumnDef.type_name:type_name -> pg_query.TypeName
-	74,   // 561: pg_query.ColumnDef.raw_default:type_name -> pg_query.Node
-	74,   // 562: pg_query.ColumnDef.cooked_default:type_name -> pg_query.Node
-	85,   // 563: pg_query.ColumnDef.identity_sequence:type_name -> pg_query.RangeVar
-	153,  // 564: pg_query.ColumnDef.coll_clause:type_name -> pg_query.CollateClause
-	74,   // 565: pg_query.ColumnDef.constraints:type_name -> pg_query.Node
-	74,   // 566: pg_query.ColumnDef.fdwoptions:type_name -> pg_query.Node
-	85,   // 567: pg_query.TableLikeClause.relation:type_name -> pg_query.RangeVar
-	74,   // 568: pg_query.IndexElem.expr:type_name -> pg_query.Node
-	74,   // 569: pg_query.IndexElem.collation:type_name -> pg_query.Node
-	74,   // 570: pg_query.IndexElem.opclass:type_name -> pg_query.Node
-	74,   // 571: pg_query.IndexElem.opclassopts:type_name -> pg_query.Node
-	1,    // 572: pg_query.IndexElem.ordering:type_name -> pg_query.SortByDir
-	2,    // 573: pg_query.IndexElem.nulls_ordering:type_name -> pg_query.SortByNulls
-	74,   // 574: pg_query.DefElem.arg:type_name -> pg_query.Node
-	7,    // 575: pg_query.DefElem.defaction:type_name -> pg_query.DefElemAction
-	74,   // 576: pg_query.LockingClause.locked_rels:type_name -> pg_query.Node
-	66,   // 577: pg_query.LockingClause.strength:type_name -> pg_query.LockClauseStrength
-	67,   // 578: pg_query.LockingClause.wait_policy:type_name -> pg_query.LockWaitPolicy
-	47,   // 579: pg_query.XmlSerialize.xmloption:type_name -> pg_query.XmlOptionType
-	74,   // 580: pg_query.XmlSerialize.expr:type_name -> pg_query.Node
-	148,  // 581: pg_query.XmlSerialize.type_name:type_name -> pg_query.TypeName
-	74,   // 582: pg_query.PartitionElem.expr:type_name -> pg_query.Node
-	74,   // 583: pg_query.PartitionElem.collation:type_name -> pg_query.Node
-	74,   // 584: pg_query.PartitionElem.opclass:type_name -> pg_query.Node
-	8,    // 585: pg_query.PartitionSpec.strategy:type_name -> pg_query.PartitionStrategy
-	74,   // 586: pg_query.PartitionSpec.part_params:type_name -> pg_query.Node
-	74,   // 587: pg_query.PartitionBoundSpec.listdatums:type_name -> pg_query.Node
-	74,   // 588: pg_query.PartitionBoundSpec.lowerdatums:type_name -> pg_query.Node
-	74,   // 589: pg_query.PartitionBoundSpec.upperdatums:type_name -> pg_query.Node
-	9,    // 590: pg_query.PartitionRangeDatum.kind:type_name -> pg_query.PartitionRangeDatumKind
-	74,   // 591: pg_query.PartitionRangeDatum.value:type_name -> pg_query.Node
-	85,   // 592: pg_query.PartitionCmd.name:type_name -> pg_query.RangeVar
-	177,  // 593: pg_query.PartitionCmd.bound:type_name -> pg_query.PartitionBoundSpec
-	84,   // 594: pg_query.RangeTblEntry.alias:type_name -> pg_query.Alias
-	84,   // 595: pg_query.RangeTblEntry.eref:type_name -> pg_query.Alias
-	10,   // 596: pg_query.RangeTblEntry.rtekind:type_name -> pg_query.RTEKind
-	184,  // 597: pg_query.RangeTblEntry.tablesample:type_name -> pg_query.TableSampleClause
-	147,  // 598: pg_query.RangeTblEntry.subquery:type_name -> pg_query.Query
-	59,   // 599: pg_query.RangeTblEntry.jointype:type_name -> pg_query.JoinType
-	74,   // 600: pg_query.RangeTblEntry.joinaliasvars:type_name -> pg_query.Node
-	74,   // 601: pg_query.RangeTblEntry.joinleftcols:type_name -> pg_query.Node
-	74,   // 602: pg_query.RangeTblEntry.joinrightcols:type_name -> pg_query.Node
-	84,   // 603: pg_query.RangeTblEntry.join_using_alias:type_name -> pg_query.Alias
-	74,   // 604: pg_query.RangeTblEntry.functions:type_name -> pg_query.Node
-	86,   // 605: pg_query.RangeTblEntry.tablefunc:type_name -> pg_query.TableFunc
-	74,   // 606: pg_query.RangeTblEntry.values_lists:type_name -> pg_query.Node
-	74,   // 607: pg_query.RangeTblEntry.coltypes:type_name -> pg_query.Node
-	74,   // 608: pg_query.RangeTblEntry.coltypmods:type_name -> pg_query.Node
-	74,   // 609: pg_query.RangeTblEntry.colcollations:type_name -> pg_query.Node
-	74,   // 610: pg_query.RangeTblEntry.security_quals:type_name -> pg_query.Node
-	74,   // 611: pg_query.RangeTblFunction.funcexpr:type_name -> pg_query.Node
-	74,   // 612: pg_query.RangeTblFunction.funccolnames:type_name -> pg_query.Node
-	74,   // 613: pg_query.RangeTblFunction.funccoltypes:type_name -> pg_query.Node
-	74,   // 614: pg_query.RangeTblFunction.funccoltypmods:type_name -> pg_query.Node
-	74,   // 615: pg_query.RangeTblFunction.funccolcollations:type_name -> pg_query.Node
-	74,   // 616: pg_query.TableSampleClause.args:type_name -> pg_query.Node
-	74,   // 617: pg_query.TableSampleClause.repeatable:type_name -> pg_query.Node
-	11,   // 618: pg_query.WithCheckOption.kind:type_name -> pg_query.WCOKind
-	74,   // 619: pg_query.WithCheckOption.qual:type_name -> pg_query.Node
-	12,   // 620: pg_query.GroupingSet.kind:type_name -> pg_query.GroupingSetKind
-	74,   // 621: pg_query.GroupingSet.content:type_name -> pg_query.Node
-	74,   // 622: pg_query.WindowClause.partition_clause:type_name -> pg_query.Node
-	74,   // 623: pg_query.WindowClause.order_clause:type_name -> pg_query.Node
-	74,   // 624: pg_query.WindowClause.start_offset:type_name -> pg_query.Node
-	74,   // 625: pg_query.WindowClause.end_offset:type_name -> pg_query.Node
-	66,   // 626: pg_query.RowMarkClause.strength:type_name -> pg_query.LockClauseStrength
-	67,   // 627: pg_query.RowMarkClause.wait_policy:type_name -> pg_query.LockWaitPolicy
-	74,   // 628: pg_query.WithClause.ctes:type_name -> pg_query.Node
-	74,   // 629: pg_query.InferClause.index_elems:type_name -> pg_query.Node
-	74,   // 630: pg_query.InferClause.where_clause:type_name -> pg_query.Node
-	64,   // 631: pg_query.OnConflictClause.action:type_name -> pg_query.OnConflictAction
-	191,  // 632: pg_query.OnConflictClause.infer:type_name -> pg_query.InferClause
-	74,   // 633: pg_query.OnConflictClause.target_list:type_name -> pg_query.Node
-	74,   // 634: pg_query.OnConflictClause.where_clause:type_name -> pg_query.Node
-	74,   // 635: pg_query.CTESearchClause.search_col_list:type_name -> pg_query.Node
-	74,   // 636: pg_query.CTECycleClause.cycle_col_list:type_name -> pg_query.Node
-	74,   // 637: pg_query.CTECycleClause.cycle_mark_value:type_name -> pg_query.Node
-	74,   // 638: pg_query.CTECycleClause.cycle_mark_default:type_name -> pg_query.Node
-	74,   // 639: pg_query.CommonTableExpr.aliascolnames:type_name -> pg_query.Node
-	13,   // 640: pg_query.CommonTableExpr.ctematerialized:type_name -> pg_query.CTEMaterialize
-	74,   // 641: pg_query.CommonTableExpr.ctequery:type_name -> pg_query.Node
-	193,  // 642: pg_query.CommonTableExpr.search_clause:type_name -> pg_query.CTESearchClause
-	194,  // 643: pg_query.CommonTableExpr.cycle_clause:type_name -> pg_query.CTECycleClause
-	74,   // 644: pg_query.CommonTableExpr.ctecolnames:type_name -> pg_query.Node
-	74,   // 645: pg_query.CommonTableExpr.ctecoltypes:type_name -> pg_query.Node
-	74,   // 646: pg_query.CommonTableExpr.ctecoltypmods:type_name -> pg_query.Node
-	74,   // 647: pg_query.CommonTableExpr.ctecolcollations:type_name -> pg_query.Node
-	57,   // 648: pg_query.MergeWhenClause.match_kind:type_name -> pg_query.MergeMatchKind
-	58,   // 649: pg_query.MergeWhenClause.command_type:type_name -> pg_query.CmdType
-	35,   // 650: pg_query.MergeWhenClause.override:type_name -> pg_query.OverridingKind
-	74,   // 651: pg_query.MergeWhenClause.condition:type_name -> pg_query.Node
-	74,   // 652: pg_query.MergeWhenClause.target_list:type_name -> pg_query.Node
-	74,   // 653: pg_query.MergeWhenClause.values:type_name -> pg_query.Node
-	148,  // 654: pg_query.JsonOutput.type_name:type_name -> pg_query.TypeName
-	124,  // 655: pg_query.JsonOutput.returning:type_name -> pg_query.JsonReturning
-	125,  // 656: pg_query.JsonArgument.val:type_name -> pg_query.JsonValueExpr
-	54,   // 657: pg_query.JsonFuncExpr.op:type_name -> pg_query.JsonExprOp
-	125,  // 658: pg_query.JsonFuncExpr.context_item:type_name -> pg_query.JsonValueExpr
-	74,   // 659: pg_query.JsonFuncExpr.pathspec:type_name -> pg_query.Node
-	74,   // 660: pg_query.JsonFuncExpr.passing:type_name -> pg_query.Node
-	198,  // 661: pg_query.JsonFuncExpr.output:type_name -> pg_query.JsonOutput
-	128,  // 662: pg_query.JsonFuncExpr.on_empty:type_name -> pg_query.JsonBehavior
-	128,  // 663: pg_query.JsonFuncExpr.on_error:type_name -> pg_query.JsonBehavior
-	52,   // 664: pg_query.JsonFuncExpr.wrapper:type_name -> pg_query.JsonWrapper
-	14,   // 665: pg_query.JsonFuncExpr.quotes:type_name -> pg_query.JsonQuotes
-	74,   // 666: pg_query.JsonTablePathSpec.string:type_name -> pg_query.Node
-	125,  // 667: pg_query.JsonTable.context_item:type_name -> pg_query.JsonValueExpr
-	201,  // 668: pg_query.JsonTable.pathspec:type_name -> pg_query.JsonTablePathSpec
-	74,   // 669: pg_query.JsonTable.passing:type_name -> pg_query.Node
-	74,   // 670: pg_query.JsonTable.columns:type_name -> pg_query.Node
-	128,  // 671: pg_query.JsonTable.on_error:type_name -> pg_query.JsonBehavior
-	84,   // 672: pg_query.JsonTable.alias:type_name -> pg_query.Alias
-	15,   // 673: pg_query.JsonTableColumn.coltype:type_name -> pg_query.JsonTableColumnType
-	148,  // 674: pg_query.JsonTableColumn.type_name:type_name -> pg_query.TypeName
-	201,  // 675: pg_query.JsonTableColumn.pathspec:type_name -> pg_query.JsonTablePathSpec
-	123,  // 676: pg_query.JsonTableColumn.format:type_name -> pg_query.JsonFormat
-	52,   // 677: pg_query.JsonTableColumn.wrapper:type_name -> pg_query.JsonWrapper
-	14,   // 678: pg_query.JsonTableColumn.quotes:type_name -> pg_query.JsonQuotes
-	74,   // 679: pg_query.JsonTableColumn.columns:type_name -> pg_query.Node
-	128,  // 680: pg_query.JsonTableColumn.on_empty:type_name -> pg_query.JsonBehavior
-	128,  // 681: pg_query.JsonTableColumn.on_error:type_name -> pg_query.JsonBehavior
-	74,   // 682: pg_query.JsonKeyValue.key:type_name -> pg_query.Node
-	125,  // 683: pg_query.JsonKeyValue.value:type_name -> pg_query.JsonValueExpr
-	125,  // 684: pg_query.JsonParseExpr.expr:type_name -> pg_query.JsonValueExpr
-	198,  // 685: pg_query.JsonParseExpr.output:type_name -> pg_query.JsonOutput
-	74,   // 686: pg_query.JsonScalarExpr.expr:type_name -> pg_query.Node
-	198,  // 687: pg_query.JsonScalarExpr.output:type_name -> pg_query.JsonOutput
-	125,  // 688: pg_query.JsonSerializeExpr.expr:type_name -> pg_query.JsonValueExpr
-	198,  // 689: pg_query.JsonSerializeExpr.output:type_name -> pg_query.JsonOutput
-	74,   // 690: pg_query.JsonObjectConstructor.exprs:type_name -> pg_query.Node
-	198,  // 691: pg_query.JsonObjectConstructor.output:type_name -> pg_query.JsonOutput
-	74,   // 692: pg_query.JsonArrayConstructor.exprs:type_name -> pg_query.Node
-	198,  // 693: pg_query.JsonArrayConstructor.output:type_name -> pg_query.JsonOutput
-	74,   // 694: pg_query.JsonArrayQueryConstructor.query:type_name -> pg_query.Node
-	198,  // 695: pg_query.JsonArrayQueryConstructor.output:type_name -> pg_query.JsonOutput
-	123,  // 696: pg_query.JsonArrayQueryConstructor.format:type_name -> pg_query.JsonFormat
-	198,  // 697: pg_query.JsonAggConstructor.output:type_name -> pg_query.JsonOutput
-	74,   // 698: pg_query.JsonAggConstructor.agg_filter:type_name -> pg_query.Node
-	74,   // 699: pg_query.JsonAggConstructor.agg_order:type_name -> pg_query.Node
-	163,  // 700: pg_query.JsonAggConstructor.over:type_name -> pg_query.WindowDef
-	211,  // 701: pg_query.JsonObjectAgg.constructor:type_name -> pg_query.JsonAggConstructor
-	204,  // 702: pg_query.JsonObjectAgg.arg:type_name -> pg_query.JsonKeyValue
-	211,  // 703: pg_query.JsonArrayAgg.constructor:type_name -> pg_query.JsonAggConstructor
-	125,  // 704: pg_query.JsonArrayAgg.arg:type_name -> pg_query.JsonValueExpr
-	74,   // 705: pg_query.RawStmt.stmt:type_name -> pg_query.Node
-	85,   // 706: pg_query.InsertStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 707: pg_query.InsertStmt.cols:type_name -> pg_query.Node
-	74,   // 708: pg_query.InsertStmt.select_stmt:type_name -> pg_query.Node
-	192,  // 709: pg_query.InsertStmt.on_conflict_clause:type_name -> pg_query.OnConflictClause
-	74,   // 710: pg_query.InsertStmt.returning_list:type_name -> pg_query.Node
-	190,  // 711: pg_query.InsertStmt.with_clause:type_name -> pg_query.WithClause
-	35,   // 712: pg_query.InsertStmt.override:type_name -> pg_query.OverridingKind
-	85,   // 713: pg_query.DeleteStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 714: pg_query.DeleteStmt.using_clause:type_name -> pg_query.Node
-	74,   // 715: pg_query.DeleteStmt.where_clause:type_name -> pg_query.Node
-	74,   // 716: pg_query.DeleteStmt.returning_list:type_name -> pg_query.Node
-	190,  // 717: pg_query.DeleteStmt.with_clause:type_name -> pg_query.WithClause
-	85,   // 718: pg_query.UpdateStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 719: pg_query.UpdateStmt.target_list:type_name -> pg_query.Node
-	74,   // 720: pg_query.UpdateStmt.where_clause:type_name -> pg_query.Node
-	74,   // 721: pg_query.UpdateStmt.from_clause:type_name -> pg_query.Node
-	74,   // 722: pg_query.UpdateStmt.returning_list:type_name -> pg_query.Node
-	190,  // 723: pg_query.UpdateStmt.with_clause:type_name -> pg_query.WithClause
-	85,   // 724: pg_query.MergeStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 725: pg_query.MergeStmt.source_relation:type_name -> pg_query.Node
-	74,   // 726: pg_query.MergeStmt.join_condition:type_name -> pg_query.Node
-	74,   // 727: pg_query.MergeStmt.merge_when_clauses:type_name -> pg_query.Node
-	74,   // 728: pg_query.MergeStmt.returning_list:type_name -> pg_query.Node
-	190,  // 729: pg_query.MergeStmt.with_clause:type_name -> pg_query.WithClause
-	74,   // 730: pg_query.SelectStmt.distinct_clause:type_name -> pg_query.Node
-	87,   // 731: pg_query.SelectStmt.into_clause:type_name -> pg_query.IntoClause
-	74,   // 732: pg_query.SelectStmt.target_list:type_name -> pg_query.Node
-	74,   // 733: pg_query.SelectStmt.from_clause:type_name -> pg_query.Node
-	74,   // 734: pg_query.SelectStmt.where_clause:type_name -> pg_query.Node
-	74,   // 735: pg_query.SelectStmt.group_clause:type_name -> pg_query.Node
-	74,   // 736: pg_query.SelectStmt.having_clause:type_name -> pg_query.Node
-	74,   // 737: pg_query.SelectStmt.window_clause:type_name -> pg_query.Node
-	74,   // 738: pg_query.SelectStmt.values_lists:type_name -> pg_query.Node
-	74,   // 739: pg_query.SelectStmt.sort_clause:type_name -> pg_query.Node
-	74,   // 740: pg_query.SelectStmt.limit_offset:type_name -> pg_query.Node
-	74,   // 741: pg_query.SelectStmt.limit_count:type_name -> pg_query.Node
-	65,   // 742: pg_query.SelectStmt.limit_option:type_name -> pg_query.LimitOption
-	74,   // 743: pg_query.SelectStmt.locking_clause:type_name -> pg_query.Node
-	190,  // 744: pg_query.SelectStmt.with_clause:type_name -> pg_query.WithClause
-	16,   // 745: pg_query.SelectStmt.op:type_name -> pg_query.SetOperation
-	219,  // 746: pg_query.SelectStmt.larg:type_name -> pg_query.SelectStmt
-	219,  // 747: pg_query.SelectStmt.rarg:type_name -> pg_query.SelectStmt
-	16,   // 748: pg_query.SetOperationStmt.op:type_name -> pg_query.SetOperation
-	74,   // 749: pg_query.SetOperationStmt.larg:type_name -> pg_query.Node
-	74,   // 750: pg_query.SetOperationStmt.rarg:type_name -> pg_query.Node
-	74,   // 751: pg_query.SetOperationStmt.col_types:type_name -> pg_query.Node
-	74,   // 752: pg_query.SetOperationStmt.col_typmods:type_name -> pg_query.Node
-	74,   // 753: pg_query.SetOperationStmt.col_collations:type_name -> pg_query.Node
-	74,   // 754: pg_query.SetOperationStmt.group_clauses:type_name -> pg_query.Node
-	74,   // 755: pg_query.ReturnStmt.returnval:type_name -> pg_query.Node
-	74,   // 756: pg_query.PLAssignStmt.indirection:type_name -> pg_query.Node
-	219,  // 757: pg_query.PLAssignStmt.val:type_name -> pg_query.SelectStmt
-	154,  // 758: pg_query.CreateSchemaStmt.authrole:type_name -> pg_query.RoleSpec
-	74,   // 759: pg_query.CreateSchemaStmt.schema_elts:type_name -> pg_query.Node
-	85,   // 760: pg_query.AlterTableStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 761: pg_query.AlterTableStmt.cmds:type_name -> pg_query.Node
-	17,   // 762: pg_query.AlterTableStmt.objtype:type_name -> pg_query.ObjectType
-	19,   // 763: pg_query.AlterTableCmd.subtype:type_name -> pg_query.AlterTableType
-	154,  // 764: pg_query.AlterTableCmd.newowner:type_name -> pg_query.RoleSpec
-	74,   // 765: pg_query.AlterTableCmd.def:type_name -> pg_query.Node
-	18,   // 766: pg_query.AlterTableCmd.behavior:type_name -> pg_query.DropBehavior
-	74,   // 767: pg_query.AlterCollationStmt.collname:type_name -> pg_query.Node
-	74,   // 768: pg_query.AlterDomainStmt.type_name:type_name -> pg_query.Node
-	74,   // 769: pg_query.AlterDomainStmt.def:type_name -> pg_query.Node
-	18,   // 770: pg_query.AlterDomainStmt.behavior:type_name -> pg_query.DropBehavior
-	20,   // 771: pg_query.GrantStmt.targtype:type_name -> pg_query.GrantTargetType
-	17,   // 772: pg_query.GrantStmt.objtype:type_name -> pg_query.ObjectType
-	74,   // 773: pg_query.GrantStmt.objects:type_name -> pg_query.Node
-	74,   // 774: pg_query.GrantStmt.privileges:type_name -> pg_query.Node
-	74,   // 775: pg_query.GrantStmt.grantees:type_name -> pg_query.Node
-	154,  // 776: pg_query.GrantStmt.grantor:type_name -> pg_query.RoleSpec
-	18,   // 777: pg_query.GrantStmt.behavior:type_name -> pg_query.DropBehavior
-	74,   // 778: pg_query.ObjectWithArgs.objname:type_name -> pg_query.Node
-	74,   // 779: pg_query.ObjectWithArgs.objargs:type_name -> pg_query.Node
-	74,   // 780: pg_query.ObjectWithArgs.objfuncargs:type_name -> pg_query.Node
-	74,   // 781: pg_query.AccessPriv.cols:type_name -> pg_query.Node
-	74,   // 782: pg_query.GrantRoleStmt.granted_roles:type_name -> pg_query.Node
-	74,   // 783: pg_query.GrantRoleStmt.grantee_roles:type_name -> pg_query.Node
-	74,   // 784: pg_query.GrantRoleStmt.opt:type_name -> pg_query.Node
-	154,  // 785: pg_query.GrantRoleStmt.grantor:type_name -> pg_query.RoleSpec
-	18,   // 786: pg_query.GrantRoleStmt.behavior:type_name -> pg_query.DropBehavior
-	74,   // 787: pg_query.AlterDefaultPrivilegesStmt.options:type_name -> pg_query.Node
-	229,  // 788: pg_query.AlterDefaultPrivilegesStmt.action:type_name -> pg_query.GrantStmt
-	85,   // 789: pg_query.CopyStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 790: pg_query.CopyStmt.query:type_name -> pg_query.Node
-	74,   // 791: pg_query.CopyStmt.attlist:type_name -> pg_query.Node
-	74,   // 792: pg_query.CopyStmt.options:type_name -> pg_query.Node
-	74,   // 793: pg_query.CopyStmt.where_clause:type_name -> pg_query.Node
-	21,   // 794: pg_query.VariableSetStmt.kind:type_name -> pg_query.VariableSetKind
-	74,   // 795: pg_query.VariableSetStmt.args:type_name -> pg_query.Node
-	85,   // 796: pg_query.CreateStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 797: pg_query.CreateStmt.table_elts:type_name -> pg_query.Node
-	74,   // 798: pg_query.CreateStmt.inh_relations:type_name -> pg_query.Node
-	177,  // 799: pg_query.CreateStmt.partbound:type_name -> pg_query.PartitionBoundSpec
-	176,  // 800: pg_query.CreateStmt.partspec:type_name -> pg_query.PartitionSpec
-	148,  // 801: pg_query.CreateStmt.of_typename:type_name -> pg_query.TypeName
-	74,   // 802: pg_query.CreateStmt.constraints:type_name -> pg_query.Node
-	74,   // 803: pg_query.CreateStmt.options:type_name -> pg_query.Node
-	36,   // 804: pg_query.CreateStmt.oncommit:type_name -> pg_query.OnCommitAction
-	22,   // 805: pg_query.Constraint.contype:type_name -> pg_query.ConstrType
-	74,   // 806: pg_query.Constraint.raw_expr:type_name -> pg_query.Node
-	74,   // 807: pg_query.Constraint.keys:type_name -> pg_query.Node
-	74,   // 808: pg_query.Constraint.including:type_name -> pg_query.Node
-	74,   // 809: pg_query.Constraint.exclusions:type_name -> pg_query.Node
-	74,   // 810: pg_query.Constraint.options:type_name -> pg_query.Node
-	74,   // 811: pg_query.Constraint.where_clause:type_name -> pg_query.Node
-	85,   // 812: pg_query.Constraint.pktable:type_name -> pg_query.RangeVar
-	74,   // 813: pg_query.Constraint.fk_attrs:type_name -> pg_query.Node
-	74,   // 814: pg_query.Constraint.pk_attrs:type_name -> pg_query.Node
-	74,   // 815: pg_query.Constraint.fk_del_set_cols:type_name -> pg_query.Node
-	74,   // 816: pg_query.Constraint.old_conpfeqop:type_name -> pg_query.Node
-	154,  // 817: pg_query.CreateTableSpaceStmt.owner:type_name -> pg_query.RoleSpec
-	74,   // 818: pg_query.CreateTableSpaceStmt.options:type_name -> pg_query.Node
-	74,   // 819: pg_query.AlterTableSpaceOptionsStmt.options:type_name -> pg_query.Node
-	17,   // 820: pg_query.AlterTableMoveAllStmt.objtype:type_name -> pg_query.ObjectType
-	74,   // 821: pg_query.AlterTableMoveAllStmt.roles:type_name -> pg_query.Node
-	74,   // 822: pg_query.CreateExtensionStmt.options:type_name -> pg_query.Node
-	74,   // 823: pg_query.AlterExtensionStmt.options:type_name -> pg_query.Node
-	17,   // 824: pg_query.AlterExtensionContentsStmt.objtype:type_name -> pg_query.ObjectType
-	74,   // 825: pg_query.AlterExtensionContentsStmt.object:type_name -> pg_query.Node
-	74,   // 826: pg_query.CreateFdwStmt.func_options:type_name -> pg_query.Node
-	74,   // 827: pg_query.CreateFdwStmt.options:type_name -> pg_query.Node
-	74,   // 828: pg_query.AlterFdwStmt.func_options:type_name -> pg_query.Node
-	74,   // 829: pg_query.AlterFdwStmt.options:type_name -> pg_query.Node
-	74,   // 830: pg_query.CreateForeignServerStmt.options:type_name -> pg_query.Node
-	74,   // 831: pg_query.AlterForeignServerStmt.options:type_name -> pg_query.Node
-	237,  // 832: pg_query.CreateForeignTableStmt.base_stmt:type_name -> pg_query.CreateStmt
-	74,   // 833: pg_query.CreateForeignTableStmt.options:type_name -> pg_query.Node
-	154,  // 834: pg_query.CreateUserMappingStmt.user:type_name -> pg_query.RoleSpec
-	74,   // 835: pg_query.CreateUserMappingStmt.options:type_name -> pg_query.Node
-	154,  // 836: pg_query.AlterUserMappingStmt.user:type_name -> pg_query.RoleSpec
-	74,   // 837: pg_query.AlterUserMappingStmt.options:type_name -> pg_query.Node
-	154,  // 838: pg_query.DropUserMappingStmt.user:type_name -> pg_query.RoleSpec
-	23,   // 839: pg_query.ImportForeignSchemaStmt.list_type:type_name -> pg_query.ImportForeignSchemaType
-	74,   // 840: pg_query.ImportForeignSchemaStmt.table_list:type_name -> pg_query.Node
-	74,   // 841: pg_query.ImportForeignSchemaStmt.options:type_name -> pg_query.Node
-	85,   // 842: pg_query.CreatePolicyStmt.table:type_name -> pg_query.RangeVar
-	74,   // 843: pg_query.CreatePolicyStmt.roles:type_name -> pg_query.Node
-	74,   // 844: pg_query.CreatePolicyStmt.qual:type_name -> pg_query.Node
-	74,   // 845: pg_query.CreatePolicyStmt.with_check:type_name -> pg_query.Node
-	85,   // 846: pg_query.AlterPolicyStmt.table:type_name -> pg_query.RangeVar
-	74,   // 847: pg_query.AlterPolicyStmt.roles:type_name -> pg_query.Node
-	74,   // 848: pg_query.AlterPolicyStmt.qual:type_name -> pg_query.Node
-	74,   // 849: pg_query.AlterPolicyStmt.with_check:type_name -> pg_query.Node
-	74,   // 850: pg_query.CreateAmStmt.handler_name:type_name -> pg_query.Node
-	85,   // 851: pg_query.CreateTrigStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 852: pg_query.CreateTrigStmt.funcname:type_name -> pg_query.Node
-	74,   // 853: pg_query.CreateTrigStmt.args:type_name -> pg_query.Node
-	74,   // 854: pg_query.CreateTrigStmt.columns:type_name -> pg_query.Node
-	74,   // 855: pg_query.CreateTrigStmt.when_clause:type_name -> pg_query.Node
-	74,   // 856: pg_query.CreateTrigStmt.transition_rels:type_name -> pg_query.Node
-	85,   // 857: pg_query.CreateTrigStmt.constrrel:type_name -> pg_query.RangeVar
-	74,   // 858: pg_query.CreateEventTrigStmt.whenclause:type_name -> pg_query.Node
-	74,   // 859: pg_query.CreateEventTrigStmt.funcname:type_name -> pg_query.Node
-	74,   // 860: pg_query.CreatePLangStmt.plhandler:type_name -> pg_query.Node
-	74,   // 861: pg_query.CreatePLangStmt.plinline:type_name -> pg_query.Node
-	74,   // 862: pg_query.CreatePLangStmt.plvalidator:type_name -> pg_query.Node
-	24,   // 863: pg_query.CreateRoleStmt.stmt_type:type_name -> pg_query.RoleStmtType
-	74,   // 864: pg_query.CreateRoleStmt.options:type_name -> pg_query.Node
-	154,  // 865: pg_query.AlterRoleStmt.role:type_name -> pg_query.RoleSpec
-	74,   // 866: pg_query.AlterRoleStmt.options:type_name -> pg_query.Node
-	154,  // 867: pg_query.AlterRoleSetStmt.role:type_name -> pg_query.RoleSpec
-	235,  // 868: pg_query.AlterRoleSetStmt.setstmt:type_name -> pg_query.VariableSetStmt
-	74,   // 869: pg_query.DropRoleStmt.roles:type_name -> pg_query.Node
-	85,   // 870: pg_query.CreateSeqStmt.sequence:type_name -> pg_query.RangeVar
-	74,   // 871: pg_query.CreateSeqStmt.options:type_name -> pg_query.Node
-	85,   // 872: pg_query.AlterSeqStmt.sequence:type_name -> pg_query.RangeVar
-	74,   // 873: pg_query.AlterSeqStmt.options:type_name -> pg_query.Node
-	17,   // 874: pg_query.DefineStmt.kind:type_name -> pg_query.ObjectType
-	74,   // 875: pg_query.DefineStmt.defnames:type_name -> pg_query.Node
-	74,   // 876: pg_query.DefineStmt.args:type_name -> pg_query.Node
-	74,   // 877: pg_query.DefineStmt.definition:type_name -> pg_query.Node
-	74,   // 878: pg_query.CreateDomainStmt.domainname:type_name -> pg_query.Node
-	148,  // 879: pg_query.CreateDomainStmt.type_name:type_name -> pg_query.TypeName
-	153,  // 880: pg_query.CreateDomainStmt.coll_clause:type_name -> pg_query.CollateClause
-	74,   // 881: pg_query.CreateDomainStmt.constraints:type_name -> pg_query.Node
-	74,   // 882: pg_query.CreateOpClassStmt.opclassname:type_name -> pg_query.Node
-	74,   // 883: pg_query.CreateOpClassStmt.opfamilyname:type_name -> pg_query.Node
-	148,  // 884: pg_query.CreateOpClassStmt.datatype:type_name -> pg_query.TypeName
-	74,   // 885: pg_query.CreateOpClassStmt.items:type_name -> pg_query.Node
-	230,  // 886: pg_query.CreateOpClassItem.name:type_name -> pg_query.ObjectWithArgs
-	74,   // 887: pg_query.CreateOpClassItem.order_family:type_name -> pg_query.Node
-	74,   // 888: pg_query.CreateOpClassItem.class_args:type_name -> pg_query.Node
-	148,  // 889: pg_query.CreateOpClassItem.storedtype:type_name -> pg_query.TypeName
-	74,   // 890: pg_query.CreateOpFamilyStmt.opfamilyname:type_name -> pg_query.Node
-	74,   // 891: pg_query.AlterOpFamilyStmt.opfamilyname:type_name -> pg_query.Node
-	74,   // 892: pg_query.AlterOpFamilyStmt.items:type_name -> pg_query.Node
-	74,   // 893: pg_query.DropStmt.objects:type_name -> pg_query.Node
-	17,   // 894: pg_query.DropStmt.remove_type:type_name -> pg_query.ObjectType
-	18,   // 895: pg_query.DropStmt.behavior:type_name -> pg_query.DropBehavior
-	74,   // 896: pg_query.TruncateStmt.relations:type_name -> pg_query.Node
-	18,   // 897: pg_query.TruncateStmt.behavior:type_name -> pg_query.DropBehavior
-	17,   // 898: pg_query.CommentStmt.objtype:type_name -> pg_query.ObjectType
-	74,   // 899: pg_query.CommentStmt.object:type_name -> pg_query.Node
-	17,   // 900: pg_query.SecLabelStmt.objtype:type_name -> pg_query.ObjectType
-	74,   // 901: pg_query.SecLabelStmt.object:type_name -> pg_query.Node
-	74,   // 902: pg_query.DeclareCursorStmt.query:type_name -> pg_query.Node
-	25,   // 903: pg_query.FetchStmt.direction:type_name -> pg_query.FetchDirection
-	85,   // 904: pg_query.IndexStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 905: pg_query.IndexStmt.index_params:type_name -> pg_query.Node
-	74,   // 906: pg_query.IndexStmt.index_including_params:type_name -> pg_query.Node
-	74,   // 907: pg_query.IndexStmt.options:type_name -> pg_query.Node
-	74,   // 908: pg_query.IndexStmt.where_clause:type_name -> pg_query.Node
-	74,   // 909: pg_query.IndexStmt.exclude_op_names:type_name -> pg_query.Node
-	74,   // 910: pg_query.CreateStatsStmt.defnames:type_name -> pg_query.Node
-	74,   // 911: pg_query.CreateStatsStmt.stat_types:type_name -> pg_query.Node
-	74,   // 912: pg_query.CreateStatsStmt.exprs:type_name -> pg_query.Node
-	74,   // 913: pg_query.CreateStatsStmt.relations:type_name -> pg_query.Node
-	74,   // 914: pg_query.StatsElem.expr:type_name -> pg_query.Node
-	74,   // 915: pg_query.AlterStatsStmt.defnames:type_name -> pg_query.Node
-	74,   // 916: pg_query.AlterStatsStmt.stxstattarget:type_name -> pg_query.Node
-	74,   // 917: pg_query.CreateFunctionStmt.funcname:type_name -> pg_query.Node
-	74,   // 918: pg_query.CreateFunctionStmt.parameters:type_name -> pg_query.Node
-	148,  // 919: pg_query.CreateFunctionStmt.return_type:type_name -> pg_query.TypeName
-	74,   // 920: pg_query.CreateFunctionStmt.options:type_name -> pg_query.Node
-	74,   // 921: pg_query.CreateFunctionStmt.sql_body:type_name -> pg_query.Node
-	148,  // 922: pg_query.FunctionParameter.arg_type:type_name -> pg_query.TypeName
-	26,   // 923: pg_query.FunctionParameter.mode:type_name -> pg_query.FunctionParameterMode
-	74,   // 924: pg_query.FunctionParameter.defexpr:type_name -> pg_query.Node
-	17,   // 925: pg_query.AlterFunctionStmt.objtype:type_name -> pg_query.ObjectType
-	230,  // 926: pg_query.AlterFunctionStmt.func:type_name -> pg_query.ObjectWithArgs
-	74,   // 927: pg_query.AlterFunctionStmt.actions:type_name -> pg_query.Node
-	74,   // 928: pg_query.DoStmt.args:type_name -> pg_query.Node
-	155,  // 929: pg_query.CallStmt.funccall:type_name -> pg_query.FuncCall
-	96,   // 930: pg_query.CallStmt.funcexpr:type_name -> pg_query.FuncExpr
-	74,   // 931: pg_query.CallStmt.outargs:type_name -> pg_query.Node
-	17,   // 932: pg_query.RenameStmt.rename_type:type_name -> pg_query.ObjectType
-	17,   // 933: pg_query.RenameStmt.relation_type:type_name -> pg_query.ObjectType
-	85,   // 934: pg_query.RenameStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 935: pg_query.RenameStmt.object:type_name -> pg_query.Node
-	18,   // 936: pg_query.RenameStmt.behavior:type_name -> pg_query.DropBehavior
-	17,   // 937: pg_query.AlterObjectDependsStmt.object_type:type_name -> pg_query.ObjectType
-	85,   // 938: pg_query.AlterObjectDependsStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 939: pg_query.AlterObjectDependsStmt.object:type_name -> pg_query.Node
-	78,   // 940: pg_query.AlterObjectDependsStmt.extname:type_name -> pg_query.String
-	17,   // 941: pg_query.AlterObjectSchemaStmt.object_type:type_name -> pg_query.ObjectType
-	85,   // 942: pg_query.AlterObjectSchemaStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 943: pg_query.AlterObjectSchemaStmt.object:type_name -> pg_query.Node
-	17,   // 944: pg_query.AlterOwnerStmt.object_type:type_name -> pg_query.ObjectType
-	85,   // 945: pg_query.AlterOwnerStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 946: pg_query.AlterOwnerStmt.object:type_name -> pg_query.Node
-	154,  // 947: pg_query.AlterOwnerStmt.newowner:type_name -> pg_query.RoleSpec
-	230,  // 948: pg_query.AlterOperatorStmt.opername:type_name -> pg_query.ObjectWithArgs
-	74,   // 949: pg_query.AlterOperatorStmt.options:type_name -> pg_query.Node
-	74,   // 950: pg_query.AlterTypeStmt.type_name:type_name -> pg_query.Node
-	74,   // 951: pg_query.AlterTypeStmt.options:type_name -> pg_query.Node
-	85,   // 952: pg_query.RuleStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 953: pg_query.RuleStmt.where_clause:type_name -> pg_query.Node
-	58,   // 954: pg_query.RuleStmt.event:type_name -> pg_query.CmdType
-	74,   // 955: pg_query.RuleStmt.actions:type_name -> pg_query.Node
-	27,   // 956: pg_query.TransactionStmt.kind:type_name -> pg_query.TransactionStmtKind
-	74,   // 957: pg_query.TransactionStmt.options:type_name -> pg_query.Node
-	85,   // 958: pg_query.CompositeTypeStmt.typevar:type_name -> pg_query.RangeVar
-	74,   // 959: pg_query.CompositeTypeStmt.coldeflist:type_name -> pg_query.Node
-	74,   // 960: pg_query.CreateEnumStmt.type_name:type_name -> pg_query.Node
-	74,   // 961: pg_query.CreateEnumStmt.vals:type_name -> pg_query.Node
-	74,   // 962: pg_query.CreateRangeStmt.type_name:type_name -> pg_query.Node
-	74,   // 963: pg_query.CreateRangeStmt.params:type_name -> pg_query.Node
-	74,   // 964: pg_query.AlterEnumStmt.type_name:type_name -> pg_query.Node
-	85,   // 965: pg_query.ViewStmt.view:type_name -> pg_query.RangeVar
-	74,   // 966: pg_query.ViewStmt.aliases:type_name -> pg_query.Node
-	74,   // 967: pg_query.ViewStmt.query:type_name -> pg_query.Node
-	74,   // 968: pg_query.ViewStmt.options:type_name -> pg_query.Node
-	28,   // 969: pg_query.ViewStmt.with_check_option:type_name -> pg_query.ViewCheckOption
-	74,   // 970: pg_query.CreatedbStmt.options:type_name -> pg_query.Node
-	74,   // 971: pg_query.AlterDatabaseStmt.options:type_name -> pg_query.Node
-	235,  // 972: pg_query.AlterDatabaseSetStmt.setstmt:type_name -> pg_query.VariableSetStmt
-	74,   // 973: pg_query.DropdbStmt.options:type_name -> pg_query.Node
-	235,  // 974: pg_query.AlterSystemStmt.setstmt:type_name -> pg_query.VariableSetStmt
-	85,   // 975: pg_query.ClusterStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 976: pg_query.ClusterStmt.params:type_name -> pg_query.Node
-	74,   // 977: pg_query.VacuumStmt.options:type_name -> pg_query.Node
-	74,   // 978: pg_query.VacuumStmt.rels:type_name -> pg_query.Node
-	85,   // 979: pg_query.VacuumRelation.relation:type_name -> pg_query.RangeVar
-	74,   // 980: pg_query.VacuumRelation.va_cols:type_name -> pg_query.Node
-	74,   // 981: pg_query.ExplainStmt.query:type_name -> pg_query.Node
-	74,   // 982: pg_query.ExplainStmt.options:type_name -> pg_query.Node
-	74,   // 983: pg_query.CreateTableAsStmt.query:type_name -> pg_query.Node
-	87,   // 984: pg_query.CreateTableAsStmt.into:type_name -> pg_query.IntoClause
-	17,   // 985: pg_query.CreateTableAsStmt.objtype:type_name -> pg_query.ObjectType
-	85,   // 986: pg_query.RefreshMatViewStmt.relation:type_name -> pg_query.RangeVar
-	29,   // 987: pg_query.DiscardStmt.target:type_name -> pg_query.DiscardMode
-	74,   // 988: pg_query.LockStmt.relations:type_name -> pg_query.Node
-	74,   // 989: pg_query.ConstraintsSetStmt.constraints:type_name -> pg_query.Node
-	30,   // 990: pg_query.ReindexStmt.kind:type_name -> pg_query.ReindexObjectType
-	85,   // 991: pg_query.ReindexStmt.relation:type_name -> pg_query.RangeVar
-	74,   // 992: pg_query.ReindexStmt.params:type_name -> pg_query.Node
-	74,   // 993: pg_query.CreateConversionStmt.conversion_name:type_name -> pg_query.Node
-	74,   // 994: pg_query.CreateConversionStmt.func_name:type_name -> pg_query.Node
-	148,  // 995: pg_query.CreateCastStmt.sourcetype:type_name -> pg_query.TypeName
-	148,  // 996: pg_query.CreateCastStmt.targettype:type_name -> pg_query.TypeName
-	230,  // 997: pg_query.CreateCastStmt.func:type_name -> pg_query.ObjectWithArgs
-	39,   // 998: pg_query.CreateCastStmt.context:type_name -> pg_query.CoercionContext
-	148,  // 999: pg_query.CreateTransformStmt.type_name:type_name -> pg_query.TypeName
-	230,  // 1000: pg_query.CreateTransformStmt.fromsql:type_name -> pg_query.ObjectWithArgs
-	230,  // 1001: pg_query.CreateTransformStmt.tosql:type_name -> pg_query.ObjectWithArgs
-	74,   // 1002: pg_query.PrepareStmt.argtypes:type_name -> pg_query.Node
-	74,   // 1003: pg_query.PrepareStmt.query:type_name -> pg_query.Node
-	74,   // 1004: pg_query.ExecuteStmt.params:type_name -> pg_query.Node
-	74,   // 1005: pg_query.DropOwnedStmt.roles:type_name -> pg_query.Node
-	18,   // 1006: pg_query.DropOwnedStmt.behavior:type_name -> pg_query.DropBehavior
-	74,   // 1007: pg_query.ReassignOwnedStmt.roles:type_name -> pg_query.Node
-	154,  // 1008: pg_query.ReassignOwnedStmt.newrole:type_name -> pg_query.RoleSpec
-	74,   // 1009: pg_query.AlterTSDictionaryStmt.dictname:type_name -> pg_query.Node
-	74,   // 1010: pg_query.AlterTSDictionaryStmt.options:type_name -> pg_query.Node
-	31,   // 1011: pg_query.AlterTSConfigurationStmt.kind:type_name -> pg_query.AlterTSConfigType
-	74,   // 1012: pg_query.AlterTSConfigurationStmt.cfgname:type_name -> pg_query.Node
-	74,   // 1013: pg_query.AlterTSConfigurationStmt.tokentype:type_name -> pg_query.Node
-	74,   // 1014: pg_query.AlterTSConfigurationStmt.dicts:type_name -> pg_query.Node
-	85,   // 1015: pg_query.PublicationTable.relation:type_name -> pg_query.RangeVar
-	74,   // 1016: pg_query.PublicationTable.where_clause:type_name -> pg_query.Node
-	74,   // 1017: pg_query.PublicationTable.columns:type_name -> pg_query.Node
-	32,   // 1018: pg_query.PublicationObjSpec.pubobjtype:type_name -> pg_query.PublicationObjSpecType
-	336,  // 1019: pg_query.PublicationObjSpec.pubtable:type_name -> pg_query.PublicationTable
-	74,   // 1020: pg_query.CreatePublicationStmt.options:type_name -> pg_query.Node
-	74,   // 1021: pg_query.CreatePublicationStmt.pubobjects:type_name -> pg_query.Node
-	74,   // 1022: pg_query.AlterPublicationStmt.options:type_name -> pg_query.Node
-	74,   // 1023: pg_query.AlterPublicationStmt.pubobjects:type_name -> pg_query.Node
-	33,   // 1024: pg_query.AlterPublicationStmt.action:type_name -> pg_query.AlterPublicationAction
-	74,   // 1025: pg_query.CreateSubscriptionStmt.publication:type_name -> pg_query.Node
-	74,   // 1026: pg_query.CreateSubscriptionStmt.options:type_name -> pg_query.Node
-	34,   // 1027: pg_query.AlterSubscriptionStmt.kind:type_name -> pg_query.AlterSubscriptionType
-	74,   // 1028: pg_query.AlterSubscriptionStmt.publication:type_name -> pg_query.Node
-	74,   // 1029: pg_query.AlterSubscriptionStmt.options:type_name -> pg_query.Node
-	18,   // 1030: pg_query.DropSubscriptionStmt.behavior:type_name -> pg_query.DropBehavior
-	70,   // 1031: pg_query.ScanToken.token:type_name -> pg_query.Token
-	69,   // 1032: pg_query.ScanToken.keyword_kind:type_name -> pg_query.KeywordKind
-	345,  // 1033: pg_query.SummaryResult.tables:type_name -> pg_query.SummaryResult.Table
-	346,  // 1034: pg_query.SummaryResult.aliases:type_name -> pg_query.SummaryResult.AliasesEntry
-	347,  // 1035: pg_query.SummaryResult.functions:type_name -> pg_query.SummaryResult.Function
-	348,  // 1036: pg_query.SummaryResult.filter_columns:type_name -> pg_query.SummaryResult.FilterColumn
-	71,   // 1037: pg_query.SummaryResult.Table.context:type_name -> pg_query.SummaryResult.Context
-	71,   // 1038: pg_query.SummaryResult.Function.context:type_name -> pg_query.SummaryResult.Context
-	1039, // [1039:1039] is the sub-list for method output_type
-	1039, // [1039:1039] is the sub-list for method input_type
-	1039, // [1039:1039] is the sub-list for extension type_name
-	1039, // [1039:1039] is the sub-list for extension extendee
-	0,    // [0:1039] is the sub-list for field type_name
+	218,  // 0: pg_query.ParseResult.stmts:type_name -> pg_query.RawStmt
+	348,  // 1: pg_query.ScanResult.tokens:type_name -> pg_query.ScanToken
+	86,   // 2: pg_query.Node.alias:type_name -> pg_query.Alias
+	87,   // 3: pg_query.Node.range_var:type_name -> pg_query.RangeVar
+	88,   // 4: pg_query.Node.table_func:type_name -> pg_query.TableFunc
+	89,   // 5: pg_query.Node.into_clause:type_name -> pg_query.IntoClause
+	90,   // 6: pg_query.Node.var:type_name -> pg_query.Var
+	91,   // 7: pg_query.Node.param:type_name -> pg_query.Param
+	92,   // 8: pg_query.Node.aggref:type_name -> pg_query.Aggref
+	93,   // 9: pg_query.Node.grouping_func:type_name -> pg_query.GroupingFunc
+	94,   // 10: pg_query.Node.window_func:type_name -> pg_query.WindowFunc
+	95,   // 11: pg_query.Node.window_func_run_condition:type_name -> pg_query.WindowFuncRunCondition
+	96,   // 12: pg_query.Node.merge_support_func:type_name -> pg_query.MergeSupportFunc
+	97,   // 13: pg_query.Node.subscripting_ref:type_name -> pg_query.SubscriptingRef
+	98,   // 14: pg_query.Node.func_expr:type_name -> pg_query.FuncExpr
+	99,   // 15: pg_query.Node.named_arg_expr:type_name -> pg_query.NamedArgExpr
+	100,  // 16: pg_query.Node.op_expr:type_name -> pg_query.OpExpr
+	101,  // 17: pg_query.Node.distinct_expr:type_name -> pg_query.DistinctExpr
+	102,  // 18: pg_query.Node.null_if_expr:type_name -> pg_query.NullIfExpr
+	103,  // 19: pg_query.Node.scalar_array_op_expr:type_name -> pg_query.ScalarArrayOpExpr
+	104,  // 20: pg_query.Node.bool_expr:type_name -> pg_query.BoolExpr
+	105,  // 21: pg_query.Node.sub_link:type_name -> pg_query.SubLink
+	106,  // 22: pg_query.Node.sub_plan:type_name -> pg_query.SubPlan
+	107,  // 23: pg_query.Node.alternative_sub_plan:type_name -> pg_query.AlternativeSubPlan
+	108,  // 24: pg_query.Node.field_select:type_name -> pg_query.FieldSelect
+	109,  // 25: pg_query.Node.field_store:type_name -> pg_query.FieldStore
+	110,  // 26: pg_query.Node.relabel_type:type_name -> pg_query.RelabelType
+	111,  // 27: pg_query.Node.coerce_via_io:type_name -> pg_query.CoerceViaIO
+	112,  // 28: pg_query.Node.array_coerce_expr:type_name -> pg_query.ArrayCoerceExpr
+	113,  // 29: pg_query.Node.convert_rowtype_expr:type_name -> pg_query.ConvertRowtypeExpr
+	114,  // 30: pg_query.Node.collate_expr:type_name -> pg_query.CollateExpr
+	115,  // 31: pg_query.Node.case_expr:type_name -> pg_query.CaseExpr
+	116,  // 32: pg_query.Node.case_when:type_name -> pg_query.CaseWhen
+	117,  // 33: pg_query.Node.case_test_expr:type_name -> pg_query.CaseTestExpr
+	118,  // 34: pg_query.Node.array_expr:type_name -> pg_query.ArrayExpr
+	119,  // 35: pg_query.Node.row_expr:type_name -> pg_query.RowExpr
+	120,  // 36: pg_query.Node.row_compare_expr:type_name -> pg_query.RowCompareExpr
+	121,  // 37: pg_query.Node.coalesce_expr:type_name -> pg_query.CoalesceExpr
+	122,  // 38: pg_query.Node.min_max_expr:type_name -> pg_query.MinMaxExpr
+	123,  // 39: pg_query.Node.sqlvalue_function:type_name -> pg_query.SQLValueFunction
+	124,  // 40: pg_query.Node.xml_expr:type_name -> pg_query.XmlExpr
+	125,  // 41: pg_query.Node.json_format:type_name -> pg_query.JsonFormat
+	126,  // 42: pg_query.Node.json_returning:type_name -> pg_query.JsonReturning
+	127,  // 43: pg_query.Node.json_value_expr:type_name -> pg_query.JsonValueExpr
+	128,  // 44: pg_query.Node.json_constructor_expr:type_name -> pg_query.JsonConstructorExpr
+	129,  // 45: pg_query.Node.json_is_predicate:type_name -> pg_query.JsonIsPredicate
+	130,  // 46: pg_query.Node.json_behavior:type_name -> pg_query.JsonBehavior
+	131,  // 47: pg_query.Node.json_expr:type_name -> pg_query.JsonExpr
+	132,  // 48: pg_query.Node.json_table_path:type_name -> pg_query.JsonTablePath
+	133,  // 49: pg_query.Node.json_table_path_scan:type_name -> pg_query.JsonTablePathScan
+	134,  // 50: pg_query.Node.json_table_sibling_join:type_name -> pg_query.JsonTableSiblingJoin
+	135,  // 51: pg_query.Node.null_test:type_name -> pg_query.NullTest
+	136,  // 52: pg_query.Node.boolean_test:type_name -> pg_query.BooleanTest
+	137,  // 53: pg_query.Node.merge_action:type_name -> pg_query.MergeAction
+	138,  // 54: pg_query.Node.coerce_to_domain:type_name -> pg_query.CoerceToDomain
+	139,  // 55: pg_query.Node.coerce_to_domain_value:type_name -> pg_query.CoerceToDomainValue
+	140,  // 56: pg_query.Node.set_to_default:type_name -> pg_query.SetToDefault
+	141,  // 57: pg_query.Node.current_of_expr:type_name -> pg_query.CurrentOfExpr
+	142,  // 58: pg_query.Node.next_value_expr:type_name -> pg_query.NextValueExpr
+	143,  // 59: pg_query.Node.inference_elem:type_name -> pg_query.InferenceElem
+	144,  // 60: pg_query.Node.returning_expr:type_name -> pg_query.ReturningExpr
+	145,  // 61: pg_query.Node.target_entry:type_name -> pg_query.TargetEntry
+	146,  // 62: pg_query.Node.range_tbl_ref:type_name -> pg_query.RangeTblRef
+	147,  // 63: pg_query.Node.join_expr:type_name -> pg_query.JoinExpr
+	148,  // 64: pg_query.Node.from_expr:type_name -> pg_query.FromExpr
+	149,  // 65: pg_query.Node.on_conflict_expr:type_name -> pg_query.OnConflictExpr
+	150,  // 66: pg_query.Node.query:type_name -> pg_query.Query
+	151,  // 67: pg_query.Node.type_name:type_name -> pg_query.TypeName
+	152,  // 68: pg_query.Node.column_ref:type_name -> pg_query.ColumnRef
+	153,  // 69: pg_query.Node.param_ref:type_name -> pg_query.ParamRef
+	154,  // 70: pg_query.Node.a_expr:type_name -> pg_query.A_Expr
+	155,  // 71: pg_query.Node.type_cast:type_name -> pg_query.TypeCast
+	156,  // 72: pg_query.Node.collate_clause:type_name -> pg_query.CollateClause
+	157,  // 73: pg_query.Node.role_spec:type_name -> pg_query.RoleSpec
+	158,  // 74: pg_query.Node.func_call:type_name -> pg_query.FuncCall
+	159,  // 75: pg_query.Node.a_star:type_name -> pg_query.A_Star
+	160,  // 76: pg_query.Node.a_indices:type_name -> pg_query.A_Indices
+	161,  // 77: pg_query.Node.a_indirection:type_name -> pg_query.A_Indirection
+	162,  // 78: pg_query.Node.a_array_expr:type_name -> pg_query.A_ArrayExpr
+	163,  // 79: pg_query.Node.res_target:type_name -> pg_query.ResTarget
+	164,  // 80: pg_query.Node.multi_assign_ref:type_name -> pg_query.MultiAssignRef
+	165,  // 81: pg_query.Node.sort_by:type_name -> pg_query.SortBy
+	166,  // 82: pg_query.Node.window_def:type_name -> pg_query.WindowDef
+	167,  // 83: pg_query.Node.range_subselect:type_name -> pg_query.RangeSubselect
+	168,  // 84: pg_query.Node.range_function:type_name -> pg_query.RangeFunction
+	169,  // 85: pg_query.Node.range_table_func:type_name -> pg_query.RangeTableFunc
+	170,  // 86: pg_query.Node.range_table_func_col:type_name -> pg_query.RangeTableFuncCol
+	171,  // 87: pg_query.Node.range_table_sample:type_name -> pg_query.RangeTableSample
+	172,  // 88: pg_query.Node.column_def:type_name -> pg_query.ColumnDef
+	173,  // 89: pg_query.Node.table_like_clause:type_name -> pg_query.TableLikeClause
+	174,  // 90: pg_query.Node.index_elem:type_name -> pg_query.IndexElem
+	175,  // 91: pg_query.Node.def_elem:type_name -> pg_query.DefElem
+	176,  // 92: pg_query.Node.locking_clause:type_name -> pg_query.LockingClause
+	177,  // 93: pg_query.Node.xml_serialize:type_name -> pg_query.XmlSerialize
+	178,  // 94: pg_query.Node.partition_elem:type_name -> pg_query.PartitionElem
+	179,  // 95: pg_query.Node.partition_spec:type_name -> pg_query.PartitionSpec
+	180,  // 96: pg_query.Node.partition_bound_spec:type_name -> pg_query.PartitionBoundSpec
+	181,  // 97: pg_query.Node.partition_range_datum:type_name -> pg_query.PartitionRangeDatum
+	182,  // 98: pg_query.Node.partition_cmd:type_name -> pg_query.PartitionCmd
+	183,  // 99: pg_query.Node.range_tbl_entry:type_name -> pg_query.RangeTblEntry
+	184,  // 100: pg_query.Node.rtepermission_info:type_name -> pg_query.RTEPermissionInfo
+	185,  // 101: pg_query.Node.range_tbl_function:type_name -> pg_query.RangeTblFunction
+	186,  // 102: pg_query.Node.table_sample_clause:type_name -> pg_query.TableSampleClause
+	187,  // 103: pg_query.Node.with_check_option:type_name -> pg_query.WithCheckOption
+	188,  // 104: pg_query.Node.sort_group_clause:type_name -> pg_query.SortGroupClause
+	189,  // 105: pg_query.Node.grouping_set:type_name -> pg_query.GroupingSet
+	190,  // 106: pg_query.Node.window_clause:type_name -> pg_query.WindowClause
+	191,  // 107: pg_query.Node.row_mark_clause:type_name -> pg_query.RowMarkClause
+	192,  // 108: pg_query.Node.with_clause:type_name -> pg_query.WithClause
+	193,  // 109: pg_query.Node.infer_clause:type_name -> pg_query.InferClause
+	194,  // 110: pg_query.Node.on_conflict_clause:type_name -> pg_query.OnConflictClause
+	195,  // 111: pg_query.Node.ctesearch_clause:type_name -> pg_query.CTESearchClause
+	196,  // 112: pg_query.Node.ctecycle_clause:type_name -> pg_query.CTECycleClause
+	197,  // 113: pg_query.Node.common_table_expr:type_name -> pg_query.CommonTableExpr
+	198,  // 114: pg_query.Node.merge_when_clause:type_name -> pg_query.MergeWhenClause
+	199,  // 115: pg_query.Node.returning_option:type_name -> pg_query.ReturningOption
+	200,  // 116: pg_query.Node.returning_clause:type_name -> pg_query.ReturningClause
+	201,  // 117: pg_query.Node.trigger_transition:type_name -> pg_query.TriggerTransition
+	202,  // 118: pg_query.Node.json_output:type_name -> pg_query.JsonOutput
+	203,  // 119: pg_query.Node.json_argument:type_name -> pg_query.JsonArgument
+	204,  // 120: pg_query.Node.json_func_expr:type_name -> pg_query.JsonFuncExpr
+	205,  // 121: pg_query.Node.json_table_path_spec:type_name -> pg_query.JsonTablePathSpec
+	206,  // 122: pg_query.Node.json_table:type_name -> pg_query.JsonTable
+	207,  // 123: pg_query.Node.json_table_column:type_name -> pg_query.JsonTableColumn
+	208,  // 124: pg_query.Node.json_key_value:type_name -> pg_query.JsonKeyValue
+	209,  // 125: pg_query.Node.json_parse_expr:type_name -> pg_query.JsonParseExpr
+	210,  // 126: pg_query.Node.json_scalar_expr:type_name -> pg_query.JsonScalarExpr
+	211,  // 127: pg_query.Node.json_serialize_expr:type_name -> pg_query.JsonSerializeExpr
+	212,  // 128: pg_query.Node.json_object_constructor:type_name -> pg_query.JsonObjectConstructor
+	213,  // 129: pg_query.Node.json_array_constructor:type_name -> pg_query.JsonArrayConstructor
+	214,  // 130: pg_query.Node.json_array_query_constructor:type_name -> pg_query.JsonArrayQueryConstructor
+	215,  // 131: pg_query.Node.json_agg_constructor:type_name -> pg_query.JsonAggConstructor
+	216,  // 132: pg_query.Node.json_object_agg:type_name -> pg_query.JsonObjectAgg
+	217,  // 133: pg_query.Node.json_array_agg:type_name -> pg_query.JsonArrayAgg
+	218,  // 134: pg_query.Node.raw_stmt:type_name -> pg_query.RawStmt
+	219,  // 135: pg_query.Node.insert_stmt:type_name -> pg_query.InsertStmt
+	220,  // 136: pg_query.Node.delete_stmt:type_name -> pg_query.DeleteStmt
+	221,  // 137: pg_query.Node.update_stmt:type_name -> pg_query.UpdateStmt
+	222,  // 138: pg_query.Node.merge_stmt:type_name -> pg_query.MergeStmt
+	223,  // 139: pg_query.Node.select_stmt:type_name -> pg_query.SelectStmt
+	224,  // 140: pg_query.Node.set_operation_stmt:type_name -> pg_query.SetOperationStmt
+	225,  // 141: pg_query.Node.return_stmt:type_name -> pg_query.ReturnStmt
+	226,  // 142: pg_query.Node.plassign_stmt:type_name -> pg_query.PLAssignStmt
+	227,  // 143: pg_query.Node.create_schema_stmt:type_name -> pg_query.CreateSchemaStmt
+	228,  // 144: pg_query.Node.alter_table_stmt:type_name -> pg_query.AlterTableStmt
+	229,  // 145: pg_query.Node.alter_table_cmd:type_name -> pg_query.AlterTableCmd
+	230,  // 146: pg_query.Node.atalter_constraint:type_name -> pg_query.ATAlterConstraint
+	231,  // 147: pg_query.Node.replica_identity_stmt:type_name -> pg_query.ReplicaIdentityStmt
+	232,  // 148: pg_query.Node.alter_collation_stmt:type_name -> pg_query.AlterCollationStmt
+	233,  // 149: pg_query.Node.alter_domain_stmt:type_name -> pg_query.AlterDomainStmt
+	234,  // 150: pg_query.Node.grant_stmt:type_name -> pg_query.GrantStmt
+	235,  // 151: pg_query.Node.object_with_args:type_name -> pg_query.ObjectWithArgs
+	236,  // 152: pg_query.Node.access_priv:type_name -> pg_query.AccessPriv
+	237,  // 153: pg_query.Node.grant_role_stmt:type_name -> pg_query.GrantRoleStmt
+	238,  // 154: pg_query.Node.alter_default_privileges_stmt:type_name -> pg_query.AlterDefaultPrivilegesStmt
+	239,  // 155: pg_query.Node.copy_stmt:type_name -> pg_query.CopyStmt
+	240,  // 156: pg_query.Node.variable_set_stmt:type_name -> pg_query.VariableSetStmt
+	241,  // 157: pg_query.Node.variable_show_stmt:type_name -> pg_query.VariableShowStmt
+	242,  // 158: pg_query.Node.create_stmt:type_name -> pg_query.CreateStmt
+	243,  // 159: pg_query.Node.constraint:type_name -> pg_query.Constraint
+	244,  // 160: pg_query.Node.create_table_space_stmt:type_name -> pg_query.CreateTableSpaceStmt
+	245,  // 161: pg_query.Node.drop_table_space_stmt:type_name -> pg_query.DropTableSpaceStmt
+	246,  // 162: pg_query.Node.alter_table_space_options_stmt:type_name -> pg_query.AlterTableSpaceOptionsStmt
+	247,  // 163: pg_query.Node.alter_table_move_all_stmt:type_name -> pg_query.AlterTableMoveAllStmt
+	248,  // 164: pg_query.Node.create_extension_stmt:type_name -> pg_query.CreateExtensionStmt
+	249,  // 165: pg_query.Node.alter_extension_stmt:type_name -> pg_query.AlterExtensionStmt
+	250,  // 166: pg_query.Node.alter_extension_contents_stmt:type_name -> pg_query.AlterExtensionContentsStmt
+	251,  // 167: pg_query.Node.create_fdw_stmt:type_name -> pg_query.CreateFdwStmt
+	252,  // 168: pg_query.Node.alter_fdw_stmt:type_name -> pg_query.AlterFdwStmt
+	253,  // 169: pg_query.Node.create_foreign_server_stmt:type_name -> pg_query.CreateForeignServerStmt
+	254,  // 170: pg_query.Node.alter_foreign_server_stmt:type_name -> pg_query.AlterForeignServerStmt
+	255,  // 171: pg_query.Node.create_foreign_table_stmt:type_name -> pg_query.CreateForeignTableStmt
+	256,  // 172: pg_query.Node.create_user_mapping_stmt:type_name -> pg_query.CreateUserMappingStmt
+	257,  // 173: pg_query.Node.alter_user_mapping_stmt:type_name -> pg_query.AlterUserMappingStmt
+	258,  // 174: pg_query.Node.drop_user_mapping_stmt:type_name -> pg_query.DropUserMappingStmt
+	259,  // 175: pg_query.Node.import_foreign_schema_stmt:type_name -> pg_query.ImportForeignSchemaStmt
+	260,  // 176: pg_query.Node.create_policy_stmt:type_name -> pg_query.CreatePolicyStmt
+	261,  // 177: pg_query.Node.alter_policy_stmt:type_name -> pg_query.AlterPolicyStmt
+	262,  // 178: pg_query.Node.create_am_stmt:type_name -> pg_query.CreateAmStmt
+	263,  // 179: pg_query.Node.create_trig_stmt:type_name -> pg_query.CreateTrigStmt
+	264,  // 180: pg_query.Node.create_event_trig_stmt:type_name -> pg_query.CreateEventTrigStmt
+	265,  // 181: pg_query.Node.alter_event_trig_stmt:type_name -> pg_query.AlterEventTrigStmt
+	266,  // 182: pg_query.Node.create_plang_stmt:type_name -> pg_query.CreatePLangStmt
+	267,  // 183: pg_query.Node.create_role_stmt:type_name -> pg_query.CreateRoleStmt
+	268,  // 184: pg_query.Node.alter_role_stmt:type_name -> pg_query.AlterRoleStmt
+	269,  // 185: pg_query.Node.alter_role_set_stmt:type_name -> pg_query.AlterRoleSetStmt
+	270,  // 186: pg_query.Node.drop_role_stmt:type_name -> pg_query.DropRoleStmt
+	271,  // 187: pg_query.Node.create_seq_stmt:type_name -> pg_query.CreateSeqStmt
+	272,  // 188: pg_query.Node.alter_seq_stmt:type_name -> pg_query.AlterSeqStmt
+	273,  // 189: pg_query.Node.define_stmt:type_name -> pg_query.DefineStmt
+	274,  // 190: pg_query.Node.create_domain_stmt:type_name -> pg_query.CreateDomainStmt
+	275,  // 191: pg_query.Node.create_op_class_stmt:type_name -> pg_query.CreateOpClassStmt
+	276,  // 192: pg_query.Node.create_op_class_item:type_name -> pg_query.CreateOpClassItem
+	277,  // 193: pg_query.Node.create_op_family_stmt:type_name -> pg_query.CreateOpFamilyStmt
+	278,  // 194: pg_query.Node.alter_op_family_stmt:type_name -> pg_query.AlterOpFamilyStmt
+	279,  // 195: pg_query.Node.drop_stmt:type_name -> pg_query.DropStmt
+	280,  // 196: pg_query.Node.truncate_stmt:type_name -> pg_query.TruncateStmt
+	281,  // 197: pg_query.Node.comment_stmt:type_name -> pg_query.CommentStmt
+	282,  // 198: pg_query.Node.sec_label_stmt:type_name -> pg_query.SecLabelStmt
+	283,  // 199: pg_query.Node.declare_cursor_stmt:type_name -> pg_query.DeclareCursorStmt
+	284,  // 200: pg_query.Node.close_portal_stmt:type_name -> pg_query.ClosePortalStmt
+	285,  // 201: pg_query.Node.fetch_stmt:type_name -> pg_query.FetchStmt
+	286,  // 202: pg_query.Node.index_stmt:type_name -> pg_query.IndexStmt
+	287,  // 203: pg_query.Node.create_stats_stmt:type_name -> pg_query.CreateStatsStmt
+	288,  // 204: pg_query.Node.stats_elem:type_name -> pg_query.StatsElem
+	289,  // 205: pg_query.Node.alter_stats_stmt:type_name -> pg_query.AlterStatsStmt
+	290,  // 206: pg_query.Node.create_function_stmt:type_name -> pg_query.CreateFunctionStmt
+	291,  // 207: pg_query.Node.function_parameter:type_name -> pg_query.FunctionParameter
+	292,  // 208: pg_query.Node.alter_function_stmt:type_name -> pg_query.AlterFunctionStmt
+	293,  // 209: pg_query.Node.do_stmt:type_name -> pg_query.DoStmt
+	294,  // 210: pg_query.Node.inline_code_block:type_name -> pg_query.InlineCodeBlock
+	295,  // 211: pg_query.Node.call_stmt:type_name -> pg_query.CallStmt
+	296,  // 212: pg_query.Node.call_context:type_name -> pg_query.CallContext
+	297,  // 213: pg_query.Node.rename_stmt:type_name -> pg_query.RenameStmt
+	298,  // 214: pg_query.Node.alter_object_depends_stmt:type_name -> pg_query.AlterObjectDependsStmt
+	299,  // 215: pg_query.Node.alter_object_schema_stmt:type_name -> pg_query.AlterObjectSchemaStmt
+	300,  // 216: pg_query.Node.alter_owner_stmt:type_name -> pg_query.AlterOwnerStmt
+	301,  // 217: pg_query.Node.alter_operator_stmt:type_name -> pg_query.AlterOperatorStmt
+	302,  // 218: pg_query.Node.alter_type_stmt:type_name -> pg_query.AlterTypeStmt
+	303,  // 219: pg_query.Node.rule_stmt:type_name -> pg_query.RuleStmt
+	304,  // 220: pg_query.Node.notify_stmt:type_name -> pg_query.NotifyStmt
+	305,  // 221: pg_query.Node.listen_stmt:type_name -> pg_query.ListenStmt
+	306,  // 222: pg_query.Node.unlisten_stmt:type_name -> pg_query.UnlistenStmt
+	307,  // 223: pg_query.Node.transaction_stmt:type_name -> pg_query.TransactionStmt
+	308,  // 224: pg_query.Node.composite_type_stmt:type_name -> pg_query.CompositeTypeStmt
+	309,  // 225: pg_query.Node.create_enum_stmt:type_name -> pg_query.CreateEnumStmt
+	310,  // 226: pg_query.Node.create_range_stmt:type_name -> pg_query.CreateRangeStmt
+	311,  // 227: pg_query.Node.alter_enum_stmt:type_name -> pg_query.AlterEnumStmt
+	312,  // 228: pg_query.Node.view_stmt:type_name -> pg_query.ViewStmt
+	313,  // 229: pg_query.Node.load_stmt:type_name -> pg_query.LoadStmt
+	314,  // 230: pg_query.Node.createdb_stmt:type_name -> pg_query.CreatedbStmt
+	315,  // 231: pg_query.Node.alter_database_stmt:type_name -> pg_query.AlterDatabaseStmt
+	316,  // 232: pg_query.Node.alter_database_refresh_coll_stmt:type_name -> pg_query.AlterDatabaseRefreshCollStmt
+	317,  // 233: pg_query.Node.alter_database_set_stmt:type_name -> pg_query.AlterDatabaseSetStmt
+	318,  // 234: pg_query.Node.dropdb_stmt:type_name -> pg_query.DropdbStmt
+	319,  // 235: pg_query.Node.alter_system_stmt:type_name -> pg_query.AlterSystemStmt
+	320,  // 236: pg_query.Node.cluster_stmt:type_name -> pg_query.ClusterStmt
+	321,  // 237: pg_query.Node.vacuum_stmt:type_name -> pg_query.VacuumStmt
+	322,  // 238: pg_query.Node.vacuum_relation:type_name -> pg_query.VacuumRelation
+	323,  // 239: pg_query.Node.explain_stmt:type_name -> pg_query.ExplainStmt
+	324,  // 240: pg_query.Node.create_table_as_stmt:type_name -> pg_query.CreateTableAsStmt
+	325,  // 241: pg_query.Node.refresh_mat_view_stmt:type_name -> pg_query.RefreshMatViewStmt
+	326,  // 242: pg_query.Node.check_point_stmt:type_name -> pg_query.CheckPointStmt
+	327,  // 243: pg_query.Node.discard_stmt:type_name -> pg_query.DiscardStmt
+	328,  // 244: pg_query.Node.lock_stmt:type_name -> pg_query.LockStmt
+	329,  // 245: pg_query.Node.constraints_set_stmt:type_name -> pg_query.ConstraintsSetStmt
+	330,  // 246: pg_query.Node.reindex_stmt:type_name -> pg_query.ReindexStmt
+	331,  // 247: pg_query.Node.create_conversion_stmt:type_name -> pg_query.CreateConversionStmt
+	332,  // 248: pg_query.Node.create_cast_stmt:type_name -> pg_query.CreateCastStmt
+	333,  // 249: pg_query.Node.create_transform_stmt:type_name -> pg_query.CreateTransformStmt
+	334,  // 250: pg_query.Node.prepare_stmt:type_name -> pg_query.PrepareStmt
+	335,  // 251: pg_query.Node.execute_stmt:type_name -> pg_query.ExecuteStmt
+	336,  // 252: pg_query.Node.deallocate_stmt:type_name -> pg_query.DeallocateStmt
+	337,  // 253: pg_query.Node.drop_owned_stmt:type_name -> pg_query.DropOwnedStmt
+	338,  // 254: pg_query.Node.reassign_owned_stmt:type_name -> pg_query.ReassignOwnedStmt
+	339,  // 255: pg_query.Node.alter_tsdictionary_stmt:type_name -> pg_query.AlterTSDictionaryStmt
+	340,  // 256: pg_query.Node.alter_tsconfiguration_stmt:type_name -> pg_query.AlterTSConfigurationStmt
+	341,  // 257: pg_query.Node.publication_table:type_name -> pg_query.PublicationTable
+	342,  // 258: pg_query.Node.publication_obj_spec:type_name -> pg_query.PublicationObjSpec
+	343,  // 259: pg_query.Node.create_publication_stmt:type_name -> pg_query.CreatePublicationStmt
+	344,  // 260: pg_query.Node.alter_publication_stmt:type_name -> pg_query.AlterPublicationStmt
+	345,  // 261: pg_query.Node.create_subscription_stmt:type_name -> pg_query.CreateSubscriptionStmt
+	346,  // 262: pg_query.Node.alter_subscription_stmt:type_name -> pg_query.AlterSubscriptionStmt
+	347,  // 263: pg_query.Node.drop_subscription_stmt:type_name -> pg_query.DropSubscriptionStmt
+	77,   // 264: pg_query.Node.integer:type_name -> pg_query.Integer
+	78,   // 265: pg_query.Node.float:type_name -> pg_query.Float
+	79,   // 266: pg_query.Node.boolean:type_name -> pg_query.Boolean
+	80,   // 267: pg_query.Node.string:type_name -> pg_query.String
+	81,   // 268: pg_query.Node.bit_string:type_name -> pg_query.BitString
+	82,   // 269: pg_query.Node.list:type_name -> pg_query.List
+	84,   // 270: pg_query.Node.int_list:type_name -> pg_query.IntList
+	83,   // 271: pg_query.Node.oid_list:type_name -> pg_query.OidList
+	85,   // 272: pg_query.Node.a_const:type_name -> pg_query.A_Const
+	76,   // 273: pg_query.List.items:type_name -> pg_query.Node
+	76,   // 274: pg_query.OidList.items:type_name -> pg_query.Node
+	76,   // 275: pg_query.IntList.items:type_name -> pg_query.Node
+	77,   // 276: pg_query.A_Const.ival:type_name -> pg_query.Integer
+	78,   // 277: pg_query.A_Const.fval:type_name -> pg_query.Float
+	79,   // 278: pg_query.A_Const.boolval:type_name -> pg_query.Boolean
+	80,   // 279: pg_query.A_Const.sval:type_name -> pg_query.String
+	81,   // 280: pg_query.A_Const.bsval:type_name -> pg_query.BitString
+	76,   // 281: pg_query.Alias.colnames:type_name -> pg_query.Node
+	86,   // 282: pg_query.RangeVar.alias:type_name -> pg_query.Alias
+	38,   // 283: pg_query.TableFunc.functype:type_name -> pg_query.TableFuncType
+	76,   // 284: pg_query.TableFunc.ns_uris:type_name -> pg_query.Node
+	76,   // 285: pg_query.TableFunc.ns_names:type_name -> pg_query.Node
+	76,   // 286: pg_query.TableFunc.docexpr:type_name -> pg_query.Node
+	76,   // 287: pg_query.TableFunc.rowexpr:type_name -> pg_query.Node
+	76,   // 288: pg_query.TableFunc.colnames:type_name -> pg_query.Node
+	76,   // 289: pg_query.TableFunc.coltypes:type_name -> pg_query.Node
+	76,   // 290: pg_query.TableFunc.coltypmods:type_name -> pg_query.Node
+	76,   // 291: pg_query.TableFunc.colcollations:type_name -> pg_query.Node
+	76,   // 292: pg_query.TableFunc.colexprs:type_name -> pg_query.Node
+	76,   // 293: pg_query.TableFunc.coldefexprs:type_name -> pg_query.Node
+	76,   // 294: pg_query.TableFunc.colvalexprs:type_name -> pg_query.Node
+	76,   // 295: pg_query.TableFunc.passingvalexprs:type_name -> pg_query.Node
+	76,   // 296: pg_query.TableFunc.plan:type_name -> pg_query.Node
+	87,   // 297: pg_query.IntoClause.rel:type_name -> pg_query.RangeVar
+	76,   // 298: pg_query.IntoClause.col_names:type_name -> pg_query.Node
+	76,   // 299: pg_query.IntoClause.options:type_name -> pg_query.Node
+	37,   // 300: pg_query.IntoClause.on_commit:type_name -> pg_query.OnCommitAction
+	150,  // 301: pg_query.IntoClause.view_query:type_name -> pg_query.Query
+	76,   // 302: pg_query.Var.xpr:type_name -> pg_query.Node
+	39,   // 303: pg_query.Var.varreturningtype:type_name -> pg_query.VarReturningType
+	76,   // 304: pg_query.Param.xpr:type_name -> pg_query.Node
+	40,   // 305: pg_query.Param.paramkind:type_name -> pg_query.ParamKind
+	76,   // 306: pg_query.Aggref.xpr:type_name -> pg_query.Node
+	76,   // 307: pg_query.Aggref.aggargtypes:type_name -> pg_query.Node
+	76,   // 308: pg_query.Aggref.aggdirectargs:type_name -> pg_query.Node
+	76,   // 309: pg_query.Aggref.args:type_name -> pg_query.Node
+	76,   // 310: pg_query.Aggref.aggorder:type_name -> pg_query.Node
+	76,   // 311: pg_query.Aggref.aggdistinct:type_name -> pg_query.Node
+	76,   // 312: pg_query.Aggref.aggfilter:type_name -> pg_query.Node
+	62,   // 313: pg_query.Aggref.aggsplit:type_name -> pg_query.AggSplit
+	76,   // 314: pg_query.GroupingFunc.xpr:type_name -> pg_query.Node
+	76,   // 315: pg_query.GroupingFunc.args:type_name -> pg_query.Node
+	76,   // 316: pg_query.GroupingFunc.refs:type_name -> pg_query.Node
+	76,   // 317: pg_query.WindowFunc.xpr:type_name -> pg_query.Node
+	76,   // 318: pg_query.WindowFunc.args:type_name -> pg_query.Node
+	76,   // 319: pg_query.WindowFunc.aggfilter:type_name -> pg_query.Node
+	76,   // 320: pg_query.WindowFunc.run_condition:type_name -> pg_query.Node
+	76,   // 321: pg_query.WindowFuncRunCondition.xpr:type_name -> pg_query.Node
+	76,   // 322: pg_query.WindowFuncRunCondition.arg:type_name -> pg_query.Node
+	76,   // 323: pg_query.MergeSupportFunc.xpr:type_name -> pg_query.Node
+	76,   // 324: pg_query.SubscriptingRef.xpr:type_name -> pg_query.Node
+	76,   // 325: pg_query.SubscriptingRef.refupperindexpr:type_name -> pg_query.Node
+	76,   // 326: pg_query.SubscriptingRef.reflowerindexpr:type_name -> pg_query.Node
+	76,   // 327: pg_query.SubscriptingRef.refexpr:type_name -> pg_query.Node
+	76,   // 328: pg_query.SubscriptingRef.refassgnexpr:type_name -> pg_query.Node
+	76,   // 329: pg_query.FuncExpr.xpr:type_name -> pg_query.Node
+	42,   // 330: pg_query.FuncExpr.funcformat:type_name -> pg_query.CoercionForm
+	76,   // 331: pg_query.FuncExpr.args:type_name -> pg_query.Node
+	76,   // 332: pg_query.NamedArgExpr.xpr:type_name -> pg_query.Node
+	76,   // 333: pg_query.NamedArgExpr.arg:type_name -> pg_query.Node
+	76,   // 334: pg_query.OpExpr.xpr:type_name -> pg_query.Node
+	76,   // 335: pg_query.OpExpr.args:type_name -> pg_query.Node
+	76,   // 336: pg_query.DistinctExpr.xpr:type_name -> pg_query.Node
+	76,   // 337: pg_query.DistinctExpr.args:type_name -> pg_query.Node
+	76,   // 338: pg_query.NullIfExpr.xpr:type_name -> pg_query.Node
+	76,   // 339: pg_query.NullIfExpr.args:type_name -> pg_query.Node
+	76,   // 340: pg_query.ScalarArrayOpExpr.xpr:type_name -> pg_query.Node
+	76,   // 341: pg_query.ScalarArrayOpExpr.args:type_name -> pg_query.Node
+	76,   // 342: pg_query.BoolExpr.xpr:type_name -> pg_query.Node
+	43,   // 343: pg_query.BoolExpr.boolop:type_name -> pg_query.BoolExprType
+	76,   // 344: pg_query.BoolExpr.args:type_name -> pg_query.Node
+	76,   // 345: pg_query.SubLink.xpr:type_name -> pg_query.Node
+	44,   // 346: pg_query.SubLink.sub_link_type:type_name -> pg_query.SubLinkType
+	76,   // 347: pg_query.SubLink.testexpr:type_name -> pg_query.Node
+	76,   // 348: pg_query.SubLink.oper_name:type_name -> pg_query.Node
+	76,   // 349: pg_query.SubLink.subselect:type_name -> pg_query.Node
+	76,   // 350: pg_query.SubPlan.xpr:type_name -> pg_query.Node
+	44,   // 351: pg_query.SubPlan.sub_link_type:type_name -> pg_query.SubLinkType
+	76,   // 352: pg_query.SubPlan.testexpr:type_name -> pg_query.Node
+	76,   // 353: pg_query.SubPlan.param_ids:type_name -> pg_query.Node
+	76,   // 354: pg_query.SubPlan.set_param:type_name -> pg_query.Node
+	76,   // 355: pg_query.SubPlan.par_param:type_name -> pg_query.Node
+	76,   // 356: pg_query.SubPlan.args:type_name -> pg_query.Node
+	76,   // 357: pg_query.AlternativeSubPlan.xpr:type_name -> pg_query.Node
+	76,   // 358: pg_query.AlternativeSubPlan.subplans:type_name -> pg_query.Node
+	76,   // 359: pg_query.FieldSelect.xpr:type_name -> pg_query.Node
+	76,   // 360: pg_query.FieldSelect.arg:type_name -> pg_query.Node
+	76,   // 361: pg_query.FieldStore.xpr:type_name -> pg_query.Node
+	76,   // 362: pg_query.FieldStore.arg:type_name -> pg_query.Node
+	76,   // 363: pg_query.FieldStore.newvals:type_name -> pg_query.Node
+	76,   // 364: pg_query.FieldStore.fieldnums:type_name -> pg_query.Node
+	76,   // 365: pg_query.RelabelType.xpr:type_name -> pg_query.Node
+	76,   // 366: pg_query.RelabelType.arg:type_name -> pg_query.Node
+	42,   // 367: pg_query.RelabelType.relabelformat:type_name -> pg_query.CoercionForm
+	76,   // 368: pg_query.CoerceViaIO.xpr:type_name -> pg_query.Node
+	76,   // 369: pg_query.CoerceViaIO.arg:type_name -> pg_query.Node
+	42,   // 370: pg_query.CoerceViaIO.coerceformat:type_name -> pg_query.CoercionForm
+	76,   // 371: pg_query.ArrayCoerceExpr.xpr:type_name -> pg_query.Node
+	76,   // 372: pg_query.ArrayCoerceExpr.arg:type_name -> pg_query.Node
+	76,   // 373: pg_query.ArrayCoerceExpr.elemexpr:type_name -> pg_query.Node
+	42,   // 374: pg_query.ArrayCoerceExpr.coerceformat:type_name -> pg_query.CoercionForm
+	76,   // 375: pg_query.ConvertRowtypeExpr.xpr:type_name -> pg_query.Node
+	76,   // 376: pg_query.ConvertRowtypeExpr.arg:type_name -> pg_query.Node
+	42,   // 377: pg_query.ConvertRowtypeExpr.convertformat:type_name -> pg_query.CoercionForm
+	76,   // 378: pg_query.CollateExpr.xpr:type_name -> pg_query.Node
+	76,   // 379: pg_query.CollateExpr.arg:type_name -> pg_query.Node
+	76,   // 380: pg_query.CaseExpr.xpr:type_name -> pg_query.Node
+	76,   // 381: pg_query.CaseExpr.arg:type_name -> pg_query.Node
+	76,   // 382: pg_query.CaseExpr.args:type_name -> pg_query.Node
+	76,   // 383: pg_query.CaseExpr.defresult:type_name -> pg_query.Node
+	76,   // 384: pg_query.CaseWhen.xpr:type_name -> pg_query.Node
+	76,   // 385: pg_query.CaseWhen.expr:type_name -> pg_query.Node
+	76,   // 386: pg_query.CaseWhen.result:type_name -> pg_query.Node
+	76,   // 387: pg_query.CaseTestExpr.xpr:type_name -> pg_query.Node
+	76,   // 388: pg_query.ArrayExpr.xpr:type_name -> pg_query.Node
+	76,   // 389: pg_query.ArrayExpr.elements:type_name -> pg_query.Node
+	76,   // 390: pg_query.RowExpr.xpr:type_name -> pg_query.Node
+	76,   // 391: pg_query.RowExpr.args:type_name -> pg_query.Node
+	42,   // 392: pg_query.RowExpr.row_format:type_name -> pg_query.CoercionForm
+	76,   // 393: pg_query.RowExpr.colnames:type_name -> pg_query.Node
+	76,   // 394: pg_query.RowCompareExpr.xpr:type_name -> pg_query.Node
+	70,   // 395: pg_query.RowCompareExpr.cmptype:type_name -> pg_query.CompareType
+	76,   // 396: pg_query.RowCompareExpr.opnos:type_name -> pg_query.Node
+	76,   // 397: pg_query.RowCompareExpr.opfamilies:type_name -> pg_query.Node
+	76,   // 398: pg_query.RowCompareExpr.inputcollids:type_name -> pg_query.Node
+	76,   // 399: pg_query.RowCompareExpr.largs:type_name -> pg_query.Node
+	76,   // 400: pg_query.RowCompareExpr.rargs:type_name -> pg_query.Node
+	76,   // 401: pg_query.CoalesceExpr.xpr:type_name -> pg_query.Node
+	76,   // 402: pg_query.CoalesceExpr.args:type_name -> pg_query.Node
+	76,   // 403: pg_query.MinMaxExpr.xpr:type_name -> pg_query.Node
+	45,   // 404: pg_query.MinMaxExpr.op:type_name -> pg_query.MinMaxOp
+	76,   // 405: pg_query.MinMaxExpr.args:type_name -> pg_query.Node
+	76,   // 406: pg_query.SQLValueFunction.xpr:type_name -> pg_query.Node
+	46,   // 407: pg_query.SQLValueFunction.op:type_name -> pg_query.SQLValueFunctionOp
+	76,   // 408: pg_query.XmlExpr.xpr:type_name -> pg_query.Node
+	47,   // 409: pg_query.XmlExpr.op:type_name -> pg_query.XmlExprOp
+	76,   // 410: pg_query.XmlExpr.named_args:type_name -> pg_query.Node
+	76,   // 411: pg_query.XmlExpr.arg_names:type_name -> pg_query.Node
+	76,   // 412: pg_query.XmlExpr.args:type_name -> pg_query.Node
+	48,   // 413: pg_query.XmlExpr.xmloption:type_name -> pg_query.XmlOptionType
+	50,   // 414: pg_query.JsonFormat.format_type:type_name -> pg_query.JsonFormatType
+	49,   // 415: pg_query.JsonFormat.encoding:type_name -> pg_query.JsonEncoding
+	125,  // 416: pg_query.JsonReturning.format:type_name -> pg_query.JsonFormat
+	76,   // 417: pg_query.JsonValueExpr.raw_expr:type_name -> pg_query.Node
+	76,   // 418: pg_query.JsonValueExpr.formatted_expr:type_name -> pg_query.Node
+	125,  // 419: pg_query.JsonValueExpr.format:type_name -> pg_query.JsonFormat
+	76,   // 420: pg_query.JsonConstructorExpr.xpr:type_name -> pg_query.Node
+	51,   // 421: pg_query.JsonConstructorExpr.type:type_name -> pg_query.JsonConstructorType
+	76,   // 422: pg_query.JsonConstructorExpr.args:type_name -> pg_query.Node
+	76,   // 423: pg_query.JsonConstructorExpr.func:type_name -> pg_query.Node
+	76,   // 424: pg_query.JsonConstructorExpr.coercion:type_name -> pg_query.Node
+	126,  // 425: pg_query.JsonConstructorExpr.returning:type_name -> pg_query.JsonReturning
+	76,   // 426: pg_query.JsonIsPredicate.expr:type_name -> pg_query.Node
+	125,  // 427: pg_query.JsonIsPredicate.format:type_name -> pg_query.JsonFormat
+	52,   // 428: pg_query.JsonIsPredicate.item_type:type_name -> pg_query.JsonValueType
+	54,   // 429: pg_query.JsonBehavior.btype:type_name -> pg_query.JsonBehaviorType
+	76,   // 430: pg_query.JsonBehavior.expr:type_name -> pg_query.Node
+	76,   // 431: pg_query.JsonExpr.xpr:type_name -> pg_query.Node
+	55,   // 432: pg_query.JsonExpr.op:type_name -> pg_query.JsonExprOp
+	76,   // 433: pg_query.JsonExpr.formatted_expr:type_name -> pg_query.Node
+	125,  // 434: pg_query.JsonExpr.format:type_name -> pg_query.JsonFormat
+	76,   // 435: pg_query.JsonExpr.path_spec:type_name -> pg_query.Node
+	126,  // 436: pg_query.JsonExpr.returning:type_name -> pg_query.JsonReturning
+	76,   // 437: pg_query.JsonExpr.passing_names:type_name -> pg_query.Node
+	76,   // 438: pg_query.JsonExpr.passing_values:type_name -> pg_query.Node
+	130,  // 439: pg_query.JsonExpr.on_empty:type_name -> pg_query.JsonBehavior
+	130,  // 440: pg_query.JsonExpr.on_error:type_name -> pg_query.JsonBehavior
+	53,   // 441: pg_query.JsonExpr.wrapper:type_name -> pg_query.JsonWrapper
+	76,   // 442: pg_query.JsonTablePathScan.plan:type_name -> pg_query.Node
+	132,  // 443: pg_query.JsonTablePathScan.path:type_name -> pg_query.JsonTablePath
+	76,   // 444: pg_query.JsonTablePathScan.child:type_name -> pg_query.Node
+	76,   // 445: pg_query.JsonTableSiblingJoin.plan:type_name -> pg_query.Node
+	76,   // 446: pg_query.JsonTableSiblingJoin.lplan:type_name -> pg_query.Node
+	76,   // 447: pg_query.JsonTableSiblingJoin.rplan:type_name -> pg_query.Node
+	76,   // 448: pg_query.NullTest.xpr:type_name -> pg_query.Node
+	76,   // 449: pg_query.NullTest.arg:type_name -> pg_query.Node
+	56,   // 450: pg_query.NullTest.nulltesttype:type_name -> pg_query.NullTestType
+	76,   // 451: pg_query.BooleanTest.xpr:type_name -> pg_query.Node
+	76,   // 452: pg_query.BooleanTest.arg:type_name -> pg_query.Node
+	57,   // 453: pg_query.BooleanTest.booltesttype:type_name -> pg_query.BoolTestType
+	58,   // 454: pg_query.MergeAction.match_kind:type_name -> pg_query.MergeMatchKind
+	59,   // 455: pg_query.MergeAction.command_type:type_name -> pg_query.CmdType
+	36,   // 456: pg_query.MergeAction.override:type_name -> pg_query.OverridingKind
+	76,   // 457: pg_query.MergeAction.qual:type_name -> pg_query.Node
+	76,   // 458: pg_query.MergeAction.target_list:type_name -> pg_query.Node
+	76,   // 459: pg_query.MergeAction.update_colnos:type_name -> pg_query.Node
+	76,   // 460: pg_query.CoerceToDomain.xpr:type_name -> pg_query.Node
+	76,   // 461: pg_query.CoerceToDomain.arg:type_name -> pg_query.Node
+	42,   // 462: pg_query.CoerceToDomain.coercionformat:type_name -> pg_query.CoercionForm
+	76,   // 463: pg_query.CoerceToDomainValue.xpr:type_name -> pg_query.Node
+	76,   // 464: pg_query.SetToDefault.xpr:type_name -> pg_query.Node
+	76,   // 465: pg_query.CurrentOfExpr.xpr:type_name -> pg_query.Node
+	76,   // 466: pg_query.NextValueExpr.xpr:type_name -> pg_query.Node
+	76,   // 467: pg_query.InferenceElem.xpr:type_name -> pg_query.Node
+	76,   // 468: pg_query.InferenceElem.expr:type_name -> pg_query.Node
+	76,   // 469: pg_query.ReturningExpr.xpr:type_name -> pg_query.Node
+	76,   // 470: pg_query.ReturningExpr.retexpr:type_name -> pg_query.Node
+	76,   // 471: pg_query.TargetEntry.xpr:type_name -> pg_query.Node
+	76,   // 472: pg_query.TargetEntry.expr:type_name -> pg_query.Node
+	60,   // 473: pg_query.JoinExpr.jointype:type_name -> pg_query.JoinType
+	76,   // 474: pg_query.JoinExpr.larg:type_name -> pg_query.Node
+	76,   // 475: pg_query.JoinExpr.rarg:type_name -> pg_query.Node
+	76,   // 476: pg_query.JoinExpr.using_clause:type_name -> pg_query.Node
+	86,   // 477: pg_query.JoinExpr.join_using_alias:type_name -> pg_query.Alias
+	76,   // 478: pg_query.JoinExpr.quals:type_name -> pg_query.Node
+	86,   // 479: pg_query.JoinExpr.alias:type_name -> pg_query.Alias
+	76,   // 480: pg_query.FromExpr.fromlist:type_name -> pg_query.Node
+	76,   // 481: pg_query.FromExpr.quals:type_name -> pg_query.Node
+	65,   // 482: pg_query.OnConflictExpr.action:type_name -> pg_query.OnConflictAction
+	76,   // 483: pg_query.OnConflictExpr.arbiter_elems:type_name -> pg_query.Node
+	76,   // 484: pg_query.OnConflictExpr.arbiter_where:type_name -> pg_query.Node
+	76,   // 485: pg_query.OnConflictExpr.on_conflict_set:type_name -> pg_query.Node
+	76,   // 486: pg_query.OnConflictExpr.on_conflict_where:type_name -> pg_query.Node
+	76,   // 487: pg_query.OnConflictExpr.excl_rel_tlist:type_name -> pg_query.Node
+	59,   // 488: pg_query.Query.command_type:type_name -> pg_query.CmdType
+	0,    // 489: pg_query.Query.query_source:type_name -> pg_query.QuerySource
+	76,   // 490: pg_query.Query.utility_stmt:type_name -> pg_query.Node
+	76,   // 491: pg_query.Query.cte_list:type_name -> pg_query.Node
+	76,   // 492: pg_query.Query.rtable:type_name -> pg_query.Node
+	76,   // 493: pg_query.Query.rteperminfos:type_name -> pg_query.Node
+	148,  // 494: pg_query.Query.jointree:type_name -> pg_query.FromExpr
+	76,   // 495: pg_query.Query.merge_action_list:type_name -> pg_query.Node
+	76,   // 496: pg_query.Query.merge_join_condition:type_name -> pg_query.Node
+	76,   // 497: pg_query.Query.target_list:type_name -> pg_query.Node
+	36,   // 498: pg_query.Query.override:type_name -> pg_query.OverridingKind
+	149,  // 499: pg_query.Query.on_conflict:type_name -> pg_query.OnConflictExpr
+	76,   // 500: pg_query.Query.returning_list:type_name -> pg_query.Node
+	76,   // 501: pg_query.Query.group_clause:type_name -> pg_query.Node
+	76,   // 502: pg_query.Query.grouping_sets:type_name -> pg_query.Node
+	76,   // 503: pg_query.Query.having_qual:type_name -> pg_query.Node
+	76,   // 504: pg_query.Query.window_clause:type_name -> pg_query.Node
+	76,   // 505: pg_query.Query.distinct_clause:type_name -> pg_query.Node
+	76,   // 506: pg_query.Query.sort_clause:type_name -> pg_query.Node
+	76,   // 507: pg_query.Query.limit_offset:type_name -> pg_query.Node
+	76,   // 508: pg_query.Query.limit_count:type_name -> pg_query.Node
+	66,   // 509: pg_query.Query.limit_option:type_name -> pg_query.LimitOption
+	76,   // 510: pg_query.Query.row_marks:type_name -> pg_query.Node
+	76,   // 511: pg_query.Query.set_operations:type_name -> pg_query.Node
+	76,   // 512: pg_query.Query.constraint_deps:type_name -> pg_query.Node
+	76,   // 513: pg_query.Query.with_check_options:type_name -> pg_query.Node
+	76,   // 514: pg_query.TypeName.names:type_name -> pg_query.Node
+	76,   // 515: pg_query.TypeName.typmods:type_name -> pg_query.Node
+	76,   // 516: pg_query.TypeName.array_bounds:type_name -> pg_query.Node
+	76,   // 517: pg_query.ColumnRef.fields:type_name -> pg_query.Node
+	4,    // 518: pg_query.A_Expr.kind:type_name -> pg_query.A_Expr_Kind
+	76,   // 519: pg_query.A_Expr.name:type_name -> pg_query.Node
+	76,   // 520: pg_query.A_Expr.lexpr:type_name -> pg_query.Node
+	76,   // 521: pg_query.A_Expr.rexpr:type_name -> pg_query.Node
+	76,   // 522: pg_query.TypeCast.arg:type_name -> pg_query.Node
+	151,  // 523: pg_query.TypeCast.type_name:type_name -> pg_query.TypeName
+	76,   // 524: pg_query.CollateClause.arg:type_name -> pg_query.Node
+	76,   // 525: pg_query.CollateClause.collname:type_name -> pg_query.Node
+	5,    // 526: pg_query.RoleSpec.roletype:type_name -> pg_query.RoleSpecType
+	76,   // 527: pg_query.FuncCall.funcname:type_name -> pg_query.Node
+	76,   // 528: pg_query.FuncCall.args:type_name -> pg_query.Node
+	76,   // 529: pg_query.FuncCall.agg_order:type_name -> pg_query.Node
+	76,   // 530: pg_query.FuncCall.agg_filter:type_name -> pg_query.Node
+	166,  // 531: pg_query.FuncCall.over:type_name -> pg_query.WindowDef
+	42,   // 532: pg_query.FuncCall.funcformat:type_name -> pg_query.CoercionForm
+	76,   // 533: pg_query.A_Indices.lidx:type_name -> pg_query.Node
+	76,   // 534: pg_query.A_Indices.uidx:type_name -> pg_query.Node
+	76,   // 535: pg_query.A_Indirection.arg:type_name -> pg_query.Node
+	76,   // 536: pg_query.A_Indirection.indirection:type_name -> pg_query.Node
+	76,   // 537: pg_query.A_ArrayExpr.elements:type_name -> pg_query.Node
+	76,   // 538: pg_query.ResTarget.indirection:type_name -> pg_query.Node
+	76,   // 539: pg_query.ResTarget.val:type_name -> pg_query.Node
+	76,   // 540: pg_query.MultiAssignRef.source:type_name -> pg_query.Node
+	76,   // 541: pg_query.SortBy.node:type_name -> pg_query.Node
+	1,    // 542: pg_query.SortBy.sortby_dir:type_name -> pg_query.SortByDir
+	2,    // 543: pg_query.SortBy.sortby_nulls:type_name -> pg_query.SortByNulls
+	76,   // 544: pg_query.SortBy.use_op:type_name -> pg_query.Node
+	76,   // 545: pg_query.WindowDef.partition_clause:type_name -> pg_query.Node
+	76,   // 546: pg_query.WindowDef.order_clause:type_name -> pg_query.Node
+	76,   // 547: pg_query.WindowDef.start_offset:type_name -> pg_query.Node
+	76,   // 548: pg_query.WindowDef.end_offset:type_name -> pg_query.Node
+	76,   // 549: pg_query.RangeSubselect.subquery:type_name -> pg_query.Node
+	86,   // 550: pg_query.RangeSubselect.alias:type_name -> pg_query.Alias
+	76,   // 551: pg_query.RangeFunction.functions:type_name -> pg_query.Node
+	86,   // 552: pg_query.RangeFunction.alias:type_name -> pg_query.Alias
+	76,   // 553: pg_query.RangeFunction.coldeflist:type_name -> pg_query.Node
+	76,   // 554: pg_query.RangeTableFunc.docexpr:type_name -> pg_query.Node
+	76,   // 555: pg_query.RangeTableFunc.rowexpr:type_name -> pg_query.Node
+	76,   // 556: pg_query.RangeTableFunc.namespaces:type_name -> pg_query.Node
+	76,   // 557: pg_query.RangeTableFunc.columns:type_name -> pg_query.Node
+	86,   // 558: pg_query.RangeTableFunc.alias:type_name -> pg_query.Alias
+	151,  // 559: pg_query.RangeTableFuncCol.type_name:type_name -> pg_query.TypeName
+	76,   // 560: pg_query.RangeTableFuncCol.colexpr:type_name -> pg_query.Node
+	76,   // 561: pg_query.RangeTableFuncCol.coldefexpr:type_name -> pg_query.Node
+	76,   // 562: pg_query.RangeTableSample.relation:type_name -> pg_query.Node
+	76,   // 563: pg_query.RangeTableSample.method:type_name -> pg_query.Node
+	76,   // 564: pg_query.RangeTableSample.args:type_name -> pg_query.Node
+	76,   // 565: pg_query.RangeTableSample.repeatable:type_name -> pg_query.Node
+	151,  // 566: pg_query.ColumnDef.type_name:type_name -> pg_query.TypeName
+	76,   // 567: pg_query.ColumnDef.raw_default:type_name -> pg_query.Node
+	76,   // 568: pg_query.ColumnDef.cooked_default:type_name -> pg_query.Node
+	87,   // 569: pg_query.ColumnDef.identity_sequence:type_name -> pg_query.RangeVar
+	156,  // 570: pg_query.ColumnDef.coll_clause:type_name -> pg_query.CollateClause
+	76,   // 571: pg_query.ColumnDef.constraints:type_name -> pg_query.Node
+	76,   // 572: pg_query.ColumnDef.fdwoptions:type_name -> pg_query.Node
+	87,   // 573: pg_query.TableLikeClause.relation:type_name -> pg_query.RangeVar
+	76,   // 574: pg_query.IndexElem.expr:type_name -> pg_query.Node
+	76,   // 575: pg_query.IndexElem.collation:type_name -> pg_query.Node
+	76,   // 576: pg_query.IndexElem.opclass:type_name -> pg_query.Node
+	76,   // 577: pg_query.IndexElem.opclassopts:type_name -> pg_query.Node
+	1,    // 578: pg_query.IndexElem.ordering:type_name -> pg_query.SortByDir
+	2,    // 579: pg_query.IndexElem.nulls_ordering:type_name -> pg_query.SortByNulls
+	76,   // 580: pg_query.DefElem.arg:type_name -> pg_query.Node
+	7,    // 581: pg_query.DefElem.defaction:type_name -> pg_query.DefElemAction
+	76,   // 582: pg_query.LockingClause.locked_rels:type_name -> pg_query.Node
+	67,   // 583: pg_query.LockingClause.strength:type_name -> pg_query.LockClauseStrength
+	68,   // 584: pg_query.LockingClause.wait_policy:type_name -> pg_query.LockWaitPolicy
+	48,   // 585: pg_query.XmlSerialize.xmloption:type_name -> pg_query.XmlOptionType
+	76,   // 586: pg_query.XmlSerialize.expr:type_name -> pg_query.Node
+	151,  // 587: pg_query.XmlSerialize.type_name:type_name -> pg_query.TypeName
+	76,   // 588: pg_query.PartitionElem.expr:type_name -> pg_query.Node
+	76,   // 589: pg_query.PartitionElem.collation:type_name -> pg_query.Node
+	76,   // 590: pg_query.PartitionElem.opclass:type_name -> pg_query.Node
+	8,    // 591: pg_query.PartitionSpec.strategy:type_name -> pg_query.PartitionStrategy
+	76,   // 592: pg_query.PartitionSpec.part_params:type_name -> pg_query.Node
+	76,   // 593: pg_query.PartitionBoundSpec.listdatums:type_name -> pg_query.Node
+	76,   // 594: pg_query.PartitionBoundSpec.lowerdatums:type_name -> pg_query.Node
+	76,   // 595: pg_query.PartitionBoundSpec.upperdatums:type_name -> pg_query.Node
+	9,    // 596: pg_query.PartitionRangeDatum.kind:type_name -> pg_query.PartitionRangeDatumKind
+	76,   // 597: pg_query.PartitionRangeDatum.value:type_name -> pg_query.Node
+	87,   // 598: pg_query.PartitionCmd.name:type_name -> pg_query.RangeVar
+	180,  // 599: pg_query.PartitionCmd.bound:type_name -> pg_query.PartitionBoundSpec
+	86,   // 600: pg_query.RangeTblEntry.alias:type_name -> pg_query.Alias
+	86,   // 601: pg_query.RangeTblEntry.eref:type_name -> pg_query.Alias
+	10,   // 602: pg_query.RangeTblEntry.rtekind:type_name -> pg_query.RTEKind
+	186,  // 603: pg_query.RangeTblEntry.tablesample:type_name -> pg_query.TableSampleClause
+	150,  // 604: pg_query.RangeTblEntry.subquery:type_name -> pg_query.Query
+	60,   // 605: pg_query.RangeTblEntry.jointype:type_name -> pg_query.JoinType
+	76,   // 606: pg_query.RangeTblEntry.joinaliasvars:type_name -> pg_query.Node
+	76,   // 607: pg_query.RangeTblEntry.joinleftcols:type_name -> pg_query.Node
+	76,   // 608: pg_query.RangeTblEntry.joinrightcols:type_name -> pg_query.Node
+	86,   // 609: pg_query.RangeTblEntry.join_using_alias:type_name -> pg_query.Alias
+	76,   // 610: pg_query.RangeTblEntry.functions:type_name -> pg_query.Node
+	88,   // 611: pg_query.RangeTblEntry.tablefunc:type_name -> pg_query.TableFunc
+	76,   // 612: pg_query.RangeTblEntry.values_lists:type_name -> pg_query.Node
+	76,   // 613: pg_query.RangeTblEntry.coltypes:type_name -> pg_query.Node
+	76,   // 614: pg_query.RangeTblEntry.coltypmods:type_name -> pg_query.Node
+	76,   // 615: pg_query.RangeTblEntry.colcollations:type_name -> pg_query.Node
+	76,   // 616: pg_query.RangeTblEntry.groupexprs:type_name -> pg_query.Node
+	76,   // 617: pg_query.RangeTblEntry.security_quals:type_name -> pg_query.Node
+	76,   // 618: pg_query.RangeTblFunction.funcexpr:type_name -> pg_query.Node
+	76,   // 619: pg_query.RangeTblFunction.funccolnames:type_name -> pg_query.Node
+	76,   // 620: pg_query.RangeTblFunction.funccoltypes:type_name -> pg_query.Node
+	76,   // 621: pg_query.RangeTblFunction.funccoltypmods:type_name -> pg_query.Node
+	76,   // 622: pg_query.RangeTblFunction.funccolcollations:type_name -> pg_query.Node
+	76,   // 623: pg_query.TableSampleClause.args:type_name -> pg_query.Node
+	76,   // 624: pg_query.TableSampleClause.repeatable:type_name -> pg_query.Node
+	11,   // 625: pg_query.WithCheckOption.kind:type_name -> pg_query.WCOKind
+	76,   // 626: pg_query.WithCheckOption.qual:type_name -> pg_query.Node
+	12,   // 627: pg_query.GroupingSet.kind:type_name -> pg_query.GroupingSetKind
+	76,   // 628: pg_query.GroupingSet.content:type_name -> pg_query.Node
+	76,   // 629: pg_query.WindowClause.partition_clause:type_name -> pg_query.Node
+	76,   // 630: pg_query.WindowClause.order_clause:type_name -> pg_query.Node
+	76,   // 631: pg_query.WindowClause.start_offset:type_name -> pg_query.Node
+	76,   // 632: pg_query.WindowClause.end_offset:type_name -> pg_query.Node
+	67,   // 633: pg_query.RowMarkClause.strength:type_name -> pg_query.LockClauseStrength
+	68,   // 634: pg_query.RowMarkClause.wait_policy:type_name -> pg_query.LockWaitPolicy
+	76,   // 635: pg_query.WithClause.ctes:type_name -> pg_query.Node
+	76,   // 636: pg_query.InferClause.index_elems:type_name -> pg_query.Node
+	76,   // 637: pg_query.InferClause.where_clause:type_name -> pg_query.Node
+	65,   // 638: pg_query.OnConflictClause.action:type_name -> pg_query.OnConflictAction
+	193,  // 639: pg_query.OnConflictClause.infer:type_name -> pg_query.InferClause
+	76,   // 640: pg_query.OnConflictClause.target_list:type_name -> pg_query.Node
+	76,   // 641: pg_query.OnConflictClause.where_clause:type_name -> pg_query.Node
+	76,   // 642: pg_query.CTESearchClause.search_col_list:type_name -> pg_query.Node
+	76,   // 643: pg_query.CTECycleClause.cycle_col_list:type_name -> pg_query.Node
+	76,   // 644: pg_query.CTECycleClause.cycle_mark_value:type_name -> pg_query.Node
+	76,   // 645: pg_query.CTECycleClause.cycle_mark_default:type_name -> pg_query.Node
+	76,   // 646: pg_query.CommonTableExpr.aliascolnames:type_name -> pg_query.Node
+	13,   // 647: pg_query.CommonTableExpr.ctematerialized:type_name -> pg_query.CTEMaterialize
+	76,   // 648: pg_query.CommonTableExpr.ctequery:type_name -> pg_query.Node
+	195,  // 649: pg_query.CommonTableExpr.search_clause:type_name -> pg_query.CTESearchClause
+	196,  // 650: pg_query.CommonTableExpr.cycle_clause:type_name -> pg_query.CTECycleClause
+	76,   // 651: pg_query.CommonTableExpr.ctecolnames:type_name -> pg_query.Node
+	76,   // 652: pg_query.CommonTableExpr.ctecoltypes:type_name -> pg_query.Node
+	76,   // 653: pg_query.CommonTableExpr.ctecoltypmods:type_name -> pg_query.Node
+	76,   // 654: pg_query.CommonTableExpr.ctecolcollations:type_name -> pg_query.Node
+	58,   // 655: pg_query.MergeWhenClause.match_kind:type_name -> pg_query.MergeMatchKind
+	59,   // 656: pg_query.MergeWhenClause.command_type:type_name -> pg_query.CmdType
+	36,   // 657: pg_query.MergeWhenClause.override:type_name -> pg_query.OverridingKind
+	76,   // 658: pg_query.MergeWhenClause.condition:type_name -> pg_query.Node
+	76,   // 659: pg_query.MergeWhenClause.target_list:type_name -> pg_query.Node
+	76,   // 660: pg_query.MergeWhenClause.values:type_name -> pg_query.Node
+	14,   // 661: pg_query.ReturningOption.option:type_name -> pg_query.ReturningOptionKind
+	76,   // 662: pg_query.ReturningClause.options:type_name -> pg_query.Node
+	76,   // 663: pg_query.ReturningClause.exprs:type_name -> pg_query.Node
+	151,  // 664: pg_query.JsonOutput.type_name:type_name -> pg_query.TypeName
+	126,  // 665: pg_query.JsonOutput.returning:type_name -> pg_query.JsonReturning
+	127,  // 666: pg_query.JsonArgument.val:type_name -> pg_query.JsonValueExpr
+	55,   // 667: pg_query.JsonFuncExpr.op:type_name -> pg_query.JsonExprOp
+	127,  // 668: pg_query.JsonFuncExpr.context_item:type_name -> pg_query.JsonValueExpr
+	76,   // 669: pg_query.JsonFuncExpr.pathspec:type_name -> pg_query.Node
+	76,   // 670: pg_query.JsonFuncExpr.passing:type_name -> pg_query.Node
+	202,  // 671: pg_query.JsonFuncExpr.output:type_name -> pg_query.JsonOutput
+	130,  // 672: pg_query.JsonFuncExpr.on_empty:type_name -> pg_query.JsonBehavior
+	130,  // 673: pg_query.JsonFuncExpr.on_error:type_name -> pg_query.JsonBehavior
+	53,   // 674: pg_query.JsonFuncExpr.wrapper:type_name -> pg_query.JsonWrapper
+	15,   // 675: pg_query.JsonFuncExpr.quotes:type_name -> pg_query.JsonQuotes
+	76,   // 676: pg_query.JsonTablePathSpec.string:type_name -> pg_query.Node
+	127,  // 677: pg_query.JsonTable.context_item:type_name -> pg_query.JsonValueExpr
+	205,  // 678: pg_query.JsonTable.pathspec:type_name -> pg_query.JsonTablePathSpec
+	76,   // 679: pg_query.JsonTable.passing:type_name -> pg_query.Node
+	76,   // 680: pg_query.JsonTable.columns:type_name -> pg_query.Node
+	130,  // 681: pg_query.JsonTable.on_error:type_name -> pg_query.JsonBehavior
+	86,   // 682: pg_query.JsonTable.alias:type_name -> pg_query.Alias
+	16,   // 683: pg_query.JsonTableColumn.coltype:type_name -> pg_query.JsonTableColumnType
+	151,  // 684: pg_query.JsonTableColumn.type_name:type_name -> pg_query.TypeName
+	205,  // 685: pg_query.JsonTableColumn.pathspec:type_name -> pg_query.JsonTablePathSpec
+	125,  // 686: pg_query.JsonTableColumn.format:type_name -> pg_query.JsonFormat
+	53,   // 687: pg_query.JsonTableColumn.wrapper:type_name -> pg_query.JsonWrapper
+	15,   // 688: pg_query.JsonTableColumn.quotes:type_name -> pg_query.JsonQuotes
+	76,   // 689: pg_query.JsonTableColumn.columns:type_name -> pg_query.Node
+	130,  // 690: pg_query.JsonTableColumn.on_empty:type_name -> pg_query.JsonBehavior
+	130,  // 691: pg_query.JsonTableColumn.on_error:type_name -> pg_query.JsonBehavior
+	76,   // 692: pg_query.JsonKeyValue.key:type_name -> pg_query.Node
+	127,  // 693: pg_query.JsonKeyValue.value:type_name -> pg_query.JsonValueExpr
+	127,  // 694: pg_query.JsonParseExpr.expr:type_name -> pg_query.JsonValueExpr
+	202,  // 695: pg_query.JsonParseExpr.output:type_name -> pg_query.JsonOutput
+	76,   // 696: pg_query.JsonScalarExpr.expr:type_name -> pg_query.Node
+	202,  // 697: pg_query.JsonScalarExpr.output:type_name -> pg_query.JsonOutput
+	127,  // 698: pg_query.JsonSerializeExpr.expr:type_name -> pg_query.JsonValueExpr
+	202,  // 699: pg_query.JsonSerializeExpr.output:type_name -> pg_query.JsonOutput
+	76,   // 700: pg_query.JsonObjectConstructor.exprs:type_name -> pg_query.Node
+	202,  // 701: pg_query.JsonObjectConstructor.output:type_name -> pg_query.JsonOutput
+	76,   // 702: pg_query.JsonArrayConstructor.exprs:type_name -> pg_query.Node
+	202,  // 703: pg_query.JsonArrayConstructor.output:type_name -> pg_query.JsonOutput
+	76,   // 704: pg_query.JsonArrayQueryConstructor.query:type_name -> pg_query.Node
+	202,  // 705: pg_query.JsonArrayQueryConstructor.output:type_name -> pg_query.JsonOutput
+	125,  // 706: pg_query.JsonArrayQueryConstructor.format:type_name -> pg_query.JsonFormat
+	202,  // 707: pg_query.JsonAggConstructor.output:type_name -> pg_query.JsonOutput
+	76,   // 708: pg_query.JsonAggConstructor.agg_filter:type_name -> pg_query.Node
+	76,   // 709: pg_query.JsonAggConstructor.agg_order:type_name -> pg_query.Node
+	166,  // 710: pg_query.JsonAggConstructor.over:type_name -> pg_query.WindowDef
+	215,  // 711: pg_query.JsonObjectAgg.constructor:type_name -> pg_query.JsonAggConstructor
+	208,  // 712: pg_query.JsonObjectAgg.arg:type_name -> pg_query.JsonKeyValue
+	215,  // 713: pg_query.JsonArrayAgg.constructor:type_name -> pg_query.JsonAggConstructor
+	127,  // 714: pg_query.JsonArrayAgg.arg:type_name -> pg_query.JsonValueExpr
+	76,   // 715: pg_query.RawStmt.stmt:type_name -> pg_query.Node
+	87,   // 716: pg_query.InsertStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 717: pg_query.InsertStmt.cols:type_name -> pg_query.Node
+	76,   // 718: pg_query.InsertStmt.select_stmt:type_name -> pg_query.Node
+	194,  // 719: pg_query.InsertStmt.on_conflict_clause:type_name -> pg_query.OnConflictClause
+	200,  // 720: pg_query.InsertStmt.returning_clause:type_name -> pg_query.ReturningClause
+	192,  // 721: pg_query.InsertStmt.with_clause:type_name -> pg_query.WithClause
+	36,   // 722: pg_query.InsertStmt.override:type_name -> pg_query.OverridingKind
+	87,   // 723: pg_query.DeleteStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 724: pg_query.DeleteStmt.using_clause:type_name -> pg_query.Node
+	76,   // 725: pg_query.DeleteStmt.where_clause:type_name -> pg_query.Node
+	200,  // 726: pg_query.DeleteStmt.returning_clause:type_name -> pg_query.ReturningClause
+	192,  // 727: pg_query.DeleteStmt.with_clause:type_name -> pg_query.WithClause
+	87,   // 728: pg_query.UpdateStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 729: pg_query.UpdateStmt.target_list:type_name -> pg_query.Node
+	76,   // 730: pg_query.UpdateStmt.where_clause:type_name -> pg_query.Node
+	76,   // 731: pg_query.UpdateStmt.from_clause:type_name -> pg_query.Node
+	200,  // 732: pg_query.UpdateStmt.returning_clause:type_name -> pg_query.ReturningClause
+	192,  // 733: pg_query.UpdateStmt.with_clause:type_name -> pg_query.WithClause
+	87,   // 734: pg_query.MergeStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 735: pg_query.MergeStmt.source_relation:type_name -> pg_query.Node
+	76,   // 736: pg_query.MergeStmt.join_condition:type_name -> pg_query.Node
+	76,   // 737: pg_query.MergeStmt.merge_when_clauses:type_name -> pg_query.Node
+	200,  // 738: pg_query.MergeStmt.returning_clause:type_name -> pg_query.ReturningClause
+	192,  // 739: pg_query.MergeStmt.with_clause:type_name -> pg_query.WithClause
+	76,   // 740: pg_query.SelectStmt.distinct_clause:type_name -> pg_query.Node
+	89,   // 741: pg_query.SelectStmt.into_clause:type_name -> pg_query.IntoClause
+	76,   // 742: pg_query.SelectStmt.target_list:type_name -> pg_query.Node
+	76,   // 743: pg_query.SelectStmt.from_clause:type_name -> pg_query.Node
+	76,   // 744: pg_query.SelectStmt.where_clause:type_name -> pg_query.Node
+	76,   // 745: pg_query.SelectStmt.group_clause:type_name -> pg_query.Node
+	76,   // 746: pg_query.SelectStmt.having_clause:type_name -> pg_query.Node
+	76,   // 747: pg_query.SelectStmt.window_clause:type_name -> pg_query.Node
+	76,   // 748: pg_query.SelectStmt.values_lists:type_name -> pg_query.Node
+	76,   // 749: pg_query.SelectStmt.sort_clause:type_name -> pg_query.Node
+	76,   // 750: pg_query.SelectStmt.limit_offset:type_name -> pg_query.Node
+	76,   // 751: pg_query.SelectStmt.limit_count:type_name -> pg_query.Node
+	66,   // 752: pg_query.SelectStmt.limit_option:type_name -> pg_query.LimitOption
+	76,   // 753: pg_query.SelectStmt.locking_clause:type_name -> pg_query.Node
+	192,  // 754: pg_query.SelectStmt.with_clause:type_name -> pg_query.WithClause
+	17,   // 755: pg_query.SelectStmt.op:type_name -> pg_query.SetOperation
+	223,  // 756: pg_query.SelectStmt.larg:type_name -> pg_query.SelectStmt
+	223,  // 757: pg_query.SelectStmt.rarg:type_name -> pg_query.SelectStmt
+	17,   // 758: pg_query.SetOperationStmt.op:type_name -> pg_query.SetOperation
+	76,   // 759: pg_query.SetOperationStmt.larg:type_name -> pg_query.Node
+	76,   // 760: pg_query.SetOperationStmt.rarg:type_name -> pg_query.Node
+	76,   // 761: pg_query.SetOperationStmt.col_types:type_name -> pg_query.Node
+	76,   // 762: pg_query.SetOperationStmt.col_typmods:type_name -> pg_query.Node
+	76,   // 763: pg_query.SetOperationStmt.col_collations:type_name -> pg_query.Node
+	76,   // 764: pg_query.SetOperationStmt.group_clauses:type_name -> pg_query.Node
+	76,   // 765: pg_query.ReturnStmt.returnval:type_name -> pg_query.Node
+	76,   // 766: pg_query.PLAssignStmt.indirection:type_name -> pg_query.Node
+	223,  // 767: pg_query.PLAssignStmt.val:type_name -> pg_query.SelectStmt
+	157,  // 768: pg_query.CreateSchemaStmt.authrole:type_name -> pg_query.RoleSpec
+	76,   // 769: pg_query.CreateSchemaStmt.schema_elts:type_name -> pg_query.Node
+	87,   // 770: pg_query.AlterTableStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 771: pg_query.AlterTableStmt.cmds:type_name -> pg_query.Node
+	18,   // 772: pg_query.AlterTableStmt.objtype:type_name -> pg_query.ObjectType
+	20,   // 773: pg_query.AlterTableCmd.subtype:type_name -> pg_query.AlterTableType
+	157,  // 774: pg_query.AlterTableCmd.newowner:type_name -> pg_query.RoleSpec
+	76,   // 775: pg_query.AlterTableCmd.def:type_name -> pg_query.Node
+	19,   // 776: pg_query.AlterTableCmd.behavior:type_name -> pg_query.DropBehavior
+	76,   // 777: pg_query.AlterCollationStmt.collname:type_name -> pg_query.Node
+	76,   // 778: pg_query.AlterDomainStmt.type_name:type_name -> pg_query.Node
+	76,   // 779: pg_query.AlterDomainStmt.def:type_name -> pg_query.Node
+	19,   // 780: pg_query.AlterDomainStmt.behavior:type_name -> pg_query.DropBehavior
+	21,   // 781: pg_query.GrantStmt.targtype:type_name -> pg_query.GrantTargetType
+	18,   // 782: pg_query.GrantStmt.objtype:type_name -> pg_query.ObjectType
+	76,   // 783: pg_query.GrantStmt.objects:type_name -> pg_query.Node
+	76,   // 784: pg_query.GrantStmt.privileges:type_name -> pg_query.Node
+	76,   // 785: pg_query.GrantStmt.grantees:type_name -> pg_query.Node
+	157,  // 786: pg_query.GrantStmt.grantor:type_name -> pg_query.RoleSpec
+	19,   // 787: pg_query.GrantStmt.behavior:type_name -> pg_query.DropBehavior
+	76,   // 788: pg_query.ObjectWithArgs.objname:type_name -> pg_query.Node
+	76,   // 789: pg_query.ObjectWithArgs.objargs:type_name -> pg_query.Node
+	76,   // 790: pg_query.ObjectWithArgs.objfuncargs:type_name -> pg_query.Node
+	76,   // 791: pg_query.AccessPriv.cols:type_name -> pg_query.Node
+	76,   // 792: pg_query.GrantRoleStmt.granted_roles:type_name -> pg_query.Node
+	76,   // 793: pg_query.GrantRoleStmt.grantee_roles:type_name -> pg_query.Node
+	76,   // 794: pg_query.GrantRoleStmt.opt:type_name -> pg_query.Node
+	157,  // 795: pg_query.GrantRoleStmt.grantor:type_name -> pg_query.RoleSpec
+	19,   // 796: pg_query.GrantRoleStmt.behavior:type_name -> pg_query.DropBehavior
+	76,   // 797: pg_query.AlterDefaultPrivilegesStmt.options:type_name -> pg_query.Node
+	234,  // 798: pg_query.AlterDefaultPrivilegesStmt.action:type_name -> pg_query.GrantStmt
+	87,   // 799: pg_query.CopyStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 800: pg_query.CopyStmt.query:type_name -> pg_query.Node
+	76,   // 801: pg_query.CopyStmt.attlist:type_name -> pg_query.Node
+	76,   // 802: pg_query.CopyStmt.options:type_name -> pg_query.Node
+	76,   // 803: pg_query.CopyStmt.where_clause:type_name -> pg_query.Node
+	22,   // 804: pg_query.VariableSetStmt.kind:type_name -> pg_query.VariableSetKind
+	76,   // 805: pg_query.VariableSetStmt.args:type_name -> pg_query.Node
+	87,   // 806: pg_query.CreateStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 807: pg_query.CreateStmt.table_elts:type_name -> pg_query.Node
+	76,   // 808: pg_query.CreateStmt.inh_relations:type_name -> pg_query.Node
+	180,  // 809: pg_query.CreateStmt.partbound:type_name -> pg_query.PartitionBoundSpec
+	179,  // 810: pg_query.CreateStmt.partspec:type_name -> pg_query.PartitionSpec
+	151,  // 811: pg_query.CreateStmt.of_typename:type_name -> pg_query.TypeName
+	76,   // 812: pg_query.CreateStmt.constraints:type_name -> pg_query.Node
+	76,   // 813: pg_query.CreateStmt.nnconstraints:type_name -> pg_query.Node
+	76,   // 814: pg_query.CreateStmt.options:type_name -> pg_query.Node
+	37,   // 815: pg_query.CreateStmt.oncommit:type_name -> pg_query.OnCommitAction
+	23,   // 816: pg_query.Constraint.contype:type_name -> pg_query.ConstrType
+	76,   // 817: pg_query.Constraint.raw_expr:type_name -> pg_query.Node
+	76,   // 818: pg_query.Constraint.keys:type_name -> pg_query.Node
+	76,   // 819: pg_query.Constraint.including:type_name -> pg_query.Node
+	76,   // 820: pg_query.Constraint.exclusions:type_name -> pg_query.Node
+	76,   // 821: pg_query.Constraint.options:type_name -> pg_query.Node
+	76,   // 822: pg_query.Constraint.where_clause:type_name -> pg_query.Node
+	87,   // 823: pg_query.Constraint.pktable:type_name -> pg_query.RangeVar
+	76,   // 824: pg_query.Constraint.fk_attrs:type_name -> pg_query.Node
+	76,   // 825: pg_query.Constraint.pk_attrs:type_name -> pg_query.Node
+	76,   // 826: pg_query.Constraint.fk_del_set_cols:type_name -> pg_query.Node
+	76,   // 827: pg_query.Constraint.old_conpfeqop:type_name -> pg_query.Node
+	157,  // 828: pg_query.CreateTableSpaceStmt.owner:type_name -> pg_query.RoleSpec
+	76,   // 829: pg_query.CreateTableSpaceStmt.options:type_name -> pg_query.Node
+	76,   // 830: pg_query.AlterTableSpaceOptionsStmt.options:type_name -> pg_query.Node
+	18,   // 831: pg_query.AlterTableMoveAllStmt.objtype:type_name -> pg_query.ObjectType
+	76,   // 832: pg_query.AlterTableMoveAllStmt.roles:type_name -> pg_query.Node
+	76,   // 833: pg_query.CreateExtensionStmt.options:type_name -> pg_query.Node
+	76,   // 834: pg_query.AlterExtensionStmt.options:type_name -> pg_query.Node
+	18,   // 835: pg_query.AlterExtensionContentsStmt.objtype:type_name -> pg_query.ObjectType
+	76,   // 836: pg_query.AlterExtensionContentsStmt.object:type_name -> pg_query.Node
+	76,   // 837: pg_query.CreateFdwStmt.func_options:type_name -> pg_query.Node
+	76,   // 838: pg_query.CreateFdwStmt.options:type_name -> pg_query.Node
+	76,   // 839: pg_query.AlterFdwStmt.func_options:type_name -> pg_query.Node
+	76,   // 840: pg_query.AlterFdwStmt.options:type_name -> pg_query.Node
+	76,   // 841: pg_query.CreateForeignServerStmt.options:type_name -> pg_query.Node
+	76,   // 842: pg_query.AlterForeignServerStmt.options:type_name -> pg_query.Node
+	242,  // 843: pg_query.CreateForeignTableStmt.base_stmt:type_name -> pg_query.CreateStmt
+	76,   // 844: pg_query.CreateForeignTableStmt.options:type_name -> pg_query.Node
+	157,  // 845: pg_query.CreateUserMappingStmt.user:type_name -> pg_query.RoleSpec
+	76,   // 846: pg_query.CreateUserMappingStmt.options:type_name -> pg_query.Node
+	157,  // 847: pg_query.AlterUserMappingStmt.user:type_name -> pg_query.RoleSpec
+	76,   // 848: pg_query.AlterUserMappingStmt.options:type_name -> pg_query.Node
+	157,  // 849: pg_query.DropUserMappingStmt.user:type_name -> pg_query.RoleSpec
+	24,   // 850: pg_query.ImportForeignSchemaStmt.list_type:type_name -> pg_query.ImportForeignSchemaType
+	76,   // 851: pg_query.ImportForeignSchemaStmt.table_list:type_name -> pg_query.Node
+	76,   // 852: pg_query.ImportForeignSchemaStmt.options:type_name -> pg_query.Node
+	87,   // 853: pg_query.CreatePolicyStmt.table:type_name -> pg_query.RangeVar
+	76,   // 854: pg_query.CreatePolicyStmt.roles:type_name -> pg_query.Node
+	76,   // 855: pg_query.CreatePolicyStmt.qual:type_name -> pg_query.Node
+	76,   // 856: pg_query.CreatePolicyStmt.with_check:type_name -> pg_query.Node
+	87,   // 857: pg_query.AlterPolicyStmt.table:type_name -> pg_query.RangeVar
+	76,   // 858: pg_query.AlterPolicyStmt.roles:type_name -> pg_query.Node
+	76,   // 859: pg_query.AlterPolicyStmt.qual:type_name -> pg_query.Node
+	76,   // 860: pg_query.AlterPolicyStmt.with_check:type_name -> pg_query.Node
+	76,   // 861: pg_query.CreateAmStmt.handler_name:type_name -> pg_query.Node
+	87,   // 862: pg_query.CreateTrigStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 863: pg_query.CreateTrigStmt.funcname:type_name -> pg_query.Node
+	76,   // 864: pg_query.CreateTrigStmt.args:type_name -> pg_query.Node
+	76,   // 865: pg_query.CreateTrigStmt.columns:type_name -> pg_query.Node
+	76,   // 866: pg_query.CreateTrigStmt.when_clause:type_name -> pg_query.Node
+	76,   // 867: pg_query.CreateTrigStmt.transition_rels:type_name -> pg_query.Node
+	87,   // 868: pg_query.CreateTrigStmt.constrrel:type_name -> pg_query.RangeVar
+	76,   // 869: pg_query.CreateEventTrigStmt.whenclause:type_name -> pg_query.Node
+	76,   // 870: pg_query.CreateEventTrigStmt.funcname:type_name -> pg_query.Node
+	76,   // 871: pg_query.CreatePLangStmt.plhandler:type_name -> pg_query.Node
+	76,   // 872: pg_query.CreatePLangStmt.plinline:type_name -> pg_query.Node
+	76,   // 873: pg_query.CreatePLangStmt.plvalidator:type_name -> pg_query.Node
+	25,   // 874: pg_query.CreateRoleStmt.stmt_type:type_name -> pg_query.RoleStmtType
+	76,   // 875: pg_query.CreateRoleStmt.options:type_name -> pg_query.Node
+	157,  // 876: pg_query.AlterRoleStmt.role:type_name -> pg_query.RoleSpec
+	76,   // 877: pg_query.AlterRoleStmt.options:type_name -> pg_query.Node
+	157,  // 878: pg_query.AlterRoleSetStmt.role:type_name -> pg_query.RoleSpec
+	240,  // 879: pg_query.AlterRoleSetStmt.setstmt:type_name -> pg_query.VariableSetStmt
+	76,   // 880: pg_query.DropRoleStmt.roles:type_name -> pg_query.Node
+	87,   // 881: pg_query.CreateSeqStmt.sequence:type_name -> pg_query.RangeVar
+	76,   // 882: pg_query.CreateSeqStmt.options:type_name -> pg_query.Node
+	87,   // 883: pg_query.AlterSeqStmt.sequence:type_name -> pg_query.RangeVar
+	76,   // 884: pg_query.AlterSeqStmt.options:type_name -> pg_query.Node
+	18,   // 885: pg_query.DefineStmt.kind:type_name -> pg_query.ObjectType
+	76,   // 886: pg_query.DefineStmt.defnames:type_name -> pg_query.Node
+	76,   // 887: pg_query.DefineStmt.args:type_name -> pg_query.Node
+	76,   // 888: pg_query.DefineStmt.definition:type_name -> pg_query.Node
+	76,   // 889: pg_query.CreateDomainStmt.domainname:type_name -> pg_query.Node
+	151,  // 890: pg_query.CreateDomainStmt.type_name:type_name -> pg_query.TypeName
+	156,  // 891: pg_query.CreateDomainStmt.coll_clause:type_name -> pg_query.CollateClause
+	76,   // 892: pg_query.CreateDomainStmt.constraints:type_name -> pg_query.Node
+	76,   // 893: pg_query.CreateOpClassStmt.opclassname:type_name -> pg_query.Node
+	76,   // 894: pg_query.CreateOpClassStmt.opfamilyname:type_name -> pg_query.Node
+	151,  // 895: pg_query.CreateOpClassStmt.datatype:type_name -> pg_query.TypeName
+	76,   // 896: pg_query.CreateOpClassStmt.items:type_name -> pg_query.Node
+	235,  // 897: pg_query.CreateOpClassItem.name:type_name -> pg_query.ObjectWithArgs
+	76,   // 898: pg_query.CreateOpClassItem.order_family:type_name -> pg_query.Node
+	76,   // 899: pg_query.CreateOpClassItem.class_args:type_name -> pg_query.Node
+	151,  // 900: pg_query.CreateOpClassItem.storedtype:type_name -> pg_query.TypeName
+	76,   // 901: pg_query.CreateOpFamilyStmt.opfamilyname:type_name -> pg_query.Node
+	76,   // 902: pg_query.AlterOpFamilyStmt.opfamilyname:type_name -> pg_query.Node
+	76,   // 903: pg_query.AlterOpFamilyStmt.items:type_name -> pg_query.Node
+	76,   // 904: pg_query.DropStmt.objects:type_name -> pg_query.Node
+	18,   // 905: pg_query.DropStmt.remove_type:type_name -> pg_query.ObjectType
+	19,   // 906: pg_query.DropStmt.behavior:type_name -> pg_query.DropBehavior
+	76,   // 907: pg_query.TruncateStmt.relations:type_name -> pg_query.Node
+	19,   // 908: pg_query.TruncateStmt.behavior:type_name -> pg_query.DropBehavior
+	18,   // 909: pg_query.CommentStmt.objtype:type_name -> pg_query.ObjectType
+	76,   // 910: pg_query.CommentStmt.object:type_name -> pg_query.Node
+	18,   // 911: pg_query.SecLabelStmt.objtype:type_name -> pg_query.ObjectType
+	76,   // 912: pg_query.SecLabelStmt.object:type_name -> pg_query.Node
+	76,   // 913: pg_query.DeclareCursorStmt.query:type_name -> pg_query.Node
+	26,   // 914: pg_query.FetchStmt.direction:type_name -> pg_query.FetchDirection
+	87,   // 915: pg_query.IndexStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 916: pg_query.IndexStmt.index_params:type_name -> pg_query.Node
+	76,   // 917: pg_query.IndexStmt.index_including_params:type_name -> pg_query.Node
+	76,   // 918: pg_query.IndexStmt.options:type_name -> pg_query.Node
+	76,   // 919: pg_query.IndexStmt.where_clause:type_name -> pg_query.Node
+	76,   // 920: pg_query.IndexStmt.exclude_op_names:type_name -> pg_query.Node
+	76,   // 921: pg_query.CreateStatsStmt.defnames:type_name -> pg_query.Node
+	76,   // 922: pg_query.CreateStatsStmt.stat_types:type_name -> pg_query.Node
+	76,   // 923: pg_query.CreateStatsStmt.exprs:type_name -> pg_query.Node
+	76,   // 924: pg_query.CreateStatsStmt.relations:type_name -> pg_query.Node
+	76,   // 925: pg_query.StatsElem.expr:type_name -> pg_query.Node
+	76,   // 926: pg_query.AlterStatsStmt.defnames:type_name -> pg_query.Node
+	76,   // 927: pg_query.AlterStatsStmt.stxstattarget:type_name -> pg_query.Node
+	76,   // 928: pg_query.CreateFunctionStmt.funcname:type_name -> pg_query.Node
+	76,   // 929: pg_query.CreateFunctionStmt.parameters:type_name -> pg_query.Node
+	151,  // 930: pg_query.CreateFunctionStmt.return_type:type_name -> pg_query.TypeName
+	76,   // 931: pg_query.CreateFunctionStmt.options:type_name -> pg_query.Node
+	76,   // 932: pg_query.CreateFunctionStmt.sql_body:type_name -> pg_query.Node
+	151,  // 933: pg_query.FunctionParameter.arg_type:type_name -> pg_query.TypeName
+	27,   // 934: pg_query.FunctionParameter.mode:type_name -> pg_query.FunctionParameterMode
+	76,   // 935: pg_query.FunctionParameter.defexpr:type_name -> pg_query.Node
+	18,   // 936: pg_query.AlterFunctionStmt.objtype:type_name -> pg_query.ObjectType
+	235,  // 937: pg_query.AlterFunctionStmt.func:type_name -> pg_query.ObjectWithArgs
+	76,   // 938: pg_query.AlterFunctionStmt.actions:type_name -> pg_query.Node
+	76,   // 939: pg_query.DoStmt.args:type_name -> pg_query.Node
+	158,  // 940: pg_query.CallStmt.funccall:type_name -> pg_query.FuncCall
+	98,   // 941: pg_query.CallStmt.funcexpr:type_name -> pg_query.FuncExpr
+	76,   // 942: pg_query.CallStmt.outargs:type_name -> pg_query.Node
+	18,   // 943: pg_query.RenameStmt.rename_type:type_name -> pg_query.ObjectType
+	18,   // 944: pg_query.RenameStmt.relation_type:type_name -> pg_query.ObjectType
+	87,   // 945: pg_query.RenameStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 946: pg_query.RenameStmt.object:type_name -> pg_query.Node
+	19,   // 947: pg_query.RenameStmt.behavior:type_name -> pg_query.DropBehavior
+	18,   // 948: pg_query.AlterObjectDependsStmt.object_type:type_name -> pg_query.ObjectType
+	87,   // 949: pg_query.AlterObjectDependsStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 950: pg_query.AlterObjectDependsStmt.object:type_name -> pg_query.Node
+	80,   // 951: pg_query.AlterObjectDependsStmt.extname:type_name -> pg_query.String
+	18,   // 952: pg_query.AlterObjectSchemaStmt.object_type:type_name -> pg_query.ObjectType
+	87,   // 953: pg_query.AlterObjectSchemaStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 954: pg_query.AlterObjectSchemaStmt.object:type_name -> pg_query.Node
+	18,   // 955: pg_query.AlterOwnerStmt.object_type:type_name -> pg_query.ObjectType
+	87,   // 956: pg_query.AlterOwnerStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 957: pg_query.AlterOwnerStmt.object:type_name -> pg_query.Node
+	157,  // 958: pg_query.AlterOwnerStmt.newowner:type_name -> pg_query.RoleSpec
+	235,  // 959: pg_query.AlterOperatorStmt.opername:type_name -> pg_query.ObjectWithArgs
+	76,   // 960: pg_query.AlterOperatorStmt.options:type_name -> pg_query.Node
+	76,   // 961: pg_query.AlterTypeStmt.type_name:type_name -> pg_query.Node
+	76,   // 962: pg_query.AlterTypeStmt.options:type_name -> pg_query.Node
+	87,   // 963: pg_query.RuleStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 964: pg_query.RuleStmt.where_clause:type_name -> pg_query.Node
+	59,   // 965: pg_query.RuleStmt.event:type_name -> pg_query.CmdType
+	76,   // 966: pg_query.RuleStmt.actions:type_name -> pg_query.Node
+	28,   // 967: pg_query.TransactionStmt.kind:type_name -> pg_query.TransactionStmtKind
+	76,   // 968: pg_query.TransactionStmt.options:type_name -> pg_query.Node
+	87,   // 969: pg_query.CompositeTypeStmt.typevar:type_name -> pg_query.RangeVar
+	76,   // 970: pg_query.CompositeTypeStmt.coldeflist:type_name -> pg_query.Node
+	76,   // 971: pg_query.CreateEnumStmt.type_name:type_name -> pg_query.Node
+	76,   // 972: pg_query.CreateEnumStmt.vals:type_name -> pg_query.Node
+	76,   // 973: pg_query.CreateRangeStmt.type_name:type_name -> pg_query.Node
+	76,   // 974: pg_query.CreateRangeStmt.params:type_name -> pg_query.Node
+	76,   // 975: pg_query.AlterEnumStmt.type_name:type_name -> pg_query.Node
+	87,   // 976: pg_query.ViewStmt.view:type_name -> pg_query.RangeVar
+	76,   // 977: pg_query.ViewStmt.aliases:type_name -> pg_query.Node
+	76,   // 978: pg_query.ViewStmt.query:type_name -> pg_query.Node
+	76,   // 979: pg_query.ViewStmt.options:type_name -> pg_query.Node
+	29,   // 980: pg_query.ViewStmt.with_check_option:type_name -> pg_query.ViewCheckOption
+	76,   // 981: pg_query.CreatedbStmt.options:type_name -> pg_query.Node
+	76,   // 982: pg_query.AlterDatabaseStmt.options:type_name -> pg_query.Node
+	240,  // 983: pg_query.AlterDatabaseSetStmt.setstmt:type_name -> pg_query.VariableSetStmt
+	76,   // 984: pg_query.DropdbStmt.options:type_name -> pg_query.Node
+	240,  // 985: pg_query.AlterSystemStmt.setstmt:type_name -> pg_query.VariableSetStmt
+	87,   // 986: pg_query.ClusterStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 987: pg_query.ClusterStmt.params:type_name -> pg_query.Node
+	76,   // 988: pg_query.VacuumStmt.options:type_name -> pg_query.Node
+	76,   // 989: pg_query.VacuumStmt.rels:type_name -> pg_query.Node
+	87,   // 990: pg_query.VacuumRelation.relation:type_name -> pg_query.RangeVar
+	76,   // 991: pg_query.VacuumRelation.va_cols:type_name -> pg_query.Node
+	76,   // 992: pg_query.ExplainStmt.query:type_name -> pg_query.Node
+	76,   // 993: pg_query.ExplainStmt.options:type_name -> pg_query.Node
+	76,   // 994: pg_query.CreateTableAsStmt.query:type_name -> pg_query.Node
+	89,   // 995: pg_query.CreateTableAsStmt.into:type_name -> pg_query.IntoClause
+	18,   // 996: pg_query.CreateTableAsStmt.objtype:type_name -> pg_query.ObjectType
+	87,   // 997: pg_query.RefreshMatViewStmt.relation:type_name -> pg_query.RangeVar
+	30,   // 998: pg_query.DiscardStmt.target:type_name -> pg_query.DiscardMode
+	76,   // 999: pg_query.LockStmt.relations:type_name -> pg_query.Node
+	76,   // 1000: pg_query.ConstraintsSetStmt.constraints:type_name -> pg_query.Node
+	31,   // 1001: pg_query.ReindexStmt.kind:type_name -> pg_query.ReindexObjectType
+	87,   // 1002: pg_query.ReindexStmt.relation:type_name -> pg_query.RangeVar
+	76,   // 1003: pg_query.ReindexStmt.params:type_name -> pg_query.Node
+	76,   // 1004: pg_query.CreateConversionStmt.conversion_name:type_name -> pg_query.Node
+	76,   // 1005: pg_query.CreateConversionStmt.func_name:type_name -> pg_query.Node
+	151,  // 1006: pg_query.CreateCastStmt.sourcetype:type_name -> pg_query.TypeName
+	151,  // 1007: pg_query.CreateCastStmt.targettype:type_name -> pg_query.TypeName
+	235,  // 1008: pg_query.CreateCastStmt.func:type_name -> pg_query.ObjectWithArgs
+	41,   // 1009: pg_query.CreateCastStmt.context:type_name -> pg_query.CoercionContext
+	151,  // 1010: pg_query.CreateTransformStmt.type_name:type_name -> pg_query.TypeName
+	235,  // 1011: pg_query.CreateTransformStmt.fromsql:type_name -> pg_query.ObjectWithArgs
+	235,  // 1012: pg_query.CreateTransformStmt.tosql:type_name -> pg_query.ObjectWithArgs
+	76,   // 1013: pg_query.PrepareStmt.argtypes:type_name -> pg_query.Node
+	76,   // 1014: pg_query.PrepareStmt.query:type_name -> pg_query.Node
+	76,   // 1015: pg_query.ExecuteStmt.params:type_name -> pg_query.Node
+	76,   // 1016: pg_query.DropOwnedStmt.roles:type_name -> pg_query.Node
+	19,   // 1017: pg_query.DropOwnedStmt.behavior:type_name -> pg_query.DropBehavior
+	76,   // 1018: pg_query.ReassignOwnedStmt.roles:type_name -> pg_query.Node
+	157,  // 1019: pg_query.ReassignOwnedStmt.newrole:type_name -> pg_query.RoleSpec
+	76,   // 1020: pg_query.AlterTSDictionaryStmt.dictname:type_name -> pg_query.Node
+	76,   // 1021: pg_query.AlterTSDictionaryStmt.options:type_name -> pg_query.Node
+	32,   // 1022: pg_query.AlterTSConfigurationStmt.kind:type_name -> pg_query.AlterTSConfigType
+	76,   // 1023: pg_query.AlterTSConfigurationStmt.cfgname:type_name -> pg_query.Node
+	76,   // 1024: pg_query.AlterTSConfigurationStmt.tokentype:type_name -> pg_query.Node
+	76,   // 1025: pg_query.AlterTSConfigurationStmt.dicts:type_name -> pg_query.Node
+	87,   // 1026: pg_query.PublicationTable.relation:type_name -> pg_query.RangeVar
+	76,   // 1027: pg_query.PublicationTable.where_clause:type_name -> pg_query.Node
+	76,   // 1028: pg_query.PublicationTable.columns:type_name -> pg_query.Node
+	33,   // 1029: pg_query.PublicationObjSpec.pubobjtype:type_name -> pg_query.PublicationObjSpecType
+	341,  // 1030: pg_query.PublicationObjSpec.pubtable:type_name -> pg_query.PublicationTable
+	76,   // 1031: pg_query.CreatePublicationStmt.options:type_name -> pg_query.Node
+	76,   // 1032: pg_query.CreatePublicationStmt.pubobjects:type_name -> pg_query.Node
+	76,   // 1033: pg_query.AlterPublicationStmt.options:type_name -> pg_query.Node
+	76,   // 1034: pg_query.AlterPublicationStmt.pubobjects:type_name -> pg_query.Node
+	34,   // 1035: pg_query.AlterPublicationStmt.action:type_name -> pg_query.AlterPublicationAction
+	76,   // 1036: pg_query.CreateSubscriptionStmt.publication:type_name -> pg_query.Node
+	76,   // 1037: pg_query.CreateSubscriptionStmt.options:type_name -> pg_query.Node
+	35,   // 1038: pg_query.AlterSubscriptionStmt.kind:type_name -> pg_query.AlterSubscriptionType
+	76,   // 1039: pg_query.AlterSubscriptionStmt.publication:type_name -> pg_query.Node
+	76,   // 1040: pg_query.AlterSubscriptionStmt.options:type_name -> pg_query.Node
+	19,   // 1041: pg_query.DropSubscriptionStmt.behavior:type_name -> pg_query.DropBehavior
+	72,   // 1042: pg_query.ScanToken.token:type_name -> pg_query.Token
+	71,   // 1043: pg_query.ScanToken.keyword_kind:type_name -> pg_query.KeywordKind
+	350,  // 1044: pg_query.SummaryResult.tables:type_name -> pg_query.SummaryResult.Table
+	351,  // 1045: pg_query.SummaryResult.aliases:type_name -> pg_query.SummaryResult.AliasesEntry
+	352,  // 1046: pg_query.SummaryResult.functions:type_name -> pg_query.SummaryResult.Function
+	353,  // 1047: pg_query.SummaryResult.filter_columns:type_name -> pg_query.SummaryResult.FilterColumn
+	73,   // 1048: pg_query.SummaryResult.Table.context:type_name -> pg_query.SummaryResult.Context
+	73,   // 1049: pg_query.SummaryResult.Function.context:type_name -> pg_query.SummaryResult.Context
+	1050, // [1050:1050] is the sub-list for method output_type
+	1050, // [1050:1050] is the sub-list for method input_type
+	1050, // [1050:1050] is the sub-list for extension type_name
+	1050, // [1050:1050] is the sub-list for extension extendee
+	0,    // [0:1050] is the sub-list for field type_name
 }
 
 func init() { file_pg_query_proto_init() }
@@ -36790,6 +37473,7 @@ func file_pg_query_proto_init() {
 		(*Node_CurrentOfExpr)(nil),
 		(*Node_NextValueExpr)(nil),
 		(*Node_InferenceElem)(nil),
+		(*Node_ReturningExpr)(nil),
 		(*Node_TargetEntry)(nil),
 		(*Node_RangeTblRef)(nil),
 		(*Node_JoinExpr)(nil),
@@ -36827,7 +37511,6 @@ func file_pg_query_proto_init() {
 		(*Node_PartitionSpec)(nil),
 		(*Node_PartitionBoundSpec)(nil),
 		(*Node_PartitionRangeDatum)(nil),
-		(*Node_SinglePartitionSpec)(nil),
 		(*Node_PartitionCmd)(nil),
 		(*Node_RangeTblEntry)(nil),
 		(*Node_RtepermissionInfo)(nil),
@@ -36845,6 +37528,8 @@ func file_pg_query_proto_init() {
 		(*Node_CtecycleClause)(nil),
 		(*Node_CommonTableExpr)(nil),
 		(*Node_MergeWhenClause)(nil),
+		(*Node_ReturningOption)(nil),
+		(*Node_ReturningClause)(nil),
 		(*Node_TriggerTransition)(nil),
 		(*Node_JsonOutput)(nil),
 		(*Node_JsonArgument)(nil),
@@ -36873,8 +37558,9 @@ func file_pg_query_proto_init() {
 		(*Node_PlassignStmt)(nil),
 		(*Node_CreateSchemaStmt)(nil),
 		(*Node_AlterTableStmt)(nil),
-		(*Node_ReplicaIdentityStmt)(nil),
 		(*Node_AlterTableCmd)(nil),
+		(*Node_AtalterConstraint)(nil),
+		(*Node_ReplicaIdentityStmt)(nil),
 		(*Node_AlterCollationStmt)(nil),
 		(*Node_AlterDomainStmt)(nil),
 		(*Node_GrantStmt)(nil),
@@ -37013,8 +37699,8 @@ func file_pg_query_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pg_query_proto_rawDesc), len(file_pg_query_proto_rawDesc)),
-			NumEnums:      72,
-			NumMessages:   277,
+			NumEnums:      74,
+			NumMessages:   280,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

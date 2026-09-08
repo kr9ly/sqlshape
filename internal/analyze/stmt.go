@@ -1301,7 +1301,7 @@ func (a *analyzer) insertStmt(ins *pgparse.InsertStmt, sc *scope) ([]rteCol, *Er
 		if ins.OnConflictClause != nil && (orig.RuleEvents["insert"] || orig.RuleEvents["update"]) {
 			return nil, errAt(codeFeatureNotSupported, -1, "INSERT with ON CONFLICT clause cannot be used with table that has INSERT or UPDATE rules")
 		}
-		if err := a.ruleRestrictions(orig, "insert", len(ins.ReturningList) > 0); err != nil {
+		if err := a.ruleRestrictions(orig, "insert", len(ins.GetReturningClause().GetExprs()) > 0); err != nil {
 			return nil, err
 		}
 		if len(a.dmlCTEs) > 0 && orig.RuleInsertSelect["insert"] {
@@ -1459,7 +1459,7 @@ func (a *analyzer) insertStmt(ins *pgparse.InsertStmt, sc *scope) ([]rteCol, *Er
 			}
 		}
 	}
-	return a.returning(ins.ReturningList, inner)
+	return a.returning(ins.GetReturningClause().GetExprs(), inner)
 }
 
 func (a *analyzer) setClause(targets []*pgparse.Node, rel *schema.Relation, sc *scope) *Error {
@@ -1580,7 +1580,7 @@ func (a *analyzer) updateStmt(upd *pgparse.UpdateStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	if orig := a.s.Relation(upd.Relation.Schemaname, upd.Relation.Relname); orig != nil {
-		if err := a.ruleRestrictions(orig, "update", len(upd.ReturningList) > 0); err != nil {
+		if err := a.ruleRestrictions(orig, "update", len(upd.GetReturningClause().GetExprs()) > 0); err != nil {
 			return nil, err
 		}
 	}
@@ -1610,7 +1610,7 @@ func (a *analyzer) updateStmt(upd *pgparse.UpdateStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	a.recordFixed(sc, upd.WhereClause)
-	return a.returning(upd.ReturningList, sc)
+	return a.returning(upd.GetReturningClause().GetExprs(), sc)
 }
 
 func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Error) {
@@ -1624,7 +1624,7 @@ func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	if orig := a.s.Relation(del.Relation.Schemaname, del.Relation.Relname); orig != nil {
-		if err := a.ruleRestrictions(orig, "delete", len(del.ReturningList) > 0); err != nil {
+		if err := a.ruleRestrictions(orig, "delete", len(del.GetReturningClause().GetExprs()) > 0); err != nil {
 			return nil, err
 		}
 	}
@@ -1647,7 +1647,7 @@ func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	a.recordFixed(sc, del.WhereClause)
-	return a.returning(del.ReturningList, sc)
+	return a.returning(del.GetReturningClause().GetExprs(), sc)
 }
 
 // figureColname implements PG's FigureColname for unaliased target entries.
@@ -2008,7 +2008,7 @@ func (a *analyzer) mergeStmt(m *pgparse.MergeStmt, sc *scope) ([]rteCol, *Error)
 	}
 	ret := newScope(sc)
 	ret.items = []*rte{source, target} // RETURNING * expands the source first (transformMergeStmt's rtable order)
-	return a.returning(m.ReturningList, ret)
+	return a.returning(m.GetReturningClause().GetExprs(), ret)
 }
 
 const (
@@ -2344,13 +2344,13 @@ func (a *analyzer) checkCTEColumnList(c *pgparse.CommonTableExpr, cols []rteCol)
 func hasReturning(n *pgparse.Node) bool {
 	switch v := n.Node.(type) {
 	case *pgparse.Node_InsertStmt:
-		return len(v.InsertStmt.ReturningList) > 0
+		return len(v.InsertStmt.GetReturningClause().GetExprs()) > 0
 	case *pgparse.Node_UpdateStmt:
-		return len(v.UpdateStmt.ReturningList) > 0
+		return len(v.UpdateStmt.GetReturningClause().GetExprs()) > 0
 	case *pgparse.Node_DeleteStmt:
-		return len(v.DeleteStmt.ReturningList) > 0
+		return len(v.DeleteStmt.GetReturningClause().GetExprs()) > 0
 	case *pgparse.Node_MergeStmt:
-		return len(v.MergeStmt.ReturningList) > 0
+		return len(v.MergeStmt.GetReturningClause().GetExprs()) > 0
 	}
 	return true
 }
