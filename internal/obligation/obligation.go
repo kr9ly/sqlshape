@@ -87,14 +87,12 @@ const (
 	ByForeignKey
 	// Waived: the statement opted out.
 	Waived
-	// NotApplicable: the obligation's kinds do not include this statement's class, or
-	// the leaf is a RETURNING scope.
-	NotApplicable
 )
 
-// Discharge is one (leaf, obligation) judgment. Every judgment is recorded, discharged
-// or not, so an entry point can print the full audit (`sqlshape check`) or just the
-// failures (vet).
+// Discharge is one (leaf, obligation) judgment. Every applicable judgment is recorded,
+// discharged or not, so an entry point can print the full audit (`sqlshape check`) or
+// just the failures (vet). An obligation whose kinds do not include the statement's
+// class at that leaf is not a judgment and is not recorded.
 type Discharge struct {
 	Obligation *Obligation
 	Leaf       facts.Leaf
@@ -117,19 +115,4 @@ type Problem struct {
 	Subject string
 	Source  string
 	Message string
-}
-
-// Options are the entry point's contribution: what the statement opted out of, and the
-// context whose obligations apply.
-type Options struct {
-	// Strict adds the advisory discharges (a policy discharge without FORCE ROW LEVEL
-	// SECURITY) to the failures.
-	Strict bool
-}
-
-// Check judges every obligation against every leaf of f, at every depth, and returns
-// all judgments in leaf order. Implemented in the next step; the signature is the
-// contract.
-func Check(s *schema.Schema, decls []Obligation, f *facts.Facts, l Lowerer, opt Options) []Discharge {
-	panic("obligation.Check: not implemented")
 }

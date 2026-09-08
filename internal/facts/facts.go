@@ -59,6 +59,9 @@ type Scope struct {
 	// Returning marks the RETURNING list's scope: its rows are the ones just written, so
 	// read obligations do not apply.
 	Returning bool
+	// At is the 0-based offset of this level's WHERE (or ON) clause, -1 without one:
+	// where a missing predicate is reported.
+	At int32
 }
 
 // Leaf is one relation occurrence in a scope.
@@ -143,6 +146,8 @@ type Pred struct {
 	// outer join's ON restricts only its nullable side.
 	Restricts []int
 	Origin    Origin
+	// Name is the policy that contributed a FromPolicy predicate.
+	Name string
 }
 
 // PredOp is the shape of a Pred.

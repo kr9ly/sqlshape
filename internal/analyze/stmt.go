@@ -1900,7 +1900,7 @@ func (a *analyzer) mergeStmt(m *pg_query.MergeStmt, sc *scope) ([]rteCol, *Error
 	}
 	both := newScope(sc)
 	both.items = []*rte{target, source}
-	a.recordFacts(a.newProver(both, m.JoinCondition), sc)
+	a.recordFacts(a.newProver(both, m.JoinCondition), sc, loc(m.JoinCondition))
 	srcOnly := newScope(sc)
 	srcOnly.items = []*rte{source}
 	tgtOnly := newScope(sc)

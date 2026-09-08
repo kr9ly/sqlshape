@@ -49,11 +49,13 @@ func (a *analyzer) newProver(sc *scope, where *pg_query.Node) *prover {
 // for the tree built at the end of the analysis. Levels inside a view body are not the statement's (they are
 // reached through the leaf that reads the view); a RETURNING list's rows are the ones
 // just written and carry no obligations.
-func (a *analyzer) recordFacts(p *prover, as *scope) {
+func (a *analyzer) recordFacts(p *prover, as *scope, at int32) {
 	if a.inView > 0 || a.inReturning {
 		return
 	}
-	a.factScopes = append(a.factScopes, factScope{sc: as, fs: a.scopeFacts(p, nil)})
+	fs := a.scopeFacts(p, nil)
+	fs.At = at
+	a.factScopes = append(a.factScopes, factScope{sc: as, fs: fs})
 }
 
 // scopeFacts writes one level down. waived names the tables the enclosing definition
@@ -130,6 +132,7 @@ func (a *analyzer) scopeFacts(p *prover, waived map[string]bool) *facts.Scope {
 					return facts.ColRef{Leaf: i, Column: l.cols[k.i].name}, true
 				}, true)
 				pr.Origin = facts.FromPolicy
+				pr.Name = pol.Name
 				pr.Restricts = []int{i}
 				fs.Preds = append(fs.Preds, pr)
 			}
@@ -182,6 +185,7 @@ func (a *analyzer) viewFacts(rel *schema.Relation) *facts.Scope {
 	}
 	p := a.newProver(sub.sc, sub.sel.WhereClause)
 	fs := a.scopeFacts(p, rel.Unfiltered)
+	fs.At = -1
 	clearPositions(fs) // offsets into the view's definition mean nothing to the statement
 	a.viewFactScopes[rel] = fs
 	return fs
@@ -328,7 +332,7 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 	f.Top = byScope[top]
 	if f.Top == nil {
 		// INSERT (and a MERGE whose ON did not record): the target alone at the top
-		f.Top = &facts.Scope{}
+		f.Top = &facts.Scope{At: -1}
 		if a.writeLeaf != nil {
 			f.Top.Leaves = []facts.Leaf{a.leafFacts(a.writeLeaf, nil)}
 		}
@@ -386,4 +390,44 @@ func (a *analyzer) buildFacts(stmt *pg_query.Node, top *scope) *facts.Facts {
 		f.Writes = append(f.Writes, facts.Write{Table: name, Kind: facts.Delete, Position: pos})
 	}
 	return f
+}
+
+// Lower reads a declared predicate over rel in the facts language: the expression is
+// parsed and type-checked against the table alone (an error is the declaration's), and
+// each conjunct becomes a facts.Pred whose ColRef.Leaf is 0, standing for the subject.
+// This is internal/obligation's Lowerer for PostgreSQL.
+func Lower(s *schema.Schema, expr string, rel *schema.Relation) ([]facts.Pred, error) {
+	tree, err := pg_query.Parse("SELECT " + expr)
+	if err != nil {
+		return nil, &Error{Code: codeSyntaxError, Message: strings.TrimPrefix(err.Error(), "syntax error ")}
+	}
+	targets := tree.Stmts[0].Stmt.GetSelectStmt().GetTargetList()
+	if len(tree.Stmts) != 1 || len(targets) != 1 {
+		return nil, &Error{Code: codeSyntaxError, Message: "one boolean expression expected"}
+	}
+	n := targets[0].GetResTarget().GetVal()
+	a := newAnalyzer(s, nil, nil)
+	sc := newScope(nil)
+	r, aerr := a.relationRTE(rel, nil, 0)
+	if aerr != nil {
+		return nil, aerr
+	}
+	sc.items = []*rte{r}
+	if aerr := a.boolClause(n, sc, "WHERE"); aerr != nil {
+		return nil, aerr
+	}
+	p := a.newProver(sc, n)
+	ref := func(k colKey) (facts.ColRef, bool) {
+		if k.r != r || k.i >= len(r.cols) {
+			return facts.ColRef{}, false
+		}
+		return facts.ColRef{Leaf: 0, Column: r.cols[k.i].name}, true
+	}
+	var out []facts.Pred
+	for _, c := range p.conjuncts {
+		pr := a.predFacts(p, c.n, ref, false)
+		pr.Origin = facts.FromStatement
+		out = append(out, pr)
+	}
+	return out, nil
 }

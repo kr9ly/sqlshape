@@ -719,7 +719,7 @@ func (a *analyzer) recordFixed(sc *scope, where *pg_query.Node) {
 		return
 	}
 	p := a.newProver(sc, where)
-	a.recordFacts(p, sc)
+	a.recordFacts(p, sc, loc(where))
 	if a.inView == 0 {
 		for k := range p.known {
 			if k.r.rel != nil {

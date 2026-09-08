@@ -153,6 +153,11 @@ type Relation struct {
 	// Unfiltered (views): tables a `-- sqlshape: unfiltered t1, t2` directive before the
 	// CREATE VIEW exempts from their visibility policy inside this view's query.
 	Unfiltered map[string]bool
+	// Directives are the `-- sqlshape: ...` lines written before the CREATE, verbatim
+	// (normalized whitespace), for the packages whose grammar they belong to
+	// (internal/obligation reads `require ...`). The loader keeps them all, whether or
+	// not it interprets them itself.
+	Directives []string
 	// InsteadRules (views): the write commands ("insert" / "update" / "delete") a
 	// CREATE RULE ... DO INSTEAD makes the view take.
 	InsteadRules map[string]bool
@@ -989,7 +994,10 @@ func (s *Schema) createTable(st *pg_query.CreateStmt, loc int32) {
 	}
 	for _, d := range s.pending {
 		norm := strings.Join(strings.Fields(d), " ")
+		rel.Directives = append(rel.Directives, norm)
 		switch {
+		case len(norm) > 8 && strings.EqualFold(norm[:8], "require "):
+			// an obligation (internal/obligation parses it)
 		case len(norm) > 14 && strings.EqualFold(norm[:14], "visible where "):
 			pred, err := parseExpr(norm[14:])
 			if err != nil {
@@ -1222,7 +1230,7 @@ func (s *Schema) createView(st *pg_query.ViewStmt, loc int32) {
 			// CREATE OR REPLACE VIEW keeps the relation (its rules, triggers and the views
 			// built on it) and redefines the query
 			rel = existing
-			rel.Frozen, rel.Unfiltered = nil, nil
+			rel.Frozen, rel.Unfiltered, rel.Directives = nil, nil, nil
 			// the redefinition is the definition (pg_dump writes a view a later object needs
 			// as a dummy first and CREATE OR REPLACEs it once the object exists)
 			rel.Definition = s.stmtText
@@ -1276,7 +1284,10 @@ func (s *Schema) viewDependsOnItself(rel *Relation) bool {
 func (s *Schema) viewDirectives(rel *Relation, loc int32) {
 	for _, d := range s.pending {
 		norm := strings.Join(strings.Fields(d), " ")
+		rel.Directives = append(rel.Directives, norm)
 		switch {
+		case len(norm) > 8 && strings.EqualFold(norm[:8], "require "):
+			// an obligation (internal/obligation parses it)
 		case len(norm) > 11 && strings.EqualFold(norm[:11], "unfiltered "):
 			if rel.Unfiltered == nil {
 				rel.Unfiltered = map[string]bool{}
