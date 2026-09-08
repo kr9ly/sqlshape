@@ -462,8 +462,37 @@ VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
 
 Values a `bigint` or `text` cannot tell apart, such as an enum label, a table's ID or an amount in
 some unit, are named types in Go. The checker binds a named type to the meaning on the SQL side
-(an enum, a lookup table's key, a CHECK value set, a primary key, a domain) from where it is used,
-and reports every later use that disagrees. Nothing is registered. The binding crosses packages.
+(an enum, a lookup table's key, a CHECK value set, a primary key, a domain) and reports every use
+that disagrees.
+
+#### Meaning comes from use, not from a registry
+
+There is no place where a Go type is declared to "be" a table's ID or an enum. A plain named type
+acquires its meaning the first time a statement passes or receives it against a column that has one,
+and keeps it from then on, in every package that uses the type.
+
+```go
+type UserID int64 // nothing more: no tag, no comment, no registration
+```
+
+```go
+// 1. the first meeting binds: UserID now stands for users.id
+var User = sqlshape.One[User, struct{ ID UserID }](`SELECT id, email FROM users WHERE id = {{.ID}}`)
+
+// 2. every later meeting is checked against that binding
+var Total = sqlshape.One[int64, struct{ ID UserID }](`SELECT total FROM orders WHERE id = {{.ID}}`)
+// sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id
+```
+
+The same goes for a string type meeting an enum column or the key of a seeded lookup table (its
+constants are then compared with the labels), and for an integer type meeting a domain column (it
+then carries the unit). Which statement comes first does not matter: all bindings of a type are
+collected and must agree. A type that never meets such a column is never checked. The binding is
+exported as an analysis fact, so a type declared in one package and used in another is one type
+with one meaning.
+
+Why this way: sqlshape generates nothing and has no registration API, so the Go code stays plain Go;
+binding by use means a type is checked exactly where it matters and never has to be announced.
 
 #### Enum and lookup values agree with the named type's constants
 

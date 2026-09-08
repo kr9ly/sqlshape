@@ -417,7 +417,28 @@ VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
 
 ### 型に意味を持たせる
 
-`bigint`や`text`のままでは区別できない値、たとえばenumのラベル、テーブルのID、金額の単位は、Goではnamed typeで表す。検査器はnamed typeが使われた箇所からそれをSQL側の意味（enum、lookupテーブルのキー、CHECKの値集合、主キー、ドメイン）に結びつけ、以後の使用箇所で食い違いを報告する。登録は要らない。結びつきはパッケージを越えて効く。
+`bigint`や`text`のままでは区別できない値、たとえばenumのラベル、テーブルのID、金額の単位は、Goではnamed typeで表す。検査器はnamed typeをSQL側の意味（enum、lookupテーブルのキー、CHECKの値集合、主キー、ドメイン）に結びつけ、食い違う使い方を報告する。
+
+#### 意味は登録ではなく使用箇所から決まる
+
+Goの型を「これはこのテーブルのID」「これはこのenum」と宣言する場所はどこにもない。素のnamed typeは、意味を持つ列に対して文が初めてそれを渡すか受けた瞬間に意味を獲得し、以後その型を使うすべてのパッケージでそれを保つ。
+
+```go
+type UserID int64 // これだけ。タグもコメントも登録も無い
+```
+
+```go
+// 1. 最初の出会いが束縛する。UserIDはここからusers.idを表す
+var User = sqlshape.One[User, struct{ ID UserID }](`SELECT id, email FROM users WHERE id = {{.ID}}`)
+
+// 2. 以後の出会いはその束縛に照らされる
+var Total = sqlshape.One[int64, struct{ ID UserID }](`SELECT total FROM orders WHERE id = {{.ID}}`)
+// sqlshape: parameter .ID is UserID, which stands for key users.id elsewhere, but here meets key orders.id
+```
+
+文字列型がenumの列やseed済みlookupテーブルのキーに出会えば同じことが起き（以後その定数がラベルと比較される）、整数型がドメインの列に出会えば単位を帯びる。どの文が先かは関係ない。型の束縛は全部集めて突き合わせ、食い違えば報告する。そういう列に一度も出会わない型は検査されない。束縛は解析のfactとして書き出されるので、あるパッケージで宣言して別のパッケージで使う型も、一つの型に一つの意味として扱われる。
+
+なぜこうしているか。sqlshapeは何も生成せず、登録APIも持たないので、Goのコードは素のGoのまま。使用箇所で束縛すれば、型は意味を持つ場所でだけ検査され、事前に名乗る必要がない。
 
 #### enumやlookupテーブルの値はnamed typeの定数と一致させる
 
