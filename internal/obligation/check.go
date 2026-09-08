@@ -113,7 +113,9 @@ func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 	}
 	switch {
 	case o.Body.Predicate != "":
-		d.Position = sc.At
+		if sc.At >= 0 {
+			d.Position = sc.At // the WHERE the predicate is missing from
+		}
 		c.predicate(sc, i, o, rel, &d)
 	case o.Body.Pinned != "":
 		c.pinned(sc, i, o, rel, &d)

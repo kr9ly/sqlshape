@@ -5,7 +5,8 @@
 `cmd/sqlshape` is a `go vet -vettool`-compatible checker. Run it as `sqlshape ./...`,
 `sqlshape vet ./...` or `go vet -vettool=$(which sqlshape) ./...`; the flags below are passed the
 same way in each case.
-The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
+`sqlshape check` takes `-schema`, `-quiet` and the three boundary flags below
+([checks.md](checks.md#declaring-the-rules-in-schemasql-require)). The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
 [migrations.md](migrations.md).
 
 ## Checker flags

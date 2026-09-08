@@ -154,6 +154,7 @@ $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to s
 $ $EDITOR up.sql                            # reorder, split, add USING, interleave a backfill
 $ sqlshape apply -db "$DSN" -packages ./... up.sql
 $ sqlshape verify-schema -db "$DSN"         # drift: where a database differs from schema.sql
+$ sqlshape check ops.sql                    # SQL outside Go, judged against schema.sql's obligations
 ```
 
 The generated DDL may be edited by hand. `apply` checks, before running anything, that applying the
@@ -164,7 +165,7 @@ rename or the removal of an enum label, are declared in `schema.sql` with `-- @m
 
 ## Documentation
 
-- [docs/checks.md](docs/checks.md) — everything the checker verifies: shapes, meaning, failure modes (with PostgreSQL's constraint naming rules), cardinality, boundaries
+- [docs/checks.md](docs/checks.md) — everything the checker verifies: shapes, meaning, failure modes (with PostgreSQL's constraint naming rules), cardinality, the rules a schema declares (`require`, aggregates, `sqlshape check`)
 - [docs/templates.md](docs/templates.md) — the template subset, directives, shared fragments, hazards, sparse checking
 - [docs/runtime.md](docs/runtime.md) — `Run` / `Collect` / `First` / `Exec`, `One`, `Batch`, `Copy`, `MatView`, the Go type table, type registration, errors, tests on a real PostgreSQL
 - [docs/migrations.md](docs/migrations.md) — `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements

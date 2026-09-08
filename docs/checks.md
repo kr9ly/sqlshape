@@ -890,6 +890,23 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 -- orders belongs to aggregate orders and this statement also touches invoices of aggregate invoices: one statement, one aggregate (read across aggregates through a view)
 ```
 
+The same judgment is available for SQL that is not in Go code (an operator's UPDATE, a backfill, a
+query an agent is about to run):
+
+```
+$ sqlshape check -schema schema.sql ops.sql     # or: ... < ops.sql
+ops.sql:2: ok orders: require pinned(tenant_id)
+ops.sql:6: waived orders: require pinned(tenant_id): orders: `require pinned(tenant_id)` is waived by this statement
+ops.sql:8: FAIL orders: visible where deleted_at IS NULL: rows of orders are visible where ...
+sqlshape: 2 finding(s)
+```
+
+Every judgment is printed, with the path that discharged it (`ok`, `ok(policy)`, `ok(fk)`,
+`waived`), so the output doubles as the audit of what a script was allowed to do; `-quiet` prints
+failures only. The exit code is 1 when a statement fails an obligation or does not analyze. The
+`-- sqlshape:` lines above a statement belong to it, and `-require-columns` / `-no-tables` /
+`-no-table-reads` are accepted as in vet.
+
 The flags remain as shorthands: `-require-columns=tenant_id` is `require pinned(tenant_id)` on every
 table that has the column, `-no-table-reads` is `require via view` on every table, `-no-tables` is
 `require via view on all`.

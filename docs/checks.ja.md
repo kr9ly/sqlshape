@@ -769,6 +769,18 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 -- orders belongs to aggregate orders and this statement also touches invoices of aggregate invoices: one statement, one aggregate (read across aggregates through a view)
 ```
 
+同じ判定はGoコードの外のSQL（運用のUPDATE、backfill、エージェントがこれから流すクエリ）にも使える。
+
+```
+$ sqlshape check -schema schema.sql ops.sql     # または ... < ops.sql
+ops.sql:2: ok orders: require pinned(tenant_id)
+ops.sql:6: waived orders: require pinned(tenant_id): orders: `require pinned(tenant_id)` is waived by this statement
+ops.sql:8: FAIL orders: visible where deleted_at IS NULL: rows of orders are visible where ...
+sqlshape: 2 finding(s)
+```
+
+判定は全部、履行経路つきで出る（`ok`、`ok(policy)`、`ok(fk)`、`waived`）ので、そのスクリプトに何が許されたかの監査ログを兼ねる。`-quiet`は失敗だけを出す。義務を履行できない文か解析に失敗する文があれば終了コード1。文の直上の`-- sqlshape:`行はその文のもので、`-require-columns` / `-no-tables` / `-no-table-reads`はvetと同じく受け付ける。
+
 フラグは略記として残る。`-require-columns=tenant_id`はその列を持つ全表への`require pinned(tenant_id)`、`-no-table-reads`は全表への`require via view`、`-no-tables`は`require via view on all`。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）

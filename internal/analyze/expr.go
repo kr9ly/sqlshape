@@ -1721,6 +1721,10 @@ func loc(n *pg_query.Node) int32 {
 		return v.RangeVar.Location
 	case *pg_query.Node_CoalesceExpr:
 		return v.CoalesceExpr.Location
+	case *pg_query.Node_NullTest:
+		return v.NullTest.Location
+	case *pg_query.Node_BooleanTest:
+		return v.BooleanTest.Location
 	}
 	return -1
 }

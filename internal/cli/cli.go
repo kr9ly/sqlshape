@@ -1,5 +1,6 @@
 // Package cli is the sqlshape command: `vet` (the go/analysis checker, also what a bare
-// invocation runs so `go vet -vettool` keeps working), `diff` (the DDL from a database or
+// invocation runs so `go vet -vettool` keeps working), `check` (SQL outside Go, judged
+// against the schema's obligations), `diff` (the DDL from a database or
 // schema text to schema.sql), `apply` (a DDL file, checked by its end state and by the
 // consumers of what it drops, then run), and `verify-schema` (drift between a database
 // and schema.sql).
@@ -25,7 +26,7 @@ import (
 )
 
 // Subcommands lists the names Main handles; anything else is the checker's business.
-var Subcommands = []string{"vet", "diff", "apply", "verify-schema", "version", "help"}
+var Subcommands = []string{"vet", "check", "diff", "apply", "verify-schema", "version", "help"}
 
 // IsSubcommand reports whether name is one of Subcommands.
 func IsSubcommand(name string) bool {
@@ -49,6 +50,8 @@ func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writ
 		err = runApply(ctx, args, stdout, stderr)
 	case "verify-schema":
 		err = runVerify(ctx, args, stdout, stderr)
+	case "check":
+		err = runCheck(ctx, args, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, "sqlshape "+Version())
 		return 0
@@ -77,6 +80,9 @@ func Run(ctx context.Context, name string, args []string, stdout, stderr io.Writ
 const usage = `usage: sqlshape <command> [flags] [arguments]
 
   vet [flags] packages...        check the Go packages (also what a bare 'sqlshape' runs)
+  check [-schema PATH] [-quiet] [FILE.sql...]
+                                 judge SQL statements (files, or stdin) against schema.sql and its
+                                 obligations; prints every judgment, exit 1 when one is not discharged
   diff [-db DSN | -from FILE] [-schema PATH] [-packages P...]
                                  print the DDL that takes the database (or FILE) to schema.sql
   apply -db DSN [-schema PATH] [-packages P...] [-dry-run] [-force] [-no-transaction] DDL.sql

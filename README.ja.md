@@ -123,6 +123,7 @@ $ sqlshape diff -db "$DSN" > up.sql         # データベースの状態から 
 $ $EDITOR up.sql                            # 並べ替え、分割、USING の追加、backfill の差し込み
 $ sqlshape apply -db "$DSN" -packages ./... up.sql
 $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベースが schema.sql と違う箇所
+$ sqlshape check ops.sql                    # Goの外のSQLを schema.sql の義務に照らす
 ```
 
 生成されたDDLは手で直してよい。`apply`は、そのDDLを当てた結果が本当に`schema.sql`と一致するかを実行前に確認し、一致しなければ実行しない。`-packages`を付けると、DDLで消える列や型が変わる列をまだ使っているGoのコードがあれば、それも実行前に止まる。リネームやenumのラベル削除のように差分だけでは意図が決められない変更は、`schema.sql`に`-- @migrate`行で書き添える。詳細は[docs/migrations.ja.md](docs/migrations.ja.md)。
