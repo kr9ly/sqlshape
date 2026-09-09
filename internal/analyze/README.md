@@ -93,7 +93,10 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
 - `testdata/queries/*.sql` + `.golden`: goldens come from the real PG (`go test ./internal/analyze -update`);
   the default run compares the analyzer to them without starting PG
 - `regress_test.go`: `-regress /path/to/postgres/src/test/regress` replays PG's own regression corpus against a
-  live PG and the analyzer side by side and writes every disagreement to `-regress-report`, grouped by kind
+  live PG and the analyzer side by side and writes every disagreement to `-regress-report`, grouped by kind.
+  `SQLSHAPE_PG=18` probes another major version: its oracle, its corpus checkout (`regress-18`), its catalog
+  (the probe writes the version declaration above the corpus DDL) and its baseline
+  (`testdata/regress_baseline_<major>.txt`)
   (DIFF column name / type / nullability, STRICT = analyzer rejects what PG takes, LENIENT = the reverse, CODE =
   different SQLSTATE). A discovery tool, not a gate: `-regress-tests select,join` limits it to some files.
   A full run takes about half a minute: the schedule's first 8 lines build the shared database in order
@@ -104,7 +107,7 @@ SET / SHOW / transaction control / DO / VACUUM / ANALYZE / COPY / DECLARE CURSOR
   (`\set filename` before each COPY), `\c` is a DISCARD ALL, and DISCARD / DEALLOCATE ALL reset pgx's statement
   cache so the oracle's helper queries survive them.
   `SQLSHAPE_ORACLE_LOG=/path` keeps the server log (one MERGE in merge.sql segfaults PG 17's Prepare and is
-  skipped by `reCrash`). `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
+  skipped by `reCrash` on 17; 18 takes it). `testdata/tools/bucket.sh` / `hits.py` slice a report by bucket. The oracle is PG's Describe, so errors PG
   only raises at execution (assignment length coercion of a literal into varchar(n) / bit(n) / numeric(p,s),
   view updatability decided by view-column defaults) count as STRICT there even though the analyzer is right
 - `probe_test.go` runs one statement against one schema (`PROBE_SCHEMA=f PROBE_SQL=f [PROBE_ORACLE=1]`) for
