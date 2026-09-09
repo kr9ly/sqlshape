@@ -1,11 +1,11 @@
-# Release: push a tag v* and this builds the sqlshape binary for each platform, packs it,
-# and publishes a GitHub Release with checksums.
+# Release: push a tag v* and this cross-compiles the sqlshape binary for every platform,
+# packs it, and publishes a GitHub Release with checksums.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# The binary is a plain Go build (libpg_query runs as WebAssembly, no cgo), so it could be
-# cross-compiled from one runner; each platform still builds on its own runner so the smoke
-# test runs on the platform it ships for.
+# The binary is a plain Go build (libpg_query runs as WebAssembly, no cgo), so one runner
+# builds every target; the smoke test runs the runner's own (linux/amd64) binary as a
+# vettool over the examples, the only one it can execute.
 #
 # `go install github.com/kr9ly/sqlshape/cmd/sqlshape@<tag>` needs nothing from this
 # workflow: it reads the tag straight from the module proxy.
@@ -19,14 +19,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - { os: ubuntu-latest,     goos: linux,  goarch: amd64 }
-          - { os: ubuntu-24.04-arm,  goos: linux,  goarch: arm64 }
-          - { os: macos-14,          goos: darwin, goarch: arm64 }
-    runs-on: ${{ matrix.os }}
+  release:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -36,40 +30,31 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -trimpath \
-            -ldflags "-s -w -X github.com/kr9ly/sqlshape/internal/cli.version=${GITHUB_REF_NAME}" \
-            -o sqlshape ./cmd/sqlshape
+          mkdir dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            goos=${target%/*}; goarch=${target#*/}
+            bin=sqlshape; [ "$goos" = windows ] && bin=sqlshape.exe
+            GOOS=$goos GOARCH=$goarch go build -trimpath \
+              -ldflags "-s -w -X github.com/kr9ly/sqlshape/internal/cli.version=${GITHUB_REF_NAME}" \
+              -o "build/$goos-$goarch/$bin" ./cmd/sqlshape
+            name="sqlshape_${GITHUB_REF_NAME}_${goos}_${goarch}"
+            mkdir "$name"
+            cp "build/$goos-$goarch/$bin" LICENSE NOTICE README.md "$name"/
+            if [ "$goos" = windows ]; then
+              zip -qr "dist/$name.zip" "$name"
+            else
+              tar -czf "dist/$name.tar.gz" "$name"
+            fi
+            rm -r "$name"
+          done
+          ls -la dist
 
       - name: Smoke test
-        run: .github/scripts/smoke.sh ./sqlshape "$GITHUB_REF_NAME"
-
-      - name: Pack
-        run: |
-          name="sqlshape_${GITHUB_REF_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}"
-          mkdir "$name"
-          cp sqlshape LICENSE NOTICE README.md "$name"/
-          tar -czf "$name.tar.gz" "$name"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sqlshape_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: sqlshape_*.tar.gz
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
+        run: .github/scripts/smoke.sh ./build/linux-amd64/sqlshape "$GITHUB_REF_NAME"
 
       - name: Checksums
-        run: cd dist && sha256sum sqlshape_*.tar.gz > checksums.txt
+        run: cd dist && sha256sum sqlshape_* > checksums.txt
 
       - name: Publish
         env:

@@ -39,8 +39,8 @@ $ sqlshape version
 ```
 
 It is a plain Go build: PostgreSQL's parser (libpg_query) is embedded as WebAssembly and runs on
-wazero, so `go install` needs no C compiler. Prebuilt binaries for Linux (amd64, arm64) and macOS
-(Apple Silicon) are on the [releases page](https://github.com/kr9ly/sqlshape/releases).
+wazero, so `go install` needs no C compiler. Prebuilt binaries for Linux, macOS and Windows (amd64
+and arm64 each) are on the [releases page](https://github.com/kr9ly/sqlshape/releases).
 
 The runtime is an ordinary Go module:
 
