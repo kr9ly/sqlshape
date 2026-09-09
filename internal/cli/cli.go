@@ -22,6 +22,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/diff"
 	"github.com/kr9ly/sqlshape/internal/dump"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -103,8 +104,9 @@ type server interface {
 	Close() error
 }
 
-// newServer boots one; tests share one across commands.
-var newServer = func(ctx context.Context) (server, error) { return dump.NewServer(ctx) }
+// newServer boots one of the PostgreSQL version the schema declares; tests share one
+// across commands.
+var newServer = func(ctx context.Context, v pgparse.Version) (server, error) { return dump.NewServer(ctx, v) }
 
 // finding is a result the command reports rather than a failure to run: exit code 1.
 type finding struct{ msg string }
@@ -148,12 +150,22 @@ type target struct {
 	canonical *schema.Schema
 }
 
-// loadTarget reads the schema text at path and canonicalizes it on srv.
-func loadTarget(ctx context.Context, srv server, path string) (*target, error) {
+// readTarget reads the schema text at path and the PostgreSQL version it declares, which
+// the server the command boots must run.
+func readTarget(path string) (string, pgparse.Version, error) {
 	text, err := schema.ReadSource(path)
 	if err != nil {
-		return nil, err
+		return "", 0, err
 	}
+	v, err := schema.DeclaredVersion(text)
+	if err != nil {
+		return "", 0, err
+	}
+	return text, v, nil
+}
+
+// loadTarget canonicalizes the schema text read from path on srv.
+func loadTarget(ctx context.Context, srv server, path, text string) (*target, error) {
 	canon, _, err := srv.Canonical(ctx, text, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

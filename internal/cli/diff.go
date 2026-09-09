@@ -38,12 +38,16 @@ func runDiff(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	srv, err := newServer(ctx)
+	text, version, err := readTarget(schemaPath)
+	if err != nil {
+		return err
+	}
+	srv, err := newServer(ctx, version)
 	if err != nil {
 		return err
 	}
 	defer srv.Close()
-	tgt, err := loadTarget(ctx, srv, schemaPath)
+	tgt, err := loadTarget(ctx, srv, schemaPath, text)
 	if err != nil {
 		return err
 	}
@@ -76,7 +80,7 @@ func runDiff(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		fmt.Fprintln(stdout, stmt)
 	}
 	if *pkgs != "" {
-		index, err := indexConsumers(strings.Split(*pkgs, ","), currentText)
+		index, err := indexConsumers(strings.Split(*pkgs, ","), tgt.canonical.Version, currentText)
 		if err != nil {
 			return err
 		}

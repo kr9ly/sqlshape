@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 -- a schema-level problem (s.Problems), unrelated to any function / policy / view body
 CREATE TABLE dup_table (id bigint PRIMARY KEY);
 CREATE TABLE dup_table (id bigint PRIMARY KEY);

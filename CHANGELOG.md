@@ -8,8 +8,18 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Added
+
+- PostgreSQL 18. `schema.sql` declares its version with `-- sqlshape: postgres 18`, and the schema
+  and every statement are judged with 18's grammar and catalog: `RETURNING old` / `new` (with
+  `WITH (OLD AS ..., NEW AS ...)`), `WITHOUT OVERLAPS` keys and `PERIOD` foreign keys, `NOT ENFORCED`
+  constraints (which are no failure mode), named `NOT NULL` constraints, `VIRTUAL` generated columns.
+  `pgtest` and the migration commands run the declared version's PostgreSQL.
+
 ### Changed
 
+- `schema.sql` must declare its PostgreSQL version (`-- sqlshape: postgres 17`); a schema without
+  the line is not read. Add the line to move from 1.1.
 - The parser (libpg_query) is compiled to WebAssembly and run by wazero instead of being linked
   through cgo. `go install` no longer needs a C compiler, and the binary is a plain Go build.
   Parse trees, error messages and positions are unchanged.

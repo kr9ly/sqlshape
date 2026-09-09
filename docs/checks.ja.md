@@ -29,6 +29,7 @@
   - [呼び出し元ごとに規約を変える（`context`）](#呼び出し元ごとに規約を変えるcontext)
   - [Goの外のSQLにも同じ規約を適用する（`sqlshape check`）](#goの外のsqlにも同じ規約を適用するsqlshape-check)
 - [第3部 — 文の外側](#第3部--文の外側)
+  - [スキーマはPostgreSQLの版を名乗る（`postgres`）](#スキーマはpostgresqlの版を名乗るpostgres)
   - [sqlshapeを通さないSQLを書かない（`-raw-sql`）](#sqlshapeを通さないsqlを書かない-raw-sql)
   - [パッケージは自分のスキーマだけを参照する（`-schemas`）](#パッケージは自分のスキーマだけを参照する-schemas)
   - [スキーマ自体の問題](#スキーマ自体の問題)
@@ -1027,6 +1028,27 @@ sqlshape: 2 finding(s)
 判定は全部、履行経路つきで出る（`ok`、`ok(policy)`、`ok(fk)`、`waived`）。そのスクリプトに何が許されたかの監査ログを兼ねる。`-quiet`は失敗だけを出す。義務を履行できない文か解析に失敗する文があれば終了コード1（構文エラーの文はその行だけが失敗し、他の文は判定される）。スキーマ自身の関数本体とビュー本体は、vetと同じように最初に判定される。文の直上の`-- sqlshape:`行はその文のもので、`-context`・`-require-columns`・`-no-tables`・`-no-table-reads`はvetと同じく受け付ける。
 
 ## 第3部 — 文の外側
+
+### スキーマはPostgreSQLの版を名乗る（`postgres`）
+
+`schema.sql`は、どの版のPostgreSQL向けに書かれているかを1回宣言する。この宣言が判定の土台になる。スキーマと全部の文を読む文法、型・関数・演算子を解決するカタログ、`pgtest`とマイグレーション系コマンドが起動するPostgreSQLの版が、ここで決まる。宣言の無いスキーマは読まない。
+
+```sql
+-- sqlshape: postgres 18
+CREATE TABLE ...
+```
+
+NG
+
+- `schema.sql`（ディレクトリなら`*.sql`のどれか）に宣言が無い
+- sqlshapeが持っていない版（メッセージが対応版を列挙する。17と18）
+- 値の違う宣言が2つある
+
+OK
+
+- ファイルのどこに書いてもよい。同じ値なら繰り返しもよい
+
+新しい版だけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古い版を宣言していれば構文エラーになる。その版のサーバに流したときと同じ結果である。PostgreSQLの版を上げる作業は、この数字を変えて検査器の報告を読むことになる。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 

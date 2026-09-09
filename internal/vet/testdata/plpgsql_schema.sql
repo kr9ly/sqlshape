@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 CREATE TABLE accounts (
     id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     owner   text NOT NULL,

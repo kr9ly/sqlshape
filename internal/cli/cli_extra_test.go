@@ -14,6 +14,7 @@ import (
 	"github.com/kr9ly/sqlshape/internal/consumers"
 	"github.com/kr9ly/sqlshape/internal/diff"
 	"github.com/kr9ly/sqlshape/internal/oracle"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // The version subcommand prints "sqlshape <version>"; Version() itself reports the
@@ -81,7 +82,7 @@ func TestSchemaFlagExplicit(t *testing.T) {
 // schema.sql or a schema/ directory.
 func TestSchemaFlagWalksUpToFile(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "schema.sql"), []byte("-- x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "schema.sql"), []byte(pg17Decl+"-- x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	child := filepath.Join(root, "a", "b")
@@ -142,10 +143,10 @@ func TestSchemaFlagWalksUpToDirectory(t *testing.T) {
 // going past it.
 func TestSchemaFlagFileNamedSchemaDoesNotCount(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "schema"), []byte("not a directory"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "schema"), []byte(pg17Decl+"not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "schema.sql"), []byte("-- x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "schema.sql"), []byte(pg17Decl+"-- x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	child := filepath.Join(root, "sub")
@@ -226,7 +227,7 @@ func TestDiffReportsSchemaProblems(t *testing.T) {
 	// LISTEN is valid SQL (real Postgres applies it fine, so loadTarget's
 	// canonicalization succeeds) but the loader has no notion of it, so problems()
 	// catches it as an unsupported statement.
-	if err := os.WriteFile(schemaPath, []byte(`LISTEN some_channel;`), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+`LISTEN some_channel;`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errs := run(t, "diff", "-from", schemaPath, "-schema", schemaPath)
@@ -403,7 +404,7 @@ func TestImpactTextMultilineHead(t *testing.T) {
 // indexConsumers reports a package pattern that fails to load (packages.PrintErrors)
 // distinctly from one that loads clean.
 func TestIndexConsumersBadPackage(t *testing.T) {
-	_, err := indexConsumers([]string{"./no/such/dir"}, "")
+	_, err := indexConsumers([]string{"./no/such/dir"}, pgparse.Default, "")
 	if err == nil || !strings.Contains(err.Error(), "packages did not load") {
 		t.Fatalf("indexConsumers: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestIndexConsumersBadPackage(t *testing.T) {
 // that os.CreateTemp fail.
 func TestIndexConsumersTempFileError(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
-	if _, err := indexConsumers([]string{"./no/such/dir"}, "x"); err == nil {
+	if _, err := indexConsumers([]string{"./no/such/dir"}, pgparse.Default, "x"); err == nil {
 		t.Fatal("indexConsumers: want error from an unwritable TMPDIR")
 	}
 }
@@ -422,7 +423,7 @@ func TestIndexConsumersTempFileError(t *testing.T) {
 // environment error for every subcommand that needs one.
 func TestNewServerErrorPropagates(t *testing.T) {
 	old := newServer
-	newServer = func(context.Context) (server, error) { return nil, errors.New("boom-newserver") }
+	newServer = func(context.Context, pgparse.Version) (server, error) { return nil, errors.New("boom-newserver") }
 	defer func() { newServer = old }()
 
 	dir := t.TempDir()
@@ -431,6 +432,9 @@ func TestNewServerErrorPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	dummySchema := filepath.Join(dir, "schema.sql")
+	if err := os.WriteFile(dummySchema, []byte(pg17Decl), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, _, errs := run(t, "diff", "-from", "x", "-schema", dummySchema); code != 2 || !strings.Contains(errs, "boom-newserver") {
 		t.Fatalf("diff: code %d\n%s", code, errs)
@@ -452,7 +456,7 @@ func TestNewServerDefault(t *testing.T) {
 	newServer = defaultNewServer
 	defer func() { newServer = old }()
 
-	srv, err := newServer(context.Background())
+	srv, err := newServer(context.Background(), pgparse.Default)
 	if err != nil {
 		t.Fatalf("newServer (default): %v", err)
 	}
@@ -487,7 +491,7 @@ func TestLoadTargetCanonicalError(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("ALTER TABLE missing_table ADD COLUMN x int;"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"ALTER TABLE missing_table ADD COLUMN x int;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -506,7 +510,7 @@ func TestApplyReportsSchemaProblems(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("LISTEN some_channel;"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"LISTEN some_channel;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -523,7 +527,7 @@ func TestVerifyReportsSchemaProblems(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("LISTEN some_channel;"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"LISTEN some_channel;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errs := run(t, "verify-schema", "-db", "unused", "-schema", schemaPath)
@@ -547,7 +551,7 @@ func TestDumpLoadConnectionError(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	badDB := "postgres://localhost:1/nonexistent-sqlshape-test-db"
@@ -572,7 +576,7 @@ func TestDiffFromReadSourceError(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errs := run(t, "diff", "-from", "/no/such/source.sql", "-schema", schemaPath)
@@ -587,7 +591,7 @@ func TestDiffFromCanonicalError(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fromPath := filepath.Join(dir, "from.sql")
@@ -607,7 +611,7 @@ func TestDiffParseIntentsError(t *testing.T) {
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
 	text := "CREATE TABLE t (id int PRIMARY KEY);\n-- @migrate this is not a real declaration\n"
-	if err := os.WriteFile(schemaPath, []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errs := run(t, "diff", "-from", schemaPath, "-schema", schemaPath)
@@ -622,7 +626,7 @@ func TestDiffPackagesLoadError(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"CREATE TABLE t (id int PRIMARY KEY);"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errs := run(t, "diff", "-from", schemaPath, "-schema", schemaPath, "-packages", "./no/such/dir")
@@ -642,7 +646,7 @@ func TestApplyPackagesLoadError(t *testing.T) {
 	defer db.Close()
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte(base), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+base), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -669,7 +673,7 @@ func TestApplyDDLDoesNotReachTarget(t *testing.T) {
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
 	target := base + "\nALTER TABLE t ADD COLUMN extra text NOT NULL DEFAULT 'z';\n"
-	if err := os.WriteFile(schemaPath, []byte(target), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+target), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -696,7 +700,7 @@ func TestApplyOrderOnlyNote(t *testing.T) {
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
 	target := "CREATE TABLE t (id int PRIMARY KEY, b text, a text);"
-	if err := os.WriteFile(schemaPath, []byte(target), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+target), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -734,7 +738,7 @@ func TestApplyRealDBTxExecFailsAndRollsBack(t *testing.T) {
 
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("CREATE TABLE t (id int PRIMARY KEY, x int NOT NULL);"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"CREATE TABLE t (id int PRIMARY KEY, x int NOT NULL);"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -772,7 +776,7 @@ func TestApplyRealDBExecFailsNoTransaction(t *testing.T) {
 
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("CREATE TABLE t (id int PRIMARY KEY, x int NOT NULL);"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"CREATE TABLE t (id int PRIMARY KEY, x int NOT NULL);"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -800,7 +804,7 @@ func TestDiffLoadTargetCanonicalError(t *testing.T) {
 	requirePgDump(t)
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte("ALTER TABLE missing_table ADD COLUMN x int;"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+"ALTER TABLE missing_table ADD COLUMN x int;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errs := run(t, "diff", "-from", schemaPath, "-schema", schemaPath)

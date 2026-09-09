@@ -32,12 +32,16 @@ func runVerify(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	srv, err := newServer(ctx)
+	text, version, err := readTarget(schemaPath)
+	if err != nil {
+		return err
+	}
+	srv, err := newServer(ctx, version)
 	if err != nil {
 		return err
 	}
 	defer srv.Close()
-	tgt, err := loadTarget(ctx, srv, schemaPath)
+	tgt, err := loadTarget(ctx, srv, schemaPath, text)
 	if err != nil {
 		return err
 	}

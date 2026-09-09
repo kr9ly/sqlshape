@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 -- Stage 2: views as the read model. The tables are stage 1's; the application still
 -- writes them with plain INSERT / UPDATE, but everything it reads is a view. A view
 -- decides once what a thing is called (customer_email, status_label), which joins make

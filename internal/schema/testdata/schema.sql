@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
 CREATE DOMAIN yen AS bigint CHECK (VALUE >= 0);
 CREATE DOMAIN email AS text NOT NULL CHECK (VALUE ~ '@');

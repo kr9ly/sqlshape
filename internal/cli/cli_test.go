@@ -12,6 +12,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/dump"
 	"github.com/kr9ly/sqlshape/internal/oracle"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // one embedded server for every command of the test binary (each command would boot
@@ -25,13 +26,13 @@ var defaultNewServer = newServer
 
 func TestMain(m *testing.M) {
 	if _, err := exec.LookPath(dump.Binary()); err == nil {
-		srv, err := dump.NewServer(context.Background())
+		srv, err := dump.NewServer(context.Background(), pgparse.Default)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		shared = srv
-		newServer = func(context.Context) (server, error) { return sharedServer{srv}, nil }
+		newServer = func(context.Context, pgparse.Version) (server, error) { return sharedServer{srv}, nil }
 	}
 	code := m.Run()
 	if shared != nil {
@@ -53,6 +54,9 @@ func requirePgDump(t *testing.T) {
 }
 
 // run executes a subcommand and returns its exit code, stdout and stderr.
+// pg17Decl is the version declaration every schema.sql must open with.
+const pg17Decl = "-- sqlshape: postgres 17\n"
+
 func run(t *testing.T, name string, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -89,7 +93,7 @@ ALTER TABLE customers ADD COLUMN nickname text DEFAULT 'anon';
 CREATE TABLE order_kinds (code text PRIMARY KEY, label text NOT NULL);
 INSERT INTO order_kinds (code, label) VALUES ('retail', 'Retail'), ('bulk', 'Bulk');
 `
-	if err := os.WriteFile(schemaPath, []byte(edit), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+edit), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +149,7 @@ func TestConsumers(t *testing.T) {
 	defer db.Close()
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.sql")
-	if err := os.WriteFile(schemaPath, []byte(base+"\nALTER TABLE orders DROP COLUMN note;\n"), 0o644); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(pg17Decl+base+"\nALTER TABLE orders DROP COLUMN note;\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errs := run(t, "diff", "-db", db.ConnString(), "-schema", schemaPath, "-packages", "./examples/1-tables")

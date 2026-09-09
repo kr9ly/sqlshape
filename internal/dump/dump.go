@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/oracle"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -99,12 +100,31 @@ func Load(ctx context.Context, connString string, seeds *schema.Schema) (*schema
 		}
 		text += data
 	}
+	text = declare(versionOf(seeds, ""), text)
 	s, err := analyze.Load(text)
 	if err != nil {
 		return nil, "", fmt.Errorf("load dump: %w", err)
 	}
 	adoptSeeds(s, seeds)
 	return s, text, nil
+}
+
+// versionOf is the PostgreSQL version a canonical form is judged with: the seeds schema's
+// when there is one, else the version schemaSQL declares, else the default.
+func versionOf(seeds *schema.Schema, schemaSQL string) pgparse.Version {
+	if seeds != nil {
+		return seeds.Version.Or()
+	}
+	if v, err := schema.DeclaredVersion(schemaSQL); err == nil {
+		return v
+	}
+	return pgparse.Default
+}
+
+// declare puts the version declaration above a pg_dump text, which writes none, so the
+// loader reads it with the right grammar and catalog.
+func declare(v pgparse.Version, text string) string {
+	return fmt.Sprintf("-- sqlshape: postgres %d\n", int(v)) + text
 }
 
 // readSeeds renders the current rows of every seeded table of spec as INSERT statements
@@ -195,7 +215,7 @@ type Canonicalizer interface {
 // tables (see Load; nil takes the seeds schemaSQL itself declares). Each call boots its
 // own server; for several canonical forms use one Server.
 func Canonical(ctx context.Context, schemaSQL string, seeds *schema.Schema) (*schema.Schema, string, error) {
-	srv, err := NewServer(ctx)
+	srv, err := NewServer(ctx, versionOf(seeds, schemaSQL))
 	if err != nil {
 		return nil, "", err
 	}
@@ -211,9 +231,9 @@ type Server struct {
 	n  int
 }
 
-// NewServer boots the PostgreSQL. Close it when done.
-func NewServer(ctx context.Context) (*Server, error) {
-	o, err := oracle.Start(ctx, "")
+// NewServer boots the PostgreSQL of major version v. Close it when done.
+func NewServer(ctx context.Context, v pgparse.Version) (*Server, error) {
+	o, err := oracle.StartVersion(ctx, v, "")
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +281,7 @@ func (s *Server) Canonical(ctx context.Context, schemaSQL string, seeds *schema.
 		return nil, "", err
 	}
 	text += data
+	text = declare(s.o.Version(), text)
 	sc, err := analyze.Load(text)
 	if err != nil {
 		return nil, "", fmt.Errorf("load dump: %w", err)

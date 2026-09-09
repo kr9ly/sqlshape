@@ -11,6 +11,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/diff"
 	"github.com/kr9ly/sqlshape/internal/dump"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -28,7 +29,7 @@ var server *dump.Server
 
 func TestMain(m *testing.M) {
 	if _, err := exec.LookPath(dump.Binary()); err == nil {
-		srv, err := dump.NewServer(context.Background())
+		srv, err := dump.NewServer(context.Background(), pgparse.Default)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

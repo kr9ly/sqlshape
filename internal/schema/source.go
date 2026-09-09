@@ -12,7 +12,23 @@ import (
 // concatenated in name order (so `schema/010_types.sql`, `schema/020_tables.sql`, ...
 // apply like one file). Each file's text is preceded by a comment naming it, so a
 // problem's position can be traced back.
+// ReadSource reads a schema.sql file, or a directory of *.sql files in name order, and
+// requires the text to declare its PostgreSQL version (`-- sqlshape: postgres 17`): the
+// version decides the grammar, the catalog and the PostgreSQL pgtest runs, so a file
+// without one is not judged. Schema text built in code (Load) may leave it out and gets
+// pgparse.Default.
 func ReadSource(path string) (string, error) {
+	text, err := readSource(path)
+	if err != nil {
+		return "", err
+	}
+	if !versionLine.MatchString(strings.TrimPrefix(text, "\ufeff")) { // a byte order mark is not part of the SQL
+		return "", fmt.Errorf("%s: declare the PostgreSQL version the schema is written for, as a line `-- sqlshape: postgres 17` (sqlshape supports PostgreSQL %s)", path, supportedVersions())
+	}
+	return text, nil
+}
+
+func readSource(path string) (string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return "", err

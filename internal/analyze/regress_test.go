@@ -393,9 +393,9 @@ var (
 	reGset  = regexp.MustCompile(`\\g[a-z]*\b[^\n]*`)
 	reTemp  = regexp.MustCompile(`pg_temp_\d+\.`)
 	reStdin = regexp.MustCompile(`(?i)\bfrom\s+std(in|out)\b`)
-	// reCrash matches statements whose Prepare segfaults the oracle (PG 17: MERGE ...
-	// INSERT into a partitioned table with a VALUES source referencing a target column);
-	// every crash restarts the server under all the workers, so they are skipped
+	// reCrash matches statements whose Prepare segfaults a PG 17 oracle (MERGE ... INSERT
+	// into a partitioned table with a VALUES source referencing a target column; 18 takes
+	// them); every crash restarts the server under all the workers, so they are skipped
 	reCrash = regexp.MustCompile(`(?s)MERGE INTO measurement m\s+USING \(VALUES.*VALUES \(city_id - 1`)
 )
 
@@ -479,7 +479,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		}
 		node := tree.Stmts[0].Stmt
 		if isRegressQuery(node) {
-			if reCrash.MatchString(sql) {
+			if p.version == pgparse.PG17 && reCrash.MatchString(sql) {
 				p.count("crash-skipped")
 				continue
 			}

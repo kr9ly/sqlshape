@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
 
 CREATE TABLE users (

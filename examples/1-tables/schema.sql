@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 -- Stage 1: plain tables, the ground an ORM also covers. Everything the application
 -- does is a statement against these tables; sqlshape checks each statement's columns,
 -- parameters and failure modes against this file.

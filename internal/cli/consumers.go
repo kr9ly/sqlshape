@@ -11,6 +11,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/consumers"
 	"github.com/kr9ly/sqlshape/internal/diff"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/vet"
 )
 
@@ -18,13 +19,15 @@ import (
 // the per-package consumer indexes. The statements are read against currentSQL, the
 // schema as it is before the change: a column the target no longer has cannot be resolved
 // against the target, and it is exactly the statements still naming it that matter.
-func indexConsumers(patterns []string, currentSQL string) (*consumers.Index, error) {
+func indexConsumers(patterns []string, v pgparse.Version, currentSQL string) (*consumers.Index, error) {
 	f, err := os.CreateTemp("", "sqlshape-current-*.sql")
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(f.Name())
-	if _, err := f.WriteString(currentSQL); err != nil {
+	// the canonical text comes from pg_dump, which writes no declaration: the packages are
+	// judged against the version the target schema declares
+	if _, err := fmt.Fprintf(f, "-- sqlshape: postgres %d\n%s", int(v.Or()), currentSQL); err != nil {
 		return nil, err
 	}
 	if err := f.Close(); err != nil {

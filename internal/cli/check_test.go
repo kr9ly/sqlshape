@@ -18,7 +18,7 @@ func TestCheck(t *testing.T) {
 CREATE TABLE orders (id bigint PRIMARY KEY, tenant_id bigint NOT NULL, status text NOT NULL, deleted_at timestamptz);
 CREATE TABLE audit (id bigint PRIMARY KEY, note text);
 `
-	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(schema), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(pg17Decl+schema), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ops := `-- nightly cleanup
@@ -83,14 +83,14 @@ INSERT INTO audit (id, note) VALUES (1, 'done');
 		t.Errorf("missing: exit %d %s", code, errs)
 	}
 	badSchema := filepath.Join(dir, "bad_schema.sql")
-	os.WriteFile(badSchema, []byte("-- sqlshape: require pinned()\nCREATE TABLE t (id int);"), 0o644)
+	os.WriteFile(badSchema, []byte(pg17Decl+"-- sqlshape: require pinned()\nCREATE TABLE t (id int);"), 0o644)
 	if code, _, errs = run(t, "check", "-schema", badSchema, clean); code != 2 || !strings.Contains(errs, "pinned needs a column") {
 		t.Errorf("bad schema: exit %d %s", code, errs)
 	}
 	// the audit shows the discharge path: a policy, a composite foreign key, an EXISTS witness
 	audit := filepath.Join(dir, "audit")
 	os.MkdirAll(audit, 0o755)
-	os.WriteFile(filepath.Join(audit, "schema.sql"), []byte(`
+	os.WriteFile(filepath.Join(audit, "schema.sql"), []byte(pg17Decl+`
 -- sqlshape: require pinned(tenant_id)
 CREATE TABLE docs (id bigint PRIMARY KEY, tenant_id bigint NOT NULL, body text, UNIQUE (id, tenant_id));
 ALTER TABLE docs ENABLE ROW LEVEL SECURITY;

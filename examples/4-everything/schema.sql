@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 -- Stage 3: everything. A multi-tenant room booking service. The `core` schema is the
 -- database's private side, `app` is the API the application may reference (-schemas=app);
 -- every table row belongs to a tenant and every statement pins it (-require-columns).

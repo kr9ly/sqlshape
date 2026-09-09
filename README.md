@@ -56,6 +56,7 @@ compatible; what the checker reports may grow with minor versions.
 
 ```sql
 -- schema.sql
+-- sqlshape: postgres 17
 CREATE TABLE users (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email      text NOT NULL UNIQUE,
@@ -63,6 +64,9 @@ CREATE TABLE users (
     deleted_at timestamptz
 );
 ```
+
+The first line of `schema.sql` names the PostgreSQL version the schema is written for; every
+statement is judged with that version's grammar and catalog (17 and 18 are supported).
 
 ```go
 // users.go

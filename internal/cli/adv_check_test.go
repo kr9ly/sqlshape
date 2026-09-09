@@ -16,7 +16,7 @@ import (
 func TestAdvCheckSyntaxErrorFailsOnlyThatStatement(t *testing.T) {
 	dir := t.TempDir()
 	schema := "-- sqlshape: require pinned(id)\nCREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL);"
-	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(schema), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(pg17Decl+schema), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sql := "SELECT id FROM orders WHERE id = 1;\n" +
@@ -42,7 +42,7 @@ func TestAdvCheckSyntaxErrorFailsOnlyThatStatement(t *testing.T) {
 func TestAdvCheckBOM(t *testing.T) {
 	dir := t.TempDir()
 	schema := "-- sqlshape: require pinned(id)\nCREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL);"
-	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(schema), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(pg17Decl+schema), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sql := "\xEF\xBB\xBFSELECT id FROM orders WHERE id = 1;\n"
@@ -75,7 +75,7 @@ CREATE TRIGGER orders_bump AFTER INSERT ON orders FOR EACH ROW EXECUTE FUNCTION 
 CREATE TABLE memos (id bigint PRIMARY KEY, amount int NOT NULL);
 CREATE VIEW all_memos AS SELECT id FROM memos;
 `
-	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(schema), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(pg17Decl+schema), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "q.sql")
@@ -108,7 +108,7 @@ func TestAdvCheckPinnedMessageNamesSelfJoinOccurrence(t *testing.T) {
 	dir := t.TempDir()
 	schema := "-- sqlshape: require pinned(tenant_id)\n" +
 		"CREATE TABLE orders (id bigint PRIMARY KEY, tenant_id bigint NOT NULL, parent_id bigint);\n"
-	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(schema), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "schema.sql"), []byte(pg17Decl+schema), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sql := "SELECT o1.id FROM orders o1 JOIN orders o2 ON o2.parent_id = o1.id WHERE o1.tenant_id = 1;\n"

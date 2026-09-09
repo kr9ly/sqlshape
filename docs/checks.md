@@ -42,6 +42,7 @@ statement: the Go code around it, and the schema itself.
   - [Different callers, different rules (`context`)](#different-callers-different-rules-context)
   - [The same rules for SQL outside Go (`sqlshape check`)](#the-same-rules-for-sql-outside-go-sqlshape-check)
 - [Part 3 — Outside the statement](#part-3--outside-the-statement)
+  - [The schema names its PostgreSQL version (`postgres`)](#the-schema-names-its-postgresql-version-postgres)
   - [Do not run SQL that bypasses sqlshape (`-raw-sql`)](#do-not-run-sql-that-bypasses-sqlshape--raw-sql)
   - [A package references only its schemas (`-schemas`)](#a-package-references-only-its-schemas--schemas)
   - [Problems in the schema itself](#problems-in-the-schema-itself)
@@ -1239,6 +1240,33 @@ statement belong to it, and `-context`, `-require-columns`, `-no-tables` and `-n
 accepted as in vet.
 
 ## Part 3 — Outside the statement
+
+### The schema names its PostgreSQL version (`postgres`)
+
+`schema.sql` declares, once, the PostgreSQL major version it is written for. The declaration
+decides how everything else is judged: the grammar that parses the schema and every statement, the
+catalog of types, functions and operators they resolve against, and the PostgreSQL `pgtest` and the
+migration commands boot. A schema without it is not read.
+
+```sql
+-- sqlshape: postgres 18
+CREATE TABLE ...
+```
+
+Rejected
+
+- no declaration anywhere in `schema.sql` (or in the directory's `*.sql` files)
+- a version sqlshape does not embed (the message lists the supported ones: 17 and 18)
+- two declarations that disagree
+
+OK
+
+- the declaration anywhere in the file, repeated with the same value
+
+A statement that only a newer version accepts (`RETURNING old.*`, `WITHOUT OVERLAPS`, `NOT
+ENFORCED`, `VIRTUAL` generated columns are 18's) is a syntax error under an older declaration, as
+it is on that server. Moving to a new PostgreSQL is changing the number and reading what the
+checker reports.
 
 ### Do not run SQL that bypasses sqlshape (`-raw-sql`)
 

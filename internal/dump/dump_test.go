@@ -10,6 +10,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/diff"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 func TestNormalize(t *testing.T) {
@@ -70,7 +71,7 @@ func requirePgDump(t *testing.T) {
 func TestCanonicalFixedPoint(t *testing.T) {
 	requirePgDump(t)
 	ctx := context.Background()
-	srv, err := NewServer(ctx)
+	srv, err := NewServer(ctx, pgparse.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ COMMENT ON TABLE orders IS 'orders placed';
 func newSession(t *testing.T, schemaSQL string) (srv *Server, connString string) {
 	t.Helper()
 	ctx := context.Background()
-	srv, err := NewServer(ctx)
+	srv, err := NewServer(ctx, pgparse.Default)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestLoad(t *testing.T) {
 func TestServerCanonicalErrors(t *testing.T) {
 	requirePgDump(t)
 	ctx := context.Background()
-	srv, err := NewServer(ctx)
+	srv, err := NewServer(ctx, pgparse.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +259,7 @@ func TestServerCanonicalErrors(t *testing.T) {
 // NewServer failure. Forcing embedded-postgres itself to fail to start is impractical
 // (it depends on extracting/caching real PostgreSQL binaries), so this documents that
 // branch rather than exercising it: see dump.go's `if err != nil { return nil, "", err }`
-// right after `srv, err := NewServer(ctx)`.
+// right after `srv, err := NewServer(ctx, pgparse.Default)`.
 func TestCanonicalOneShotNewServerError(t *testing.T) {
 	t.Skip("forcing embedded-postgres to fail to start is impractical in a unit test; see comment")
 }

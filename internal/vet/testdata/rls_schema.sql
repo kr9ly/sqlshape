@@ -1,3 +1,4 @@
+-- sqlshape: postgres 17
 CREATE TABLE tenants (id uuid PRIMARY KEY);
 
 -- policies on a table whose row security is enabled, one reading a setting with missing_ok

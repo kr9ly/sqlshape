@@ -48,12 +48,16 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
-	srv, err := newServer(ctx)
+	text, version, err := readTarget(schemaPath)
+	if err != nil {
+		return err
+	}
+	srv, err := newServer(ctx, version)
 	if err != nil {
 		return err
 	}
 	defer srv.Close()
-	tgt, err := loadTarget(ctx, srv, schemaPath)
+	tgt, err := loadTarget(ctx, srv, schemaPath, text)
 	if err != nil {
 		return err
 	}
@@ -77,7 +81,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		fmt.Fprintln(stderr, "note: "+strings.ReplaceAll(n.String(), "\n", "\n  "))
 	}
 	if *pkgs != "" {
-		index, err := indexConsumers(strings.Split(*pkgs, ","), currentText)
+		index, err := indexConsumers(strings.Split(*pkgs, ","), tgt.canonical.Version, currentText)
 		if err != nil {
 			return err
 		}
