@@ -116,7 +116,7 @@ type User struct {
 }
 ```
 
-補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。
+補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。 `RETURNING`の`old.col`はINSERTの後、`new.col`はDELETEの後（PostgreSQL 18）、列の宣言に関わらずNULLになりうる。書き込みのその側には行が無い。
 
 #### 一部の分岐だけが選ぶ列はNULLを受けられる型で受ける
 
@@ -594,7 +594,7 @@ _, err := CreateCustomer.First(ctx, db, p)
 if sqlshape.Violates(err, "customers_email_key") { ... }
 ```
 
-補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、EXCLUDE制約、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。
+補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、EXCLUDE制約、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。 `NOT ENFORCED`と宣言したCHECKと外部キー（PostgreSQL 18）は決して失敗しないので、列挙されない。
 
 参照される側のキーを変えるDELETEやUPDATEは、外部キー自体が変更を拒む場合（`NO ACTION` / `RESTRICT`）だけでなく、その`ON DELETE` / `ON UPDATE`アクションが参照する側の行に対して行うことを通じても失敗しうる。`SET NULL`は参照列のNOT NULL制約に触れうる、`SET DEFAULT`は同じ外部キーに再び触れうる（デフォルト値が親に存在するとは限らない）うえデフォルトが無ければ同じNOT NULLにも触れうる、`CASCADE`は参照する側の行を削除（または更新）し、それはさらに一段下で同じように検査される——したがって`ON DELETE CASCADE`が連鎖する外部キーは、何段も先のテーブルで失敗することがある。
 

@@ -143,7 +143,7 @@ tracks its underlying column's NOT NULL live, the way PostgreSQL itself does: a 
 and past whatever the view's own WHERE clause does. If you know better than the checker, override
 it on the Go side with the `col:",notnull"` tag or on the SQL side with a
 `-- sqlshape: not null deleted_at` line in the template. For a function's result, put
-`-- sqlshape: not null` above its `CREATE FUNCTION` in `schema.sql`.
+`-- sqlshape: not null` above its `CREATE FUNCTION` in `schema.sql`. In a `RETURNING` list, `old.col` after an INSERT and `new.col` after a DELETE (PostgreSQL 18) may be NULL whatever the column declares: the row does not exist on that side of the write.
 
 #### A column only some branches select needs a field that can hold NULL
 
@@ -674,7 +674,7 @@ if sqlshape.Violates(err, "customers_email_key") { ... }
 Listed are unique constraints and primary keys, foreign keys in both directions (the inserted row
 references a missing parent; the deleted row is still referenced by a child), EXCLUDE constraints,
 CHECKs, domain CHECKs, and NOT NULL where the value written may be NULL. A NULL that would come from
-a parameter is dropped when the field's Go type cannot be nil (a `string`, for instance).
+a parameter is dropped when the field's Go type cannot be nil (a `string`, for instance). A CHECK or foreign key declared `NOT ENFORCED` (PostgreSQL 18) never raises and is not listed.
 
 A DELETE or an UPDATE that changes a referenced key can also fail through what its foreign keys'
 `ON DELETE` / `ON UPDATE` actions do to the referencing rows, not just through a foreign key that
