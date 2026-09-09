@@ -8,6 +8,10 @@ go 1.26.1
 // binary as cmd/sqlshape/vX.Y.Z (the /v2 in the module path is what makes a 2.x tag legal).
 require github.com/kr9ly/sqlshape v1.2.0
 
+// The MySQL dialect (GPLv2) is imported for its registration. It is resolved through
+// go.work until its first tag: add `require github.com/kr9ly/sqlshape/mysql vX.Y.Z` here
+// once mysql/vX.Y.Z exists, and bump it with each release.
+
 require golang.org/x/tools v0.49.0
 
 require (

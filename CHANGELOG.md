@@ -8,6 +8,17 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Added
+
+- MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
+  MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
+  (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result
+  columns against `R` by name, type and nullability, parameters against `P` where their context
+  types them (compared with or assigned to a column, `LIMIT`). Single-block SELECT, INSERT, UPDATE
+  and DELETE over base tables; expressions the analyzer does not type yet are accepted with a note,
+  and views, derived tables, set operations, `One`, `MatView`, `Copy` and the obligations are not
+  supported yet. Parameters stay `{{.X}}` in the template; the analyzer speaks `?` to MySQL.
+
 ### Changed
 
 - The binary is its own Go module, `github.com/kr9ly/sqlshape/cmd/sqlshape/v2`, under the GNU

@@ -18,17 +18,28 @@ import (
 // without one is not judged. Schema text built in code (Load) may leave it out and gets
 // pgparse.Default.
 func ReadSource(path string) (string, error) {
-	text, err := readSource(path)
+	text, err := ReadText(path)
 	if err != nil {
 		return "", err
 	}
-	if !versionLine.MatchString(strings.TrimPrefix(text, "\ufeff")) { // a byte order mark is not part of the SQL
-		return "", fmt.Errorf("%s: declare the PostgreSQL version the schema is written for, as a line `-- sqlshape: postgres 17` (sqlshape supports PostgreSQL %s)", path, supportedVersions())
+	if err := RequireVersion(path, text); err != nil {
+		return "", err
 	}
 	return text, nil
 }
 
-func readSource(path string) (string, error) {
+// RequireVersion is ReadSource's check on a text already read: the PostgreSQL version
+// must be declared.
+func RequireVersion(path, text string) error {
+	if !versionLine.MatchString(strings.TrimPrefix(text, "\ufeff")) { // a byte order mark is not part of the SQL
+		return fmt.Errorf("%s: declare the PostgreSQL version the schema is written for, as a line `-- sqlshape: postgres 17` (sqlshape supports PostgreSQL %s)", path, supportedVersions())
+	}
+	return nil
+}
+
+// ReadText is ReadSource without the version check: the schema text of a file or a
+// directory, for a caller that reads the dialect line itself (internal/dialect).
+func ReadText(path string) (string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return "", err

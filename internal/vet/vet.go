@@ -27,6 +27,7 @@ import (
 	"github.com/kr9ly/sqlshape/internal/analyze"
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/consumers"
+	"github.com/kr9ly/sqlshape/internal/dialect"
 	"github.com/kr9ly/sqlshape/internal/expand"
 	"github.com/kr9ly/sqlshape/internal/facts"
 	"github.com/kr9ly/sqlshape/internal/obligation"
@@ -81,6 +82,10 @@ var (
 type loadedSchema struct {
 	s        *schema.Schema
 	problems []string
+	// dialect is set instead of s when the schema declares a dialect other than
+	// PostgreSQL: statements are then judged through internal/dialect (dialect.go)
+	dialect     dialect.Analyzer
+	dialectName string
 	// fnRefs are the relations each analyzable function body references (adviseSchema:
 	// SECURITY DEFINER functions past row-level security)
 	fnRefs map[*schema.Function][]analyze.RelationRef
@@ -121,8 +126,25 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if s, ok := schemaCache[path]; ok {
 		return s, nil
 	}
-	src, err := schema.ReadSource(path)
+	src, err := schema.ReadText(path)
 	if err != nil {
+		return nil, err
+	}
+	decl, err := dialect.Declared(src)
+	if err != nil {
+		return nil, err
+	}
+	if decl.Name != "" && decl.Name != dialect.Postgres {
+		load, _ := dialect.Lookup(decl.Name)
+		an, err := load(src)
+		if err != nil {
+			return nil, err
+		}
+		ls := &loadedSchema{dialect: an, dialectName: decl.Name, problems: an.Problems()}
+		schemaCache[path] = ls
+		return ls, nil
+	}
+	if err := schema.RequireVersion(path, src); err != nil {
 		return nil, err
 	}
 	s, err := analyze.Load(src)
@@ -290,10 +312,14 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	s := ls.s
 	c := &checker{pass: pass, s: s, ls: ls, strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
-	c.collectDeclaredTypes()
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
+	if ls.dialect != nil {
+		c.runDialect(calls, matviews)
+		return index, nil
+	}
+	c.collectDeclaredTypes()
 	if strictFlag {
 		for _, p := range ls.caveats {
 			pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
@@ -537,8 +563,20 @@ func runeOfHex(s string) rune {
 	return rune(r)
 }
 
-func (c *checker) checkCall(call *ast.CallExpr) {
+// site is a Query / One call taken apart: its type arguments, its template and the
+// template's expansions.
+type callSite struct {
+	rType, pType types.Type
+	single       bool // One
+	lit          literal
+	res          *expand.Result
+}
+
+// template reads a Query / One call: R and P, the constant template and its expansions.
+// It reports what stops the call from being checked and returns false.
+func (c *checker) template(call *ast.CallExpr) (callSite, bool) {
 	pass := c.pass
+	var cs callSite
 	// type arguments R, P
 	var fun ast.Expr = call.Fun
 	switch f := fun.(type) {
@@ -548,34 +586,45 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		fun = f.X
 	}
 	ident := fun.(*ast.SelectorExpr).Sel
-	single := ident.Name == "One"
+	cs.single = ident.Name == "One"
 	inst, ok := pass.TypesInfo.Instances[ident]
 	if !ok || inst.TypeArgs.Len() != 2 {
 		pass.Reportf(call.Pos(), "sqlshape: %s must be instantiated as %s[R, P]", ident.Name, ident.Name)
-		return
+		return cs, false
 	}
-	rType, pType := inst.TypeArgs.At(0), inst.TypeArgs.At(1)
+	cs.rType, cs.pType = inst.TypeArgs.At(0), inst.TypeArgs.At(1)
 
 	if len(call.Args) != 1 {
-		return
+		return cs, false
 	}
 	tv, ok := pass.TypesInfo.Types[call.Args[0]]
 	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
 		c.unchecked++
 		pass.Reportf(call.Args[0].Pos(), "sqlshape: query template must be a string constant")
-		return
+		return cs, false
 	}
-	lit := literal{text: constant.StringVal(tv.Value), fallback: call.Args[0].Pos(), segs: c.segments(call.Args[0], 0)}
+	cs.lit = literal{text: constant.StringVal(tv.Value), fallback: call.Args[0].Pos(), segs: c.segments(call.Args[0], 0)}
 
-	res, err := expand.Expand(lit.text)
+	res, err := expand.Expand(cs.lit.text)
 	if err != nil {
 		if te, ok := err.(*expand.Error); ok {
-			pass.Reportf(lit.pos(te.Pos), "sqlshape: template: %s", te.Msg)
+			pass.Reportf(cs.lit.pos(te.Pos), "sqlshape: template: %s", te.Msg)
 		} else {
-			pass.Reportf(lit.pos(0), "sqlshape: template: %v", err)
+			pass.Reportf(cs.lit.pos(0), "sqlshape: template: %v", err)
 		}
+		return cs, false
+	}
+	cs.res = res
+	return cs, true
+}
+
+func (c *checker) checkCall(call *ast.CallExpr) {
+	pass := c.pass
+	cs, ok := c.template(call)
+	if !ok {
 		return
 	}
+	rType, pType, single, lit, res := cs.rType, cs.pType, cs.single, cs.lit, cs.res
 	if c.strict {
 		c.reportUnusedParams(pType, res, call.Pos())
 	}

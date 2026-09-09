@@ -11,6 +11,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/internal/cli"
 	"github.com/kr9ly/sqlshape/internal/vet"
+	_ "github.com/kr9ly/sqlshape/mysql/dialect" // a schema.sql declaring `-- sqlshape: mysql 8.4`
 )
 
 func main() {

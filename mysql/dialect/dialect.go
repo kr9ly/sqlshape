@@ -1,0 +1,107 @@
+// Package dialect registers MySQL with the checker: importing it (for its side effect,
+// as cmd/sqlshape does) makes a schema.sql that declares `-- sqlshape: mysql 8.4` load
+// through the MySQL schema loader and judge statements through the MySQL analyzer.
+package dialect
+
+import (
+	"strconv"
+
+	"github.com/kr9ly/sqlshape/internal/dialect"
+	"github.com/kr9ly/sqlshape/mysql/internal/analyze"
+	"github.com/kr9ly/sqlshape/mysql/internal/schema"
+)
+
+// Name is the dialect's name in the schema declaration.
+const Name = "mysql"
+
+func init() {
+	dialect.Register(Name, load)
+}
+
+func load(schemaSQL string) (dialect.Analyzer, error) {
+	s, err := schema.Load(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	return &mysql{s: s}, nil
+}
+
+type mysql struct{ s *schema.Schema }
+
+func (m *mysql) Problems() []string {
+	var out []string
+	for _, p := range m.s.Problems {
+		out = append(out, p.String())
+	}
+	return out
+}
+
+func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
+	r, err := analyze.Analyze(m.s, sql)
+	if err != nil {
+		if ae, ok := err.(*analyze.Error); ok {
+			return nil, &dialect.Error{Message: ae.Message, Code: "MySQL error " + strconv.Itoa(ae.Code), Position: ae.Position}
+		}
+		return nil, err
+	}
+	out := &dialect.Result{}
+	for _, p := range r.Params {
+		out.Params = append(out.Params, typeOf(p.Type, p.Known))
+	}
+	for _, c := range r.Columns {
+		out.Columns = append(out.Columns, dialect.Column{Name: c.Name, Type: typeOf(c.Type, c.Known), Nullable: c.Nullable})
+	}
+	return out, nil
+}
+
+func typeOf(t schema.Type, known bool) dialect.Type {
+	if !known {
+		return dialect.Type{Name: "an expression the analyzer does not type yet"}
+	}
+	return dialect.Type{Name: t.String(), Go: GoTypes(t)}
+}
+
+// GoTypes is the Go side of a MySQL type: what go-sql-driver/mysql scans a column of the
+// type into and encodes a parameter from, through database/sql. Integers arrive as int64
+// (uint64 for bigint unsigned), DECIMAL as its decimal text, temporal types as time.Time
+// (parseTime=true) or their text, binary strings and JSON as bytes. Nil for a type with no
+// mapping; the checker then accepts the field with a note.
+func GoTypes(t schema.Type) []string {
+	switch t.Name {
+	case "tinyint", "smallint", "mediumint", "int", "year":
+		gos := []string{"int64", "int32", "int"}
+		if t.Unsigned {
+			gos = append(gos, "uint64", "uint32", "uint")
+		}
+		if t.Name == "tinyint" && t.Length == 1 {
+			gos = append(gos, "bool")
+		}
+		return gos
+	case "bigint":
+		if t.Unsigned {
+			return []string{"uint64", "int64"}
+		}
+		return []string{"int64", "int"}
+	case "decimal":
+		return []string{"string"}
+	case "float":
+		return []string{"float32", "float64"}
+	case "double":
+		return []string{"float64"}
+	case "bit":
+		return []string{"[]byte"}
+	case "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set":
+		return []string{"string", "[]byte"}
+	case "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob":
+		return []string{"[]byte"}
+	case "json":
+		return []string{"[]byte", "string"}
+	case "date", "datetime", "timestamp":
+		return []string{"time.Time", "string"}
+	case "time":
+		return []string{"string"}
+	case "null":
+		return []string{"any"}
+	}
+	return nil
+}
