@@ -22,6 +22,7 @@ func main() {
 	genOnly := flag.Bool("generate-only", false, "write the sources and stop before the toolchain")
 	corpus := flag.String("corpus", "", "write mysql-test/t split into statements to this file and exit")
 	actions := flag.Bool("actions", false, "print how far the grammar's semantic actions are read, and exit")
+	show := flag.String("show", "", "with -actions: comma-separated rule/alt pairs whose symbols and action to print")
 	roots := flag.String("roots", "", "with -actions: comma-separated start rules; report the unread actions reachable from them")
 	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
@@ -35,7 +36,17 @@ func main() {
 		if err != nil {
 			fatal(err)
 		}
-		if *roots != "" {
+		if *show != "" {
+			want := map[string]bool{}
+			for _, k := range strings.Split(*show, ",") {
+				want[k] = true
+			}
+			for _, a := range alts {
+				if want[fmt.Sprintf("%s/%d", a.Rule, a.Index)] {
+					fmt.Printf("%s/%d: %s\n    %s\n", a.Rule, a.Index, strings.Join(a.Syms, " "), a.Action)
+				}
+			}
+		} else if *roots != "" {
 			fmt.Print(parsegen.ReachReport(alts, strings.Split(*roots, ",")))
 		} else {
 			fmt.Print(parsegen.ActionReport(alts))

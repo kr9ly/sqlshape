@@ -96,6 +96,9 @@ func ReadActions(src string) ([]Alt, error) {
 		for {
 			var syms []string
 			action := ""
+			// $N in the action counts mid-rule actions as symbols; the CST has no node for
+			// them, so posMap[N] is the child index (1-based) or 0 for a mid-rule action.
+			posMap := []int{0}
 			for i < len(toks) {
 				t := toks[i]
 				if t.kind == tkBar || t.kind == tkSemi {
@@ -104,6 +107,7 @@ func ReadActions(src string) ([]Alt, error) {
 				if t.kind == tkID && i+1 < len(toks) && toks[i+1].kind != tkColon || t.kind == tkLit {
 					i++
 					syms = append(syms, t.text)
+					posMap = append(posMap, len(syms))
 					continue
 				}
 				if t.kind == tkID { // next rule head
@@ -118,10 +122,15 @@ func ReadActions(src string) ([]Alt, error) {
 						(toks[i].kind == tkID && i+1 < len(toks) && toks[i+1].kind == tkColon)
 					if final {
 						action = t.text
+					} else {
+						posMap = append(posMap, 0)
 					}
 				}
 			}
 			a := classify(lhs.text, idx, syms, action)
+			if len(posMap) > len(syms)+1 && a.Kind != ActUnknown && a.Kind != ActDefault {
+				a = remap(a, posMap)
+			}
 			alts = append(alts, a)
 			idx++
 			if i < len(toks) && toks[i].kind == tkBar {
@@ -138,41 +147,132 @@ func ReadActions(src string) ([]Alt, error) {
 }
 
 var (
-	reCComment    = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	reLineCmt     = regexp.MustCompile(`//[^\n]*`)
-	reSpace       = regexp.MustCompile(`\s+`)
-	reNullCheck   = regexp.MustCompile(`if\(\$\$==(nullptr|NULL)\)MYSQL_YYABORT;`)
-	rePass        = regexp.MustCompile(`^\$\$=\$(\d+);$`)
-	reConst       = regexp.MustCompile(`^\$\$=(-?\d+|true|false|[A-Z][A-Za-z_0-9]*(::[A-Za-z_0-9]+)*);$`)
-	reNew         = regexp.MustCompile(`^\$\$=NEW_PTN([A-Za-z_0-9]+)(<[^>]*>)?\((.*)\);$`)
-	reListAppend  = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
-	reListAppend2 = regexp.MustCompile(`^\$(\d+)->push_(back|front)\(\$(\d+)\);\$\$=\$(\d+);$`)
-	reListNew     = regexp.MustCompile(`^\$\$=NEW_PTN([A-Za-z_0-9]+)(<[^>]*>)?\((.*?)\);if\(\$\$==(nullptr|NULL)\|\|\$\$->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
-	rePassPos     = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$!=nullptr\)\$\$->m_pos=@\$;$`)
-	rePassField   = regexp.MustCompile(`^\$\$=(to_lex_cstring\()?\$(\d+)(\.str|\.node)?\)?;$`)
-	reItemize     = regexp.MustCompile(`^ITEMIZE\(\$(\d+),&\$\$\);$`)
-	reFlags       = regexp.MustCompile(`^\$\$=\$(\d+)\|\$(\d+);$`)
-	reNumber      = regexp.MustCompile(`^interror;\$\$=\((ulong|ulonglong|int|uint|longlong)\)my_strtoll10\(\$(\d+)\.str,nullptr,&error\);(if\(error!=0\)\{[^}]*\})?$`)
-	reAppend3     = regexp.MustCompile(`^(if\(\$(\d+)==nullptr\|\|\$(\d+)->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;|if\(\$(\d+)->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;|\$(\d+)->push_(back|front)\(\$(\d+)\);)\$\$=\$(\d+);(\$\$->m_pos=@\$;)?$`)
-	reAppendVal   = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$\.push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
-	reAppendNull  = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$==nullptr\|\|\$\$->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
-	reListInitVal = regexp.MustCompile(`^\$\$\.init\(YYMEM_ROOT\);(if\(\$\$\.push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;)?$`)
-	reStruct      = regexp.MustCompile(`^(\$\$\.[A-Za-z_0-9]+=[^;]+;)+$`)
-	reStructField = regexp.MustCompile(`\$\$\.([A-Za-z_0-9]+)=([^;]+);`)
-	reArgChild    = regexp.MustCompile(`^\$(\d+)$`)
-	reArgField    = regexp.MustCompile(`^\$(\d+)((\.|->)[A-Za-z_0-9.]+)$`)
+	reCComment       = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	reLineCmt        = regexp.MustCompile(`//[^\n]*`)
+	reSpace          = regexp.MustCompile(`\s+`)
+	reNullCheck      = regexp.MustCompile(`if\(\$\$==(nullptr|NULL)\)MYSQL_YYABORT;`)
+	reDigest         = regexp.MustCompile(`Lex_input_stream\*lip=YYLIP;lip->reduce_digest_token\([^)]*\);`)
+	reFoundSemicolon = regexp.MustCompile(`YYLIP->found_semicolon=nullptr;`)
+	// charset conversion of a token: the value is the token
+	reConvert       = regexp.MustCompile(`^THD\*thd=YYTHD;if\(thd->charset_is_\w+\)(\{.*)?\$\$=\$1;.*convert_string\(&\$\$,.*MYSQL_YYABORT;\}$`)
+	reStrmake       = regexp.MustCompile(`^(THD\*thd=YYTHD;)?\$\$\.str=(thd|YYTHD)->strmake\(\$(\d+)\.str,\$\d+\.length\);if\(\$\$\.str==nullptr\)MYSQL_YYABORT;\$\$\.length=\$\d+\.length;$`)
+	reParseTree     = regexp.MustCompile(`^\*parse_tree=\$(\d+);$`)
+	reContextualize = regexp.MustCompile(`^\$\$=nullptr;CONTEXTUALIZE\(\$(\d+)\);$`)
+	reHelperNew     = regexp.MustCompile(`^\$\$=([a-z][a-z_0-9]*)\((.*)\);$`)
+	reBraceNew      = regexp.MustCompile(`^\$\$=([A-Z][A-Za-z_0-9]*)\{(.*)\};$`)
+	reDequeNew      = regexp.MustCompile(`^\$\$=new\(YYMEM_ROOT\)[A-Za-z_0-9<>*]+\(YYMEM_ROOT\);((\$\$->push_back\(\$\d+\);)+)$`)
+	reLexSet        = regexp.MustCompile(`^(LEX\*lex=Lex;|THD\*thd=YYTHD;LEX\*lex=thd->lex;)?((lex|Lex|YYTHD->lex)->[A-Za-z_.]+\|?=[^;]+;)+$`)
+	reLexSetField   = regexp.MustCompile(`(?:lex|Lex|YYTHD->lex)->([A-Za-z_.]+)\|?=([^;]+);`)
+	reBraceAnon     = regexp.MustCompile(`^\$\$=\{(.*)\};$`)
+	reNewList       = regexp.MustCompile(`^\$\$=(?:NEW_PTN|new\(YYMEM_ROOT\))(?:List|Mem_root_array|mem_root_deque)<[^>]*>(?:\(YYMEM_ROOT\))?;((?:if\((?:\$\$==nullptr\|\|)?)?\$\$->push_(?:back|front)\(\$\d+(?:\.\w+)?\)\)?(?:MYSQL_YYABORT)?;)+$`)
+	reNewListPB     = regexp.MustCompile(`\$\$->push_(back|front)\(\$(\d+)(\.\w+)?\)`)
+	reNewListVal    = regexp.MustCompile(`^\$\$\.init\((?:YYMEM_ROOT|YYTHD->mem_root)\);(?:if\(\$\$\.push_(?:back|front)\((?:to_lex_cstring\()?\$(\d+)\)?\)\)MYSQL_YYABORT;)?$`)
+	reFlatten       = regexp.MustCompile(`^\$\$=flatten_associative_operator<(Item_cond_[a-z]+),[^>]*>\(YYMEM_ROOT,@\$,\$(\d+),\$(\d+)\);(if\(\$\$!=nullptr\)\$\$->m_pos=@\$;)?$`)
+	reNewPlain      = regexp.MustCompile(`^\$\$=new(?:\(YYMEM_ROOT\))?([A-Z][A-Za-z_0-9]*)\((.*)\);(\$\$->m_pos=@\$;)?$`)
+	reNewFieldList  = regexp.MustCompile(`^\$\$=NEW_PTN([A-Za-z_0-9]+)\(@\$(?:,YYMEM_ROOT)?\);if\(\$\$==nullptr\|\|\$\$->push_back\(&?\$(\d+)(->[a-z_]+)?\)\)MYSQL_YYABORT;$`)
+	reSpGuard       = regexp.MustCompile(`if\(lex->sphead\)\{[^{}]*MYSQL_YYABORT;\}`)
+	reMsgGuard      = regexp.MustCompile(`if\([^{};]*\)my_(message|error)\([^;]*\);`)
+	reStructExt     = regexp.MustCompile(`^\$\$=\$(\d+);((\$\$\.\w+=[^;]+;)+)$`)
+	reAllocNew      = regexp.MustCompile(`^if\(!\(\$\$=([A-Za-z_0-9]+)::alloc\((.*)\)\)\)MYSQL_YYABORT;$`)
+	reCastWrap      = regexp.MustCompile(`(?:to_lex_cstring|static_cast<[a-z_0-9:]+>)\((\$\d+(?:\.str)?)\)`)
+	reGuardBlock    = regexp.MustCompile(`if\([^{};]*\)\{[^{}]*MYSQL_YYABORT;\}`)
+	reGuardStmt     = regexp.MustCompile(`if\([^{};]*\)MYSQL_YYABORT;`)
+	reNewListPlain  = regexp.MustCompile(`^\$\$=NEW_PTN([A-Za-z_0-9]+)\(@\$(?:,YYMEM_ROOT)?\);(?:if\((?:\$\$==nullptr\|\|)?)?\$\$->push_back\(&?\$(\d+)(->[a-z_]+)?\)\)?(?:MYSQL_YYABORT)?;$`)
+	reAppendOnly    = regexp.MustCompile(`^if\(\$\$->push_(back|front)\(&?\$(\d+)(?:->\w+)?\)\)MYSQL_YYABORT;(\$\$->m_pos=@\$;)?$`)
+	reSetCall       = regexp.MustCompile(`\$\$\.([\w.]+)\.set\(([^()]*)\);`)
+	reInitCall      = regexp.MustCompile(`\$\$(\.[\w.]+)?\.init\(\);`)
+	reNullValue     = regexp.MustCompile(`^\$\$=(null_lex_str|NULL_STR|NULL_CSTR|EMPTY_CSTR|EMPTY_STR);$`)
+	rePass          = regexp.MustCompile(`^\$\$=\$(\d+);$`)
+	reConst         = regexp.MustCompile(`^\$\$=(-?\d+|true|false|&?[A-Za-z][A-Za-z_0-9]*(::[A-Za-z_0-9]+)*);$`)
+	reNew           = regexp.MustCompile(`^\$\$=NEW_PTN([A-Za-z_0-9]+)(<[^>]*>)?\(([^;]*)\);$`)
+	reListAppend    = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
+	reListAppend2   = regexp.MustCompile(`^\$(\d+)->push_(back|front)\(\$(\d+)\);\$\$=\$(\d+);$`)
+	reListNew       = regexp.MustCompile(`^\$\$=NEW_PTN([A-Za-z_0-9]+)(<[^>]*>)?\((.*?)\);if\(\$\$==(nullptr|NULL)\|\|\$\$->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
+	rePassPos       = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$!=nullptr\)\$\$->m_pos=@\$;$`)
+	rePassField     = regexp.MustCompile(`^\$\$=(to_lex_cstring\()?\$(\d+)(\.str|\.node)?\)?;$`)
+	reItemize       = regexp.MustCompile(`^ITEMIZE\(\$(\d+),&\$\$\);$`)
+	reFlags         = regexp.MustCompile(`^\$\$=\$(\d+)\|\$(\d+);$`)
+	reNumber        = regexp.MustCompile(`^interror;\$\$=\((ulong|ulonglong|int|uint|longlong)\)my_strtoll10\(\$(\d+)\.str,nullptr,&error\);(if\(error!=0\)\{[^}]*\})?$`)
+	reAppend3       = regexp.MustCompile(`^(if\(\$(\d+)==nullptr\|\|\$(\d+)->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;|if\(\$(\d+)->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;|\$(\d+)->push_(back|front)\(\$(\d+)\);)\$\$=\$(\d+);(\$\$->m_pos=@\$;)?$`)
+	reAppendDflt    = regexp.MustCompile(`^if\(\$\$->push_(back|front)\(&?\$(\d+)(?:->\w+)?\)\)MYSQL_YYABORT;\$\$=\$(\d+);(\$\$->m_pos=@\$;)?$`)
+	reAppendVal     = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$\.push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
+	reAppendNull    = regexp.MustCompile(`^\$\$=\$(\d+);if\(\$\$==nullptr\|\|\$\$->push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;$`)
+	reListInitVal   = regexp.MustCompile(`^\$\$\.init\(YYMEM_ROOT\);(if\(\$\$\.push_(back|front)\(\$(\d+)\)\)MYSQL_YYABORT;)?$`)
+	reStruct        = regexp.MustCompile(`^(\$\$\.[A-Za-z_0-9]+=[^;]+;)+$`)
+	reStructField   = regexp.MustCompile(`\$\$\.([A-Za-z_0-9]+)=([^;]+);`)
+	reArgChild      = regexp.MustCompile(`^\$(\d+)$`)
+	reArgField      = regexp.MustCompile(`^\$(\d+)((\.|->)[A-Za-z_0-9.]+)$`)
 )
 
 // normalize strips comments and whitespace so that the shapes can be matched textually.
 func normalize(action string) string {
-	a := strings.TrimSpace(action)
-	a = strings.TrimPrefix(a, "{")
-	a = strings.TrimSuffix(a, "}")
-	a = reCComment.ReplaceAllString(a, "")
+	a := reCComment.ReplaceAllString(action, "")
 	a = reLineCmt.ReplaceAllString(a, "")
+	a = strings.TrimSpace(a)
+	for strings.HasPrefix(a, "{") && strings.HasSuffix(a, "}") { // `{ { ... } }`
+		a = strings.TrimSpace(a[1 : len(a)-1])
+	}
 	a = reSpace.ReplaceAllString(a, "")
 	a = reNullCheck.ReplaceAllString(a, "")
+	a = stripCalls(a, "push_warning(", "push_warning_printf(", "push_deprecated_warn(", "push_deprecated_warn_no_replacement(",
+		"warn_on_deprecated_user_defined_collation(", "warn_about_deprecated_national(", "DBUG_EXECUTE_IF(", "MYSQL_YYABORT_UNLESS(", "MAKE_CMD_DDL_DUMMY(")
+	a = reSpGuard.ReplaceAllString(a, "")
+	a = reMsgGuard.ReplaceAllString(a, "")
+	a = reCastWrap.ReplaceAllString(a, "$1")
+	a = stripGuards(a)
+	a = reSetCall.ReplaceAllString(a, "$$$$.$1=$2;") // `$$.algo.set(x)` -> `$$.algo=x`
+	a = reInitCall.ReplaceAllString(a, "")           // `$$.init()`, `$$.flags.init()`
+	a = reDigest.ReplaceAllString(a, "")
+	a = reFoundSemicolon.ReplaceAllString(a, "")
 	return a
+}
+
+// stripGuards removes error checks: `if (cond) MYSQL_YYABORT;` and `if (cond) { ...
+// MYSQL_YYABORT; }` whose condition does not build anything (no push_back, no $$=).
+func stripGuards(a string) string {
+	for _, re := range []*regexp.Regexp{reGuardBlock, reGuardStmt} {
+		a = re.ReplaceAllStringFunc(a, func(m string) string {
+			cond := m[strings.Index(m, "(")+1:]
+			if strings.Contains(cond, "push_") || strings.Contains(cond, "$$") {
+				return m
+			}
+			return ""
+		})
+	}
+	return a
+}
+
+// stripCalls removes statements that are a call to one of the named functions (warnings
+// and other bookkeeping the server does besides building the tree).
+func stripCalls(a string, names ...string) string {
+	for {
+		changed := false
+		for _, name := range names {
+			i := strings.Index(a, name)
+			if i < 0 || (i > 0 && a[i-1] != ';' && a[i-1] != '}') {
+				continue
+			}
+			depth := 0
+			j := i + len(name) - 1
+			for ; j < len(a); j++ {
+				if a[j] == '(' {
+					depth++
+				} else if a[j] == ')' {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+			}
+			if j+1 < len(a) && a[j+1] == ';' {
+				a = a[:i] + a[j+2:]
+				changed = true
+			}
+		}
+		if !changed {
+			return a
+		}
+	}
 }
 
 func classify(rule string, idx int, syms []string, action string) Alt {
@@ -181,8 +281,24 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 	switch {
 	case action == "":
 		a.Kind = ActDefault
-	case n == "" || n == "$$=nullptr;" || n == "$$=NULL;" || n == "$$={};":
+	case n == "$$=nullptr;" || n == "$$=NULL;" || n == "$$={};":
 		a.Kind = ActEmpty
+	case !strings.Contains(n, "$"):
+		// only side effects on the server's state (or nothing left after stripping):
+		// the value is bison's default, the first child
+		a.Kind = ActDefault
+	case reStructExt.MatchString(n):
+		m := reStructExt.FindStringSubmatch(n)
+		a.Kind = ActStruct
+		a.Fields = []Field{{Name: "$base", Arg: Arg{Child: atoi(m[1])}}}
+		for _, f := range reStructField.FindAllStringSubmatch(m[2], -1) {
+			a.Fields = append(a.Fields, Field{Name: f[1], Arg: parseArgs(f[2])[0]})
+		}
+	case reAllocNew.MatchString(n):
+		m := reAllocNew.FindStringSubmatch(n)
+		a.Kind = ActNew
+		a.Class = m[1]
+		a.Args = parseArgs(m[2])
 	case rePass.MatchString(n):
 		m := rePass.FindStringSubmatch(n)
 		a.Kind = ActPass
@@ -197,6 +313,28 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 	case reItemize.MatchString(n):
 		a.Kind = ActPass
 		a.Args = []Arg{{Child: atoi(reItemize.FindStringSubmatch(n)[1])}}
+	case reNullValue.MatchString(n):
+		a.Kind = ActEmpty
+	case reConvert.MatchString(n), reStrmake.MatchString(n):
+		a.Kind = ActPass
+		a.Args = []Arg{{Child: 1}}
+	case reParseTree.MatchString(n):
+		a.Kind = ActPass
+		a.Args = []Arg{{Child: atoi(reParseTree.FindStringSubmatch(n)[1])}}
+	case reContextualize.MatchString(n):
+		a.Kind = ActPass
+		a.Args = []Arg{{Child: atoi(reContextualize.FindStringSubmatch(n)[1])}}
+	case reDequeNew.MatchString(n):
+		a.Kind = ActListNew
+		for _, m := range regexp.MustCompile(`\$\$->push_back\(\$(\d+)\);`).FindAllStringSubmatch(n, -1) {
+			a.Args = append(a.Args, Arg{Child: atoi(m[1])})
+		}
+	case reLexSet.MatchString(n):
+		// legacy: the alternative sets fields of the statement's LEX; keep them as a struct
+		a.Kind = ActStruct
+		for _, f := range reLexSetField.FindAllStringSubmatch(n, -1) {
+			a.Fields = append(a.Fields, Field{Name: f[1], Arg: parseArgs(f[2])[0]})
+		}
 	case reFlags.MatchString(n):
 		m := reFlags.FindStringSubmatch(n)
 		a.Kind = ActFlags
@@ -204,6 +342,10 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 	case reNumber.MatchString(n):
 		a.Kind = ActNumber
 		a.Args = []Arg{{Child: atoi(reNumber.FindStringSubmatch(n)[2])}}
+	case reAppendDflt.MatchString(n):
+		m := reAppendDflt.FindStringSubmatch(n)
+		a.Kind = ActListAppend
+		a.Args = []Arg{{Child: atoi(m[3])}, {Child: atoi(m[2])}}
 	case reAppendVal.MatchString(n):
 		m := reAppendVal.FindStringSubmatch(n)
 		a.Kind = ActListAppend
@@ -253,6 +395,91 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 		a.Kind = ActNew
 		a.Class = m[1]
 		a.Args = parseArgs(m[3])
+	case reHelperNew.MatchString(n):
+		// a helper that builds the node (create_func_cast, make_index_engine_attribute ...)
+		m := reHelperNew.FindStringSubmatch(n)
+		a.Kind = ActNew
+		a.Class = m[1]
+		a.Args = parseArgs(m[2])
+	case reBraceNew.MatchString(n):
+		m := reBraceNew.FindStringSubmatch(n)
+		a.Kind = ActNew
+		a.Class = m[1]
+		a.Args = parseArgs(m[2])
+	case reBraceAnon.MatchString(n):
+		// `$$= {$1, false}`: a by-value struct initialized positionally
+		a.Kind = ActStruct
+		for i, g := range parseArgs(reBraceAnon.FindStringSubmatch(n)[1]) {
+			a.Fields = append(a.Fields, Field{Name: fmt.Sprintf("%d", i), Arg: g})
+		}
+	case reNewList.MatchString(n):
+		a.Kind = ActListNew
+		for _, m := range reNewListPB.FindAllStringSubmatch(n, -1) {
+			g := Arg{Child: atoi(m[2]), Field: m[3]}
+			if m[1] == "front" {
+				a.Args = append([]Arg{g}, a.Args...)
+			} else {
+				a.Args = append(a.Args, g)
+			}
+		}
+	case reNewListVal.MatchString(n):
+		a.Kind = ActListNew
+		if m := reNewListVal.FindStringSubmatch(n); m[1] != "" {
+			a.Args = []Arg{{Child: atoi(m[1])}}
+		}
+	case reNewListPlain.MatchString(n):
+		m := reNewListPlain.FindStringSubmatch(n)
+		a.Kind = ActListNew
+		a.Class = m[1]
+		a.Args = []Arg{{Child: atoi(m[2]), Field: m[3]}}
+	case reAppendOnly.MatchString(n):
+		// `if ($$->push_back($3)) MYSQL_YYABORT;` on top of bison's default $$ = $1
+		m := reAppendOnly.FindStringSubmatch(n)
+		a.Kind = ActListAppend
+		a.Args = []Arg{{Child: 1}, {Child: atoi(m[2])}}
+	case reNewFieldList.MatchString(n):
+		m := reNewFieldList.FindStringSubmatch(n)
+		a.Kind = ActListNew
+		a.Class = m[1]
+		a.Args = []Arg{{Child: atoi(m[2]), Field: m[3]}}
+	case reFlatten.MatchString(n):
+		m := reFlatten.FindStringSubmatch(n)
+		a.Kind = ActNew
+		a.Class = m[1]
+		a.Args = []Arg{{Child: atoi(m[2])}, {Child: atoi(m[3])}}
+	case reNewPlain.MatchString(n):
+		m := reNewPlain.FindStringSubmatch(n)
+		a.Kind = ActNew
+		a.Class = m[1]
+		a.Args = parseArgs(m[2])
+	}
+	return a
+}
+
+// remap renumbers $N references from RHS positions (with mid-rule actions) to CST child
+// indexes; a reference to a mid-rule action's own value makes the alternative unknown.
+func remap(a Alt, posMap []int) Alt {
+	fix := func(g *Arg) bool {
+		if g.Child == 0 {
+			return true
+		}
+		if g.Child >= len(posMap) || posMap[g.Child] == 0 {
+			return false
+		}
+		g.Child = posMap[g.Child]
+		return true
+	}
+	for i := range a.Args {
+		if !fix(&a.Args[i]) {
+			a.Kind = ActUnknown
+			return a
+		}
+	}
+	for i := range a.Fields {
+		if !fix(&a.Fields[i].Arg) {
+			a.Kind = ActUnknown
+			return a
+		}
 	}
 	return a
 }
@@ -260,6 +487,7 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 func parseArgs(s string) []Arg {
 	var out []Arg
 	for _, x := range splitTopLevel(s) {
+		x = strings.TrimPrefix(x, "&") // passing a child by address
 		switch {
 		case reArgChild.MatchString(x):
 			out = append(out, Arg{Child: atoi(reArgChild.FindStringSubmatch(x)[1])})
@@ -279,10 +507,10 @@ func splitTopLevel(s string) []string {
 	depth := 0
 	start := 0
 	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '(', '[', '<', '{':
+		switch s[i] { // '<' '>' are not brackets here: `->` is common, templates are not
+		case '(', '[', '{':
 			depth++
-		case ')', ']', '>', '}':
+		case ')', ']', '}':
 			depth--
 		case ',':
 			if depth == 0 {

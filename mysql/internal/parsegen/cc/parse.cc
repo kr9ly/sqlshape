@@ -46,9 +46,13 @@ static void serialize(std::string &s, const Node *n, const char *base, uint32_t 
     uint32_t end = n->end ? (uint32_t)(n->end - base) : len;
     if (start > len) start = len;
     if (end > len) end = len;
-    put16(s, n->kind | 0x8000u);
+    put16(s, n->kind | 0x8000u | (n->hasval ? 0x4000u : 0));
     put32(s, start);
     put32(s, end);
+    if (n->hasval) {
+      put32(s, n->vlen);
+      s.append(n->val, n->vlen);
+    }
     return;
   }
   put16(s, n->kind);

@@ -12,6 +12,7 @@ package parsegen
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -29,6 +30,9 @@ type Grammar struct {
 	// terminals in order of first use. Index = the kind id the generated actions
 	// pass to mk/L and the id the Go side decodes.
 	Kinds []string
+	// ValueTokens are the tokens whose value the lexer sets as a string (identifiers,
+	// literals: `%type <lexer.lex_str>`); their leaves carry that value besides the span.
+	ValueTokens []string
 }
 
 // kindID returns the id of name, adding it to Kinds when new.
@@ -66,6 +70,23 @@ func StripGrammar(src string) (*Grammar, error) {
 			}
 		}
 	}
+	// tokens the lexer gives a string value: the unquoted identifier, the unescaped literal
+	valueTokens := map[string]bool{}
+	for _, m := range reLexStrType.FindAllStringSubmatch(decl, -1) {
+		for _, name := range strings.Fields(m[1]) {
+			if tokens[name] {
+				valueTokens[name] = true
+			}
+		}
+	}
+	charsetTokens := map[string]bool{}
+	for _, m := range reCharsetType.FindAllStringSubmatch(decl, -1) {
+		for _, name := range strings.Fields(m[1]) {
+			if tokens[name] {
+				charsetTokens[name] = true
+			}
+		}
+	}
 	startM := reStart.FindStringSubmatch(decl)
 	if startM == nil {
 		return nil, fmt.Errorf("grammar: no %%start")
@@ -85,6 +106,10 @@ func StripGrammar(src string) (*Grammar, error) {
 		return nil, err
 	}
 	g := &Grammar{Start: start}
+	for name := range valueTokens {
+		g.ValueTokens = append(g.ValueTokens, name)
+	}
+	sort.Strings(g.ValueTokens)
 	seen := map[string]int{}
 	for i := 0; i+1 < len(toks); i++ { // rules first, so that their ids are dense and stable
 		if toks[i].kind == tkID && toks[i+1].kind == tkColon && (i == 0 || toks[i-1].kind != tkPrec) {
@@ -144,7 +169,14 @@ func StripGrammar(src string) (*Grammar, error) {
 				}
 				real = append(real, x)
 				if strings.HasPrefix(x, "'") || strings.HasPrefix(x, `"`) || tokens[x] {
-					args = append(args, fmt.Sprintf("L(YYTHD, %d, &@%d)", g.kindID(x, seen), k+1))
+					switch {
+					case valueTokens[x]:
+						args = append(args, fmt.Sprintf("LS(YYTHD, %d, &@%d, &$%d.lexer.lex_str)", g.kindID(x, seen), k+1, k+1))
+					case charsetTokens[x]:
+						args = append(args, fmt.Sprintf("LC(YYTHD, %d, &@%d, $%d.lexer.charset)", g.kindID(x, seen), k+1, k+1))
+					default:
+						args = append(args, fmt.Sprintf("L(YYTHD, %d, &@%d)", g.kindID(x, seen), k+1))
+					}
 				} else {
 					if _, ok := seen[x]; !ok {
 						return nil, fmt.Errorf("grammar: %s uses %s, which is neither a token nor a rule", lhs.text, x)
@@ -330,15 +362,17 @@ void my_sql_parser_error(MY_SQL_PARSER_LTYPE *l, class THD *thd, Node **out, con
 `
 
 var (
-	reSectionSep = regexp.MustCompile(`(?m)^%%[ \t]*$`)
-	reTokenDecl  = regexp.MustCompile(`(?m)^%token\s*(?:<[^>]*>)?\s+([^\n/]*)`)
-	reStart      = regexp.MustCompile(`(?m)^%start\s+(\S+)`)
-	rePrologue   = regexp.MustCompile(`(?s)%\{.*?%\}`)
-	reParseParam = regexp.MustCompile(`(?m)^%parse-param.*$`)
-	reLexParam   = regexp.MustCompile(`(?m)^%lex-param.*$`)
-	reApiPure    = regexp.MustCompile(`(?m)^%define api\.pure.*$`)
-	reTypeDecl   = regexp.MustCompile(`(?m)^%type\b[^\n]*(\n[ \t]+[^\n%][^\n]*)*`)
-	reTaggedDecl = regexp.MustCompile(`(?m)^(%token|%left|%right|%nonassoc|%precedence)\s*<[^>]*>`)
+	reSectionSep  = regexp.MustCompile(`(?m)^%%[ \t]*$`)
+	reTokenDecl   = regexp.MustCompile(`(?m)^%token\s*(?:<[^>]*>)?\s+([^\n/]*)`)
+	reStart       = regexp.MustCompile(`(?m)^%start\s+(\S+)`)
+	rePrologue    = regexp.MustCompile(`(?s)%\{.*?%\}`)
+	reParseParam  = regexp.MustCompile(`(?m)^%parse-param.*$`)
+	reLexParam    = regexp.MustCompile(`(?m)^%lex-param.*$`)
+	reApiPure     = regexp.MustCompile(`(?m)^%define api\.pure.*$`)
+	reTypeDecl    = regexp.MustCompile(`(?m)^%type\b[^\n]*(\n[ \t]+[^\n%][^\n]*)*`)
+	reLexStrType  = regexp.MustCompile(`(?m)^%type\s*<lexer\.lex_str>((?:[^\n]*)(?:\n[ \t]+[^\n%][^\n]*)*)`)
+	reCharsetType = regexp.MustCompile(`(?m)^%type\s*<lexer\.charset>((?:[^\n]*)(?:\n[ \t]+[^\n%][^\n]*)*)`)
+	reTaggedDecl  = regexp.MustCompile(`(?m)^(%token|%left|%right|%nonassoc|%precedence)\s*<[^>]*>`)
 )
 
 type tokKind int

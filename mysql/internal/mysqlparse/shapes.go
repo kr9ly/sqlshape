@@ -13,16 +13,16 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	1: { // sql_statement
-		{Kind: ActUnknown},
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	2: { // opt_end_of_input
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	3: { // simple_statement_or_begin
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 		{Kind: ActDefault},
 	},
 	4: { // simple_statement
@@ -103,7 +103,7 @@ var shapes = [...][]Shape{
 		{Kind: ActEmpty},
 		{Kind: ActEmpty},
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 		{Kind: ActDefault},
@@ -164,21 +164,21 @@ var shapes = [...][]Shape{
 		{Kind: ActEmpty},
 	},
 	5: { // deallocate
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_DEALLOCATE_PREPARE"}}, {Name: "prepared_stmt_name", Arg: Arg{Child: 3}}}},
 	},
 	6: { // deallocate_or_drop
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	7: { // prepare
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_PREPARE"}}, {Name: "prepared_stmt_name", Arg: Arg{Child: 2}}, {Name: "contains_plaintext_password", Arg: Arg{Text: "true"}}}},
 	},
 	8: { // prepare_src
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "prepared_stmt_code", Arg: Arg{Child: 1}}, {Name: "prepared_stmt_code_is_varref", Arg: Arg{Text: "false"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "prepared_stmt_code", Arg: Arg{Child: 2}}, {Name: "prepared_stmt_code_is_varref", Arg: Arg{Text: "true"}}}},
 	},
 	9: { // execute
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 	},
 	10: { // execute_using
 		{Kind: ActDefault},
@@ -192,11 +192,11 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	13: { // help
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_HELP"}}, {Name: "help_arg", Arg: Arg{Child: 2, Field: ".str"}}}},
 	},
 	14: { // change_replication_stmt
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	15: { // filter_defs
 		{Kind: ActDefault},
@@ -216,7 +216,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	18: { // filter_db_list
-		{Kind: ActNew, Class: "mem_root_deque", Args: []Arg{{Text: "YYMEM_ROOT);$$->push_back($1"}}},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	19: { // filter_db_ident
@@ -227,7 +227,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	21: { // filter_db_pair_list
-		{Kind: ActNew, Class: "mem_root_deque", Args: []Arg{{Text: "YYMEM_ROOT);$$->push_back($2);$$->push_back($4"}}},
+		{Kind: ActListNew, Args: []Arg{{Child: 2}, {Child: 4}}},
 		{Kind: ActUnknown},
 	},
 	22: { // opt_filter_table_list
@@ -235,7 +235,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	23: { // filter_table_list
-		{Kind: ActNew, Class: "mem_root_deque", Args: []Arg{{Text: "YYMEM_ROOT);$$->push_back($1"}}},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	24: { // filter_table_ident
@@ -246,7 +246,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	26: { // filter_string_list
-		{Kind: ActNew, Class: "mem_root_deque", Args: []Arg{{Text: "YYMEM_ROOT);$$->push_back($1"}}},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	27: { // filter_string
@@ -257,33 +257,33 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	29: { // source_def
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.host", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.network_namespace", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.bind_addr", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.user", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.password", Arg: Arg{Child: 3, Field: ".str"}}, {Name: "contains_plaintext_password", Arg: Arg{Text: "true"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.port", Arg: Arg{Child: 3}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.connect_retry", Arg: Arg{Child: 3}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.retry_count", Arg: Arg{Child: 3}}, {Name: "mi.retry_count_opt", Arg: Arg{Text: "LEX_SOURCE_INFO::LEX_MI_ENABLE"}}}},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl", Arg: Arg{Text: "$3?LEX_SOURCE_INFO::LEX_MI_ENABLE:LEX_SOURCE_INFO::LEX_MI_DISABLE"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_ca", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_capath", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.tls_version", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_cert", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_cipher", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_key", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_verify_server_cert", Arg: Arg{Text: "$3?LEX_SOURCE_INFO::LEX_MI_ENABLE:LEX_SOURCE_INFO::LEX_MI_DISABLE"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_crl", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.ssl_crlpath", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.public_key_path", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.get_public_key", Arg: Arg{Text: "$3?LEX_SOURCE_INFO::LEX_MI_ENABLE:LEX_SOURCE_INFO::LEX_MI_DISABLE"}}}},
 		{Kind: ActUnknown},
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.compression_algorithm", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.zstd_compression_level", Arg: Arg{Child: 3}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.auto_position", Arg: Arg{Text: "$3?LEX_SOURCE_INFO::LEX_MI_ENABLE:LEX_SOURCE_INFO::LEX_MI_DISABLE"}}}},
 		{Kind: ActDefault},
 		{Kind: ActUnknown},
 		{Kind: ActDefault},
@@ -301,29 +301,29 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	32: { // privilege_check_def
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.privilege_checks_none", Arg: Arg{Text: "false"}}, {Name: "mi.privilege_checks_username", Arg: Arg{Child: 1, Field: "->user.str"}}, {Name: "mi.privilege_checks_hostname", Arg: Arg{Child: 1, Field: "->host.str"}}}},
+		{Kind: ActDefault},
 	},
 	33: { // table_primary_key_check_def
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	34: { // assign_gtids_to_anonymous_transactions_def
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.assign_gtids_to_anonymous_transactions_type", Arg: Arg{Text: "LEX_SOURCE_INFO::LEX_MI_ANONYMOUS_TO_GTID_UUID"}}, {Name: "mi.assign_gtids_to_anonymous_transactions_manual_uuid", Arg: Arg{Child: 1, Field: ".str"}}}},
 	},
 	35: { // source_tls_ciphersuites_def
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.tls_ciphersuites", Arg: Arg{Text: "LEX_SOURCE_INFO::SPECIFIED_STRING"}}, {Name: "mi.tls_ciphersuites_string", Arg: Arg{Child: 1, Field: ".str"}}}},
+		{Kind: ActDefault},
 	},
 	36: { // source_file_def
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.log_file_name", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.pos", Arg: Arg{Child: 3}}, {Name: "mi.pos", Arg: Arg{Text: "max<ulonglong>(BIN_LOG_HEADER_SIZE,Lex->mi.pos)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.relay_log_name", Arg: Arg{Child: 3, Field: ".str"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.relay_log_pos", Arg: Arg{Child: 3}}, {Name: "mi.relay_log_pos", Arg: Arg{Text: "max<ulong>(BIN_LOG_HEADER_SIZE,Lex->mi.relay_log_pos)"}}}},
 	},
 	37: { // opt_channel
 		{Kind: ActEmpty},
@@ -339,11 +339,11 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_create_role", Args: []Arg{{Text: "@$"}, {Text: "!!$3"}, {Child: 4}}},
 	},
 	40: { // create_resource_group_stmt
-		{Kind: ActNew, Class: "PT_create_resource_group", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}, {Child: 7}, {Child: 8}, {Child: 9}, {Text: "$10.is_default?true:$10.value"}}},
+		{Kind: ActNew, Class: "PT_create_resource_group", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 7}, {Child: 8}, {Child: 9}, {Text: "$10.is_default?true:$10.value"}}},
 	},
 	41: { // create
 		{Kind: ActUnknown},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
@@ -355,7 +355,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_create_srs", Args: []Arg{{Text: "@$"}, {Child: 6}, {Text: "*$7"}, {Text: "false"}, {Child: 5}}},
 	},
 	43: { // srs_attributes
-		{Kind: ActNew, Class: "Sql_cmd_srs_attributes", Args: []Arg{{Text: ");if(!$$)MYSQL_YYABORT_ERROR(ER_DA_OOM"}, {Text: "MYF(0)"}}},
+		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
@@ -384,7 +384,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	48: { // event_tail
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	49: { // ev_schedule_time
 		{Kind: ActDefault},
@@ -398,7 +398,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	51: { // ev_starts
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
 	},
 	52: { // ev_ends
@@ -418,7 +418,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	56: { // ev_sql_stmt
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	57: { // ev_sql_stmt_inner
 		{Kind: ActDefault},
@@ -436,35 +436,35 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	58: { // sp_name
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "new", Args: []Arg{{Text: "YYMEM_ROOT)sp_name($1"}, {Child: 3}, {Text: "true);$$->init_qname(YYTHD"}}},
 		{Kind: ActUnknown},
 	},
 	59: { // sp_a_chistics
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	60: { // sp_c_chistics
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	61: { // sp_chistic
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActEmpty},
+		{Kind: ActStruct, Fields: []Field{{Name: "sp_chistics.comment", Arg: Arg{Child: 2}}}},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "sp_chistics.language", Arg: Arg{Child: 2}}}},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	62: { // sp_c_chistic
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	63: { // sp_suid
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	64: { // call_stmt
 		{Kind: ActNew, Class: "PT_call", Args: []Arg{{Text: "@$"}, {Child: 2}, {Child: 3}}},
@@ -496,22 +496,22 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	72: { // sp_opt_inout
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "sp_variable::MODE_IN"},
+		{Kind: ActConst, Const: "sp_variable::MODE_IN"},
+		{Kind: ActConst, Const: "sp_variable::MODE_OUT"},
+		{Kind: ActConst, Const: "sp_variable::MODE_INOUT"},
 	},
 	73: { // sp_proc_stmts
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	74: { // sp_proc_stmts1
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	75: { // sp_decls
 		{Kind: ActStruct, Fields: []Field{{Name: "vars", Arg: Arg{Text: "$$.conds=$$.hndlrs=$$.curs=0"}}}},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "vars", Arg: Arg{Text: "$1.vars+$2.vars"}}, {Name: "conds", Arg: Arg{Text: "$1.conds+$2.conds"}}, {Name: "hndlrs", Arg: Arg{Text: "$1.hndlrs+$2.hndlrs"}}, {Name: "curs", Arg: Arg{Text: "$1.curs+$2.curs"}}}},
 	},
 	76: { // sp_decl
 		{Kind: ActUnknown},
@@ -520,8 +520,8 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	77: { // sp_handler_type
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "sp_handler::EXIT"},
+		{Kind: ActConst, Const: "sp_handler::CONTINUE"},
 	},
 	78: { // sp_hcond_list
 		{Kind: ActConst, Const: "1"},
@@ -531,15 +531,15 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	80: { // sp_cond
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "sp_condition_value", Args: []Arg{{Child: 1}}},
 		{Kind: ActDefault},
 	},
 	81: { // sqlstate
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "sp_condition_value", Args: []Arg{{Child: 3, Field: ".str"}}},
 	},
 	82: { // opt_value
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	83: { // sp_hcond
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -549,7 +549,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "sp_condition_value", Args: []Arg{{Text: "sp_condition_value::EXCEPTION"}}},
 	},
 	84: { // signal_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_SIGNAL"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_signal($2,$3)"}}}},
 	},
 	85: { // signal_value
 		{Kind: ActUnknown},
@@ -587,7 +587,7 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "CIN_MYSQL_ERRNO"},
 	},
 	91: { // resignal_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_RESIGNAL"}}, {Name: "keep_diagnostics", Arg: Arg{Text: "DA_KEEP_DIAGNOSTICS"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_resignal($2,$3)"}}}},
 	},
 	92: { // get_diagnostics
 		{Kind: ActUnknown},
@@ -602,7 +602,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Condition_information", Args: []Arg{{Child: 2}, {Child: 3}}},
 	},
 	95: { // statement_information
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	96: { // statement_information_item
@@ -610,7 +610,7 @@ var shapes = [...][]Shape{
 	},
 	97: { // simple_target_specification
 		{Kind: ActUnknown},
-		{Kind: ActNew, Class: "Item_func_get_user_var", Args: []Arg{{Text: "@$"}, {Text: "$2);ITEMIZE($$"}, {Text: "&$$"}}},
+		{Kind: ActUnknown},
 	},
 	98: { // statement_information_item_name
 		{Kind: ActConst, Const: "Statement_information_item::NUMBER"},
@@ -620,7 +620,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	100: { // condition_information
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	101: { // condition_information_item
@@ -665,7 +665,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	106: { // sp_proc_stmt_if
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	107: { // sp_proc_stmt_statement
 		{Kind: ActUnknown},
@@ -674,7 +674,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	109: { // sp_proc_stmt_unlabeled
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	110: { // sp_proc_stmt_leave
 		{Kind: ActUnknown},
@@ -683,13 +683,13 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	112: { // sp_proc_stmt_open
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	113: { // sp_proc_stmt_fetch
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 	},
 	114: { // sp_proc_stmt_close
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	115: { // sp_opt_fetch_noise
 		{Kind: ActDefault},
@@ -697,11 +697,11 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	116: { // sp_fetch_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	117: { // sp_if
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	118: { // sp_elseifs
 		{Kind: ActDefault},
@@ -713,10 +713,10 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	120: { // simple_case_stmt
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	121: { // searched_case_stmt
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	122: { // simple_when_clause_list
 		{Kind: ActDefault},
@@ -727,34 +727,34 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	124: { // simple_when_clause
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	125: { // searched_when_clause
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	126: { // else_clause_opt
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	127: { // sp_labeled_control
 		{Kind: ActUnknown},
 	},
 	128: { // sp_opt_label
-		{Kind: ActConst, Const: "NULL_CSTR"},
+		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	129: { // sp_labeled_block
 		{Kind: ActUnknown},
 	},
 	130: { // sp_unlabeled_block
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	131: { // sp_block_content
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	132: { // sp_unlabeled_control
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	133: { // trg_action_time
@@ -767,11 +767,11 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "TRG_EVENT_DELETE"},
 	},
 	135: { // opt_ts_datafile_name
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "nullptr"}}, {Name: "1", Arg: Arg{Text: "0"}}}},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	136: { // opt_logfile_group_name
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "nullptr"}}, {Name: "1", Arg: Arg{Text: "0"}}}},
 		{Kind: ActPass, Args: []Arg{{Child: 4}}},
 	},
 	137: { // opt_tablespace_options
@@ -891,7 +891,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_alter_tablespace_option_comment", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 	},
 	164: { // ts_option_engine
-		{Kind: ActNew, Class: "PT_alter_tablespace_option_engine", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}}},
+		{Kind: ActNew, Class: "PT_alter_tablespace_option_engine", Args: []Arg{{Text: "@$"}, {Child: 4}}},
 	},
 	165: { // ts_option_file_block_size
 		{Kind: ActNew, Class: "PT_alter_tablespace_option_file_block_size", Args: []Arg{{Text: "@$"}, {Child: 3}}},
@@ -904,18 +904,18 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_alter_tablespace_option_encryption", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 	},
 	168: { // ts_option_engine_attribute
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "make_tablespace_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
 	},
 	169: { // size_number
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 		{Kind: ActUnknown},
 	},
 	170: { // opt_create_table_options_etc
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "$base", Arg: Arg{Child: 2}}, {Name: "opt_create_table_options", Arg: Arg{Child: 1}}}},
 		{Kind: ActDefault},
 	},
 	171: { // opt_create_partitioning_etc
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "$base", Arg: Arg{Child: 2}}, {Name: "opt_partitioning", Arg: Arg{Child: 1}}}},
 		{Kind: ActDefault},
 	},
 	172: { // opt_duplicate_as_qe
@@ -943,12 +943,12 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "true"},
 	},
 	177: { // opt_key_algo
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "enum_key_algorithm::KEY_ALGORITHM_NONE"},
 		{Kind: ActUnknown},
 	},
 	178: { // opt_num_parts
 		{Kind: ActConst, Const: "0"},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	179: { // opt_sub_part
 		{Kind: ActEmpty},
@@ -960,12 +960,12 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	181: { // name_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1, Field: ".str"}}},
 		{Kind: ActUnknown},
 	},
 	182: { // opt_num_subparts
 		{Kind: ActConst, Const: "0"},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	183: { // opt_part_defs
 		{Kind: ActEmpty},
@@ -996,7 +996,7 @@ var shapes = [...][]Shape{
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	190: { // part_value_item_list_paren
-		{Kind: ActNew, Class: "PT_part_value_item_list_paren", Args: []Arg{{Text: "@$"}, {Child: 3}, {Text: "@4"}}},
+		{Kind: ActNew, Class: "PT_part_value_item_list_paren", Args: []Arg{{Text: "@$"}, {Child: 2}, {Text: "@4"}}},
 	},
 	191: { // part_value_item_list
 		{Kind: ActListNew, Class: "Mem_root_array", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 1}}},
@@ -1027,7 +1027,7 @@ var shapes = [...][]Shape{
 	},
 	198: { // part_option
 		{Kind: ActNew, Class: "PT_partition_tablespace", Args: []Arg{{Text: "@$"}, {Child: 3, Field: ".str"}}},
-		{Kind: ActNew, Class: "PT_partition_engine", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}}},
+		{Kind: ActNew, Class: "PT_partition_engine", Args: []Arg{{Text: "@$"}, {Child: 4}}},
 		{Kind: ActNew, Class: "PT_partition_nodegroup", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_partition_max_rows", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_partition_min_rows", Args: []Arg{{Text: "@$"}, {Child: 3}}},
@@ -1044,16 +1044,16 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	201: { // opt_create_database_options
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	202: { // create_database_options
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	203: { // create_database_option
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
 	},
 	204: { // opt_if_not_exists
@@ -1073,12 +1073,12 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	208: { // create_table_option
-		{Kind: ActNew, Class: "PT_create_table_engine_option", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($3)"}}},
+		{Kind: ActNew, Class: "PT_create_table_engine_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_table_secondary_engine_option", Args: []Arg{{Text: "@$"}}},
-		{Kind: ActNew, Class: "PT_create_table_secondary_engine_option", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($3)"}}},
+		{Kind: ActNew, Class: "PT_create_table_secondary_engine_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_max_rows_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_min_rows_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_create_avg_row_length_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_password_option", Args: []Arg{{Text: "@$"}, {Child: 3, Field: ".str"}}},
 		{Kind: ActNew, Class: "PT_create_commen_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_compress_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
@@ -1087,7 +1087,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_create_pack_keys_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_stats_auto_recalc_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_stats_persistent_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_create_stats_stable_pages", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_stats_stable_pages", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_create_checksum_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_checksum_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
@@ -1103,10 +1103,10 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_create_storage_option", Args: []Arg{{Text: "@$"}, {Text: "HA_SM_DISK"}}},
 		{Kind: ActNew, Class: "PT_create_storage_option", Args: []Arg{{Text: "@$"}, {Text: "HA_SM_MEMORY"}}},
 		{Kind: ActNew, Class: "PT_create_connection_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_create_key_block_size_option", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_start_transaction_option", Args: []Arg{{Text: "@$"}, {Text: "true"}}},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "make_table_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
+		{Kind: ActNew, Class: "make_table_secondary_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_create_ts_autoextend_size_option", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 	},
 	209: { // ternary_option
@@ -1168,7 +1168,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 3}}},
 	},
 	222: { // opt_constraint_name
-		{Kind: ActConst, Const: "NULL_STR"},
+		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	223: { // opt_not
@@ -1207,22 +1207,22 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::CHAR"}, {Child: 2, Field: ".charset"}, {Child: 2, Field: ".force_binary"}}},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
-		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::CHAR"}, {Child: 2}, {Text: "&my_charset_bin"}}},
-		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::CHAR"}, {Text: "&my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::CHAR"}, {Child: 2}, {Text: "my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::CHAR"}, {Text: "my_charset_bin"}}},
 		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::VARCHAR"}, {Child: 2}, {Child: 3, Field: ".charset"}, {Child: 3, Field: ".force_binary"}}},
 		{Kind: ActUnknown},
-		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::VARCHAR"}, {Child: 2}, {Text: "&my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::VARCHAR"}, {Child: 2}, {Text: "my_charset_bin"}}},
 		{Kind: ActUnknown},
 		{Kind: ActNew, Class: "PT_date_type", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_time_type", Args: []Arg{{Text: "@$"}, {Text: "Time_type::TIME"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_timestamp_type", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_time_type", Args: []Arg{{Text: "@$"}, {Text: "Time_type::DATETIME"}, {Child: 2}}},
-		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::TINY"}, {Text: "&my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::TINY"}, {Text: "my_charset_bin"}}},
 		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActDefault},
-		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::MEDIUM"}, {Text: "&my_charset_bin"}}},
-		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::LONG"}, {Text: "&my_charset_bin"}}},
-		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::MEDIUM"}, {Text: "&my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::MEDIUM"}, {Text: "my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::LONG"}, {Text: "my_charset_bin"}}},
+		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::MEDIUM"}, {Text: "my_charset_bin"}}},
 		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::MEDIUM"}, {Child: 3, Field: ".charset"}, {Child: 3, Field: ".force_binary"}}},
 		{Kind: ActNew, Class: "PT_blob_type", Args: []Arg{{Text: "@$"}, {Text: "Blob_type::TINY"}, {Child: 2, Field: ".charset"}, {Child: 2, Field: ".force_binary"}}},
 		{Kind: ActNew, Class: "PT_char_type", Args: []Arg{{Text: "@$"}, {Text: "Char_type::TEXT"}, {Child: 2}, {Child: 3, Field: ".charset"}, {Child: 3, Field: ".force_binary"}}},
@@ -1245,19 +1245,19 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_spacial_type", Args: []Arg{{Text: "@$"}, {Text: "Field::GEOM_MULTIPOLYGON"}}},
 	},
 	231: { // nchar
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	232: { // varchar
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	233: { // nvarchar
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	234: { // int_type
 		{Kind: ActConst, Const: "Int_type::INT"},
@@ -1312,7 +1312,7 @@ var shapes = [...][]Shape{
 	245: { // field_option
 		{Kind: ActConst, Const: "0"},
 		{Kind: ActConst, Const: "UNSIGNED_FLAG"},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "ZEROFILL_FLAG"},
 	},
 	246: { // field_length
 		{Kind: ActPass, Args: []Arg{{Child: 2, Field: ".str"}}},
@@ -1334,7 +1334,7 @@ var shapes = [...][]Shape{
 	},
 	250: { // column_attribute_list
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Class: "Mem_root_array", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 1}}},
 	},
 	251: { // column_attribute
 		{Kind: ActNew, Class: "PT_null_column_attr", Args: []Arg{{Text: "@$"}}},
@@ -1342,21 +1342,21 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_secondary_column_attr", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_default_column_attr", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_generated_default_val_column_attr", Args: []Arg{{Text: "@$"}, {Child: 3}}},
-		{Kind: ActNew, Class: "PT_on_update_column_attr", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($3)"}}},
+		{Kind: ActNew, Class: "PT_on_update_column_attr", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_auto_increment_column_attr", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_serial_default_value_column_attr", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_primary_key_column_attr", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_unique_key_column_attr", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_unique_key_column_attr", Args: []Arg{{Text: "@$"}}},
-		{Kind: ActNew, Class: "PT_comment_column_attr", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($2)"}}},
+		{Kind: ActNew, Class: "PT_comment_column_attr", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_collate_column_attr", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_column_format_column_attr", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_storage_media_column_attr", Args: []Arg{{Text: "@$"}, {Child: 2}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_srid_column_attr", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_check_constraint_column_attr", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_constraint_enforcement_attr", Args: []Arg{{Text: "@$"}, {Child: 1}}},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "make_column_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
+		{Kind: ActNew, Class: "make_column_secondary_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
 		{Kind: ActNew, Class: "PT_column_visibility_attr", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 	},
 	252: { // column_format
@@ -1373,7 +1373,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	255: { // now_or_signed_literal
-		{Kind: ActNew, Class: "Item_func_now_local", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($1)"}}},
+		{Kind: ActNew, Class: "Item_func_now_local", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 		{Kind: ActDefault},
 	},
 	256: { // character_set
@@ -1382,7 +1382,7 @@ var shapes = [...][]Shape{
 	},
 	257: { // charset_name
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "&my_charset_bin"},
 	},
 	258: { // opt_load_data_charset
 		{Kind: ActEmpty},
@@ -1390,7 +1390,7 @@ var shapes = [...][]Shape{
 	},
 	259: { // old_or_new_charset_name
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "&my_charset_bin"},
 	},
 	260: { // old_or_new_charset_name_or_default
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -1398,31 +1398,31 @@ var shapes = [...][]Shape{
 	},
 	261: { // collation_name
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "&my_charset_bin"},
 	},
 	262: { // opt_collate
 		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	263: { // opt_default
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	264: { // ascii
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "&my_charset_latin1"},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 	},
 	265: { // unicode
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	266: { // opt_charset_with_opt_binary
 		{Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Text: "nullptr"}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Child: 1}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Child: 1}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
-		{Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Text: "&my_charset_bin"}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Text: "my_charset_bin"}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
@@ -1474,17 +1474,17 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "KEYTYPE_UNIQUE"},
 	},
 	277: { // key_or_index
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	278: { // opt_key_or_index
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	279: { // keys_or_index
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	280: { // opt_unique
 		{Kind: ActConst, Const: "KEYTYPE_MULTIPLE"},
@@ -1527,15 +1527,15 @@ var shapes = [...][]Shape{
 	},
 	290: { // common_index_option
 		{Kind: ActNew, Class: "PT_block_size", Args: []Arg{{Text: "@$"}, {Child: 3}}},
-		{Kind: ActNew, Class: "PT_index_comment", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($2)"}}},
+		{Kind: ActNew, Class: "PT_index_comment", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PT_index_visibility", Args: []Arg{{Text: "@$"}, {Child: 1}}},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "make_index_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
+		{Kind: ActNew, Class: "make_index_secondary_engine_attribute", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 3}}},
 	},
 	291: { // opt_index_name_and_type
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Child: 1}}, {Name: "1", Arg: Arg{Text: "nullptr"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Child: 1}}, {Name: "1", Arg: Arg{Text: "NEW_PTNPT_index_type(@$,$3)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Child: 1}}, {Name: "1", Arg: Arg{Text: "NEW_PTNPT_index_type(@$,$3)"}}}},
 	},
 	292: { // opt_index_type_clause
 		{Kind: ActEmpty},
@@ -1556,47 +1556,47 @@ var shapes = [...][]Shape{
 	},
 	296: { // key_list
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 	},
 	297: { // key_part
-		{Kind: ActNew, Class: "PT_key_part_specification", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($1)"}, {Child: 2}, {Text: "0"}}},
+		{Kind: ActNew, Class: "PT_key_part_specification", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 2}, {Text: "0"}}},
 		{Kind: ActUnknown},
 	},
 	298: { // key_list_with_expression
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 	},
 	299: { // key_part_with_expression
 		{Kind: ActDefault},
 		{Kind: ActNew, Class: "PT_key_part_specification", Args: []Arg{{Text: "@$"}, {Child: 2}, {Child: 4}}},
 	},
 	300: { // opt_ident
-		{Kind: ActConst, Const: "NULL_STR"},
+		{Kind: ActEmpty},
 		{Kind: ActDefault},
 	},
 	301: { // string_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	302: { // alter_table_stmt
 		{Kind: ActNew, Class: "PT_alter_table_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3}, {Child: 4, Field: ".actions"}, {Text: "$4.flags.algo.get_or_default()"}, {Text: "$4.flags.lock.get_or_default()"}, {Text: "$4.flags.validation.get_or_default()"}}},
 		{Kind: ActNew, Class: "PT_alter_table_standalone_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3}, {Child: 4, Field: ".action"}, {Text: "$4.flags.algo.get_or_default()"}, {Text: "$4.flags.lock.get_or_default()"}, {Text: "$4.flags.validation.get_or_default()"}}},
 	},
 	303: { // alter_database_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_ALTER_DB"}}, {Name: "name", Arg: Arg{Child: 3}}}},
 	},
 	304: { // alter_procedure_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_ALTER_PROCEDURE"}}, {Name: "spname", Arg: Arg{Child: 3}}}},
 	},
 	305: { // alter_function_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_ALTER_FUNCTION"}}, {Name: "spname", Arg: Arg{Child: 3}}}},
 	},
 	306: { // alter_view_stmt
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	307: { // alter_event_stmt
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	308: { // alter_logfile_stmt
 		{Kind: ActUnknown},
@@ -1604,14 +1604,14 @@ var shapes = [...][]Shape{
 	309: { // alter_tablespace_stmt
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_alter_tablespace_rename{$3,$6}"}}, {Name: "sql_command", Arg: Arg{Text: "SQLCOM_ALTER_TABLESPACE"}}}},
 		{Kind: ActUnknown},
 	},
 	310: { // alter_undo_tablespace_stmt
 		{Kind: ActUnknown},
 	},
 	311: { // alter_server_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_ALTER_SERVER"}}, {Name: "server_options.m_server_name", Arg: Arg{Child: 3}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_alter_server(&Lex->server_options)"}}}},
 	},
 	312: { // alter_user_stmt
 		{Kind: ActDefault},
@@ -1625,22 +1625,22 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	313: { // opt_replace_password
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "LEX_CSTRING", Args: []Arg{{Text: "nullptr"}, {Text: "0"}}},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	314: { // alter_resource_group_stmt
-		{Kind: ActNew, Class: "PT_alter_resource_group", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}, {Child: 5}, {Child: 6}, {Child: 7}, {Child: 8}}},
+		{Kind: ActNew, Class: "PT_alter_resource_group", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 5}, {Child: 6}, {Child: 7}, {Child: 8}}},
 	},
 	315: { // alter_user_command
 		{Kind: ActUnknown},
 	},
 	316: { // opt_user_attribute
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_user_attribute", Arg: Arg{Text: "enum_alter_user_attribute::ALTER_USER_ATTRIBUTE"}}, {Name: "alter_user_comment_text", Arg: Arg{Child: 2}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_user_attribute", Arg: Arg{Text: "enum_alter_user_attribute::ALTER_USER_COMMENT"}}, {Name: "alter_user_comment_text", Arg: Arg{Child: 2}}}},
 	},
 	317: { // opt_account_lock_password_expire_options
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	318: { // opt_account_lock_password_expire_option_list
@@ -1648,36 +1648,36 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	319: { // opt_account_lock_password_expire_option
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_password.expire_after_days", Arg: Arg{Child: 4}}, {Name: "alter_password.update_password_expired_column", Arg: Arg{Text: "false"}}, {Name: "alter_password.update_password_expired_fields", Arg: Arg{Text: "true"}}, {Name: "alter_password.use_default_password_lifetime", Arg: Arg{Text: "false"}}}},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_password.password_history_length", Arg: Arg{Child: 3}}, {Name: "alter_password.update_password_history", Arg: Arg{Text: "true"}}, {Name: "alter_password.use_default_password_history", Arg: Arg{Text: "false"}}}},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_password.password_reuse_interval", Arg: Arg{Child: 4}}, {Name: "alter_password.update_password_reuse_interval", Arg: Arg{Text: "true"}}, {Name: "alter_password.use_default_password_reuse_interval", Arg: Arg{Text: "false"}}}},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_password.update_failed_login_attempts", Arg: Arg{Text: "true"}}, {Name: "alter_password.failed_login_attempts", Arg: Arg{Child: 2}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "alter_password.update_password_lock_time", Arg: Arg{Text: "true"}}, {Name: "alter_password.password_lock_time", Arg: Arg{Child: 2}}}},
+		{Kind: ActDefault},
 	},
 	320: { // connect_options
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	321: { // connect_option_list
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	322: { // connect_option
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mqh.questions", Arg: Arg{Child: 2}}, {Name: "mqh.specified_limits", Arg: Arg{Text: "USER_RESOURCES::QUERIES_PER_HOUR"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mqh.updates", Arg: Arg{Child: 2}}, {Name: "mqh.specified_limits", Arg: Arg{Text: "USER_RESOURCES::UPDATES_PER_HOUR"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mqh.conn_per_hour", Arg: Arg{Child: 2}}, {Name: "mqh.specified_limits", Arg: Arg{Text: "USER_RESOURCES::CONNECTIONS_PER_HOUR"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mqh.user_conn", Arg: Arg{Child: 2}}, {Name: "mqh.specified_limits", Arg: Arg{Text: "USER_RESOURCES::USER_CONNECTIONS"}}}},
 	},
 	323: { // user_func
 		{Kind: ActUnknown},
@@ -1705,7 +1705,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	329: { // standalone_alter_table_action
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "action", Arg: Arg{Child: 1}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "flags", Arg: Arg{Child: 1}}, {Name: "action", Arg: Arg{Child: 3}}}},
 	},
 	330: { // alter_table_partition_options
@@ -1713,7 +1713,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_alter_table_remove_partitioning", Args: []Arg{{Text: "@$"}}},
 	},
 	331: { // opt_alter_command_list
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "actions", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "flags", Arg: Arg{Child: 1}}, {Name: "actions", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActDefault},
 		{Kind: ActUnknown},
@@ -1756,7 +1756,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "actions", Arg: Arg{Child: 1}}}},
 		{Kind: ActUnknown},
 	},
 	337: { // alter_commands_modifier_list
@@ -1788,21 +1788,21 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_alter_table_rename_key", Args: []Arg{{Text: "@$"}, {Child: 3, Field: ".str"}, {Child: 5, Field: ".str"}}},
 		{Kind: ActNew, Class: "PT_alter_table_rename_column", Args: []Arg{{Text: "@$"}, {Child: 3, Field: ".str"}, {Child: 5, Field: ".str"}}},
 		{Kind: ActNew, Class: "PT_alter_table_convert_to_charset", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 5}}},
-		{Kind: ActNew, Class: "PT_alter_table_convert_to_charset", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->variables.collation_database,$5?$5:YYTHD->variables.collation_database"}}},
+		{Kind: ActNew, Class: "PT_alter_table_convert_to_charset", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->variables.collation_database"}, {Text: "$5?$5:YYTHD->variables.collation_database"}}},
 		{Kind: ActNew, Class: "PT_alter_table_force", Args: []Arg{{Text: "@$"}}},
 		{Kind: ActNew, Class: "PT_alter_table_order", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 	},
 	339: { // alter_commands_modifier
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "algo", Arg: Arg{Child: 1}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "lock", Arg: Arg{Child: 1}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "validation", Arg: Arg{Child: 1}}}},
 	},
 	340: { // opt_index_lock_and_algorithm
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "lock", Arg: Arg{Child: 1}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "algo", Arg: Arg{Child: 1}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "lock", Arg: Arg{Child: 1}}, {Name: "algo", Arg: Arg{Child: 2}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "algo", Arg: Arg{Child: 1}}, {Name: "lock", Arg: Arg{Child: 2}}}},
 	},
 	341: { // alter_algorithm_option
 		{Kind: ActPass, Args: []Arg{{Child: 3}}},
@@ -1834,20 +1834,20 @@ var shapes = [...][]Shape{
 	348: { // opt_place
 		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 2, Field: ".str"}}},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "first_keyword"},
 	},
 	349: { // opt_to
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	350: { // group_replication
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	351: { // group_replication_start
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	352: { // opt_group_replication_start_options
 		{Kind: ActDefault},
@@ -1863,22 +1863,22 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	355: { // group_replication_user
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.user", Arg: Arg{Child: 3, Field: ".str"}}}},
 	},
 	356: { // group_replication_password
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.password", Arg: Arg{Child: 3, Field: ".str"}}, {Name: "contains_plaintext_password", Arg: Arg{Text: "true"}}}},
 	},
 	357: { // group_replication_plugin_auth
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.plugin_auth", Arg: Arg{Child: 3, Field: ".str"}}}},
 	},
 	358: { // stop_replica_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_REPLICA_STOP"}}, {Name: "type", Arg: Arg{Text: "0"}}, {Name: "replica_thd_opt", Arg: Arg{Child: 3}}}},
 	},
 	359: { // start_replica_stmt
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	360: { // start
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_BEGIN"}}, {Name: "start_transaction_opt", Arg: Arg{Child: 3}}}},
 	},
 	361: { // opt_start_transaction_option_list
 		{Kind: ActConst, Const: "0"},
@@ -1894,20 +1894,20 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "MYSQL_START_TRANS_OPT_READ_WRITE"},
 	},
 	364: { // opt_user_option
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.user", Arg: Arg{Child: 3, Field: ".str"}}}},
 	},
 	365: { // opt_password_option
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.password", Arg: Arg{Child: 3, Field: ".str"}}, {Name: "contains_plaintext_password", Arg: Arg{Text: "true"}}}},
 	},
 	366: { // opt_default_auth_option
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.plugin_auth", Arg: Arg{Child: 3, Field: ".str"}}}},
 	},
 	367: { // opt_plugin_dir_option
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "replica_connection.plugin_dir", Arg: Arg{Child: 3, Field: ".str"}}}},
 	},
 	368: { // opt_replica_thread_option_list
 		{Kind: ActConst, Const: "0"},
@@ -1922,15 +1922,15 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "REPLICA_IO"},
 	},
 	371: { // opt_replica_until
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	372: { // replica_until
 		{Kind: ActDefault},
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.gtid", Arg: Arg{Child: 3, Field: ".str"}}, {Name: "mi.gtid_until_condition", Arg: Arg{Text: "LEX_SOURCE_INFO::UNTIL_SQL_BEFORE_GTIDS"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.gtid", Arg: Arg{Child: 3, Field: ".str"}}, {Name: "mi.gtid_until_condition", Arg: Arg{Text: "LEX_SOURCE_INFO::UNTIL_SQL_AFTER_GTIDS"}}}},
+		{Kind: ActDefault},
 	},
 	373: { // checksum
 		{Kind: ActUnknown},
@@ -1978,7 +1978,7 @@ var shapes = [...][]Shape{
 		{Kind: ActStruct, Fields: []Field{{Name: "command", Arg: Arg{Text: "Sql_cmd_analyze_table::Histogram_command::DROP_HISTOGRAM"}}, {Name: "columns", Arg: Arg{Child: 4}}, {Name: "param", Arg: Arg{Text: "nullptr"}}}},
 	},
 	384: { // binlog_base64_event
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_BINLOG_BASE64_EVENT"}}, {Name: "binlog_stmt_arg", Arg: Arg{Child: 2}}}},
 	},
 	385: { // check_table_stmt
 		{Kind: ActNew, Class: "PT_check_table_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3}, {Child: 4, Field: ".flags"}, {Child: 4, Field: ".sql_flags"}}},
@@ -2008,8 +2008,8 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "1"},
 	},
 	391: { // rename
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	392: { // rename_list
 		{Kind: ActUnknown},
@@ -2020,7 +2020,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	394: { // table_to_table
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	395: { // keycache_stmt
 		{Kind: ActNew, Class: "PT_cache_index_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3}, {Child: 5}}},
@@ -2035,14 +2035,14 @@ var shapes = [...][]Shape{
 	},
 	398: { // key_cache_name
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "default_key_cache_base"},
 	},
 	399: { // preload_stmt
 		{Kind: ActNew, Class: "PT_load_index_partitions_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 5}, {Child: 6}, {Child: 7}, {Child: 8}}},
 		{Kind: ActNew, Class: "PT_load_index_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 5}}},
 	},
 	400: { // preload_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	401: { // preload_keys
@@ -2075,11 +2075,11 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_query_expression", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 2, Field: ".body"}, {Child: 3}, {Child: 4}}},
 	},
 	408: { // query_expression_body
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Child: 1}}, {Name: "1", Arg: Arg{Text: "false"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Child: 1}}, {Name: "1", Arg: Arg{Text: "true"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "flatten_equal_set_ops<PT_union"}}, {Name: "1", Arg: Arg{Text: "PT_set_operation::UNION>(YYMEM_ROOT,@$,$1.body,$3,$4.body,$4.is_parenthesized)"}}, {Name: "2", Arg: Arg{Text: "false"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "flatten_equal_set_ops<PT_except"}}, {Name: "1", Arg: Arg{Text: "PT_set_operation::EXCEPT>(YYMEM_ROOT,@$,$1.body,$3,$4.body,$4.is_parenthesized)"}}, {Name: "2", Arg: Arg{Text: "false"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "flatten_equal_set_ops<PT_intersect"}}, {Name: "1", Arg: Arg{Text: "PT_set_operation::INTERSECT>(YYMEM_ROOT,@$,$1.body,$3,$4.body,$4.is_parenthesized)"}}, {Name: "2", Arg: Arg{Text: "false"}}}},
 	},
 	409: { // query_expression_parens
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
@@ -2125,7 +2125,7 @@ var shapes = [...][]Shape{
 	},
 	420: { // select_option
 		{Kind: ActStruct, Fields: []Field{{Name: "query_spec_options", Arg: Arg{Child: 1}}}},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "query_spec_options", Arg: Arg{Text: "0"}}}},
 	},
 	421: { // locking_clause_list
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 2}}},
@@ -2158,23 +2158,23 @@ var shapes = [...][]Shape{
 	},
 	428: { // select_item
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActNew, Class: "PTI_expr_with_alias", Args: []Arg{{Text: "@$"}, {Child: 1}, {Text: "@1.cpp"}, {Text: "to_lex_cstring($2)"}}},
+		{Kind: ActNew, Class: "PTI_expr_with_alias", Args: []Arg{{Text: "@$"}, {Child: 1}, {Text: "@1.cpp"}, {Child: 2}}},
 	},
 	429: { // select_alias
-		{Kind: ActUnknown},
+		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	430: { // optional_braces
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	431: { // expr
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Item_cond_or", Args: []Arg{{Child: 1}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_func_xor", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 3}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Item_cond_and", Args: []Arg{{Child: 1}, {Child: 3}}},
 		{Kind: ActNew, Class: "PTI_truth_transform", Args: []Arg{{Text: "@$"}, {Child: 2}, {Text: "Item::BOOL_NEGATED"}}},
 		{Kind: ActNew, Class: "PTI_truth_transform", Args: []Arg{{Text: "@$"}, {Child: 1}, {Text: "Item::BOOL_IS_TRUE"}}},
 		{Kind: ActNew, Class: "PTI_truth_transform", Args: []Arg{{Text: "@$"}, {Child: 1}, {Text: "Item::BOOL_NOT_TRUE"}}},
@@ -2237,24 +2237,24 @@ var shapes = [...][]Shape{
 	},
 	437: { // and
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	438: { // not
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	439: { // not2
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	440: { // comp_op
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "&comp_eq_creator"},
+		{Kind: ActConst, Const: "&comp_equal_creator"},
+		{Kind: ActConst, Const: "&comp_ge_creator"},
+		{Kind: ActConst, Const: "&comp_gt_creator"},
+		{Kind: ActConst, Const: "&comp_le_creator"},
+		{Kind: ActConst, Const: "&comp_lt_creator"},
+		{Kind: ActConst, Const: "&comp_ne_creator"},
 	},
 	441: { // all_or_any
 		{Kind: ActConst, Const: "1"},
@@ -2266,7 +2266,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Item_func_set_collation", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 3}}},
 		{Kind: ActDefault},
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 		{Kind: ActDefault},
@@ -2285,12 +2285,12 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PTI_exists_subselect", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "PTI_odbc_date", Args: []Arg{{Text: "@$"}, {Child: 2}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_func_match", Args: []Arg{{Text: "@$"}, {Child: 2}, {Child: 5}, {Child: 6}}},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "create_func_cast", Args: []Arg{{Text: "YYTHD"}, {Text: "@$"}, {Child: 2}, {Text: "ITEM_CAST_CHAR"}, {Text: "my_charset_bin"}}},
+		{Kind: ActNew, Class: "create_func_cast", Args: []Arg{{Text: "YYTHD"}, {Text: "@$"}, {Child: 3}, {Child: 5}, {Child: 6}}},
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
 		{Kind: ActNew, Class: "Item_func_case", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 2}, {Child: 4}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "create_func_cast", Args: []Arg{{Text: "YYTHD"}, {Text: "@$"}, {Child: 3}, {Child: 5}, {Text: "false"}}},
 		{Kind: ActNew, Class: "Item_func_conv_charset", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_default_value", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_insert_value", Args: []Arg{{Text: "@$"}, {Child: 3}}},
@@ -2312,7 +2312,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_func_insert", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}, {Child: 7}, {Child: 9}}},
 		{Kind: ActNew, Class: "Item_func_interval", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_func_interval", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3}, {Child: 5}, {Child: 7}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "create_func_json_value", Args: []Arg{{Text: "YYTHD"}, {Text: "@3"}, {Child: 3}, {Child: 5}, {Child: 6}, {Child: 7, Field: ".empty.type"}, {Child: 7, Field: ".empty.default_string"}, {Child: 7, Field: ".error.type"}, {Child: 7, Field: ".error.default_string"}}},
 		{Kind: ActNew, Class: "Item_func_left", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_func_minute", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_func_month", Args: []Arg{{Text: "@$"}, {Child: 3}}},
@@ -2336,14 +2336,14 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}, {Text: "INTERVAL_DAY"}, {Text: "0"}}},
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 6}, {Child: 7}, {Text: "0"}}},
 		{Kind: ActNew, Class: "Item_func_curdate_local", Args: []Arg{{Text: "@$"}}},
-		{Kind: ActNew, Class: "Item_func_curtime_local", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($2)"}}},
+		{Kind: ActNew, Class: "Item_func_curtime_local", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 6}, {Child: 7}, {Text: "0"}}},
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 6}, {Child: 7}, {Text: "1"}}},
 		{Kind: ActNew, Class: "Item_extract", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_func_get_format", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_func_log", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_func_log", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
-		{Kind: ActNew, Class: "PTI_function_call_nonkeyword_now", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($1)"}}},
+		{Kind: ActNew, Class: "PTI_function_call_nonkeyword_now", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 		{Kind: ActNew, Class: "Item_func_locate", Args: []Arg{{Text: "@$"}, {Child: 5}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}, {Text: "INTERVAL_DAY"}, {Text: "1"}}},
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 6}, {Child: 7}, {Text: "1"}}},
@@ -2351,15 +2351,15 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_func_substr", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_func_substr", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}, {Child: 7}}},
 		{Kind: ActNew, Class: "Item_func_substr", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
-		{Kind: ActNew, Class: "PTI_function_call_nonkeyword_sysdate", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($2)"}}},
+		{Kind: ActNew, Class: "PTI_function_call_nonkeyword_sysdate", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 		{Kind: ActNew, Class: "Item_date_add_interval", Args: []Arg{{Text: "@$"}, {Child: 7}, {Child: 5}, {Child: 3}, {Text: "0"}}},
 		{Kind: ActNew, Class: "Item_func_timestamp_diff", Args: []Arg{{Text: "@$"}, {Child: 5}, {Child: 7}, {Child: 3}}},
 		{Kind: ActNew, Class: "Item_func_curdate_utc", Args: []Arg{{Text: "@$"}}},
-		{Kind: ActNew, Class: "Item_func_curtime_utc", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($2)"}}},
-		{Kind: ActNew, Class: "Item_func_now_utc", Args: []Arg{{Text: "@$"}, {Text: "static_cast<uint8>($2)"}}},
+		{Kind: ActNew, Class: "Item_func_curtime_utc", Args: []Arg{{Text: "@$"}, {Child: 2}}},
+		{Kind: ActNew, Class: "Item_func_now_utc", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 	},
 	446: { // opt_returning_type
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "ITEM_CAST_CHAR"}}, {Name: "1", Arg: Arg{Text: "nullptr"}}, {Name: "2", Arg: Arg{Text: "\"512\""}}, {Name: "3", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	447: { // function_call_conflict
@@ -2402,7 +2402,7 @@ var shapes = [...][]Shape{
 	},
 	450: { // fulltext_options
 		{Kind: ActFlags, Args: []Arg{{Child: 1}, {Child: 2}}},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "FT_BOOL"},
 	},
 	451: { // opt_natural_language_mode
 		{Kind: ActConst, Const: "FT_NL"},
@@ -2439,7 +2439,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_sum_xor", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "PTI_count_sym", Args: []Arg{{Text: "@$"}, {Child: 6}}},
 		{Kind: ActNew, Class: "Item_sum_count", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Item_sum_count", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 6}}},
 		{Kind: ActNew, Class: "Item_sum_min", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
 		{Kind: ActNew, Class: "Item_sum_min", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 6}}},
 		{Kind: ActNew, Class: "Item_sum_max", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}}},
@@ -2453,8 +2453,8 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_func_group_concat", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 4}, {Child: 5}, {Child: 6}, {Child: 8}}},
 	},
 	458: { // sampling_method
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "tablesample_type::SYSTEM_TABLESAMPLE_TYPE"},
+		{Kind: ActConst, Const: "tablesample_type::BERNOULLI_TABLESAMPLE_TYPE"},
 	},
 	459: { // sampling_percentage
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -2462,7 +2462,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	460: { // opt_tablesample_clause
-		{Kind: ActUnknown},
+		{Kind: ActEmpty},
 		{Kind: ActNew, Class: "PT_tablesample", Args: []Arg{{Text: "@$"}, {Child: 2}, {Child: 4}}},
 	},
 	461: { // window_func_call
@@ -2488,7 +2488,7 @@ var shapes = [...][]Shape{
 	},
 	464: { // param_or_var
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActNew, Class: "PTI_int_splocal", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($1)"}}},
+		{Kind: ActNew, Class: "PTI_int_splocal", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 		{Kind: ActNew, Class: "PTI_user_variable", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 	},
 	465: { // opt_ll_default
@@ -2578,7 +2578,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_func_grouping", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 	},
 	485: { // in_expression_user_variable_assignment
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PTI_variable_aux_set_var", Args: []Arg{{Text: "@$"}, {Child: 2}, {Child: 4}}},
 	},
 	486: { // rvalue_system_or_user_variable
 		{Kind: ActNew, Class: "PTI_user_variable", Args: []Arg{{Text: "@$"}, {Child: 2}}},
@@ -2589,7 +2589,7 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "1"},
 	},
 	488: { // opt_gconcat_separator
-		{Kind: ActNew, Class: "String", Args: []Arg{{Text: "\""}, {Text: "\""}, {Text: "1"}, {Text: "&my_charset_latin1"}}},
+		{Kind: ActNew, Class: "String", Args: []Arg{{Text: "\""}, {Text: "\""}, {Text: "1"}, {Text: "my_charset_latin1"}}},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	489: { // opt_gorder_clause
@@ -2598,15 +2598,15 @@ var shapes = [...][]Shape{
 	},
 	490: { // gorder_list
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
-		{Kind: ActNew, Class: "PT_gorder_list", Args: []Arg{{Text: "@$);$$->push_back($1"}}},
+		{Kind: ActListNew, Class: "PT_gorder_list", Args: []Arg{{Child: 1}}},
 	},
 	491: { // in_sum_expr
 		{Kind: ActNew, Class: "PTI_in_sum_expr", Args: []Arg{{Text: "@1"}, {Child: 2}}},
 	},
 	492: { // cast_type
-		{Kind: ActStruct, Fields: []Field{{Name: "target", Arg: Arg{Text: "ITEM_CAST_CHAR"}}, {Name: "charset", Arg: Arg{Text: "&my_charset_bin"}}, {Name: "length", Arg: Arg{Child: 2}}, {Name: "dec", Arg: Arg{Text: "nullptr"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "target", Arg: Arg{Text: "ITEM_CAST_CHAR"}}, {Name: "charset", Arg: Arg{Text: "my_charset_bin"}}, {Name: "length", Arg: Arg{Child: 2}}, {Name: "dec", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "target", Arg: Arg{Text: "ITEM_CAST_CHAR"}}, {Name: "charset", Arg: Arg{Text: "national_charset_info"}}, {Name: "length", Arg: Arg{Child: 2}}, {Name: "dec", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "target", Arg: Arg{Text: "ITEM_CAST_SIGNED_INT"}}, {Name: "charset", Arg: Arg{Text: "nullptr"}}, {Name: "length", Arg: Arg{Text: "nullptr"}}, {Name: "dec", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "target", Arg: Arg{Text: "ITEM_CAST_SIGNED_INT"}}, {Name: "charset", Arg: Arg{Text: "nullptr"}}, {Name: "length", Arg: Arg{Text: "nullptr"}}, {Name: "dec", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "target", Arg: Arg{Text: "ITEM_CAST_UNSIGNED_INT"}}, {Name: "charset", Arg: Arg{Text: "nullptr"}}, {Name: "length", Arg: Arg{Text: "nullptr"}}, {Name: "dec", Arg: Arg{Text: "nullptr"}}}},
@@ -2652,7 +2652,7 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	499: { // when_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 2}, {Child: 4}}},
 		{Kind: ActUnknown},
 	},
 	500: { // table_reference
@@ -2726,11 +2726,11 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	515: { // derived_table
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_derived_table", Args: []Arg{{Text: "@$"}, {Text: "false"}, {Child: 1}, {Child: 2}, {Child: 3}}},
+		{Kind: ActNew, Class: "PT_derived_table", Args: []Arg{{Text: "@$"}, {Text: "true"}, {Child: 2}, {Child: 3}, {Child: 4}}},
 	},
 	516: { // table_function
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_table_factor_function", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}, {Child: 6}, {Text: "to_lex_string($8)"}}},
 	},
 	517: { // columns_clause
 		{Kind: ActPass, Args: []Arg{{Child: 3}}},
@@ -2745,8 +2745,8 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_json_table_column_with_nested_path", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 4}}},
 	},
 	520: { // jt_column_type
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "enum_jt_column::JTC_PATH"},
+		{Kind: ActConst, Const: "enum_jt_column::JTC_EXISTS"},
 	},
 	521: { // opt_on_empty_or_error
 		{Kind: ActStruct, Fields: []Field{{Name: "empty", Arg: Arg{Text: "{Json_on_response_type::IMPLICIT,nullptr}"}}, {Name: "error", Arg: Arg{Text: "{Json_on_response_type::IMPLICIT,nullptr}"}}}},
@@ -2756,7 +2756,7 @@ var shapes = [...][]Shape{
 	},
 	522: { // opt_on_empty_or_error_json_table
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "error", Arg: Arg{Child: 1}}, {Name: "empty", Arg: Arg{Child: 2}}}},
 	},
 	523: { // on_empty
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -2765,9 +2765,9 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	525: { // json_on_response
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "Json_on_response_type::ERROR"}}, {Name: "1", Arg: Arg{Text: "nullptr"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "Json_on_response_type::NULL_VALUE"}}, {Name: "1", Arg: Arg{Text: "nullptr"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "Json_on_response_type::DEFAULT"}}, {Name: "1", Arg: Arg{Child: 2}}}},
 	},
 	526: { // index_hint_clause
 		{Kind: ActConst, Const: "INDEX_HINT_MASK_ALL"},
@@ -2803,8 +2803,8 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Index_hint", Args: []Arg{{Text: "STRING_WITH_LEN(\"PRIMARY\")"}}},
 	},
 	534: { // key_usage_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	535: { // using_list
 		{Kind: ActDefault},
@@ -2814,7 +2814,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	537: { // interval
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActConst, Const: "INTERVAL_DAY_HOUR"},
 		{Kind: ActConst, Const: "INTERVAL_DAY_MICROSECOND"},
 		{Kind: ActConst, Const: "INTERVAL_DAY_MINUTE"},
@@ -2849,7 +2849,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	541: { // opt_table_alias
-		{Kind: ActConst, Const: "NULL_CSTR"},
+		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	542: { // opt_all
@@ -2865,11 +2865,11 @@ var shapes = [...][]Shape{
 	},
 	545: { // opt_having_clause
 		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PTI_having", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 	},
 	546: { // opt_qualify_clause
 		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PTI_qualify", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 	},
 	547: { // with_clause
 		{Kind: ActNew, Class: "PT_with_clause", Args: []Arg{{Text: "@$"}, {Child: 2}, {Text: "false"}}},
@@ -2883,12 +2883,12 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	550: { // opt_derived_column_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	551: { // simple_ident_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	552: { // opt_window_clause
 		{Kind: ActEmpty},
@@ -2909,7 +2909,7 @@ var shapes = [...][]Shape{
 	},
 	556: { // group_list
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
-		{Kind: ActNew, Class: "PT_order_list", Args: []Arg{{Text: "@$);$$->push_back($1"}}},
+		{Kind: ActListNew, Class: "PT_order_list", Args: []Arg{{Child: 1}}},
 	},
 	557: { // olap_opt
 		{Kind: ActConst, Const: "UNSPECIFIED_OLAP_TYPE"},
@@ -2917,7 +2917,7 @@ var shapes = [...][]Shape{
 	},
 	558: { // alter_order_list
 		{Kind: ActUnknown},
-		{Kind: ActNew, Class: "PT_order_list", Args: []Arg{{Text: "@$);$$->push_back($1"}}},
+		{Kind: ActListNew, Class: "PT_order_list", Args: []Arg{{Child: 1}}},
 	},
 	559: { // alter_order_item
 		{Kind: ActNew, Class: "PT_order_expr", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 2}}},
@@ -2931,7 +2931,7 @@ var shapes = [...][]Shape{
 	},
 	562: { // order_list
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
-		{Kind: ActNew, Class: "PT_order_list", Args: []Arg{{Text: "@$);$$->push_back($1"}}},
+		{Kind: ActListNew, Class: "PT_order_list", Args: []Arg{{Child: 1}}},
 	},
 	563: { // opt_ordering_direction
 		{Kind: ActConst, Const: "ORDER_NOT_RELEVANT"},
@@ -2954,7 +2954,7 @@ var shapes = [...][]Shape{
 		{Kind: ActStruct, Fields: []Field{{Name: "limit", Arg: Arg{Child: 1}}, {Name: "opt_offset", Arg: Arg{Child: 3}}, {Name: "is_offset_first", Arg: Arg{Text: "false"}}}},
 	},
 	568: { // limit_option
-		{Kind: ActNew, Class: "PTI_limit_option_ident", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($1)"}}},
+		{Kind: ActNew, Class: "PTI_limit_option_ident", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 		{Kind: ActNew, Class: "PTI_limit_option_param_marker", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 		{Kind: ActNew, Class: "Item_uint", Args: []Arg{{Text: "@$"}, {Child: 1, Field: ".str"}, {Child: 1, Field: ".length"}}},
 		{Kind: ActNew, Class: "Item_uint", Args: []Arg{{Text: "@$"}, {Child: 1, Field: ".str"}, {Child: 1, Field: ".length"}}},
@@ -2977,7 +2977,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 		{Kind: ActNumber, Args: []Arg{{Child: 1}}},
 		{Kind: ActNumber, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	572: { // ulonglong_num
 		{Kind: ActNumber, Args: []Arg{{Child: 1}}},
@@ -2991,10 +2991,10 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 		{Kind: ActNumber, Args: []Arg{{Child: 1}}},
 		{Kind: ActNumber, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	574: { // dec_num_error
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	575: { // dec_num
 		{Kind: ActDefault},
@@ -3026,17 +3026,17 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_drop_index_stmt", Args: []Arg{{Text: "@$"}, {Text: "YYMEM_ROOT"}, {Child: 3, Field: ".str"}, {Child: 5}, {Text: "$6.algo.get_or_default()"}, {Text: "$6.lock.get_or_default()"}}},
 	},
 	583: { // drop_database_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_DROP_DB"}}, {Name: "drop_if_exists", Arg: Arg{Child: 3}}, {Name: "name", Arg: Arg{Child: 4}}}},
 	},
 	584: { // drop_function_stmt
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 	},
 	585: { // drop_resource_group_stmt
-		{Kind: ActNew, Class: "PT_drop_resource_group", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}, {Child: 5}}},
+		{Kind: ActNew, Class: "PT_drop_resource_group", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 5}}},
 	},
 	586: { // drop_procedure_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_DROP_PROCEDURE"}}, {Name: "drop_if_exists", Arg: Arg{Child: 3}}, {Name: "spname", Arg: Arg{Child: 4}}}},
 	},
 	587: { // drop_user_stmt
 		{Kind: ActUnknown},
@@ -3045,10 +3045,10 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	589: { // drop_event_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "drop_if_exists", Arg: Arg{Child: 3}}, {Name: "spname", Arg: Arg{Child: 4}}, {Name: "sql_command", Arg: Arg{Text: "SQLCOM_DROP_EVENT"}}}},
 	},
 	590: { // drop_trigger_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_DROP_TRIGGER"}}, {Name: "drop_if_exists", Arg: Arg{Child: 3}}, {Name: "spname", Arg: Arg{Child: 4}}, {Name: "m_sql_cmd", Arg: Arg{Text: "new(YYTHD->mem_root)Sql_cmd_drop_trigger()"}}}},
 	},
 	591: { // drop_tablespace_stmt
 		{Kind: ActUnknown},
@@ -3060,7 +3060,7 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	594: { // drop_server_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_DROP_SERVER"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_drop_server($4,$3)"}}}},
 	},
 	595: { // drop_srs_stmt
 		{Kind: ActNew, Class: "PT_drop_srs", Args: []Arg{{Text: "@$"}, {Child: 6}, {Child: 5}}},
@@ -3069,7 +3069,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_drop_role", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 4}}},
 	},
 	597: { // table_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	598: { // table_alias_ref_list
@@ -3101,7 +3101,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	605: { // insert_stmt
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_insert", Args: []Arg{{Text: "@$"}, {Text: "false"}, {Child: 1}, {Child: 2}, {Child: 3}, {Child: 5}, {Child: 6}, {Child: 7, Field: ".column_list"}, {Child: 7, Field: ".row_value_list"}, {Text: "nullptr"}, {Child: 8, Field: ".table_alias"}, {Child: 8, Field: ".column_list"}, {Child: 9, Field: ".column_list"}, {Child: 9, Field: ".value_list"}}},
 		{Kind: ActUnknown},
 		{Kind: ActNew, Class: "PT_insert", Args: []Arg{{Text: "@$"}, {Text: "false"}, {Child: 1}, {Child: 2}, {Child: 3}, {Child: 5}, {Child: 6}, {Child: 7, Field: ".column_list"}, {Text: "nullptr"}, {Child: 7, Field: ".insert_query_expression"}, {Text: "NULL_CSTR"}, {Text: "nullptr"}, {Child: 8, Field: ".column_list"}, {Child: 8, Field: ".value_list"}}},
 	},
@@ -3113,12 +3113,12 @@ var shapes = [...][]Shape{
 	607: { // insert_lock_option
 		{Kind: ActConst, Const: "TL_WRITE_CONCURRENT_DEFAULT"},
 		{Kind: ActConst, Const: "TL_WRITE_LOW_PRIORITY"},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "TL_WRITE_CONCURRENT_DEFAULT"},
 		{Kind: ActConst, Const: "TL_WRITE"},
 	},
 	608: { // replace_lock_option
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "TL_WRITE_DEFAULT"},
 	},
 	609: { // opt_INTO
 		{Kind: ActDefault},
@@ -3135,7 +3135,7 @@ var shapes = [...][]Shape{
 		{Kind: ActStruct, Fields: []Field{{Name: "column_list", Arg: Arg{Child: 2}}, {Name: "insert_query_expression", Arg: Arg{Child: 4}}}},
 	},
 	612: { // insert_columns
-		{Kind: ActUnknown},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 		{Kind: ActListNew, Class: "PT_item_list", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 	},
 	613: { // insert_values
@@ -3150,12 +3150,12 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	616: { // values_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
+		{Kind: ActListNew, Class: "PT_insert_values_list", Args: []Arg{{Child: 1, Field: "->value"}}},
 	},
 	617: { // values_row_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
+		{Kind: ActListNew, Class: "PT_insert_values_list", Args: []Arg{{Child: 1, Field: "->value"}}},
 	},
 	618: { // equal
 		{Kind: ActDefault},
@@ -3321,7 +3321,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_show_errors", Args: []Arg{{Text: "@$"}, {Child: 3}}},
 	},
 	663: { // show_profiles_stmt
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_show_profiles", Args: []Arg{{Text: "@$"}}},
 	},
 	664: { // show_profile_stmt
 		{Kind: ActNew, Class: "PT_show_profile", Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 4}, {Child: 5}}},
@@ -3429,13 +3429,13 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	695: { // binlog_from
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "mi.pos", Arg: Arg{Child: 2}}}},
 	},
 	696: { // opt_wild_or_where
 		{Kind: ActEmpty},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Child: 2}}, {Name: "1", Arg: Arg{Text: "{}"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "{}"}}, {Name: "1", Arg: Arg{Child: 1}}}},
 	},
 	697: { // describe_stmt
 		{Kind: ActNew, Class: "PT_show_fields", Args: []Arg{{Text: "@$"}, {Text: "Show_cmd_type::STANDARD"}, {Child: 2}, {Child: 3}}},
@@ -3449,7 +3449,7 @@ var shapes = [...][]Shape{
 		{Kind: ActStruct, Fields: []Field{{Name: "statement", Arg: Arg{Child: 2}}, {Name: "schema_name_for_explain", Arg: Arg{Child: 1}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "statement", Arg: Arg{Child: 2}}, {Name: "schema_name_for_explain", Arg: Arg{Child: 1}}}},
 		{Kind: ActStruct, Fields: []Field{{Name: "statement", Arg: Arg{Child: 2}}, {Name: "schema_name_for_explain", Arg: Arg{Child: 1}}}},
-		{Kind: ActStruct, Fields: []Field{{Name: "statement", Arg: Arg{Text: "NEW_PTNPT_explain_for_connection(@$,static_cast<my_thread_id>($3))"}}, {Name: "schema_name_for_explain", Arg: Arg{Text: "NULL_CSTR"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "statement", Arg: Arg{Text: "NEW_PTNPT_explain_for_connection(@$,$3)"}}, {Name: "schema_name_for_explain", Arg: Arg{Text: "NULL_CSTR"}}}},
 	},
 	700: { // describe_command
 		{Kind: ActDefault},
@@ -3460,66 +3460,66 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	702: { // opt_explain_options
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "$base", Arg: Arg{Child: 2}}, {Name: "is_analyze", Arg: Arg{Text: "true"}}, {Name: "explain_into_variable_name", Arg: Arg{Text: "NULL_STR"}}}},
 		{Kind: ActUnknown},
 	},
 	703: { // opt_explain_into
-		{Kind: ActConst, Const: "NULL_STR"},
+		{Kind: ActEmpty},
 		{Kind: ActUnknown},
 	},
 	704: { // opt_explain_for_schema
-		{Kind: ActConst, Const: "NULL_CSTR"},
+		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 3}}},
 	},
 	705: { // opt_describe_column
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "LEX_STRING", Args: []Arg{{Text: "nullptr"}, {Text: "0"}}},
 		{Kind: ActUnknown},
 		{Kind: ActDefault},
 	},
 	706: { // flush
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 	},
 	707: { // flush_options
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	708: { // opt_flush_lock
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	709: { // flush_options_list
 		{Kind: ActDefault},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 	},
 	710: { // flush_option
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	711: { // opt_table_list
 		{Kind: ActEmpty},
 		{Kind: ActDefault},
 	},
 	712: { // reset
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	713: { // reset_options
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	714: { // opt_if_exists_ident
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "drop_if_exists", Arg: Arg{Child: 1}}, {Name: "name", Arg: Arg{Child: 2}}}},
 	},
 	715: { // persisted_variable_ident
 		{Kind: ActDefault},
@@ -3527,34 +3527,34 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	716: { // reset_option
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 	},
 	717: { // opt_replica_reset_options
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	718: { // source_reset_options
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
 	},
 	719: { // purge
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 	},
 	720: { // purge_options
 		{Kind: ActDefault},
 	},
 	721: { // purge_option
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "to_log", Arg: Arg{Child: 2, Field: ".str"}}}},
 		{Kind: ActUnknown},
 	},
 	722: { // kill
 		{Kind: ActUnknown},
 	},
 	723: { // kill_option
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	724: { // use
 		{Kind: ActUnknown},
@@ -3571,8 +3571,8 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "true"},
 	},
 	728: { // opt_from_keyword
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	729: { // load_data_lock
 		{Kind: ActConst, Const: "TL_WRITE_DEFAULT"},
@@ -3632,7 +3632,7 @@ var shapes = [...][]Shape{
 	},
 	742: { // opt_ignore_lines
 		{Kind: ActConst, Const: "0"},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "atol", Args: []Arg{{Child: 2, Field: ".str"}}},
 	},
 	743: { // lines_or_rows
 		{Kind: ActDefault},
@@ -3652,7 +3652,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_user_var_as_out_param", Args: []Arg{{Text: "@$"}, {Child: 2}}},
 	},
 	747: { // opt_load_data_set_spec
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "0", Arg: Arg{Text: "nullptr"}}, {Name: "1", Arg: Arg{Text: "nullptr"}}, {Name: "2", Arg: Arg{Text: "nullptr"}}}},
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	748: { // load_data_set_list
@@ -3672,17 +3672,17 @@ var shapes = [...][]Shape{
 	},
 	752: { // opt_load_parallel
 		{Kind: ActConst, Const: "0"},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "atol", Args: []Arg{{Child: 3, Field: ".str"}}},
 	},
 	753: { // opt_load_memory
 		{Kind: ActConst, Const: "0"},
 		{Kind: ActPass, Args: []Arg{{Child: 3}}},
 	},
 	754: { // text_literal
-		{Kind: ActNew, Class: "PTI_text_literal_text_string", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit(),$1"}}},
-		{Kind: ActNew, Class: "PTI_text_literal_nchar_string", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit(),$1);warn_about_deprecated_national(YYTHD"}}},
-		{Kind: ActNew, Class: "PTI_text_literal_underscore_charset", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit(),$1,$2"}}},
-		{Kind: ActNew, Class: "PTI_text_literal_concat", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit(),$1,$2"}}},
+		{Kind: ActNew, Class: "PTI_text_literal_text_string", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit()"}, {Child: 1}}},
+		{Kind: ActNew, Class: "PTI_text_literal_nchar_string", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit()"}, {Child: 1}}},
+		{Kind: ActNew, Class: "PTI_text_literal_underscore_charset", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit()"}, {Child: 1}, {Child: 2}}},
+		{Kind: ActNew, Class: "PTI_text_literal_concat", Args: []Arg{{Text: "@$"}, {Text: "YYTHD->m_parser_state->m_lip.text_string_is_7bit()"}, {Child: 1}, {Child: 2}}},
 	},
 	755: { // text_string
 		{Kind: ActNew, Class: "String", Args: []Arg{{Child: 1, Field: ".str"}, {Child: 1, Field: ".length"}, {Text: "YYTHD->variables.collation_connection"}}},
@@ -3702,7 +3702,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	759: { // null_as_literal
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Item_null", Args: []Arg{{Text: "@$"}}},
 	},
 	760: { // literal
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -3752,7 +3752,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_order_expr", Args: []Arg{{Text: "@$"}, {Child: 1}, {Text: "ORDER_NOT_RELEVANT"}}},
 	},
 	770: { // simple_ident
-		{Kind: ActNew, Class: "PTI_simple_ident_ident", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($1)"}}},
+		{Kind: ActNew, Class: "PTI_simple_ident_ident", Args: []Arg{{Text: "@$"}, {Child: 1}}},
 		{Kind: ActDefault},
 	},
 	771: { // simple_ident_nospvar
@@ -3761,19 +3761,19 @@ var shapes = [...][]Shape{
 	},
 	772: { // simple_ident_q
 		{Kind: ActNew, Class: "PTI_simple_ident_q_2d", Args: []Arg{{Text: "@$"}, {Child: 1, Field: ".str"}, {Child: 3, Field: ".str"}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PTI_simple_ident_q_3d", Args: []Arg{{Text: "@$"}, {Child: 1, Field: ".str"}, {Child: 3, Field: ".str"}, {Child: 5, Field: ".str"}}},
 	},
 	773: { // table_ident
-		{Kind: ActNew, Class: "Table_ident", Args: []Arg{{Text: "to_lex_cstring($1)"}}},
+		{Kind: ActNew, Class: "Table_ident", Args: []Arg{{Child: 1}}},
 		{Kind: ActUnknown},
 	},
 	774: { // table_ident_opt_wild
-		{Kind: ActNew, Class: "Table_ident", Args: []Arg{{Text: "to_lex_cstring($1)"}}},
-		{Kind: ActNew, Class: "Table_ident", Args: []Arg{{Text: "YYTHD->get_protocol(),to_lex_cstring($1),to_lex_cstring($3),0"}}},
+		{Kind: ActNew, Class: "Table_ident", Args: []Arg{{Child: 1}}},
+		{Kind: ActNew, Class: "Table_ident", Args: []Arg{{Text: "YYTHD->get_protocol()"}, {Child: 1}, {Child: 3}, {Text: "0"}}},
 	},
 	775: { // IDENT_sys
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	776: { // TEXT_STRING_sys_nonewline
 		{Kind: ActUnknown},
@@ -3782,39 +3782,39 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	778: { // TEXT_STRING_sys
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	779: { // TEXT_STRING_literal
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	780: { // TEXT_STRING_filesystem
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	781: { // TEXT_STRING_password
 		{Kind: ActDefault},
 	},
 	782: { // TEXT_STRING_hash
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "to_lex_string", Args: []Arg{{Text: "Item_hex_string::make_hex_str($1.str,$1.length)"}}},
 	},
 	783: { // TEXT_STRING_validated
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	784: { // ident
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	785: { // role_ident
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	786: { // label_ident
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	787: { // lvalue_ident
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActPass, Args: []Arg{{Child: 1}}},
 	},
 	788: { // ident_or_text
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -3827,16 +3827,16 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	790: { // user_ident_or_text
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "LEX_USER", Args: []Arg{{Text: "YYTHD"}, {Child: 1}, {Text: "nullptr"}}},
+		{Kind: ActNew, Class: "LEX_USER", Args: []Arg{{Text: "YYTHD"}, {Child: 1}, {Child: 3}}},
 	},
 	791: { // user
 		{Kind: ActPass, Args: []Arg{{Child: 1}}},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "LEX_USER", Args: []Arg{{Text: "YYTHD"}}},
 	},
 	792: { // role
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "LEX_USER", Args: []Arg{{Text: "YYTHD"}, {Child: 1}, {Text: "nullptr"}}},
+		{Kind: ActNew, Class: "LEX_USER", Args: []Arg{{Text: "YYTHD"}, {Child: 1}, {Child: 3}}},
 	},
 	793: { // schema
 		{Kind: ActUnknown},
@@ -4019,7 +4019,7 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 		{Kind: ActDefault},
 		{Kind: ActDefault},
 		{Kind: ActDefault},
@@ -4360,8 +4360,8 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	807: { // set_resource_group_stmt
-		{Kind: ActNew, Class: "PT_set_resource_group", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}, {Text: "nullptr"}}},
-		{Kind: ActNew, Class: "PT_set_resource_group", Args: []Arg{{Text: "@$"}, {Text: "to_lex_cstring($4)"}, {Child: 6}}},
+		{Kind: ActNew, Class: "PT_set_resource_group", Args: []Arg{{Text: "@$"}, {Child: 4}, {Text: "nullptr"}}},
+		{Kind: ActNew, Class: "PT_set_resource_group", Args: []Arg{{Text: "@$"}, {Child: 4}, {Child: 6}}},
 	},
 	808: { // thread_id_list
 		{Kind: ActListNew, Class: "Mem_root_array", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 1}}},
@@ -4426,13 +4426,13 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_set_names", Args: []Arg{{Text: "@$"}, {Text: "nullptr"}, {Text: "nullptr"}}},
 	},
 	820: { // lvalue_variable
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Bipartite_name", Args: []Arg{{Text: "{}"}, {Child: 1}}},
+		{Kind: ActNew, Class: "Bipartite_name", Args: []Arg{{Child: 1}, {Child: 3}}},
+		{Kind: ActNew, Class: "Bipartite_name", Args: []Arg{{Text: "{STRING_WITH_LEN(\"default\")}"}, {Child: 3}}},
 	},
 	821: { // rvalue_system_variable
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "Bipartite_name", Args: []Arg{{Text: "{}"}, {Child: 1}}},
+		{Kind: ActNew, Class: "Bipartite_name", Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	822: { // transaction_characteristics
 		{Kind: ActNew, Class: "PT_transaction_characteristics", Args: []Arg{{Text: "@$"}, {Child: 1}, {Child: 2}}},
@@ -4472,8 +4472,8 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_string", Args: []Arg{{Text: "@$"}, {Text: "\"SYSTEM\""}, {Text: "6"}, {Text: "system_charset_info"}}},
 	},
 	830: { // lock
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	831: { // table_or_tables
 		{Kind: ActDefault},
@@ -4492,8 +4492,8 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "TL_READ"},
 	},
 	835: { // unlock
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	836: { // shutdown_stmt
 		{Kind: ActUnknown},
@@ -4508,28 +4508,28 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_RELOAD_TLS_ROLLBACK_ON_ERROR"}, {Text: "to_lex_cstring(\"mysql_main\")"}}},
 		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_RELOAD_TLS"}, {Text: "to_lex_cstring(\"mysql_main\")"}}},
-		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_RELOAD_TLS_ROLLBACK_ON_ERROR"}, {Text: "to_lex_cstring($5)"}}},
-		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_RELOAD_TLS"}, {Text: "to_lex_cstring($5)"}}},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_RELOAD_TLS_ROLLBACK_ON_ERROR"}, {Child: 5}}},
+		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_RELOAD_TLS"}, {Child: 5}}},
+		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_ENABLE_INNODB_REDO"}, {Text: "EMPTY_CSTR"}}},
+		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "ALTER_INSTANCE_DISABLE_INNODB_REDO"}, {Text: "EMPTY_CSTR"}}},
 		{Kind: ActNew, Class: "PT_alter_instance", Args: []Arg{{Text: "@$"}, {Text: "RELOAD_KEYRING"}, {Text: "EMPTY_CSTR"}}},
 	},
 	840: { // handler_stmt
 		{Kind: ActNew, Class: "PT_handler_open", Args: []Arg{{Child: 2}, {Child: 4}}},
-		{Kind: ActNew, Class: "PT_handler_close", Args: []Arg{{Text: "to_lex_cstring($2)"}}},
-		{Kind: ActNew, Class: "PT_handler_table_scan", Args: []Arg{{Text: "to_lex_cstring($2)"}, {Child: 4}, {Child: 5}, {Child: 6}}},
-		{Kind: ActNew, Class: "PT_handler_index_scan", Args: []Arg{{Text: "to_lex_cstring($2)"}, {Text: "to_lex_cstring($4)"}, {Child: 5}, {Child: 6}, {Child: 7}}},
-		{Kind: ActNew, Class: "PT_handler_index_range_scan", Args: []Arg{{Text: "to_lex_cstring($2)"}, {Text: "to_lex_cstring($4)"}, {Child: 5}, {Child: 7}, {Child: 9}, {Child: 10}}},
+		{Kind: ActNew, Class: "PT_handler_close", Args: []Arg{{Child: 2}}},
+		{Kind: ActNew, Class: "PT_handler_table_scan", Args: []Arg{{Child: 2}, {Child: 4}, {Child: 5}, {Child: 6}}},
+		{Kind: ActNew, Class: "PT_handler_index_scan", Args: []Arg{{Child: 2}, {Child: 4}, {Child: 5}, {Child: 6}, {Child: 7}}},
+		{Kind: ActNew, Class: "PT_handler_index_range_scan", Args: []Arg{{Child: 2}, {Child: 4}, {Child: 5}, {Child: 7}, {Child: 9}, {Child: 10}}},
 	},
 	841: { // handler_scan_function
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "enum_ha_read_modes::RFIRST"},
+		{Kind: ActConst, Const: "enum_ha_read_modes::RNEXT"},
 	},
 	842: { // handler_rkey_function
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "enum_ha_read_modes::RFIRST"},
+		{Kind: ActConst, Const: "enum_ha_read_modes::RNEXT"},
+		{Kind: ActConst, Const: "enum_ha_read_modes::RPREV"},
+		{Kind: ActConst, Const: "enum_ha_read_modes::RLAST"},
 	},
 	843: { // handler_rkey_mode
 		{Kind: ActConst, Const: "HA_READ_KEY_EXACT"},
@@ -4616,21 +4616,21 @@ var shapes = [...][]Shape{
 	853: { // require_list_element
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "ssl_cipher", Arg: Arg{Child: 2, Field: ".str"}}}},
 	},
 	854: { // grant_ident
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 	},
 	855: { // user_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	856: { // role_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	857: { // opt_retain_current_password
@@ -4721,41 +4721,41 @@ var shapes = [...][]Shape{
 		{Kind: ActPass, Args: []Arg{{Child: 2}}},
 	},
 	875: { // column_list
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Class: "Mem_root_array", Args: []Arg{{Text: "YYMEM_ROOT"}, {Child: 1}}},
+		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	876: { // require_clause
 		{Kind: ActDefault},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	877: { // grant_options
-		{Kind: ActEmpty},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	878: { // opt_grant_option
 		{Kind: ActConst, Const: "false"},
 		{Kind: ActConst, Const: "true"},
 	},
 	879: { // opt_with_roles
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "grant_as.role_type", Arg: Arg{Text: "role_enum::ROLE_NAME"}}, {Name: "grant_as.role_list", Arg: Arg{Child: 3}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "grant_as.role_type", Arg: Arg{Text: "role_enum::ROLE_ALL"}}, {Name: "grant_as.role_list", Arg: Arg{Child: 4}}}},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	880: { // opt_grant_as
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActStruct, Fields: []Field{{Name: "grant_as.grant_as_used", Arg: Arg{Text: "true"}}, {Name: "grant_as.user", Arg: Arg{Child: 2}}}},
 	},
 	881: { // begin_stmt
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
 	},
 	882: { // opt_work
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	883: { // opt_chain
 		{Kind: ActConst, Const: "TVL_UNKNOWN"},
@@ -4768,21 +4768,21 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "TVL_NO"},
 	},
 	885: { // opt_savepoint
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	886: { // commit
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_COMMIT"}}, {Name: "tx_chain", Arg: Arg{Child: 3}}, {Name: "tx_release", Arg: Arg{Child: 4}}}},
 	},
 	887: { // rollback
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_ROLLBACK"}}, {Name: "tx_chain", Arg: Arg{Child: 3}}, {Name: "tx_release", Arg: Arg{Child: 4}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_ROLLBACK_TO_SAVEPOINT"}}, {Name: "ident", Arg: Arg{Child: 5}}}},
 	},
 	888: { // savepoint
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_SAVEPOINT"}}, {Name: "ident", Arg: Arg{Child: 2}}}},
 	},
 	889: { // release
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_RELEASE_SAVEPOINT"}}, {Name: "ident", Arg: Arg{Child: 3}}}},
 	},
 	890: { // union_option
 		{Kind: ActConst, Const: "1"},
@@ -4805,16 +4805,16 @@ var shapes = [...][]Shape{
 		{Kind: ActConst, Const: "SELECT_SMALL_RESULT"},
 		{Kind: ActConst, Const: "SELECT_BIG_RESULT"},
 		{Kind: ActConst, Const: "OPTION_BUFFER_RESULT"},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "OPTION_FOUND_ROWS"},
 		{Kind: ActConst, Const: "SELECT_ALL"},
 	},
 	895: { // init_lex_create_info
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	896: { // view_or_trigger_or_sp_or_event
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	897: { // definer_tail
 		{Kind: ActDefault},
@@ -4836,28 +4836,28 @@ var shapes = [...][]Shape{
 		{Kind: ActDefault},
 	},
 	900: { // no_definer
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	901: { // definer
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "definer", Arg: Arg{Text: "get_current_user(YYTHD,$3)"}}}},
 	},
 	902: { // view_replace_or_algorithm
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	903: { // view_replace
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	904: { // view_algorithm
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	905: { // view_suid
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	906: { // view_tail
 		{Kind: ActDefault},
@@ -4880,14 +4880,14 @@ var shapes = [...][]Shape{
 		{Kind: ActStruct, Fields: []Field{{Name: "ordering_clause", Arg: Arg{Child: 1}}, {Name: "anchor_trigger_name", Arg: Arg{Text: "{$2.str,$2.length}"}}}},
 	},
 	911: { // trigger_tail
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	912: { // udf_tail
 		{Kind: ActUnknown},
 		{Kind: ActUnknown},
 	},
 	913: { // sf_tail
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	914: { // routine_string
 		{Kind: ActDefault},
@@ -4895,18 +4895,18 @@ var shapes = [...][]Shape{
 	},
 	915: { // stored_routine_body
 		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	916: { // sp_tail
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
 	},
 	917: { // xa
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_XA_START"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_xa_start($3,$4)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_XA_END"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_xa_end($3,$4)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_XA_PREPARE"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_xa_prepare($3)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_XA_COMMIT"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_xa_commit($3,$4)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_XA_ROLLBACK"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_xa_rollback($3)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_XA_RECOVER"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_xa_recover($3)"}}}},
 	},
 	918: { // opt_convert_xid
 		{Kind: ActConst, Const: "false"},
@@ -4918,8 +4918,8 @@ var shapes = [...][]Shape{
 		{Kind: ActUnknown},
 	},
 	920: { // begin_or_start
-		{Kind: ActEmpty},
-		{Kind: ActEmpty},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	921: { // opt_join_or_resume
 		{Kind: ActConst, Const: "XA_NONE"},
@@ -4945,7 +4945,7 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "Item_string", Args: []Arg{{Text: "@$"}, {Text: "\"ON\""}, {Text: "2"}, {Text: "system_charset_info"}}},
 	},
 	926: { // install_set_value
-		{Kind: ActUnknown},
+		{Kind: ActNew, Class: "NEW_PTNPT_install_component_set_element", Args: []Arg{{Child: 1}, {Child: 2}, {Child: 4}}},
 	},
 	927: { // install_set_value_list
 		{Kind: ActUnknown},
@@ -4960,32 +4960,32 @@ var shapes = [...][]Shape{
 		{Kind: ActNew, Class: "PT_install_component", Args: []Arg{{Text: "@$"}, {Text: "YYTHD"}, {Child: 3}, {Child: 4}}},
 	},
 	930: { // uninstall
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_UNINSTALL_PLUGIN"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "new(YYMEM_ROOT)Sql_cmd_uninstall_plugin($3)"}}}},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_UNINSTALL_COMPONENT"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "new(YYMEM_ROOT)Sql_cmd_uninstall_component($3)"}}}},
 	},
 	931: { // TEXT_STRING_sys_list
-		{Kind: ActUnknown},
+		{Kind: ActListNew, Args: []Arg{{Child: 1}}},
 		{Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 	},
 	932: { // import_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "m_sql_cmd", Arg: Arg{Text: "new(YYTHD->mem_root)Sql_cmd_import_table($4)"}}, {Name: "sql_command", Arg: Arg{Text: "SQLCOM_IMPORT"}}}},
 	},
 	933: { // clone_stmt
-		{Kind: ActUnknown},
+		{Kind: ActStruct, Fields: []Field{{Name: "sql_command", Arg: Arg{Text: "SQLCOM_CLONE"}}, {Name: "m_sql_cmd", Arg: Arg{Text: "NEW_PTNSql_cmd_clone($6)"}}}},
 		{Kind: ActUnknown},
 	},
 	934: { // opt_datadir_ssl
-		{Kind: ActUnknown},
+		{Kind: ActEmpty},
 		{Kind: ActPass, Args: []Arg{{Child: 4}}},
 	},
 	935: { // opt_ssl
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
+		{Kind: ActDefault},
 	},
 	936: { // resource_group_types
-		{Kind: ActUnknown},
-		{Kind: ActUnknown},
+		{Kind: ActConst, Const: "resourcegroups::Type::USER_RESOURCE_GROUP"},
+		{Kind: ActConst, Const: "resourcegroups::Type::SYSTEM_RESOURCE_GROUP"},
 	},
 	937: { // opt_resource_group_vcpu_list
 		{Kind: ActNew, Class: "Mem_root_array", Args: []Arg{{Text: "YYMEM_ROOT"}}},

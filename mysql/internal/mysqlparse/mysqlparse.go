@@ -82,9 +82,14 @@ type Node struct {
 	Kind Kind
 	// Alt is which alternative of the rule was reduced, 0-based in grammar order; it selects
 	// the node's Shape. Leaves have Alt 0.
-	Alt      int
-	Start    int
-	End      int
+	Alt   int
+	Start int
+	End   int
+	// Value is the lexer's value for identifier and literal leaves: the identifier without
+	// its quotes, the string literal with escapes resolved, the charset name of an
+	// introducer. HasValue tells it apart from an empty value.
+	Value    string
+	HasValue bool
 	Children []*Node
 }
 
@@ -159,7 +164,7 @@ func decode(b []byte) (*Node, error) {
 		}
 		k := binary.LittleEndian.Uint16(b[pos:])
 		pos += 2
-		n := &Node{Kind: Kind(k & 0x7fff)}
+		n := &Node{Kind: Kind(k & 0x3fff)}
 		if k&0x8000 != 0 {
 			if pos+8 > len(b) {
 				return nil, fmt.Errorf("mysqlparse: truncated leaf at %d", pos)
@@ -167,6 +172,19 @@ func decode(b []byte) (*Node, error) {
 			n.Start = int(binary.LittleEndian.Uint32(b[pos:]))
 			n.End = int(binary.LittleEndian.Uint32(b[pos+4:]))
 			pos += 8
+			if k&0x4000 != 0 { // the lexer's value follows
+				if pos+4 > len(b) {
+					return nil, fmt.Errorf("mysqlparse: truncated leaf value at %d", pos)
+				}
+				vlen := int(binary.LittleEndian.Uint32(b[pos:]))
+				pos += 4
+				if pos+vlen > len(b) {
+					return nil, fmt.Errorf("mysqlparse: truncated leaf value at %d", pos)
+				}
+				n.Value = string(b[pos : pos+vlen])
+				n.HasValue = true
+				pos += vlen
+			}
 			return n, nil
 		}
 		if pos+4 > len(b) {

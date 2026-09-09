@@ -15,9 +15,11 @@ mysqlparse_result *mysqlparse_parse(const char *sql, uint32_t len, uint32_t sql_
 // On error, the message and the byte offset of the token it points at; else NULL / 0.
 const char *mysqlparse_error(const mysqlparse_result *r);
 uint32_t mysqlparse_cursor(const mysqlparse_result *r);
-// On success, the CST in preorder: per node u16 kind (bit 15 set on a leaf), then for a
-// leaf u32 start, u32 end (byte offsets into sql), for a rule u16 alternative index and
-// u16 child count. Little-endian.
+// On success, the CST in preorder: per node u16 kind (bit 15 set on a leaf, bit 14 on a
+// leaf that carries a value), then for a leaf u32 start, u32 end (byte offsets into sql)
+// and, with bit 14, u32 length + bytes of the lexer's value (the identifier unquoted, the
+// string literal unescaped, the charset of an introducer); for a rule u16 alternative index
+// and u16 child count. Little-endian.
 const uint8_t *mysqlparse_data(const mysqlparse_result *r);
 uint32_t mysqlparse_len(const mysqlparse_result *r);
 void mysqlparse_free(mysqlparse_result *r);

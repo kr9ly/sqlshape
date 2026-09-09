@@ -51,6 +51,36 @@ func TestParseTree(t *testing.T) {
 	}
 }
 
+func TestLeafValues(t *testing.T) {
+	sql := "SELECT `a``b`, 'it''s\\n', _utf8mb4'x', 0x1F, 12 FROM t"
+	root, err := Parse(sql, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n.IsLeaf() && n.HasValue {
+			got[n.Kind.String()+":"+n.Text(sql)] = n.Value
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	for k, want := range map[string]string{
+		"IDENT_QUOTED:`a``b`":         "a`b",
+		"TEXT_STRING:'it''s\\n'":      "it's\n",
+		"UNDERSCORE_CHARSET:_utf8mb4": "utf8mb4",
+		"HEX_NUM:0x1F":                "1F",
+		"NUM:12":                      "12",
+	} {
+		if got[k] != want {
+			t.Errorf("%s: value %q, want %q (all: %v)", k, got[k], want, got)
+		}
+	}
+}
+
 func TestParseError(t *testing.T) {
 	_, err := Parse("SELECT 1 +", 0)
 	e, ok := err.(*Error)
