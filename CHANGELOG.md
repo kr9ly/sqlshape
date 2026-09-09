@@ -8,14 +8,27 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-09
+
 ### Added
 
 - PostgreSQL 18. `schema.sql` declares its version with `-- sqlshape: postgres 18`, and the schema
   and every statement are judged with 18's grammar and catalog: `RETURNING old` / `new` (with
   `WITH (OLD AS ..., NEW AS ...)`), `WITHOUT OVERLAPS` keys and `PERIOD` foreign keys, `NOT ENFORCED`
-  constraints (which are no failure mode), named `NOT NULL` constraints, `VIRTUAL` generated columns.
-  `pgtest` and the migration commands run the declared version's PostgreSQL; `diff`, `apply` and
-  `verify-schema` warn when the database runs another major version than the schema declares.
+  constraints (which are no failure mode), named `NOT NULL` constraints, `VIRTUAL` generated columns,
+  and 18's own checks (a JSON_VALUE DEFAULT whose collation is not the RETURNING type's, a JSON path
+  that is not a jsonpath, stricter datetime and aclitem input, an outer-level aggregate over a nested
+  CTE). `pgtest` and the migration commands run the declared version's PostgreSQL; `diff`, `apply`
+  and `verify-schema` warn when the database runs another major version than the schema declares.
+- `One` proves a single row through a temporal key: the scalar columns fixed by equality and the
+  range column equal to a known value or containing a known point (`valid_at @> {{.Day}}::date`).
+
+### Fixed
+
+- `SELECT DISTINCT ON` expressions are matched to the leading `ORDER BY` expressions by expression,
+  not by where each was written; the same expression in both no longer fails with 42P10.
+- An UPDATE that assigns a generated column reports PostgreSQL's message (`column "b" can only be
+  updated to DEFAULT`) rather than INSERT's.
 
 ### Changed
 
@@ -83,6 +96,7 @@ First release: `sqlshape.Query[R, P]` / `One[R, P]` templates checked by `go vet
 test oracle), the runtime on pgx, and `sqlshape diff` / `apply` / `verify-schema` for migrations
 from a declared schema.
 
-[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/kr9ly/sqlshape/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kr9ly/sqlshape/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kr9ly/sqlshape/releases/tag/v1.0.0
