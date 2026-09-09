@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
