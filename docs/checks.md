@@ -815,7 +815,12 @@ through joins (an outer join's ON fixes only the nullable side), views, subqueri
 aggregate without `GROUP BY`, a constant `LIMIT 0` / `LIMIT 1`, a SELECT without FROM, a one-row
 `VALUES` and a one-row `INSERT ... RETURNING` are single too. A `FULL JOIN` never is, and neither is
 a key declared `DEFERRABLE`: its uniqueness is not enforced until commit, so a transaction can hold
-two rows sharing it for its own lifetime.
+two rows sharing it for its own lifetime. A temporal key (`PRIMARY KEY (id, valid_at WITHOUT
+OVERLAPS)`, PostgreSQL 18) is fixed when its scalar columns are fixed by equality and its range
+column either equals a known value or contains a known point of the element type (`valid_at @>
+{{.Day}}::date`): no two rows with the same `id` have overlapping ranges, so one point lies in at
+most one of them. A range on the known side does not do (it could be empty, which every range
+contains), nor does an overlap.
 
 #### Every branch must be provable
 

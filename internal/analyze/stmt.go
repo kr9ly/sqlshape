@@ -1228,6 +1228,9 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 		return err
 	}
 	if col.Generated != nil && (e.node == nil || e.node.GetSetToDefault() == nil) {
+		if len(a.writeRecs) > 0 && a.writeRecs[len(a.writeRecs)-1].cmd == "update" {
+			return errAt(codeGeneratedAlways, at, "column %q can only be updated to DEFAULT", col.Name)
+		}
 		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
 	}
 	if a.viewDefault[col] && (col.Generated != nil || col.Identity == 'a') && e.node != nil && e.node.GetSetToDefault() != nil {

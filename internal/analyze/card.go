@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
@@ -51,10 +52,16 @@ type prover struct {
 	leaves    []*rte
 	conjuncts []conjunct
 	known     map[colKey]bool
-	edges     []edge
-	single    map[*rte]bool
-	why       map[*rte]string // leaf → why it could not be proved single
-	fail      string          // structural reason (FULL JOIN)
+	// pointIn: range / multirange columns that contain a known point (col @> $1::date,
+	// $1::date <@ col): with a WITHOUT OVERLAPS key, at most one row's range holds it
+	pointIn map[colKey]bool
+	// contains: `col @> point` where the point is another column; it counts once that
+	// column is known (fixpoint)
+	contains []edge
+	edges    []edge
+	single   map[*rte]bool
+	why      map[*rte]string // leaf → why it could not be proved single
+	fail     string          // structural reason (FULL JOIN)
 }
 
 // cardinality decides whether the analyzed statement returns at most one row.
@@ -215,6 +222,68 @@ func (p *prover) addQuals(n *pgparse.Node, allow map[*rte]bool) {
 			p.fix(rk, allow)
 		}
 	}
+	for _, c := range conjuncts(n) {
+		p.addContainment(c, allow)
+	}
+}
+
+// addContainment notes `col @> point` / `point <@ col` where the point is a known value of
+// a non-range type (a range on the known side could be empty, which every range contains).
+func (p *prover) addContainment(c *pgparse.Node, allow map[*rte]bool) {
+	x := c.GetAExpr()
+	if x == nil || x.Kind != pgparse.A_Expr_Kind_AEXPR_OP || x.Lexpr == nil || x.Rexpr == nil {
+		return
+	}
+	parts := strs(x.Name)
+	var col, point *pgparse.Node
+	switch parts[len(parts)-1] {
+	case "@>":
+		col, point = x.Lexpr, x.Rexpr
+	case "<@":
+		col, point = x.Rexpr, x.Lexpr
+	default:
+		return
+	}
+	k, ok := p.resolve(col)
+	if !ok || !p.scalarTyped(point) || (allow != nil && !allow[k.r]) {
+		return
+	}
+	if pk, isCol := p.resolve(point); isCol {
+		p.contains = append(p.contains, edge{from: pk, to: k})
+		return
+	}
+	if p.isKnown(point) {
+		p.setPointIn(k)
+	}
+}
+
+func (p *prover) setPointIn(k colKey) {
+	if p.pointIn == nil {
+		p.pointIn = map[colKey]bool{}
+	}
+	p.pointIn[k] = true
+}
+
+// scalarTyped reports whether n's type is visibly not a range or multirange: a cast to
+// such a type, or a column of one. A bare parameter or literal could be a range.
+func (p *prover) scalarTyped(n *pgparse.Node) bool {
+	var oid catalog.OID
+	switch {
+	case n.GetTypeCast() != nil:
+		t, err := p.a.s.ResolveType(n.GetTypeCast().TypeName)
+		if err != nil {
+			return false
+		}
+		oid = t.OID
+	default:
+		k, ok := p.resolve(n)
+		if !ok {
+			return false
+		}
+		oid = k.r.cols[k.i].typ.OID
+	}
+	t := p.a.typ(p.a.baseType(oid))
+	return t != nil && t.Kind != 'r' && t.Kind != 'm'
 }
 
 func (p *prover) fix(k colKey, allow map[*rte]bool) {
@@ -515,6 +584,12 @@ func (p *prover) fixpoint() {
 				changed = true
 			}
 		}
+		for _, e := range p.contains {
+			if p.known[e.from] && !p.pointIn[e.to] {
+				p.setPointIn(e.to)
+				changed = true
+			}
+		}
 		for _, l := range p.leaves {
 			if p.single[l] {
 				continue
@@ -579,7 +654,13 @@ func (p *prover) keyFixed(r *rte, con *schema.Constraint) bool {
 				break
 			}
 		}
-		if idx < 0 || !p.known[colKey{r, idx}] {
+		if idx < 0 {
+			return false
+		}
+		k := colKey{r, idx}
+		// a temporal key's range column: a row whose range holds a known point is the only
+		// one for those key values, since no two rows' ranges overlap
+		if !p.known[k] && !(con.WithoutOverlaps && name == con.Columns[len(con.Columns)-1] && p.pointIn[k]) {
 			return false
 		}
 	}
