@@ -31,16 +31,23 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 
 ## Install
 
-The checker and the migration commands are one binary:
+The checker and the migration commands are one binary. With Go 1.26 or newer:
 
 ```
 $ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
 $ sqlshape version
 ```
 
-It is a plain Go build: PostgreSQL's parser (libpg_query) is embedded as WebAssembly and runs on
-wazero, so `go install` needs no C compiler. Prebuilt binaries for Linux, macOS and Windows (amd64
-and arm64 each) are on the [releases page](https://github.com/kr9ly/sqlshape/releases).
+Or take a prebuilt binary from the [releases page](https://github.com/kr9ly/sqlshape/releases):
+Linux, macOS and Windows, amd64 and arm64 each, as `sqlshape_<version>_<os>_<arch>.tar.gz` (`.zip`
+on Windows) with `checksums.txt` beside them. Unpack and put `sqlshape` on your `PATH`.
+
+Nothing else is needed to check code. PostgreSQL's parser (libpg_query, one per supported major
+version) is embedded as WebAssembly and runs on wazero, so there is no C compiler to install and no
+library to link; the first run compiles the module (about a second) and caches the result under the
+user cache directory (`~/.cache/sqlshape` on Linux). `pgtest` and the migration commands, which run
+your schema on a real PostgreSQL, download the declared version's server binaries into the same
+cache on first use (see [migrations.md](docs/migrations.md#requirements)).
 
 The runtime is an ordinary Go module:
 
