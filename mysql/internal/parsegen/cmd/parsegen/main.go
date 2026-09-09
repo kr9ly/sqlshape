@@ -44,7 +44,8 @@ func main() {
 				want[k] = true
 			}
 			for _, a := range alts {
-				if want[fmt.Sprintf("%s/%d", a.Rule, a.Index)] {
+				// "rule/N" names one alternative; "rule" every unread alternative of the rule
+				if want[fmt.Sprintf("%s/%d", a.Rule, a.Index)] || want[a.Rule] && a.Kind == parsegen.ActUnknown {
 					fmt.Printf("%s/%d: %s\n    %s\n", a.Rule, a.Index, strings.Join(a.Syms, " "), a.Action)
 				}
 			}

@@ -356,6 +356,9 @@ func isPosition(a mysqlparse.Arg) bool {
 
 // field applies a `.str` / `.column_list` / `.flags.algo` access the action wrote on a child.
 func field(v Value, f string) Value {
+	if v == nil {
+		return nil
+	}
 	f = strings.TrimLeft(f, ".->")
 	if head, rest, ok := strings.Cut(f, "."); ok { // a path: one step at a time
 		return field(field(v, head), rest)

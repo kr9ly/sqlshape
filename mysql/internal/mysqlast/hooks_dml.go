@@ -352,3 +352,16 @@ func init() {
 	register("view_or_trigger_or_sp_or_event", "definer init_lex_create_info definer_tail", viewHead)
 	register("view_or_trigger_or_sp_or_event", "no_definer init_lex_create_info no_definer_tail", viewHead)
 }
+
+func init() {
+	// field_def: type opt_collate opt_generated_always AS '(' expr ')' opt_stored_attribute
+	// opt_column_attribute_list -> PT_generated_field_def; a COLLATE before AS becomes an attribute
+	register("field_def", "type opt_collate opt_generated_always AS '(' expr ')' opt_stored_attribute opt_column_attribute_list", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		attrs, _ := kids[8].(List)
+		if kids[1] != nil {
+			attrs = append(attrs, &Node{Class: "PT_collate_column_attr", Names: []string{"collation"}, Args: []Value{kids[1]}})
+		}
+		return &Node{Class: "PT_generated_field_def", Names: []string{"type_node", "expr", "virtual_or_stored", "opt_attrs"},
+			Args: []Value{kids[0], kids[5], kids[7], attrs}, Start: n.Start, End: n.End}, nil
+	})
+}

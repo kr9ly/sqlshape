@@ -188,6 +188,8 @@ var (
 	reNumberHex     = regexp.MustCompile(`^\$\$=\((?:ulong|ulonglong|int|uint|longlong)\)my_strtoll\(\$(\d+)\.str,nullptr,16\);$`)
 	reAtol          = regexp.MustCompile(`^\$\$=atol\(\$(\d+)\.str\);$`)
 	reNullStruct    = regexp.MustCompile(`^\$\$=(?:LEX_STRING|LEX_CSTRING)\{nullptr,0\};$`)
+	reAppendValPre  = regexp.MustCompile(`^if\(\$(\d+)\.push_back\(\$(\d+)\)\)MYSQL_YYABORT;\$\$=\$(\d+);$`)
+	reAppendPlain   = regexp.MustCompile(`^\$\$=\$(\d+);\$\$->push_(back|front)\(\$(\d+)\);(\$\$->m_pos=@\$;)?$`)
 	reNullValue     = regexp.MustCompile(`^\$\$=(null_lex_str|NULL_STR|NULL_CSTR|EMPTY_CSTR|EMPTY_STR);$`)
 	rePass          = regexp.MustCompile(`^\$\$=\$(\d+);$`)
 	reConst         = regexp.MustCompile(`^\$\$=(-?\d+|true|false|&?[A-Za-z][A-Za-z_0-9]*(::[A-Za-z_0-9]+)*);$`)
@@ -223,7 +225,7 @@ func normalize(action string) (string, []string) {
 	a = reSpace.ReplaceAllString(a, "")
 	a = reNullCheck.ReplaceAllString(a, "")
 	a = stripCalls(a, "push_warning(", "push_warning_printf(", "push_deprecated_warn(", "push_deprecated_warn_no_replacement(",
-		"warn_on_deprecated_user_defined_collation(", "warn_about_deprecated_national(", "DBUG_EXECUTE_IF(", "MYSQL_YYABORT_UNLESS(", "MAKE_CMD_DDL_DUMMY(")
+		"warn_on_deprecated_user_defined_collation(", "warn_about_deprecated_national(", "warn_about_deprecated_binary(", "DBUG_EXECUTE_IF(", "MYSQL_YYABORT_UNLESS(", "MAKE_CMD_DDL_DUMMY(")
 	var guards []string
 	for _, re := range []*regexp.Regexp{reSpGuard, reMsgGuard} {
 		guards = append(guards, re.FindAllString(a, -1)...)
@@ -371,6 +373,16 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 		m := reAppendDflt.FindStringSubmatch(n)
 		a.Kind = ActListAppend
 		a.Args = []Arg{{Child: atoi(m[3])}, {Child: atoi(m[2])}}
+	case reAppendValPre.MatchString(n):
+		m := reAppendValPre.FindStringSubmatch(n)
+		if m[1] == m[3] {
+			a.Kind = ActListAppend
+			a.Args = []Arg{{Child: atoi(m[1])}, {Child: atoi(m[2])}}
+		}
+	case reAppendPlain.MatchString(n):
+		m := reAppendPlain.FindStringSubmatch(n)
+		a.Kind = ActListAppend
+		a.Args = []Arg{{Child: atoi(m[1])}, {Child: atoi(m[3])}}
 	case reAppendVal.MatchString(n):
 		m := reAppendVal.FindStringSubmatch(n)
 		a.Kind = ActListAppend

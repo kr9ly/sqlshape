@@ -1410,8 +1410,8 @@ var shapes = [...][]Shape{
 	},
 	264: { // ascii
 		{Syms: "ASCII_SYM", Kind: ActConst, Const: "&my_charset_latin1"},
-		{Syms: "BINARY_SYM ASCII_SYM", Kind: ActUnknown},
-		{Syms: "ASCII_SYM BINARY_SYM", Kind: ActUnknown},
+		{Syms: "BINARY_SYM ASCII_SYM", Kind: ActConst, Const: "&my_charset_latin1_bin"},
+		{Syms: "ASCII_SYM BINARY_SYM", Kind: ActConst, Const: "&my_charset_latin1_bin"},
 	},
 	265: { // unicode
 		{Syms: "UNICODE_SYM", Kind: ActUnknown},
@@ -1424,12 +1424,12 @@ var shapes = [...][]Shape{
 		{Syms: "unicode", Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Child: 1}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
 		{Syms: "BYTE_SYM", Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Text: "my_charset_bin"}}, {Name: "force_binary", Arg: Arg{Text: "false"}}}},
 		{Syms: "character_set charset_name opt_bin_mod", Kind: ActUnknown},
-		{Syms: "BINARY_SYM", Kind: ActUnknown},
+		{Syms: "BINARY_SYM", Kind: ActStruct, Fields: []Field{{Name: "charset", Arg: Arg{Text: "nullptr"}}, {Name: "force_binary", Arg: Arg{Text: "true"}}}},
 		{Syms: "BINARY_SYM character_set charset_name", Kind: ActUnknown},
 	},
 	267: { // opt_bin_mod
 		{Syms: "", Kind: ActConst, Const: "false"},
-		{Syms: "BINARY_SYM", Kind: ActUnknown},
+		{Syms: "BINARY_SYM", Kind: ActConst, Const: "true"},
 	},
 	268: { // ws_num_codepoints
 		{Syms: "'(' real_ulong_num ')'", Kind: ActPass, Args: []Arg{{Child: 2}}},
@@ -1496,7 +1496,7 @@ var shapes = [...][]Shape{
 	},
 	282: { // fulltext_index_options
 		{Syms: "fulltext_index_option", Kind: ActListNew, Args: []Arg{{Child: 1}}},
-		{Syms: "fulltext_index_options fulltext_index_option", Kind: ActUnknown},
+		{Syms: "fulltext_index_options fulltext_index_option", Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 2}}},
 	},
 	283: { // fulltext_index_option
 		{Syms: "common_index_option", Kind: ActDefault},
@@ -1508,7 +1508,7 @@ var shapes = [...][]Shape{
 	},
 	285: { // spatial_index_options
 		{Syms: "spatial_index_option", Kind: ActListNew, Args: []Arg{{Child: 1}}},
-		{Syms: "spatial_index_options spatial_index_option", Kind: ActUnknown},
+		{Syms: "spatial_index_options spatial_index_option", Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 2}}},
 	},
 	286: { // spatial_index_option
 		{Syms: "common_index_option", Kind: ActDefault},
@@ -1519,7 +1519,7 @@ var shapes = [...][]Shape{
 	},
 	288: { // index_options
 		{Syms: "index_option", Kind: ActListNew, Args: []Arg{{Child: 1}}},
-		{Syms: "index_options index_option", Kind: ActUnknown},
+		{Syms: "index_options index_option", Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 2}}},
 	},
 	289: { // index_option
 		{Syms: "common_index_option", Kind: ActPass, Args: []Arg{{Child: 1}}},
@@ -2916,7 +2916,7 @@ var shapes = [...][]Shape{
 		{Syms: "WITH_ROLLUP_SYM", Kind: ActConst, Const: "ROLLUP_TYPE"},
 	},
 	558: { // alter_order_list
-		{Syms: "alter_order_list ',' alter_order_item", Kind: ActUnknown},
+		{Syms: "alter_order_list ',' alter_order_item", Kind: ActListAppend, Args: []Arg{{Child: 1}, {Child: 3}}},
 		{Syms: "alter_order_item", Kind: ActListNew, Class: "PT_order_list", Args: []Arg{{Child: 1}}},
 	},
 	559: { // alter_order_item

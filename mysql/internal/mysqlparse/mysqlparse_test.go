@@ -229,3 +229,18 @@ func TestShape(t *testing.T) {
 		t.Errorf("opt_where_clause: %+v shape %+v", where, where.Shape())
 	}
 }
+
+func TestSplit(t *testing.T) {
+	script := "-- header\nCREATE TABLE t (a INT); # c\n/* block ; */ INSERT INTO t VALUES ('a;b', \"c;d\", `e;f`);\n\n-- sqlshape: unfiltered t\nSELECT 1\n"
+	got := Split(script)
+	// leading comments stay with their statement: `-- sqlshape:` directives live there
+	want := []string{"-- header\nCREATE TABLE t (a INT)", "# c\n/* block ; */ INSERT INTO t VALUES ('a;b', \"c;d\", `e;f`)", "-- sqlshape: unfiltered t\nSELECT 1"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	for i := range want {
+		if got[i].SQL != want[i] || script[got[i].Offset:got[i].Offset+len(got[i].SQL)] != got[i].SQL {
+			t.Errorf("%d: %q at %d", i, got[i].SQL, got[i].Offset)
+		}
+	}
+}
