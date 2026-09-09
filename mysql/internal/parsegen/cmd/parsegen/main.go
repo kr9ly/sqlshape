@@ -23,6 +23,7 @@ func main() {
 	corpus := flag.String("corpus", "", "write mysql-test/t split into statements to this file and exit")
 	actions := flag.Bool("actions", false, "print how far the grammar's semantic actions are read, and exit")
 	show := flag.String("show", "", "with -actions: comma-separated rule/alt pairs whose symbols and action to print")
+	guards := flag.Bool("guards", false, "with -actions: list the error checks dropped from the actions (with -roots: only those reachable)")
 	roots := flag.String("roots", "", "with -actions: comma-separated start rules; report the unread actions reachable from them")
 	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
@@ -46,6 +47,12 @@ func main() {
 					fmt.Printf("%s/%d: %s\n    %s\n", a.Rule, a.Index, strings.Join(a.Syms, " "), a.Action)
 				}
 			}
+		} else if *guards {
+			var rs []string
+			if *roots != "" {
+				rs = strings.Split(*roots, ",")
+			}
+			fmt.Print(parsegen.GuardReport(alts, rs))
 		} else if *roots != "" {
 			fmt.Print(parsegen.ReachReport(alts, strings.Split(*roots, ",")))
 		} else {

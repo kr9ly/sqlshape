@@ -1,14 +1,24 @@
 package mysqlast
 
-import "github.com/kr9ly/sqlshape/mysql/internal/mysqlparse"
+import (
+	"fmt"
+
+	"github.com/kr9ly/sqlshape/mysql/internal/mysqlparse"
+)
 
 // hooks are the alternatives whose server action parsegen could not read, written by
-// hand against what sql_yacc.yy does. Keys are rule name and 0-based alternative.
-// `go run ./internal/parsegen/cmd/parsegen -actions -roots ...` lists the candidates.
+// hand against what sql_yacc.yy does. They are registered by rule name and right-hand
+// side, so that a grammar version that reorders alternatives fails at init rather than
+// binding a hook to the wrong one. `go run ./internal/parsegen/cmd/parsegen -actions
+// -roots ...` lists the candidates.
 var hooks = map[hookKey]Hook{}
 
-// register adds a hook; used by the per-area files.
-func register(rule string, alt int, h Hook) {
+// register adds a hook for the alternative of rule whose right-hand side is syms.
+func register(rule, syms string, h Hook) {
+	alt, ok := mysqlparse.Alternative(rule, syms)
+	if !ok {
+		panic(fmt.Sprintf("mysqlast: no alternative %s: %s in this grammar", rule, syms))
+	}
 	hooks[hookKey{rule, alt}] = h
 }
 

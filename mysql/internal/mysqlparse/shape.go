@@ -4,6 +4,9 @@ package mysqlparse
 // parse-tree class it built and which children fed which constructor argument. parsegen
 // reads it out of sql_yacc.yy (shapes.go); it is the map from the CST to an AST.
 type Shape struct {
+	// Syms is the alternative's right-hand side, space-separated: the key that ties a
+	// hand-written hook to an alternative across grammar versions.
+	Syms   string
 	Kind   ActKind
 	Class  string   // ActNew, ActListNew: the server's parse-tree class
 	Const  string   // ActConst: the constant as written (an enum value, a literal)
@@ -53,4 +56,19 @@ func (n *Node) Shape() Shape {
 		return Shape{}
 	}
 	return shapes[n.Kind][n.Alt]
+}
+
+// Alternative returns the index of rule's alternative whose right-hand side is syms
+// (space-separated symbol names), or false.
+func Alternative(rule, syms string) (int, bool) {
+	k, ok := KindOf(rule)
+	if !ok || int(k) >= len(shapes) {
+		return 0, false
+	}
+	for i, s := range shapes[k] {
+		if s.Syms == syms {
+			return i, true
+		}
+	}
+	return 0, false
 }

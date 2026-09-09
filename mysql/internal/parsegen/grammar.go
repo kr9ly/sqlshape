@@ -270,7 +270,7 @@ func ShapesGo(pkg string, version string, kinds []string, alts []Alt, names *Nam
 		}
 		fmt.Fprintf(&b, "\t%d: { // %s\n", id, name)
 		for _, a := range as {
-			fmt.Fprintf(&b, "\t\t{Kind: Act%s", exportName(a.Kind.String()))
+			fmt.Fprintf(&b, "\t\t{Syms: %s, Kind: Act%s", strconv.Quote(strings.Join(a.Syms, " ")), exportName(a.Kind.String()))
 			if a.Class != "" {
 				fmt.Fprintf(&b, ", Class: %s", strconv.Quote(a.Class))
 			}

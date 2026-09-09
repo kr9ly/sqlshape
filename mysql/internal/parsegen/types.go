@@ -222,6 +222,11 @@ func ReadCtors(files []string, names map[string]bool) (map[string][]Ctor, error)
 				aliases[m[2]] = m[1]
 			}
 		}
+		for _, m := range reTypedefPlain.FindAllStringSubmatch(src, -1) {
+			if names[m[2]] {
+				aliases[m[2]] = m[1]
+			}
+		}
 		for _, m := range reUsingAlias.FindAllStringSubmatch(src, -1) {
 			if names[m[1]] {
 				aliases[m[1]] = m[2]
@@ -302,8 +307,9 @@ func ReadCtors(files []string, names map[string]bool) (map[string][]Ctor, error)
 }
 
 var (
-	reTypedef    = regexp.MustCompile(`(?s)typedef\s+([A-Za-z_][A-Za-z_0-9]*)\s*<[^;]*?>\s*([A-Za-z_][A-Za-z_0-9]*)\s*;`)
-	reUsingAlias = regexp.MustCompile(`using\s+([A-Za-z_][A-Za-z_0-9]*)\s*=\s*([A-Za-z_][A-Za-z_0-9]*)\s*<`)
+	reTypedef      = regexp.MustCompile(`(?s)typedef\s+([A-Za-z_][A-Za-z_0-9]*)\s*<[^;]*?>\s*([A-Za-z_][A-Za-z_0-9]*)\s*;`)
+	reTypedefPlain = regexp.MustCompile(`typedef\s+(?:struct\s+)?([A-Za-z_][A-Za-z_0-9]*)\s+([A-Za-z_][A-Za-z_0-9]*)\s*;`)
+	reUsingAlias   = regexp.MustCompile(`using\s+([A-Za-z_][A-Za-z_0-9]*)\s*=\s*([A-Za-z_][A-Za-z_0-9]*)\s*<`)
 )
 
 // isTypeOnly reports a parameter declared without a name (`Item *`, `const POS &`).

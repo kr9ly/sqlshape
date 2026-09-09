@@ -62,6 +62,10 @@ type Alt struct {
 	Const  string  // ActConst
 	Fields []Field // ActStruct
 	Action string  // the action text, normalized
+	// Guards are the checks the server's action made and this reader dropped (`if (cond)
+	// MYSQL_YYABORT`, `if (cond) my_error(...)`): errors a parse-time check layer must
+	// reproduce.
+	Guards []string
 }
 
 // Field is one `$$.name= value` assignment of a struct-valued action.
@@ -181,6 +185,9 @@ var (
 	reAppendOnly    = regexp.MustCompile(`^if\(\$\$->push_(back|front)\(&?\$(\d+)(?:->\w+)?\)\)MYSQL_YYABORT;(\$\$->m_pos=@\$;)?$`)
 	reSetCall       = regexp.MustCompile(`\$\$\.([\w.]+)\.set\(([^()]*)\);`)
 	reInitCall      = regexp.MustCompile(`\$\$(\.[\w.]+)?\.init\(\);`)
+	reNumberHex     = regexp.MustCompile(`^\$\$=\((?:ulong|ulonglong|int|uint|longlong)\)my_strtoll\(\$(\d+)\.str,nullptr,16\);$`)
+	reAtol          = regexp.MustCompile(`^\$\$=atol\(\$(\d+)\.str\);$`)
+	reNullStruct    = regexp.MustCompile(`^\$\$=(?:LEX_STRING|LEX_CSTRING)\{nullptr,0\};$`)
 	reNullValue     = regexp.MustCompile(`^\$\$=(null_lex_str|NULL_STR|NULL_CSTR|EMPTY_CSTR|EMPTY_STR);$`)
 	rePass          = regexp.MustCompile(`^\$\$=\$(\d+);$`)
 	reConst         = regexp.MustCompile(`^\$\$=(-?\d+|true|false|&?[A-Za-z][A-Za-z_0-9]*(::[A-Za-z_0-9]+)*);$`)
@@ -204,8 +211,9 @@ var (
 	reArgField      = regexp.MustCompile(`^\$(\d+)((\.|->)[A-Za-z_0-9.]+)$`)
 )
 
-// normalize strips comments and whitespace so that the shapes can be matched textually.
-func normalize(action string) string {
+// normalize strips comments and whitespace so that the shapes can be matched textually;
+// it also returns the error guards it removed.
+func normalize(action string) (string, []string) {
 	a := reCComment.ReplaceAllString(action, "")
 	a = reLineCmt.ReplaceAllString(a, "")
 	a = strings.TrimSpace(a)
@@ -216,30 +224,37 @@ func normalize(action string) string {
 	a = reNullCheck.ReplaceAllString(a, "")
 	a = stripCalls(a, "push_warning(", "push_warning_printf(", "push_deprecated_warn(", "push_deprecated_warn_no_replacement(",
 		"warn_on_deprecated_user_defined_collation(", "warn_about_deprecated_national(", "DBUG_EXECUTE_IF(", "MYSQL_YYABORT_UNLESS(", "MAKE_CMD_DDL_DUMMY(")
-	a = reSpGuard.ReplaceAllString(a, "")
-	a = reMsgGuard.ReplaceAllString(a, "")
+	var guards []string
+	for _, re := range []*regexp.Regexp{reSpGuard, reMsgGuard} {
+		guards = append(guards, re.FindAllString(a, -1)...)
+		a = re.ReplaceAllString(a, "")
+	}
 	a = reCastWrap.ReplaceAllString(a, "$1")
-	a = stripGuards(a)
+	var g2 []string
+	a, g2 = stripGuards(a)
+	guards = append(guards, g2...)
 	a = reSetCall.ReplaceAllString(a, "$$$$.$1=$2;") // `$$.algo.set(x)` -> `$$.algo=x`
 	a = reInitCall.ReplaceAllString(a, "")           // `$$.init()`, `$$.flags.init()`
 	a = reDigest.ReplaceAllString(a, "")
 	a = reFoundSemicolon.ReplaceAllString(a, "")
-	return a
+	return a, guards
 }
 
 // stripGuards removes error checks: `if (cond) MYSQL_YYABORT;` and `if (cond) { ...
 // MYSQL_YYABORT; }` whose condition does not build anything (no push_back, no $$=).
-func stripGuards(a string) string {
+func stripGuards(a string) (string, []string) {
+	var removed []string
 	for _, re := range []*regexp.Regexp{reGuardBlock, reGuardStmt} {
 		a = re.ReplaceAllStringFunc(a, func(m string) string {
 			cond := m[strings.Index(m, "(")+1:]
 			if strings.Contains(cond, "push_") || strings.Contains(cond, "$$") {
 				return m
 			}
+			removed = append(removed, m)
 			return ""
 		})
 	}
-	return a
+	return a, removed
 }
 
 // stripCalls removes statements that are a call to one of the named functions (warnings
@@ -276,7 +291,8 @@ func stripCalls(a string, names ...string) string {
 }
 
 func classify(rule string, idx int, syms []string, action string) Alt {
-	a := Alt{Rule: rule, Index: idx, Syms: syms, Action: normalize(action)}
+	norm, guards := normalize(action)
+	a := Alt{Rule: rule, Index: idx, Syms: syms, Action: norm, Guards: guards}
 	n := a.Action
 	switch {
 	case action == "":
@@ -342,6 +358,15 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 	case reNumber.MatchString(n):
 		a.Kind = ActNumber
 		a.Args = []Arg{{Child: atoi(reNumber.FindStringSubmatch(n)[2])}}
+	case reNumberHex.MatchString(n):
+		a.Kind = ActNumber
+		a.Const = "16"
+		a.Args = []Arg{{Child: atoi(reNumberHex.FindStringSubmatch(n)[1])}}
+	case reAtol.MatchString(n):
+		a.Kind = ActNumber
+		a.Args = []Arg{{Child: atoi(reAtol.FindStringSubmatch(n)[1])}}
+	case reNullStruct.MatchString(n):
+		a.Kind = ActEmpty
 	case reAppendDflt.MatchString(n):
 		m := reAppendDflt.FindStringSubmatch(n)
 		a.Kind = ActListAppend
@@ -395,7 +420,7 @@ func classify(rule string, idx int, syms []string, action string) Alt {
 		a.Kind = ActNew
 		a.Class = m[1]
 		a.Args = parseArgs(m[3])
-	case reHelperNew.MatchString(n):
+	case reHelperNew.MatchString(n) && reHelperNew.FindStringSubmatch(n)[1] != "new":
 		// a helper that builds the node (create_func_cast, make_index_engine_attribute ...)
 		m := reHelperNew.FindStringSubmatch(n)
 		a.Kind = ActNew
@@ -602,6 +627,30 @@ func ReachReport(alts []Alt, roots []string) string {
 		fmt.Fprintf(&b, "  %3d  %-36s %s\n", kv.n, kv.k, shape)
 	}
 	return b.String()
+}
+
+// GuardReport lists the error guards dropped from the alternatives reachable from roots
+// (all alternatives when roots is empty): the parse-time checks a later layer owes.
+func GuardReport(alts []Alt, roots []string) string {
+	reach := map[string]bool{}
+	if len(roots) > 0 {
+		reach = Reach(alts, roots)
+	}
+	var b strings.Builder
+	n := 0
+	for _, a := range alts {
+		if len(roots) > 0 && !reach[a.Rule] {
+			continue
+		}
+		for _, g := range a.Guards {
+			n++
+			if len(g) > 110 {
+				g = g[:110]
+			}
+			fmt.Fprintf(&b, "%s/%d  %s\n", a.Rule, a.Index, g)
+		}
+	}
+	return fmt.Sprintf("dropped guards: %d\n", n) + b.String()
 }
 
 // ActionReport summarizes how far the actions are read: counts per kind, the NEW_PTN

@@ -66,6 +66,17 @@ type Token struct {
 // ("true", "0"), or a helper expression this package does not interpret.
 type Const string
 
+// Op is a comparison operator the action passed as a creator function
+// (`&comp_eq_creator`): its SQL spelling.
+type Op string
+
+// compOps maps the server's comparison creators to the operators they build
+// (sql/item_cmpfunc.h: Eq_creator ... Ne_creator).
+var compOps = map[string]Op{
+	"&comp_eq_creator": "=", "&comp_equal_creator": "<=>", "&comp_ne_creator": "<>",
+	"&comp_gt_creator": ">", "&comp_ge_creator": ">=", "&comp_lt_creator": "<", "&comp_le_creator": "<=",
+}
+
 // Number is a numeric token the action converted with my_strtoll10.
 type Number int64
 
@@ -107,10 +118,21 @@ type hookKey struct {
 	alt  int
 }
 
-// Build folds the CST of sql into an AST.
+// Build folds the CST of sql into an AST: the statement's node, without the grammar's
+// start-rule wrapping and its END_OF_INPUT.
 func Build(sql string, root *mysqlparse.Node) (Value, error) {
 	b := &Builder{SQL: sql, hooks: hooks}
-	return b.Value(root)
+	v, err := b.Value(root)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		n, ok := v.(*Node)
+		if !ok || !n.Implicit || len(n.Args) != 1 {
+			return v, nil
+		}
+		v = n.Args[0]
+	}
 }
 
 // Value folds one CST node.
@@ -145,23 +167,35 @@ func (b *Builder) Value(n *mysqlparse.Node) (Value, error) {
 	}
 	switch shape.Kind {
 	case mysqlparse.ActDefault:
-		switch len(kids) {
+		// bison's default is $$ = $1; a rule without an action and several children keeps
+		// them all, minus the end-of-input marker, which carries nothing
+		var real []Value
+		for _, k := range kids {
+			if t, ok := k.(Token); ok && t.Kind.String() == "END_OF_INPUT" {
+				continue
+			}
+			real = append(real, k)
+		}
+		switch len(real) {
 		case 0:
 			return nil, nil
 		case 1:
-			return kids[0], nil
+			return real[0], nil
 		}
-		return &Node{Class: n.Kind.String(), Args: kids, Start: n.Start, End: n.End, Implicit: true}, nil
+		return &Node{Class: n.Kind.String(), Args: real, Start: n.Start, End: n.End, Implicit: true}, nil
 	case mysqlparse.ActEmpty:
 		return nil, nil
 	case mysqlparse.ActPass:
 		return child(shape.Args[0])
 	case mysqlparse.ActConst:
-		return Const(shape.Const), nil
+		return b.constant(shape.Const), nil
 	case mysqlparse.ActNumber:
 		v, err := child(shape.Args[0])
 		if err != nil {
 			return nil, err
+		}
+		if shape.Const == "16" {
+			return numberBase(v, 16)
 		}
 		return number(v)
 	case mysqlparse.ActFlags:
@@ -271,6 +305,9 @@ func (b *Builder) constant(text string) Value {
 	if strings.HasPrefix(text, `"`) && strings.HasSuffix(text, `"`) && len(text) >= 2 {
 		return Const(text[1 : len(text)-1])
 	}
+	if op, ok := compOps[text]; ok {
+		return op
+	}
 	return Const(text)
 }
 
@@ -316,16 +353,18 @@ func field(v Value, f string) Value {
 	return &Node{Class: "." + f, Args: []Value{v}}
 }
 
-func number(v Value) (Value, error) {
+func number(v Value) (Value, error) { return numberBase(v, 10) }
+
+func numberBase(v Value, base int) (Value, error) {
 	switch x := v.(type) {
 	case Token:
 		s := x.Value
 		if s == "" {
 			s = x.Text
 		}
-		n, err := strconv.ParseInt(s, 10, 64)
+		n, err := strconv.ParseInt(s, base, 64)
 		if err != nil {
-			u, err2 := strconv.ParseUint(s, 10, 64)
+			u, err2 := strconv.ParseUint(s, base, 64)
 			if err2 != nil {
 				return nil, fmt.Errorf("mysqlast: number %q: %v", s, err)
 			}
@@ -398,6 +437,8 @@ func sprint(b *strings.Builder, v Value) {
 			b.WriteString(x.Text)
 		}
 	case Const:
+		b.WriteString(string(x))
+	case Op:
 		b.WriteString(string(x))
 	case Number:
 		b.WriteString(strconv.FormatInt(int64(x), 10))
