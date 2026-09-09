@@ -3,14 +3,16 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #include "mysql/strings/m_ctype.h"
 #include "lex_string.h"
+struct Node;
 
 using sql_mode_t = uint64_t;
 inline constexpr sql_mode_t MODE_PIPES_AS_CONCAT = 2;
 inline constexpr sql_mode_t MODE_ANSI_QUOTES = 4;
 inline constexpr sql_mode_t MODE_IGNORE_SPACE = 8;
-inline constexpr sql_mode_t MODE_NO_BACKSLASH_ESCAPES = 1ULL << 22;  // value irrelevant for the spike
+inline constexpr sql_mode_t MODE_NO_BACKSLASH_ESCAPES = 0x40000ULL * 4;  // MODE_ANSI * 2 * 2, as system_variables.h derives it
 inline constexpr sql_mode_t MODE_HIGH_NOT_PRECEDENCE = 1ULL << 29;
 
 inline bool operator==(const LEX_CSTRING &a, const LEX_CSTRING &b) { return a.length == b.length && (a.length == 0 || memcmp(a.str, b.str, a.length) == 0); }
@@ -27,6 +29,8 @@ struct System_variables {
 class THD {
  public:
   System_variables variables;
+  std::vector<Node *> cst_nodes;      // every node built during this parse, freed together
+  const char *parse_error = nullptr;  // bison's message, set by my_sql_parser_error
   Parser_state *m_parser_state = nullptr;
   const CHARSET_INFO *m_charset = nullptr;
   const CHARSET_INFO *charset() const { return m_charset; }

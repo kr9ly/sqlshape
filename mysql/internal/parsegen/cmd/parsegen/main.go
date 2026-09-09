@@ -20,6 +20,7 @@ func main() {
 	wasm := flag.Bool("wasm", false, "also build the wasm module with em++")
 	genOnly := flag.Bool("generate-only", false, "write the sources and stop before the toolchain")
 	corpus := flag.String("corpus", "", "write mysql-test/t split into statements to this file and exit")
+	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
 
 	if *corpus != "" {
@@ -40,7 +41,7 @@ func main() {
 		}
 		*out = filepath.Join(home, ".cache", "sqlshape", "mysqlparse", v.String())
 	}
-	b := &parsegen.Build{Src: *src, Out: *out, Wasm: *wasm, Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }}
+	b := &parsegen.Build{Src: *src, Out: *out, Wasm: *wasm, Pkg: *pkg, Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }}
 	if _, err := b.Generate(); err != nil {
 		fatal(err)
 	}

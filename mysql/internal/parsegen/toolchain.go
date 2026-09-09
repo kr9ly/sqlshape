@@ -18,9 +18,17 @@ import (
 type Build struct {
 	Src  string // MySQL server source tree (sparse checkout is enough)
 	Out  string // output directory; library objects are cached under Out/obj and Out/wobj
-	Wasm bool   // also build Out/wasm/mysqlparse.{js,wasm} with em++
-	Log  func(format string, args ...any)
+	Wasm bool   // also build Out/wasm/mysqlparse.wasm with em++
+	// Pkg is the directory of Go package mysqlparse; when set, Generate writes kinds.go
+	// there and Compile (with Wasm) installs the module as wasm/mysqlparse_<major.minor>.wasm.
+	Pkg string
+	Log func(format string, args ...any)
 }
+
+// Wasm exports: the parse API (parse.h) and the allocator the host uses for its input.
+var wasmExports = []string{"_malloc", "_free", "_mysqlparse_init", "_mysqlparse_parse", "_mysqlparse_error",
+	"_mysqlparse_cursor", "_mysqlparse_data", "_mysqlparse_len", "_mysqlparse_free",
+	"_mysqlparse_kind_name", "_mysqlparse_kind_count"}
 
 // Version is the server version read from MYSQL_VERSION.
 type Version struct{ Major, Minor, Patch int }
@@ -110,6 +118,7 @@ func (b *Build) Generate() (*Grammar, error) {
 	}
 	files := map[string]string{
 		"grammar.y":            g.Text,
+		"kinds.h":              g.KindsH(),
 		"lexer.cc":             lx.LexerCC,
 		"shim/sql/sql_lex.h":   lx.SQLLexH,
 		"shim/mysql_version.h": fmt.Sprintf("#pragma once\n#define MYSQL_VERSION_ID %d\n#define MYSQL_SERVER_VERSION %q\n", ver.ID(), ver.String()),
@@ -119,7 +128,12 @@ func (b *Build) Generate() (*Grammar, error) {
 			return nil, err
 		}
 	}
-	b.log("generated for MySQL %s: rules=%d alternatives=%d mid-rule-actions=%d", ver, g.Rules, g.Alternatives, g.MidRuleActions)
+	if b.Pkg != "" {
+		if err := writeFile(filepath.Join(b.Pkg, "kinds.go"), []byte(g.KindsGo("mysqlparse", ver.String()))); err != nil {
+			return nil, err
+		}
+	}
+	b.log("generated for MySQL %s: rules=%d alternatives=%d mid-rule-actions=%d kinds=%d", ver, g.Rules, g.Alternatives, g.MidRuleActions, len(g.Kinds))
 	return g, nil
 }
 
@@ -178,21 +192,41 @@ func (b *Build) Compile() error {
 	for _, f := range []string{"xml.cc", "int2str.cc", "my_strchr.cc", "str_alloc.cc", "sql_chars.cc", "my_uctype.cc", "my_strtoll10.cc", "dtoa.cc"} {
 		lib = append(lib, filepath.Join(src, "strings", f))
 	}
-	ours := []string{"main.cc", "cst.cc", "lexer.cc", "parser.cc"}
+	ours := []string{"parse.cc", "cst.cc", "lexer.cc", "parser.cc"}
 
-	if err := b.compile("g++", cxxflags, lib, ours, filepath.Join(out, "obj"), filepath.Join(out, "mysqlparse")); err != nil {
+	// the native probe driver
+	if err := b.compile("g++", cxxflags, nil, lib, append([]string{"main.cc"}, ours...), filepath.Join(out, "obj"), filepath.Join(out, "mysqlparse")); err != nil {
 		return err
 	}
 	if b.Wasm {
-		if err := b.compile("em++", cxxflags, lib, ours, filepath.Join(out, "wobj"), filepath.Join(out, "wasm", "mysqlparse.js")); err != nil {
+		wasm := filepath.Join(out, "wasm", "mysqlparse.wasm")
+		link := []string{"--no-entry", "-sEXPORTED_FUNCTIONS=" + strings.Join(wasmExports, ","),
+			"-sALLOW_MEMORY_GROWTH=1", "-sSTACK_SIZE=4194304", "-sERROR_ON_UNDEFINED_SYMBOLS=1"}
+		if err := b.compile("em++", cxxflags, link, lib, ours, filepath.Join(out, "wobj"), wasm); err != nil {
 			return err
+		}
+		if b.Pkg != "" {
+			ver, err := ReadVersion(src)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(wasm)
+			if err != nil {
+				return err
+			}
+			dst := filepath.Join(b.Pkg, "wasm", fmt.Sprintf("mysqlparse_%d.%d.wasm", ver.Major, ver.Minor))
+			if err := writeFile(dst, data); err != nil {
+				return err
+			}
+			b.log("installed %s (%d bytes)", dst, len(data))
 		}
 	}
 	return nil
 }
 
-// compile builds the library objects (cached in objdir) in parallel and links them with ours.
-func (b *Build) compile(cxx string, flags, lib, ours []string, objdir, output string) error {
+// compile builds the library objects (cached in objdir) in parallel and links them with
+// ours; linkflags go to the link step only.
+func (b *Build) compile(cxx string, flags, linkflags, lib, ours []string, objdir, output string) error {
 	if err := os.MkdirAll(objdir, 0o755); err != nil {
 		return err
 	}
@@ -223,7 +257,8 @@ func (b *Build) compile(cxx string, flags, lib, ours []string, objdir, output st
 	if firstErr != nil {
 		return firstErr
 	}
-	args := append(append([]string{}, flags...), "-o", output)
+	args := append(append([]string{}, flags...), linkflags...)
+	args = append(args, "-o", output)
 	args = append(args, ours...)
 	args = append(args, objs...)
 	if err := b.run(b.Out, cxx, args...); err != nil {

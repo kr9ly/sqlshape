@@ -40,14 +40,18 @@ epilogue();
 	if g.Rules != 3 || g.Alternatives != 6 || g.MidRuleActions != 1 || g.Start != "stmt" {
 		t.Fatalf("counts: %+v", g)
 	}
+	// kinds: the rules in definition order, then the terminals in order of first use
+	if got := strings.Join(g.Kinds, " "); got != "stmt expr trailing SELECT_SYM ';' NUM '+'" {
+		t.Errorf("kinds %q", got)
+	}
 	for _, want := range []string{
 		`%token SELECT_SYM 258`,
 		"\n%%\n",
-		`  SELECT_SYM expr ';' { $$.node = mk(YYTHD, "stmt", 3, L(YYTHD, "SELECT_SYM", &@1), $2.node, L(YYTHD, "';'", &@3)); *out = $$.node; }`,
-		`| %empty { $$.node = mk(YYTHD, "stmt", 0); *out = $$.node; }`,
-		`| expr '+' expr %prec '+' { $$.node = mk(YYTHD, "expr", 3, $1.node, L(YYTHD, "'+'", &@2), $3.node); }`,
-		`| NUM {} NUM { $$.node = mk(YYTHD, "expr", 2, L(YYTHD, "NUM", &@1), L(YYTHD, "NUM", &@3)); }`,
-		"trailing:\n  NUM { $$.node = mk(YYTHD, \"trailing\", 1, L(YYTHD, \"NUM\", &@1)); }\n;",
+		`  SELECT_SYM expr ';' { $$.node = mk(YYTHD, 0 /* stmt */, 3, L(YYTHD, 3, &@1), $2.node, L(YYTHD, 4, &@3)); *out = $$.node; }`,
+		`| %empty { $$.node = mk(YYTHD, 0 /* stmt */, 0); *out = $$.node; }`,
+		`| expr '+' expr %prec '+' { $$.node = mk(YYTHD, 1 /* expr */, 3, $1.node, L(YYTHD, 6, &@2), $3.node); }`,
+		`| NUM {} NUM { $$.node = mk(YYTHD, 1 /* expr */, 2, L(YYTHD, 5, &@1), L(YYTHD, 5, &@3)); }`,
+		"trailing:\n  NUM { $$.node = mk(YYTHD, 2 /* trailing */, 1, L(YYTHD, 5, &@1)); }\n;",
 	} {
 		if !strings.Contains(g.Text, want) {
 			t.Errorf("missing %q in\n%s", want, g.Text)
@@ -124,10 +128,10 @@ func TestGenerateFromServerSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	v, _ := ReadVersion(src)
-	if v.String() == "8.4.6" && (g.Rules != 945 || g.Alternatives != 3125 || g.MidRuleActions != 67) {
+	if v.String() == "8.4.6" && (g.Rules != 945 || g.Alternatives != 3125 || g.MidRuleActions != 67 || len(g.Kinds) != 1721) {
 		t.Errorf("8.4.6 counts changed: %+v", g)
 	}
-	for _, f := range []string{"grammar.y", "lexer.cc", "shim/sql/sql_lex.h", "shim/sql/thd_shim.h", "main.cc", "cst.cc"} {
+	for _, f := range []string{"grammar.y", "kinds.h", "lexer.cc", "shim/sql/sql_lex.h", "shim/sql/thd_shim.h", "main.cc", "parse.cc", "cst.cc"} {
 		if _, err := os.Stat(filepath.Join(b.Out, f)); err != nil {
 			t.Error(err)
 		}
