@@ -197,3 +197,29 @@ func TestUnknownAlterAlgorithm(t *testing.T) {
 		t.Errorf("want Unsupported for an unknown ALGORITHM, got %v", err)
 	}
 }
+
+func TestViews(t *testing.T) {
+	sql := "SELECT a FROM t WHERE b = 1"
+	stmt, ok := AsPTSelectStmt(mustBuild(t, sql))
+	if !ok {
+		t.Fatal("not a PT_select_stmt")
+	}
+	qe, ok := AsPTQueryExpression(stmt.Qe())
+	if !ok {
+		t.Fatal("no query expression")
+	}
+	// `$1.body` in the server's action already picked the field of the by-value struct
+	spec, ok := AsPTQuerySpecification(qe.Body())
+	if !ok {
+		t.Fatalf("no query specification in %s", Sprint(qe.Body()))
+	}
+	items, _ := spec.ItemList().(List)
+	where, ok := AsPTIWhere(spec.OptWhereClause())
+	if len(items) != 1 || !ok {
+		t.Fatalf("items=%d where=%v (%s)", len(items), ok, Sprint(spec.OptWhereClause()))
+	}
+	cmp, ok := AsPTICompOp(where.Expr())
+	if !ok || cmp.Boolfunc2creator() != Op("=") {
+		t.Errorf("comparison: %s", Sprint(where.Expr()))
+	}
+}

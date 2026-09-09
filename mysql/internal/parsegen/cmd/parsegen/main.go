@@ -25,6 +25,7 @@ func main() {
 	show := flag.String("show", "", "with -actions: comma-separated rule/alt pairs whose symbols and action to print")
 	guards := flag.Bool("guards", false, "with -actions: list the error checks dropped from the actions (with -roots: only those reachable)")
 	roots := flag.String("roots", "", "with -actions: comma-separated start rules; report the unread actions reachable from them")
+	astpkg := flag.String("astpkg", "", "directory of package mysqlast: write views.go there")
 	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
 
@@ -83,7 +84,7 @@ func main() {
 		}
 		*out = filepath.Join(home, ".cache", "sqlshape", "mysqlparse", v.String())
 	}
-	b := &parsegen.Build{Src: *src, Out: *out, Wasm: *wasm, Pkg: *pkg, Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }}
+	b := &parsegen.Build{Src: *src, Out: *out, Wasm: *wasm, Pkg: *pkg, ASTPkg: *astpkg, Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }}
 	if _, err := b.Generate(); err != nil {
 		fatal(err)
 	}

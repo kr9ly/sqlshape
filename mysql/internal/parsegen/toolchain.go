@@ -2,6 +2,7 @@ package parsegen
 
 import (
 	"fmt"
+	"go/format"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -22,7 +23,9 @@ type Build struct {
 	// Pkg is the directory of Go package mysqlparse; when set, Generate writes kinds.go
 	// there and Compile (with Wasm) installs the module as wasm/mysqlparse_<major.minor>.wasm.
 	Pkg string
-	Log func(format string, args ...any)
+	// ASTPkg is the directory of Go package mysqlast; when set, Generate writes views.go there.
+	ASTPkg string
+	Log    func(format string, args ...any)
 }
 
 // Wasm exports: the parse API (parse.h) and the allocator the host uses for its input.
@@ -146,6 +149,11 @@ func (b *Build) Generate() (*Grammar, error) {
 		b.log("%s", strings.TrimSpace(strings.SplitN(names.Report(), "\n", 2)[0]))
 		if err := writeFile(filepath.Join(b.Pkg, "shapes.go"), []byte(ShapesGo("mysqlparse", ver.String(), g.Kinds, alts, names))); err != nil {
 			return nil, err
+		}
+		if b.ASTPkg != "" {
+			if err := writeFile(filepath.Join(b.ASTPkg, "views.go"), []byte(ViewsGo("mysqlast", ver.String(), alts, names))); err != nil {
+				return nil, err
+			}
 		}
 	}
 	b.log("generated for MySQL %s: rules=%d alternatives=%d mid-rule-actions=%d kinds=%d", ver, g.Rules, g.Alternatives, g.MidRuleActions, len(g.Kinds))
@@ -316,6 +324,13 @@ func shorten(args []string) []string {
 func writeFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
+	}
+	if strings.HasSuffix(path, ".go") {
+		formatted, err := format.Source(data)
+		if err != nil {
+			return fmt.Errorf("%s: generated Go does not parse: %w", path, err)
+		}
+		data = formatted
 	}
 	return os.WriteFile(path, data, 0o644)
 }
