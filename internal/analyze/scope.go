@@ -42,6 +42,9 @@ type rte struct {
 	single bool
 	// outerNullable: an outer join made every column nullable (null-extended rows)
 	outerNullable bool
+	// rowNullable: a whole-row reference to this item can be NULL (RETURNING old in an
+	// INSERT, new in a DELETE: the row does not exist)
+	rowNullable bool
 	// pos is the 0-based location of the reference in the statement (relations only);
 	// target marks the leaf an INSERT / UPDATE / DELETE / MERGE writes (facts.go)
 	pos    int32
@@ -185,6 +188,10 @@ type scope struct {
 	parent *scope
 	items  []*rte
 	ctes   map[string]*cte
+	// retVars are RETURNING's old / new row variables (PostgreSQL 18): reached only by a
+	// qualified reference (old.col, old.*, the whole row old), never by a bare column name,
+	// and never expanded by a bare *
+	retVars []*rte
 	// windows are this level's WINDOW clause definitions by name
 	windows map[string]*pgparse.WindowDef
 	// agg: this level's target list / HAVING has an aggregate (one row without GROUP BY)
@@ -261,6 +268,11 @@ func (sc *scope) byAlias(alias string) *rte {
 			}
 		}
 	}
+	for _, v := range sc.retVars {
+		if v.alias == alias {
+			return v
+		}
+	}
 	return nil
 }
 
@@ -278,6 +290,13 @@ func (sc *scope) aliasAt(alias string) (r *rte, ambiguous bool) {
 						return r, true
 					}
 					r = l
+				}
+			}
+		}
+		if r == nil {
+			for _, v := range s.retVars {
+				if v.alias == alias {
+					r = v
 				}
 			}
 		}
@@ -648,8 +667,16 @@ func (a *analyzer) systemColumn(sc *scope, tbl, col string) (rteCol, bool) {
 				}
 			}
 		}
+		if tbl != "" {
+			// old.ctid / new.tableoid in RETURNING (a row variable is only reached qualified)
+			for _, v := range s.retVars {
+				if v.alias == tbl && v.rel != nil {
+					hits = append(hits, v)
+				}
+			}
+		}
 		if len(hits) == 1 {
-			return rteCol{name: col, typ: ref(oid), src: &Source{Table: hits[0].rel.FullName(), Column: col, NotNull: true}}, true
+			return rteCol{name: col, typ: ref(oid), nullable: hits[0].rowNullable, src: &Source{Table: hits[0].rel.FullName(), Column: col, NotNull: !hits[0].rowNullable}}, true
 		}
 		if len(hits) > 1 {
 			return rteCol{}, false

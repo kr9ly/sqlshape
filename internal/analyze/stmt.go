@@ -1271,9 +1271,65 @@ func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32)
 	return nil
 }
 
-func (a *analyzer) returning(list []*pgparse.Node, sc *scope) ([]rteCol, *Error) {
+// returning analyzes a RETURNING clause over sc, the scope of the rows the statement wrote.
+// From PostgreSQL 18 the clause may refer to the row before and after the write as old and
+// new (or as the aliases of RETURNING WITH (OLD AS o, NEW AS n)); oldAbsent / newAbsent say
+// which of the two does not exist for some of the rows (old in an INSERT, new in a DELETE),
+// making its columns and its whole row nullable.
+func (a *analyzer) returning(rc *pgparse.ReturningClause, sc *scope, target *rte, oldAbsent, newAbsent bool) ([]rteCol, *Error) {
+	list := rc.GetExprs()
 	if len(list) == 0 {
 		return nil, nil
+	}
+	if target != nil && a.s.Version.Or() >= pgparse.PG18 {
+		oldName, newName := "old", "new"
+		var oldLoc, newLoc int32
+		explicitOld, explicitNew := false, false
+		for _, on := range rc.GetOptions() {
+			o := on.GetReturningOption()
+			switch o.GetOption() {
+			case pgparse.ReturningOptionKind_RETURNING_OPTION_OLD:
+				if explicitOld {
+					return nil, errAt(codeSyntaxError, o.Location, "OLD cannot be specified multiple times")
+				}
+				oldName, oldLoc, explicitOld = o.Value, o.Location, true
+			case pgparse.ReturningOptionKind_RETURNING_OPTION_NEW:
+				if explicitNew {
+					return nil, errAt(codeSyntaxError, o.Location, "NEW cannot be specified multiple times")
+				}
+				newName, newLoc, explicitNew = o.Value, o.Location, true
+			}
+		}
+		if explicitOld && explicitNew && oldName == newName {
+			return nil, errAt(codeDuplicateAlias, newLoc, "table name %q specified more than once", newName)
+		}
+		for _, v := range []struct {
+			name     string
+			loc      int32
+			explicit bool
+			absent   bool
+		}{{oldName, oldLoc, explicitOld, oldAbsent}, {newName, newLoc, explicitNew, newAbsent}} {
+			// a FROM item of the same name: the default alias steps aside for it, an alias
+			// the clause chose conflicts with it
+			if r, _ := sc.wholeRow(v.name, v.loc); r != nil {
+				if v.explicit {
+					return nil, errAt(codeDuplicateAlias, v.loc, "table name %q specified more than once", v.name)
+				}
+				continue
+			}
+			row := &rte{alias: v.name, cols: append([]rteCol{}, target.cols...), rowType: target.rowType, rel: target.rel, rowNullable: v.absent}
+			if v.absent {
+				for i := range row.cols {
+					row.cols[i].nullable = true
+					if src := row.cols[i].src; src != nil {
+						nullSrc := *src
+						nullSrc.NotNull = false
+						row.cols[i].src = &nullSrc
+					}
+				}
+			}
+			sc.retVars = append(sc.retVars, row)
+		}
 	}
 	for _, n := range list {
 		if w := windowIn(n.GetResTarget().GetVal()); w != nil {
@@ -1284,7 +1340,12 @@ func (a *analyzer) returning(list []*pgparse.Node, sc *scope) ([]rteCol, *Error)
 	a.srfBanNext = "RETURNING"
 	a.inReturning = true
 	defer func() { a.inReturning = false }()
-	return a.selectStmt(sel, sc)
+	cols, err := a.selectStmt(sel, sc)
+	if err == nil && len(cols) == 0 {
+		// every item was a * over a zero-column table
+		return nil, errAt(codeSyntaxError, list[0].GetResTarget().GetLocation(), "RETURNING must have at least one column")
+	}
+	return cols, err
 }
 
 func (a *analyzer) insertStmt(ins *pgparse.InsertStmt, sc *scope) ([]rteCol, *Error) {
@@ -1459,7 +1520,8 @@ func (a *analyzer) insertStmt(ins *pgparse.InsertStmt, sc *scope) ([]rteCol, *Er
 			}
 		}
 	}
-	return a.returning(ins.GetReturningClause().GetExprs(), inner)
+	// old is the row an ON CONFLICT DO UPDATE replaced, and NULL for a row that was inserted
+	return a.returning(ins.ReturningClause, inner, target, true, false)
 }
 
 func (a *analyzer) setClause(targets []*pgparse.Node, rel *schema.Relation, sc *scope) *Error {
@@ -1610,7 +1672,7 @@ func (a *analyzer) updateStmt(upd *pgparse.UpdateStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	a.recordFixed(sc, upd.WhereClause)
-	return a.returning(upd.GetReturningClause().GetExprs(), sc)
+	return a.returning(upd.ReturningClause, sc, target, false, false)
 }
 
 func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Error) {
@@ -1647,7 +1709,7 @@ func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	a.recordFixed(sc, del.WhereClause)
-	return a.returning(del.GetReturningClause().GetExprs(), sc)
+	return a.returning(del.ReturningClause, sc, target, false, true)
 }
 
 // figureColname implements PG's FigureColname for unaliased target entries.
@@ -2008,7 +2070,7 @@ func (a *analyzer) mergeStmt(m *pgparse.MergeStmt, sc *scope) ([]rteCol, *Error)
 	}
 	ret := newScope(sc)
 	ret.items = []*rte{source, target} // RETURNING * expands the source first (transformMergeStmt's rtable order)
-	return a.returning(m.GetReturningClause().GetExprs(), ret)
+	return a.returning(m.ReturningClause, ret, target, a.mergeActions&mergeInsert != 0, a.mergeActions&mergeDelete != 0)
 }
 
 const (

@@ -601,7 +601,7 @@ func (a *analyzer) columnRef(c *pgparse.ColumnRef, sc *scope) (*expr, *Error) {
 			if r != nil {
 				if r.rowType != 0 {
 					a.useAll(r.cols, c.Location)
-					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols}, nil
+					return &expr{typ: ref(r.rowType), nullable: r.rowNullable, node: nodeOf(c), fields: r.cols}, nil
 				}
 				cols := r.expand()
 				a.useAll(cols, c.Location)
@@ -638,7 +638,7 @@ func (a *analyzer) columnRef(c *pgparse.ColumnRef, sc *scope) (*expr, *Error) {
 				a.noteVarScope(sc.scopeOf(r))
 				a.useAll(r.cols, c.Location)
 				if r.rowType != 0 {
-					return &expr{typ: ref(r.rowType), node: nodeOf(c), fields: r.cols, rowOf: r}, nil
+					return &expr{typ: ref(r.rowType), nullable: r.rowNullable, node: nodeOf(c), fields: r.cols, rowOf: r}, nil
 				}
 				if r.scalarFn && len(r.cols) == 1 {
 					return &expr{typ: r.cols[0].typ, nullable: true, node: nodeOf(c)}, nil
