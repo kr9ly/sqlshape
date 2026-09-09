@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // named zones without relying on the host's zoneinfo
+
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 const (
@@ -81,6 +83,9 @@ type dtSession struct {
 	dateOrder   string // "mdy" / "dmy" / "ymd"
 	sqlStandard bool   // IntervalStyle = sql_standard
 	tz          *time.Location
+	// sessionAbbrevs: an abbreviation the session time zone itself uses (LMT, or a local
+	// abbreviation not in the abbreviation file) is accepted as that zone (PostgreSQL 18)
+	sessionAbbrevs bool
 }
 
 type dtExtra struct {
@@ -600,13 +605,16 @@ func decodeUnits(lowtoken string) (typ, val int) {
 }
 
 // decodeTimezoneAbbrev: TZ / DTZ with offset, DYNTZ with its zone, or ftUnknown.
-func decodeTimezoneAbbrev(lowtoken string, extra *dtExtra) (typ, offset int, tz *time.Location, dterr int) {
+func decodeTimezoneAbbrev(lowtoken string, extra *dtExtra, sess *dtSession) (typ, offset int, tz *time.Location, dterr int) {
 	key := lowtoken
 	if len(key) > tokMaxLen {
 		key = key[:tokMaxLen]
 	}
 	a, ok := tzAbbrevs[key]
 	if !ok {
+		if sess != nil && sess.sessionAbbrevs && sess.tz != nil && zoneUsesAbbrev(sess.tz, lowtoken) {
+			return ftDynTZ, 0, sess.tz, 0
+		}
 		return ftUnknown, 0, nil, 0
 	}
 	if a.typ == ftDynTZ {
@@ -618,6 +626,20 @@ func decodeTimezoneAbbrev(lowtoken string, extra *dtExtra) (typ, offset int, tz 
 		return a.typ, 0, loc, 0
 	}
 	return a.typ, a.offset, nil, 0
+}
+
+// zoneUsesAbbrev reports whether loc names one of its periods abbrev (case-insensitively):
+// LMT before the zone's first transition, and the standard / daylight names since. The
+// probe years cover every zone's history without walking its transition table.
+func zoneUsesAbbrev(loc *time.Location, abbrev string) bool {
+	for _, y := range []int{1000, 1850, 1900, 1950, 2000, 2024} {
+		for _, m := range []time.Month{time.January, time.July} {
+			if name, _ := time.Date(y, m, 1, 12, 0, 0, 0, loc).Zone(); strings.EqualFold(name, abbrev) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // decodeTimezone reads "+hh", "+hh:mm", "+hh:mm:ss", "+hhmm". The result follows PG's
@@ -1316,7 +1338,7 @@ func decodeDateTime(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 				}
 			}
 		case dtkString, dtkSpecial:
-			typ, val, valtz, dterr := decodeTimezoneAbbrev(field, extra)
+			typ, val, valtz, dterr := decodeTimezoneAbbrev(field, extra, sess)
 			if dterr != 0 {
 				return dtype, tm, fsec, tzp, dterr
 			}
@@ -1589,7 +1611,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 				}
 			}
 		case dtkString, dtkSpecial:
-			typ, val, valtz, dterr := decodeTimezoneAbbrev(field, extra)
+			typ, val, valtz, dterr := decodeTimezoneAbbrev(field, extra, sess)
 			if dterr != 0 {
 				return tm, fsec, tzp, dterr
 			}
@@ -2344,6 +2366,7 @@ func (a *analyzer) dtSession() *dtSession {
 	}
 	s := &dtSession{dateOrder: "mdy", tz: time.Local}
 	if a.s != nil {
+		s.sessionAbbrevs = a.s.Version.Or() >= pgparse.PG18
 		order, style, zone := a.s.DateTimeSettings()
 		if order != "" {
 			s.dateOrder = order
