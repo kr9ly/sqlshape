@@ -208,7 +208,7 @@ var (
 	reStruct        = regexp.MustCompile(`^(\$\$\.[A-Za-z_0-9]+=[^;]+;)+$`)
 	reStructField   = regexp.MustCompile(`\$\$\.([A-Za-z_0-9]+)=([^;]+);`)
 	reArgChild      = regexp.MustCompile(`^\$(\d+)$`)
-	reArgField      = regexp.MustCompile(`^\$(\d+)((\.|->)[A-Za-z_0-9.]+)$`)
+	reArgField      = regexp.MustCompile(`^\$(\d+)((?:\.|->)[A-Za-z_0-9.]+?)(?:\.get_or_default\(\))?$`)
 )
 
 // normalize strips comments and whitespace so that the shapes can be matched textually;

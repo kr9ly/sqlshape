@@ -47,7 +47,7 @@ func TestSelect(t *testing.T) {
 func TestInsertUpdateDelete(t *testing.T) {
 	for sql, wants := range map[string][]string{
 		"INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')": {"PT_insert(is_replace=false, ", "table_ident=Table_ident(table=t)", "column_list=[PTI_simple_ident_nospvar_ident(ident=a), PTI_simple_ident_nospvar_ident(ident=b)]", "row_value_list=[[Item_int(", "PTI_text_literal_text_string("},
-		"UPDATE t SET a = a + 1, b = ? WHERE id = 3":     {"PT_update(", "value_list=[Item_func_plus(a=PTI_simple_ident_ident(ident=a), b=Item_int(i=1)), Item_param(28)]", "opt_where_clause=PTI_where(expr=PTI_comp_op(left=PTI_simple_ident_ident(ident=id), boolfunc2creator==, right=Item_int(i=3)))"},
+		"UPDATE t SET a = a + 1, b = ? WHERE id = 3":     {"PT_update(", "value_list=[Item_func_plus(a=PTI_simple_ident_ident(ident=a), b=Item_int(i=1)), Item_param(pos_in_query=28)]", "opt_where_clause=PTI_where(expr=PTI_comp_op(left=PTI_simple_ident_ident(ident=id), boolfunc2creator==, right=Item_int(i=3)))"},
 		"DELETE FROM t WHERE id IN (SELECT id FROM u)":   {"PT_delete(", "Item_in_subselect(left_expr=PTI_simple_ident_ident(ident=id), pt_subquery=PT_subquery(query_expression=PT_query_expression("},
 	} {
 		got := Sprint(mustBuild(t, sql))

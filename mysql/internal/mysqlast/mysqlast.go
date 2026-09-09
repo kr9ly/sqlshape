@@ -165,16 +165,31 @@ func (b *Builder) Value(n *mysqlparse.Node) (Value, error) {
 		}
 		return v, nil
 	}
+	// a hand-written hook takes precedence over whatever parsegen read for the alternative
+	if h := b.hooks[hookKey{n.Kind.String(), n.Alt}]; h != nil {
+		return h(b, n, kids)
+	}
 	switch shape.Kind {
 	case mysqlparse.ActDefault:
 		// bison's default is $$ = $1; a rule without an action and several children keeps
 		// them all, minus the end-of-input marker, which carries nothing
-		var real []Value
+		var real, values []Value
 		for _, k := range kids {
-			if t, ok := k.(Token); ok && t.Kind.String() == "END_OF_INPUT" {
-				continue
+			if t, ok := k.(Token); ok {
+				if t.Kind.String() == "END_OF_INPUT" {
+					continue
+				}
+				if isKeyword(t.Kind) {
+					real = append(real, k)
+					continue
+				}
 			}
 			real = append(real, k)
+			values = append(values, k)
+		}
+		// `CREATE view_definition`: the keyword says nothing the child does not
+		if len(values) > 0 && len(values) < len(real) {
+			real = values
 		}
 		switch len(real) {
 		case 0:
@@ -184,6 +199,13 @@ func (b *Builder) Value(n *mysqlparse.Node) (Value, error) {
 		}
 		return &Node{Class: n.Kind.String(), Args: real, Start: n.Start, End: n.End, Implicit: true}, nil
 	case mysqlparse.ActEmpty:
+		// `simple_statement: create { $$= nullptr; }`: the legacy statements build their LEX
+		// in the child and hand up nothing; the AST keeps the child when it is a value
+		if len(kids) == 1 {
+			if _, isToken := kids[0].(Token); !isToken && kids[0] != nil {
+				return kids[0], nil
+			}
+		}
 		return nil, nil
 	case mysqlparse.ActPass:
 		return child(shape.Args[0])
@@ -290,10 +312,18 @@ func (b *Builder) Value(n *mysqlparse.Node) (Value, error) {
 		}
 		return st, nil
 	}
-	if h := b.hooks[hookKey{n.Kind.String(), n.Alt}]; h != nil {
-		return h(b, n, kids)
-	}
 	return nil, &Unsupported{Rule: n.Kind.String(), Alt: n.Alt, Start: n.Start, End: n.End, Text: n.Text(b.SQL)}
+}
+
+// isKeyword reports a token that is a reserved or non-reserved word or punctuation, not
+// an identifier, literal or placeholder.
+func isKeyword(k mysqlparse.Kind) bool {
+	switch k.String() {
+	case "IDENT", "IDENT_QUOTED", "TEXT_STRING", "NCHAR_STRING", "NUM", "LONG_NUM", "ULONGLONG_NUM", "DECIMAL_NUM", "FLOAT_NUM",
+		"HEX_NUM", "BIN_NUM", "LEX_HOSTNAME", "UNDERSCORE_CHARSET", "PARAM_MARKER", "DOLLAR_QUOTED_STRING_SYM":
+		return false
+	}
+	return true
 }
 
 // constant interprets an argument the action wrote as text.
@@ -324,9 +354,12 @@ func isPosition(a mysqlparse.Arg) bool {
 	return strings.HasPrefix(a.Text, "@") && len(a.Text) > 1 && a.Text[1] >= '0' && a.Text[1] <= '9'
 }
 
-// field applies a `.str` / `.column_list` access the action wrote on a child.
+// field applies a `.str` / `.column_list` / `.flags.algo` access the action wrote on a child.
 func field(v Value, f string) Value {
 	f = strings.TrimLeft(f, ".->")
+	if head, rest, ok := strings.Cut(f, "."); ok { // a path: one step at a time
+		return field(field(v, head), rest)
+	}
 	switch x := v.(type) {
 	case Token:
 		switch f {
@@ -339,9 +372,7 @@ func field(v Value, f string) Value {
 			return Number(len(x.Value))
 		}
 	case *Struct:
-		if fv, ok := x.Fields[f]; ok {
-			return fv
-		}
+		return x.Fields[f] // a field the alternative did not set is unset (nil)
 	case *Node:
 		if f == "node" || f == "value" {
 			return x

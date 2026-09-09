@@ -39,12 +39,12 @@ func init() {
 	// predicate: bit_expr IN_SYM '(' expr ',' expr_list ')' -> Item_func_in([bit_expr, expr, expr_list...], negated)
 	register("predicate", "bit_expr IN_SYM '(' expr ',' expr_list ')'", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		l, _ := kids[5].(List)
-		return &Node{Class: "Item_func_in", Args: []Value{append(List{kids[0], kids[3]}, l...), Const("false")}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "Item_func_in", Names: []string{"list", "is_negation"}, Args: []Value{append(List{kids[0], kids[3]}, l...), Const("false")}, Start: n.Start, End: n.End}, nil
 	})
 	// predicate: bit_expr not IN_SYM '(' expr ',' expr_list ')' -> Item_func_in(..., true)
 	register("predicate", "bit_expr not IN_SYM '(' expr ',' expr_list ')'", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		l, _ := kids[6].(List)
-		return &Node{Class: "Item_func_in", Args: []Value{append(List{kids[0], kids[4]}, l...), Const("true")}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "Item_func_in", Names: []string{"list", "is_negation"}, Args: []Value{append(List{kids[0], kids[4]}, l...), Const("true")}, Start: n.Start, End: n.End}, nil
 	})
 	// update_list: update_elem | update_list ',' update_elem -> {column_list, value_list}
 	register("update_list", "update_elem", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
@@ -63,7 +63,7 @@ func init() {
 	})
 	// table_ident: ident '.' ident -> Table_ident(schema, table)
 	register("table_ident", "ident '.' ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
-		return &Node{Class: "Table_ident", Args: []Value{field(kids[0], "str"), field(kids[2], "str")}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "Table_ident", Names: []string{"db", "table"}, Args: []Value{field(kids[0], "str"), field(kids[2], "str")}, Start: n.Start, End: n.End}, nil
 	})
 	// sp_name: ident '.' ident | ident -> sp_name(db, name)
 	register("sp_name", "ident '.' ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
@@ -120,7 +120,7 @@ func init() {
 			}
 			indexType = st.Fields["type"]
 		}
-		return &Node{Class: "PT_inline_index_definition", Args: []Value{kids[1], name, indexType, kids[4], kids[6]}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "PT_inline_index_definition", Names: []string{"type_par", "name", "type", "cols", "options"}, Args: []Value{kids[1], name, indexType, kids[4], kids[6]}, Start: n.Start, End: n.End}, nil
 	})
 	// column_attribute_list: column_attribute_list column_attribute; `CHECK (...) [NOT] ENFORCED`
 	// arrives as two attributes and the server folds the enforcement onto the CHECK
@@ -142,7 +142,7 @@ func init() {
 	})
 	// reference_list: ident -> [Key_part_spec(ident, 0, ORDER_ASC)]
 	register("reference_list", "ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
-		return List{&Node{Class: "Key_part_spec", Args: []Value{field(kids[0], "str"), Number(0), Const("ORDER_ASC")}, Start: n.Start, End: n.End}}, nil
+		return List{&Node{Class: "Key_part_spec", Names: []string{"column_name", "prefix_length", "order"}, Args: []Value{field(kids[0], "str"), Number(0), Const("ORDER_ASC")}, Start: n.Start, End: n.End}}, nil
 	})
 	// ident_string_list: ident -> [ident]
 	register("ident_string_list", "ident", listOf(1))
@@ -174,10 +174,10 @@ func init() {
 func init() {
 	// DROP TABLE / DROP VIEW: legacy LEX; keep what the statement says
 	register("drop_table_stmt", "DROP opt_temporary table_or_tables if_exists table_list opt_restrict", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
-		return &Node{Class: "Sql_cmd_drop_table", Args: []Value{kids[1], kids[3], kids[4], kids[5]}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "Sql_cmd_drop_table", Names: []string{"temporary", "if_exists", "tables", "restrict"}, Args: []Value{kids[1], kids[3], kids[4], kids[5]}, Start: n.Start, End: n.End}, nil
 	})
 	register("drop_view_stmt", "DROP VIEW_SYM if_exists table_list opt_restrict", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
-		return &Node{Class: "Sql_cmd_drop_view", Args: []Value{kids[2], kids[3], kids[4]}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "Sql_cmd_drop_view", Names: []string{"if_exists", "views", "restrict"}, Args: []Value{kids[2], kids[3], kids[4]}, Start: n.Start, End: n.End}, nil
 	})
 	// view_query_block: query_expression_with_opt_locking_clauses view_check_option
 	register("view_query_block", "query_expression_with_opt_locking_clauses view_check_option", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
@@ -199,7 +199,7 @@ func init() {
 	// key_part: ident '(' NUM ')' opt_ordering_direction -> PT_key_part_specification(name, direction, prefix length)
 	register("key_part", "ident '(' NUM ')' opt_ordering_direction", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		length, _ := number(kids[2])
-		return &Node{Class: "PT_key_part_specification", Args: []Value{field(kids[0], "str"), kids[4], length}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "PT_key_part_specification", Names: []string{"column_name", "order", "prefix_length"}, Args: []Value{field(kids[0], "str"), kids[4], length}, Start: n.Start, End: n.End}, nil
 	})
 	// window_frame_extent: window_frame_start -> PT_borders(start, CURRENT ROW)
 	register("window_frame_extent", "window_frame_start", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
@@ -260,7 +260,7 @@ func init() {
 	})
 	// param_marker: PARAM_MARKER -> Item_param(position)
 	register("param_marker", "PARAM_MARKER", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
-		return &Node{Class: "Item_param", Args: []Value{Number(n.Start)}, Start: n.Start, End: n.End}, nil
+		return &Node{Class: "Item_param", Names: []string{"pos_in_query"}, Args: []Value{Number(n.Start)}, Start: n.Start, End: n.End}, nil
 	})
 	// joined_table: table_reference inner_join_type table_reference -> PT_cross_join(a, type, b)
 	// attached where the server's add_cross_join puts it: at the leftmost table of the right
@@ -314,4 +314,41 @@ func init() {
 			Order: []string{"target", "length", "dec", "charset", "binary"}}
 		return st, nil
 	})
+}
+
+func init() {
+	// CREATE VIEW is legacy LEX all the way down: view_tail names the view and its column
+	// list, view_query_block carries the query and the check option, the outer alternative
+	// the OR REPLACE / ALGORITHM / DEFINER. They fold into one node here.
+	register("view_tail", "view_suid VIEW_SYM table_ident opt_derived_column_list AS view_query_block", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		var query, check Value
+		if st, ok := kids[5].(*Struct); ok {
+			query, check = st.Fields["query"], st.Fields["check_option"]
+		}
+		var suid Value
+		if st, ok := kids[0].(*Struct); ok {
+			suid = st.Fields["create_view_suid"]
+		}
+		return &Node{Class: "Sql_cmd_create_view", Names: []string{"suid", "name", "column_list", "query", "check_option"},
+			Args: []Value{suid, kids[2], kids[3], query, check}, Start: n.Start, End: n.End}, nil
+	})
+	viewHead := func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		view, ok := kids[len(kids)-1].(*Node)
+		if !ok || view.Class != "Sql_cmd_create_view" {
+			return kids[len(kids)-1], nil // a trigger, routine or event: left as the server's own nodes
+		}
+		var mode, algorithm Value
+		if len(kids) == 4 {
+			if st, ok := kids[0].(*Struct); ok {
+				mode, algorithm = st.Fields["create_view_mode"], st.Fields["create_view_algorithm"]
+			}
+		}
+		view.Names = append(view.Names, "replace", "algorithm", "definer")
+		view.Args = append(view.Args, mode, algorithm, kids[len(kids)-3])
+		view.Start, view.End = n.Start, n.End
+		return view, nil
+	}
+	register("view_or_trigger_or_sp_or_event", "view_replace_or_algorithm definer_opt init_lex_create_info view_tail", viewHead)
+	register("view_or_trigger_or_sp_or_event", "definer init_lex_create_info definer_tail", viewHead)
+	register("view_or_trigger_or_sp_or_event", "no_definer init_lex_create_info no_definer_tail", viewHead)
 }
