@@ -13,4 +13,6 @@ corpus.sql
 corpus.out
 fails.tsv
 *.o
+fails*.tsv
+corpus*.out
 shim/sql/sql_lex.h

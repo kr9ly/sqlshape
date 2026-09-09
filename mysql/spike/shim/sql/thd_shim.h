@@ -46,4 +46,4 @@ inline void push_deprecated_warn_no_replacement(THD *, const char *) {}
 inline void warn_on_deprecated_charset(THD *, const CHARSET_INFO *, const char *) {}
 inline void warn_on_deprecated_collation(THD *, const CHARSET_INFO *) {}
 extern CHARSET_INFO my_charset_utf8mb4_0900_ai_ci;  // referenced by the lexer; the spike never has it as a real collation
-namespace mysql::collation { const CHARSET_INFO *find_primary(const char *cs_name); }
+#include "mysql/strings/collations.h"
