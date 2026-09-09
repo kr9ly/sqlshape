@@ -56,8 +56,9 @@ jobs:
       # depend on, the stale blocks no longer line up and the merged total drops by ten points
       - name: Test
         run: |
-          pkgs=$(go list ./... | grep -v -e /internal/catalog/gen -e /cmd/sqlshape | paste -sd,)
-          go test ./... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
+          # ./... is the root module; cmd/sqlshape and mysql are nested modules in the workspace
+          pkgs=$(go list ./... ./mysql/... | grep -v -e /internal/catalog/gen -e /parsegen/cmd | paste -sd,)
+          go test ./... ./cmd/sqlshape/... ./mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
           grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the

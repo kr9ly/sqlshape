@@ -8,6 +8,14 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Changed
+
+- The binary is its own Go module, `github.com/kr9ly/sqlshape/cmd/sqlshape/v2`, under the GNU
+  General Public License v2; install it with `go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest`.
+  The runtime (`github.com/kr9ly/sqlshape`), `pgtest` and everything a checked program imports
+  stay Apache 2.0 at their import paths, in the 1.x line. Releases of the binary are tagged
+  `cmd/sqlshape/vX.Y.Z`.
+
 ## [1.2.0] - 2026-09-09
 
 ### Added

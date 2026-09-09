@@ -83,7 +83,7 @@ The checker is a `go vet` tool, so it runs wherever `go vet` runs. Build it once
 the `-vettool`:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
 $ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 

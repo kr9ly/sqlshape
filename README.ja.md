@@ -25,7 +25,7 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 検査器とマイグレーションコマンドは1つのバイナリになっている。Go 1.26以上で:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
 $ sqlshape version
 ```
 
@@ -163,5 +163,9 @@ PostgreSQL 17と18に対応し、どちらかは`schema.sql`が宣言する。�
 
 ## License
 
+The `sqlshape` runtime, `pgtest` and everything a checked program links (the root module) are
 Apache License 2.0, see [LICENSE](LICENSE). The embedded `pg_catalog` data and the validation
-rules ported from PostgreSQL are used under the PostgreSQL License, see [NOTICE](NOTICE).
+rules ported from PostgreSQL are used under the PostgreSQL License, see [NOTICE](NOTICE). The
+`sqlshape` binary (`cmd/sqlshape`) and the MySQL dialect (`mysql`) are separate modules under
+the GNU General Public License v2, see [cmd/sqlshape/LICENSE](cmd/sqlshape/LICENSE); the binary
+is a development tool, and nothing under it is linked into your program.
