@@ -50,6 +50,11 @@ func main() {
 			fmt.Print(parsegen.ReachReport(alts, strings.Split(*roots, ",")))
 		} else {
 			fmt.Print(parsegen.ActionReport(alts))
+			names, err := parsegen.ReadNames(*src, string(yacc), alts)
+			if err != nil {
+				fatal(err)
+			}
+			fmt.Print(names.Report())
 		}
 		return
 	}

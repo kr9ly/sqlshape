@@ -139,7 +139,12 @@ func (b *Build) Generate() (*Grammar, error) {
 		if len(alts) != g.Alternatives {
 			return nil, fmt.Errorf("actions: read %d alternatives, the grammar has %d", len(alts), g.Alternatives)
 		}
-		if err := writeFile(filepath.Join(b.Pkg, "shapes.go"), []byte(ShapesGo("mysqlparse", ver.String(), g.Kinds, alts))); err != nil {
+		names, err := ReadNames(b.Src, string(yacc), alts)
+		if err != nil {
+			return nil, err
+		}
+		b.log("%s", strings.TrimSpace(strings.SplitN(names.Report(), "\n", 2)[0]))
+		if err := writeFile(filepath.Join(b.Pkg, "shapes.go"), []byte(ShapesGo("mysqlparse", ver.String(), g.Kinds, alts, names))); err != nil {
 			return nil, err
 		}
 	}

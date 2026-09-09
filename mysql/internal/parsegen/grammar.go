@@ -255,7 +255,7 @@ func (g *Grammar) KindsGo(pkg string, version string) string {
 // ShapesGo is the Go source of the action table: for every (rule, alternative), what the
 // server's action did with the children, as ReadActions read it. Package mysqlparse builds
 // the AST from it.
-func ShapesGo(pkg string, version string, kinds []string, alts []Alt) string {
+func ShapesGo(pkg string, version string, kinds []string, alts []Alt, names *Names) string {
 	byRule := map[string][]Alt{}
 	for _, a := range alts {
 		byRule[a.Rule] = append(byRule[a.Rule], a)
@@ -276,6 +276,28 @@ func ShapesGo(pkg string, version string, kinds []string, alts []Alt) string {
 			}
 			if a.Const != "" {
 				fmt.Fprintf(&b, ", Const: %s", strconv.Quote(a.Const))
+			}
+			if names != nil && a.Kind == ActNew && a.Class != "" {
+				if params := names.ParamNames(a.Class, len(a.Args), HasPosArg(a)); params != nil {
+					b.WriteString(", Params: []string{")
+					for i, p := range params {
+						if i > 0 {
+							b.WriteString(", ")
+						}
+						b.WriteString(strconv.Quote(p))
+					}
+					b.WriteString("}")
+				}
+			}
+			if names != nil && a.Kind == ActStruct {
+				// positional fields ("0", "1") take the names of the rule's value type
+				if fields := names.StructFields(a.Rule); fields != nil {
+					for i := range a.Fields {
+						if k, err := strconv.Atoi(a.Fields[i].Name); err == nil && k < len(fields) {
+							a.Fields[i].Name = fields[k]
+						}
+					}
+				}
 			}
 			if len(a.Args) > 0 {
 				b.WriteString(", Args: []Arg{")

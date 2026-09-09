@@ -5,10 +5,11 @@ package mysqlparse
 // reads it out of sql_yacc.yy (shapes.go); it is the map from the CST to an AST.
 type Shape struct {
 	Kind   ActKind
-	Class  string  // ActNew, ActListNew: the server's parse-tree class
-	Const  string  // ActConst: the constant as written (an enum value, a literal)
-	Args   []Arg   // ActNew: constructor arguments; ActPass: the child; ActListAppend: list, element; ActFlags: the two operands; ActNumber: the token
-	Fields []Field // ActStruct: field assignments
+	Class  string   // ActNew, ActListNew: the server's parse-tree class
+	Const  string   // ActConst: the constant as written (an enum value, a literal)
+	Args   []Arg    // ActNew: constructor arguments; ActPass: the child; ActListAppend: list, element; ActFlags: the two operands; ActNumber: the token
+	Params []string // ActNew: the constructor's parameter names, aligned with Args (nil when unknown)
+	Fields []Field  // ActStruct: field assignments
 }
 
 // ActKind is the form of a semantic action.

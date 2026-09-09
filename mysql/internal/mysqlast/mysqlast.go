@@ -29,11 +29,24 @@ type Value any
 type Node struct {
 	Class string
 	Args  []Value
+	// Names are the constructor's parameter names aligned with Args, when the server's
+	// headers gave them (nil otherwise; hooks may set them).
+	Names []string
 	Start int
 	End   int
 	// Implicit marks a rule that had no action and more than one child: the node is named
 	// after the rule and holds every child, which is bison's default only for the first.
 	Implicit bool
+}
+
+// Arg returns the argument named name, or nil.
+func (n *Node) Arg(name string) Value {
+	for i, k := range n.Names {
+		if k == name && i < len(n.Args) {
+			return n.Args[i]
+		}
+	}
+	return nil
 }
 
 // List is a server List<T> / Mem_root_array<T>: the elements in order.
@@ -163,7 +176,7 @@ func (b *Builder) Value(n *mysqlparse.Node) (Value, error) {
 		return out, nil
 	case mysqlparse.ActNew:
 		node := &Node{Class: shape.Class, Start: n.Start, End: n.End}
-		for _, a := range shape.Args {
+		for i, a := range shape.Args {
 			if isPosition(a) {
 				continue
 			}
@@ -172,6 +185,13 @@ func (b *Builder) Value(n *mysqlparse.Node) (Value, error) {
 				return nil, err
 			}
 			node.Args = append(node.Args, v)
+			if shape.Params != nil {
+				name := ""
+				if i < len(shape.Params) {
+					name = shape.Params[i]
+				}
+				node.Names = append(node.Names, name)
+			}
 		}
 		// flatten_associative_operator: `a AND b AND c` is one Item_cond_and over three
 		if strings.HasPrefix(node.Class, "Item_cond_") && len(node.Args) == 2 {
@@ -354,6 +374,10 @@ func sprint(b *strings.Builder, v Value) {
 		for i, a := range x.Args {
 			if i > 0 {
 				b.WriteString(", ")
+			}
+			if i < len(x.Names) && x.Names[i] != "" {
+				b.WriteString(x.Names[i])
+				b.WriteByte('=')
 			}
 			sprint(b, a)
 		}

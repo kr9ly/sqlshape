@@ -30,14 +30,13 @@ func TestSelect(t *testing.T) {
 	v := mustBuild(t, "SELECT a, `b` AS c FROM t WHERE d = 1 ORDER BY a LIMIT 10")
 	got := Sprint(v)
 	for _, want := range []string{
-		"PT_select_stmt(",
-		"PT_query_specification(",
-		"PTI_expr_with_alias(PTI_simple_ident_ident(a)",
-		`PTI_expr_with_alias(PTI_simple_ident_ident(IDENT_QUOTED="b"), c)`,
-		"PT_table_factor_table_ident(Table_ident(",
-		"PTI_where(PTI_comp_op(PTI_simple_ident_ident(d), &comp_eq_creator, Item_int(1)))",
-		"PT_order(",
-		"PT_limit_clause(",
+		"PT_select_stmt(qe=PT_query_expression(body=PT_query_specification(",
+		"item_list=[PTI_expr_with_alias(expr=PTI_simple_ident_ident(ident=a), alias=nil)",
+		`PTI_expr_with_alias(expr=PTI_simple_ident_ident(ident=IDENT_QUOTED="b"), alias=c)`,
+		"from_clause=[PT_table_factor_table_ident(table_ident=Table_ident(table=t)",
+		"opt_where_clause=PTI_where(expr=PTI_comp_op(left=PTI_simple_ident_ident(ident=d), boolfunc2creator=&comp_eq_creator, right=Item_int(",
+		"order=PT_order(order_list=[PT_order_expr(item=PTI_simple_ident_ident(ident=a), dir=ORDER_NOT_RELEVANT)])",
+		"limit=PT_limit_clause(limit_options={limit: Item_uint(",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
@@ -47,9 +46,9 @@ func TestSelect(t *testing.T) {
 
 func TestInsertUpdateDelete(t *testing.T) {
 	for sql, wants := range map[string][]string{
-		"INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')": {"PT_insert(false, INSERT, TL_WRITE_CONCURRENT_DEFAULT, false, Table_ident(t), nil, [PTI_simple_ident_nospvar_ident(a), PTI_simple_ident_nospvar_ident(b)], [[Item_int(1), PTI_text_literal_text_string(", "[Item_int(2), PTI_text_literal_text_string("},
-		"UPDATE t SET a = a + 1, b = ? WHERE id = 3":     {"PT_update(", "Item_func_plus(PTI_simple_ident_ident(a), Item_int(1))", "Item_param(", "PTI_comp_op(PTI_simple_ident_ident(id), &comp_eq_creator, Item_int(3))"},
-		"DELETE FROM t WHERE id IN (SELECT id FROM u)":   {"PT_delete(", "Item_in_subselect(PTI_simple_ident_ident(id), PT_subquery("},
+		"INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')": {"PT_insert(is_replace=false, ", "table_ident=Table_ident(table=t)", "column_list=[PTI_simple_ident_nospvar_ident(ident=a), PTI_simple_ident_nospvar_ident(ident=b)]", "row_value_list=[[Item_int(", "PTI_text_literal_text_string("},
+		"UPDATE t SET a = a + 1, b = ? WHERE id = 3":     {"PT_update(", "value_list=[Item_func_plus(a=PTI_simple_ident_ident(ident=a), b=Item_int(i=1)), Item_param(28)]", "opt_where_clause=PTI_where(expr=PTI_comp_op(left=PTI_simple_ident_ident(ident=id), boolfunc2creator=&comp_eq_creator, right=Item_int(i=3)))"},
+		"DELETE FROM t WHERE id IN (SELECT id FROM u)":   {"PT_delete(", "Item_in_subselect(left_expr=PTI_simple_ident_ident(ident=id), pt_subquery=PT_subquery(query_expression=PT_query_expression("},
 	} {
 		got := Sprint(mustBuild(t, sql))
 		for _, want := range wants {

@@ -108,10 +108,10 @@ func init() {
 		name := kids[0]
 		var indexType Value
 		if st, ok := kids[2].(*Struct); ok {
-			if v := st.Fields["0"]; v != nil {
+			if v := st.Fields["name"]; v != nil {
 				name = v
 			}
-			indexType = st.Fields["1"]
+			indexType = st.Fields["type"]
 		}
 		return &Node{Class: "PT_inline_index_definition", Args: []Value{kids[1], name, indexType, kids[4], kids[6]}, Start: n.Start, End: n.End}, nil
 	})
