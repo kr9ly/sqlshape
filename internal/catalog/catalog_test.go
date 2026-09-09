@@ -1,14 +1,35 @@
 package catalog
 
-import "testing"
+import (
+	"strconv"
+	"strings"
+	"testing"
+)
 
 func TestLoad(t *testing.T) {
-	c, err := Load()
+	for _, major := range Majors() {
+		c, err := Load(major)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Major != major || !strings.HasPrefix(c.Version, strconv.Itoa(major)+".") {
+			t.Errorf("Load(%d): major %d, version %q", major, c.Major, c.Version)
+		}
+		if len(Available(major)) < 10 {
+			t.Errorf("PostgreSQL %d: %d extension dumps", major, len(Available(major)))
+		}
+		t.Logf("pg %s: %d types, %d funcs, %d operators, %d casts, %d aggregates",
+			c.Version, len(c.Types), len(c.Funcs), len(c.Operators), len(c.Casts), len(c.Aggregates))
+	}
+	if got := Majors(); len(got) != 2 || got[0] != 17 || got[1] != 18 {
+		t.Errorf("Majors() = %v", got)
+	}
+	if _, err := Load(16); err == nil || !strings.Contains(err.Error(), "no embedded catalog") {
+		t.Errorf("Load(16): %v", err)
+	}
+	c, err := Load(17)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if c.Version == "" {
-		t.Error("empty version")
 	}
 	t.Logf("pg %s: %d types, %d funcs, %d operators, %d casts, %d aggregates",
 		c.Version, len(c.Types), len(c.Funcs), len(c.Operators), len(c.Casts), len(c.Aggregates))
@@ -81,7 +102,7 @@ func TestLoad(t *testing.T) {
 }
 
 func TestWithExtensions(t *testing.T) {
-	base, err := Load()
+	base, err := Load(17)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +142,7 @@ func TestWithExtensions(t *testing.T) {
 	if _, err := base.WithExtensions([]string{"nope"}); err == nil {
 		t.Fatal("unknown extension must fail")
 	}
-	if avail := Available(); len(avail) < 10 {
+	if avail := Available(17); len(avail) < 10 {
 		t.Fatalf("Available: %v", avail)
 	}
 }

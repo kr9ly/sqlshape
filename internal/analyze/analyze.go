@@ -136,7 +136,11 @@ type analyzer struct {
 // as the view is created (PG fixes them at CREATE VIEW; see schema.Relation.Frozen). Use
 // this rather than schema.Load for a schema the analyzer will read.
 func Load(schemaSQL string) (*schema.Schema, error) {
-	cat, err := catalog.Load()
+	v, err := schema.DeclaredVersion(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	cat, err := catalog.Load(int(v))
 	if err != nil {
 		return nil, err
 	}

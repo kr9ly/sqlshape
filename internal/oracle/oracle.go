@@ -19,14 +19,26 @@ import (
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
-// Version is the PostgreSQL version the oracle runs. The generated catalog
-// must be produced from the same major version.
-const Version = embeddedpostgres.V17
+// binaries is the PostgreSQL release the oracle runs for each supported major version.
+// The catalog for a major is generated from this release (internal/catalog/gen).
+var binaries = map[pgparse.Version]embeddedpostgres.PostgresVersion{
+	pgparse.PG17: embeddedpostgres.V17,
+	pgparse.PG18: embeddedpostgres.V18,
+}
+
+// Version is the release the oracle runs for the default major version.
+var Version = binaries[pgparse.Default]
+
+// Release is the PostgreSQL release run for a major version ("17.5.0").
+func Release(v pgparse.Version) string { return string(binaries[v.Or()]) }
 
 // Oracle owns one embedded PostgreSQL instance and one connection to it.
 type Oracle struct {
+	version     pgparse.Version
 	pg          *embeddedpostgres.EmbeddedPostgres
 	conn        *pgx.Conn
 	runtimePath string
@@ -83,7 +95,16 @@ func (e *PgError) Error() string {
 // and a server start rather than an archive extraction and an initdb (~0.3s instead of
 // ~4s). Data lives in a temp dir removed by Close.
 func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
-	cache, err := ensureCache()
+	return StartVersion(ctx, pgparse.Default, schemaSQL)
+}
+
+// StartVersion is Start on the PostgreSQL major version v.
+func StartVersion(ctx context.Context, v pgparse.Version, schemaSQL string) (*Oracle, error) {
+	v = v.Or()
+	if _, ok := binaries[v]; !ok {
+		return nil, fmt.Errorf("oracle: no PostgreSQL %d binary", int(v))
+	}
+	cache, err := ensureCache(v)
 	if err != nil {
 		return nil, err
 	}
@@ -102,12 +123,12 @@ func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
 		os.RemoveAll(runtimePath)
 		return nil, fmt.Errorf("copy data directory: %w", err)
 	}
-	pg := embeddedpostgres.NewDatabase(config(cache, filepath.Join(runtimePath, "runtime"), dataPath, port))
+	pg := embeddedpostgres.NewDatabase(config(v, cache, filepath.Join(runtimePath, "runtime"), dataPath, port))
 	if err := pg.Start(); err != nil {
 		os.RemoveAll(runtimePath)
 		return nil, fmt.Errorf("start embedded postgres: %w", err)
 	}
-	o := &Oracle{pg: pg, runtimePath: runtimePath}
+	o := &Oracle{version: v, pg: pg, runtimePath: runtimePath}
 	dsn := fmt.Sprintf("postgres://sqlshape:sqlshape@127.0.0.1:%d/sqlshape?sslmode=disable", port)
 	o.dsn = dsn
 	conn, err := pgx.Connect(ctx, dsn)
@@ -126,9 +147,9 @@ func Start(ctx context.Context, schemaSQL string) (*Oracle, error) {
 }
 
 // config is the embedded-postgres configuration: binaries from cache, data at dataPath.
-func config(cache, runtimePath, dataPath string, port int) embeddedpostgres.Config {
+func config(v pgparse.Version, cache, runtimePath, dataPath string, port int) embeddedpostgres.Config {
 	cfg := embeddedpostgres.DefaultConfig().
-		Version(Version).
+		Version(binaries[v]).
 		Port(uint32(port)).
 		BinariesPath(cache).
 		RuntimePath(runtimePath).
@@ -150,24 +171,24 @@ func config(cache, runtimePath, dataPath string, port int) embeddedpostgres.Conf
 }
 
 // cacheDir is where the extracted binaries and the template data directory live:
-// $SQLSHAPE_PG_CACHE, else <user cache dir>/sqlshape/pg-<version>.
-func cacheDir() (string, error) {
+// $SQLSHAPE_PG_CACHE/pg-<version>, else <user cache dir>/sqlshape/pg-<version>.
+func cacheDir(v pgparse.Version) (string, error) {
 	if p := os.Getenv("SQLSHAPE_PG_CACHE"); p != "" {
-		return p, nil
+		return filepath.Join(p, "pg-"+string(binaries[v])), nil
 	}
 	base, err := os.UserCacheDir()
 	if err != nil {
 		base = os.TempDir()
 	}
-	return filepath.Join(base, "sqlshape", "pg-"+string(Version)), nil
+	return filepath.Join(base, "sqlshape", "pg-"+string(binaries[v])), nil
 }
 
 // ensureCache fills the cache on first use: the binaries (embedded-postgres downloads
 // and extracts them) and a data directory initialized with the sqlshape user and
 // database, taken by starting a server once and stopping it. A lock file serializes
 // processes racing for the first fill; a marker file says the fill completed.
-func ensureCache() (string, error) {
-	dir, err := cacheDir()
+func ensureCache(v pgparse.Version) (string, error) {
+	dir, err := cacheDir(v)
 	if err != nil {
 		return "", err
 	}
@@ -202,14 +223,14 @@ func ensureCache() (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(tmpRuntime)
-	pg := embeddedpostgres.NewDatabase(config(dir, tmpRuntime, filepath.Join(dir, "data"), port))
+	pg := embeddedpostgres.NewDatabase(config(v, dir, tmpRuntime, filepath.Join(dir, "data"), port))
 	if err := pg.Start(); err != nil {
 		return "", fmt.Errorf("initialize embedded postgres: %w", err)
 	}
 	if err := pg.Stop(); err != nil {
 		return "", fmt.Errorf("stop embedded postgres after initialization: %w", err)
 	}
-	if err := os.WriteFile(marker, []byte(string(Version)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(string(binaries[v])+"\n"), 0o644); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -354,6 +375,9 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// Version is the PostgreSQL major version this oracle runs.
+func (o *Oracle) Version() pgparse.Version { return o.version }
+
 // Conn exposes the underlying connection for tooling (catalog dump). Tests use Describe.
 func (o *Oracle) Conn() *pgx.Conn { return o.conn }
 
@@ -363,7 +387,7 @@ func (o *Oracle) ConnString() string { return o.dsn }
 // Session opens another connection to the same server, to the given database, for
 // callers that work in parallel. Closing a session closes only its connection.
 func (o *Oracle) Session(ctx context.Context, database string) (*Oracle, error) {
-	s := &Oracle{dsn: o.dsn}
+	s := &Oracle{version: o.version, dsn: o.dsn}
 	if err := s.Reconnect(ctx, database); err != nil {
 		return nil, err
 	}

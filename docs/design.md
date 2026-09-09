@@ -117,7 +117,7 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 | `internal/expand` | テンプレートの全展開。`{{.X}}` → `$n`と`P`上のパス |
 | `internal/pgparse` | パーサ。libpg_queryを版ごとにWebAssemblyへビルドして埋め込み、wazeroで実行する。`Version.Parse` / `Deparse` / `SplitWithScanner` / `ParsePlPgSqlToJSON`と、最新版のprotoから生成したノード型 |
 | `internal/schema` | libpg_queryでschema.sqlをカタログの上に載せる。テーブル・ビュー・enum・ドメイン・複合型・関数・制約・ポリシー・seed |
-| `internal/catalog` | 埋め込みのpg_catalog（PG 17の型・関数・演算子・キャスト・集約）と拡張のdump |
+| `internal/catalog` | 埋め込みのpg_catalog（版ごとの型・関数・演算子・キャスト・集約、`data/<major>/`）と拡張のdump |
 | `internal/analyze` | アナライザー本体。10章の型変換、スコープ、DML、`$n`推論、nullability、カーディナリティ、違反の列挙、PG互換のエラー。文の事実（`facts.Facts`）の生産と、義務の述語を事実の言語に落とす`Lower` |
 | `internal/facts` | アナライザーと義務検査の間のデータ契約。文種・スコープの木・葉・正規化述語・等値の辺・固定列・代入集合。パーサのノードを含まず、方言を知らない |
 | `internal/obligation` | 境界の規則。schema.sqlの`require` / `visible where`とvetのフラグを義務に読み、事実に対して履行を判定する（[obligations.md](obligations.md)）。`analyze`にも`vet`にも依存しない |

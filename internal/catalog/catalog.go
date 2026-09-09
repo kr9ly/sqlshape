@@ -13,12 +13,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 )
 
-//go:embed data/VERSION data/*.tsv data/ext
+// data holds one directory per PostgreSQL major version: data/<major>/VERSION, the
+// bootstrap TSVs, and data/<major>/ext/<name>/ for each dumped extension.
+//
+//go:embed data
 var data embed.FS
 
 // OID is a PostgreSQL object identifier.
@@ -213,6 +217,9 @@ type Range struct {
 
 // Catalog is the loaded bootstrap catalog with lookup indexes.
 type Catalog struct {
+	// Major is the PostgreSQL major version the catalog was dumped from; Version the
+	// release ("17.5").
+	Major   int
 	Version string
 	// Extensions are the extensions merged in (WithExtensions), in load order.
 	Extensions []*Extension
@@ -239,15 +246,44 @@ type Catalog struct {
 }
 
 var (
-	loadOnce sync.Once
-	loaded   *Catalog
-	loadErr  error
+	loadMu sync.Mutex
+	loaded = map[int]*loadedCatalog{}
 )
 
-// Load returns the embedded bootstrap catalog. Parsing happens once per process.
-func Load() (*Catalog, error) {
-	loadOnce.Do(func() { loaded, loadErr = parse() })
-	return loaded, loadErr
+type loadedCatalog struct {
+	once sync.Once
+	c    *Catalog
+	err  error
+}
+
+// Load returns the embedded bootstrap catalog of a PostgreSQL major version. Parsing
+// happens once per process per version.
+func Load(major int) (*Catalog, error) {
+	loadMu.Lock()
+	l := loaded[major]
+	if l == nil {
+		l = &loadedCatalog{}
+		loaded[major] = l
+	}
+	loadMu.Unlock()
+	l.once.Do(func() { l.c, l.err = parse(major) })
+	return l.c, l.err
+}
+
+// Majors lists the PostgreSQL major versions with an embedded catalog, ascending.
+func Majors() []int {
+	entries, err := data.ReadDir("data")
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, e := range entries {
+		if n, err := strconv.Atoi(e.Name()); err == nil && e.IsDir() {
+			out = append(out, n)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 // TypeByOID returns the type with the given oid, or nil.
@@ -275,14 +311,16 @@ func (c *Catalog) CastBetween(source, target OID) *Cast { return c.castByPair[[2
 // AggregateByFn returns the pg_aggregate row for an aggregate function oid, or nil.
 func (c *Catalog) AggregateByFn(fn OID) *Aggregate { return c.aggByFn[fn] }
 
-func parse() (*Catalog, error) {
+func parse(major int) (*Catalog, error) {
 	c := newCatalog()
-	v, err := data.ReadFile("data/VERSION")
+	c.Major = major
+	dir := "data/" + strconv.Itoa(major)
+	v, err := data.ReadFile(dir + "/VERSION")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("catalog: no embedded catalog for PostgreSQL %d (run: go run ./internal/catalog/gen -pg %d)", major, major)
 	}
 	c.Version = strings.TrimSpace(string(v))
-	if err := c.load("data", "", func(o OID) OID { return o }); err != nil {
+	if err := c.load(dir, "", func(o OID) OID { return o }); err != nil {
 		return nil, err
 	}
 	c.index()

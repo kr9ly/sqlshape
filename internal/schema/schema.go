@@ -453,7 +453,11 @@ type FuncArg struct {
 
 // Load parses schemaSQL and builds the Schema over the embedded bootstrap catalog.
 func Load(schemaSQL string) (*Schema, error) {
-	cat, err := catalog.Load()
+	v, err := DeclaredVersion(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	cat, err := catalog.Load(int(v))
 	if err != nil {
 		return nil, err
 	}
@@ -473,9 +477,12 @@ func LoadWithHook(cat *catalog.Catalog, schemaSQL string, hook func(*Schema, *Re
 // LoadWithHooks is LoadWithHook with a NotNullHook installed too, before the first
 // statement applies.
 func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook func(*Schema, *Relation)) (*Schema, error) {
-	version, err := declaredVersion(schemaSQL)
+	version, err := DeclaredVersion(schemaSQL)
 	if err != nil {
 		return nil, err
+	}
+	if cat.Major != int(version) {
+		return nil, fmt.Errorf("schema: the schema declares PostgreSQL %d but the catalog is PostgreSQL %d's", int(version), cat.Major)
 	}
 	tree, err := version.Parse(schemaSQL)
 	if err != nil {
@@ -490,7 +497,7 @@ func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook
 		if ce == nil {
 			continue
 		}
-		if _, err := catalog.ReadExtension(ce.Extname); err != nil {
+		if _, err := catalog.ReadExtension(cat.Major, ce.Extname); err != nil {
 			extProblems = append(extProblems, Problem{Location: raw.StmtLocation, Message: err.Error()})
 			continue
 		}
@@ -586,10 +593,11 @@ var directiveLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[
 // belongs to the file rather than to the statement below it, read before anything is parsed.
 var versionLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*postgres[ \t]+(\S+)[ \t]*$`)
 
-// declaredVersion reads the schema's `-- sqlshape: postgres <N>` declaration, anywhere in
+// DeclaredVersion reads the schema's `-- sqlshape: postgres <N>` declaration, anywhere in
 // the text; pgparse.Default when there is none. Two declarations that disagree, or a
 // version without an embedded parser, are errors: nothing can be judged until it is fixed.
-func declaredVersion(schemaSQL string) (pgparse.Version, error) {
+// Load reads it before anything else: the catalog and the parser both follow it.
+func DeclaredVersion(schemaSQL string) (pgparse.Version, error) {
 	var v pgparse.Version
 	for _, m := range versionLine.FindAllStringSubmatch(schemaSQL, -1) {
 		n, err := strconv.Atoi(m[1])

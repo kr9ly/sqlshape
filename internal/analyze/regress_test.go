@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +29,7 @@ import (
 // -regress / $SQLSHAPE_REGRESS); without it the test skips.
 //
 // The known disagreements — the ceiling: collation environment, RLS recursion, server
-// internals, and the three deliberate differences — are listed in testdata/regress_baseline.txt,
+// internals, and the three deliberate differences — are listed in testdata/regress_baseline_<major>.txt,
 // and the test fails on any statement that joins or leaves that list (run with
 // -regress-update to rewrite it after reading the report).
 //
@@ -39,14 +40,36 @@ var (
 	regressTests  = flag.String("regress-tests", "", "comma-separated test names to run (default: parallel_schedule order; the baseline is not checked)")
 	regressReport = flag.String("regress-report", "", "write the per-statement report here (default: stderr summary only)")
 	regressJobs   = flag.Int("regress-jobs", 0, "parallel workers for the non-promoted files (default: NumCPU, at most 8)")
-	regressUpdate = flag.Bool("regress-update", false, "rewrite testdata/regress_baseline.txt from this run's hits")
+	regressUpdate = flag.Bool("regress-update", false, "rewrite testdata/regress_baseline_<major>.txt from this run's hits")
 )
 
-const regressBaseline = "testdata/regress_baseline.txt"
+// regressVersion is the PostgreSQL major version the probe runs: $SQLSHAPE_PG, else the
+// default. The oracle, the corpus checkout, the catalog and the baseline all follow it.
+func regressVersion(t testing.TB) pgparse.Version {
+	if s := os.Getenv("SQLSHAPE_PG"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			t.Fatalf("SQLSHAPE_PG=%q: want a major version", s)
+		}
+		return pgparse.Version(n)
+	}
+	return pgparse.Default
+}
+
+// regressBaseline is the baseline file of a version's probe.
+func regressBaseline(v pgparse.Version) string {
+	return fmt.Sprintf("testdata/regress_baseline_%d.txt", int(v))
+}
+
+// regressDeclaration is the version declaration the probe writes above the corpus DDL, so
+// the analyzer judges it with the probed version's grammar and catalog.
+func regressDeclaration(v pgparse.Version) string {
+	return fmt.Sprintf("-- sqlshape: postgres %d\n", int(v))
+}
 
 // regressCorpus resolves the corpus directory: the flag, the environment, or the
 // fetch-regress.sh checkout under the user cache directory.
-func regressCorpus() string {
+func regressCorpus(v pgparse.Version) string {
 	if *regressDir != "" {
 		return *regressDir
 	}
@@ -57,8 +80,7 @@ func regressCorpus() string {
 	if err != nil {
 		return ""
 	}
-	major, _, _ := strings.Cut(string(oracle.Version), ".")
-	p := filepath.Join(base, "sqlshape", "regress-"+major, "src", "test", "regress")
+	p := filepath.Join(base, "sqlshape", fmt.Sprintf("regress-%d", int(v)), "src", "test", "regress")
 	if _, err := os.Stat(filepath.Join(p, "parallel_schedule")); err != nil {
 		return ""
 	}
@@ -80,8 +102,8 @@ func (h regressHit) hitID() string {
 }
 
 // readBaseline returns the hit ids of the baseline file (nil when there is none).
-func readBaseline(t *testing.T) map[string]bool {
-	data, err := os.ReadFile(regressBaseline)
+func readBaseline(t *testing.T, v pgparse.Version) map[string]bool {
+	data, err := os.ReadFile(regressBaseline(v))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -102,7 +124,7 @@ func readBaseline(t *testing.T) map[string]bool {
 
 // writeBaseline writes the hits as the new baseline, one per line: id fields, then the
 // first line of the statement for the reader.
-func writeBaseline(t *testing.T, hits []regressHit) {
+func writeBaseline(t *testing.T, v pgparse.Version, hits []regressHit) {
 	lines := []string{"# regress probe: the statements on which the analyzer and PostgreSQL knowingly disagree.", "# test\tclass key\tsha1(sql)\tfirst line. Rewrite with: go test ./internal/analyze -run TestRegress -regress-update"}
 	var body []string
 	for _, h := range hits {
@@ -117,7 +139,7 @@ func writeBaseline(t *testing.T, hits []regressHit) {
 	}
 	sort.Strings(body)
 	lines = append(lines, body...)
-	if err := os.WriteFile(regressBaseline, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(regressBaseline(v), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -137,9 +159,10 @@ type regressHit struct {
 }
 
 func TestRegress(t *testing.T) {
-	corpus := regressCorpus()
+	version := regressVersion(t)
+	corpus := regressCorpus(version)
 	if corpus == "" {
-		t.Skip("no regress corpus: run internal/analyze/testdata/tools/fetch-regress.sh, or set -regress / $SQLSHAPE_REGRESS")
+		t.Skipf("no regress corpus for PostgreSQL %d: run internal/analyze/testdata/tools/fetch-regress.sh REL_%d_x, or set -regress / $SQLSHAPE_REGRESS", int(version), int(version))
 	}
 	dir, err := filepath.Abs(corpus)
 	if err != nil {
@@ -174,13 +197,13 @@ func TestRegress(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
-	o, err := oracle.Start(ctx, "")
+	o, err := oracle.StartVersion(ctx, version, "")
 	if err != nil {
 		t.Fatalf("oracle: %v", err)
 	}
 	defer o.Close()
 
-	p := &regressProbe{t: t, ctx: ctx, o: o, dir: dir}
+	p := &regressProbe{t: t, ctx: ctx, o: o, dir: dir, version: version}
 	p.stats = map[string]int{}
 	// Promoted files build the shared database in order; the rest each run in a
 	// throwaway copy of it, so they run in parallel once the promoted ones are done.
@@ -300,13 +323,13 @@ func TestRegress(t *testing.T) {
 		return // a partial run cannot be compared
 	}
 	if *regressUpdate {
-		writeBaseline(t, p.hits)
+		writeBaseline(t, version, p.hits)
 		t.Logf("baseline rewritten: %d hits", len(p.hits))
 		return
 	}
-	base := readBaseline(t)
+	base := readBaseline(t, version)
 	if base == nil {
-		t.Logf("no %s: nothing asserted (write one with -regress-update)", regressBaseline)
+		t.Logf("no %s: nothing asserted (write one with -regress-update)", regressBaseline(version))
 		return
 	}
 	seen := map[string]bool{}
@@ -350,6 +373,8 @@ type regressProbe struct {
 	ctx context.Context
 	o   *oracle.Oracle
 	dir string
+	// version is the PostgreSQL major version being probed
+	version pgparse.Version
 
 	baseDDL []string // DDL accepted by PG in the promoted tests; the analyzer's shared schema
 	hits    []regressHit
@@ -459,7 +484,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 				continue
 			}
 			if s == nil {
-				s = loadRegressSchema(&ddl)
+				s = loadRegressSchema(p.version, &ddl)
 			}
 			want := reTemp.ReplaceAllString(renderOracle(ctx, o, sql), "")
 			if strings.Contains(want, "conn closed") || strings.Contains(want, "unexpected EOF") { // a backend crash took the connection: reconnect and retry
@@ -488,7 +513,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 				if err == nil && node.GetSelectStmt().GetIntoClause() != nil {
 					// SELECT INTO made a table: the analyzer's schema gets it too
 					if s == nil {
-						s = loadRegressSchema(&ddl)
+						s = loadRegressSchema(p.version, &ddl)
 					}
 					if s.Apply(sql+";\n") == nil {
 						ddl = append(ddl, sql)
@@ -505,7 +530,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 			if err == nil {
 				conn.DeallocateAll(ctx)
 				if s == nil {
-					s = loadRegressSchema(&ddl)
+					s = loadRegressSchema(p.version, &ddl)
 				}
 				drops := dropTemps(stmts[:i])
 				if st.DiscardStmt.Target == pgparse.DiscardMode_DISCARD_ALL {
@@ -559,7 +584,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 				// COMMIT: the loader drops ON COMMIT DROP tables at transaction end
 				if err == nil {
 					if s == nil {
-						s = loadRegressSchema(&ddl)
+						s = loadRegressSchema(p.version, &ddl)
 					}
 					if s.Apply(sql+";\n") == nil {
 						ddl = append(ddl, sql)
@@ -575,12 +600,12 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		}
 		// extend the analyzer's schema in place; only CREATE EXTENSION forces a rebuild
 		if s == nil {
-			s = loadRegressSchema(&ddl)
+			s = loadRegressSchema(p.version, &ddl)
 		}
 		switch aerr := s.Apply(sql + ";\n"); {
 		case aerr == nil:
 			ddl = append(ddl, sql)
-		case errors.Is(aerr, schema.ErrNeedsReload) && loadsAlone(sql):
+		case errors.Is(aerr, schema.ErrNeedsReload) && loadsAlone(p.version, sql):
 			ddl = append(ddl, sql)
 			s = nil
 		}
@@ -645,16 +670,16 @@ func dropTemps(stmts []string) []string {
 
 // loadsAlone reports whether the loader takes the statement without a hard error, so
 // appending it cannot poison the accumulated DDL.
-func loadsAlone(sql string) bool {
-	_, err := Load(sql + ";\n")
+func loadsAlone(v pgparse.Version, sql string) bool {
+	_, err := Load(regressDeclaration(v) + sql + ";\n")
 	return err == nil
 }
 
 // loadRegressSchema loads the accumulated DDL; a statement the loader rejects
 // outright (not merely a Problem) is dropped so the rest still applies.
-func loadRegressSchema(ddl *[]string) *schema.Schema {
+func loadRegressSchema(v pgparse.Version, ddl *[]string) *schema.Schema {
 	for {
-		s, err := Load(strings.Join(*ddl, ";\n") + ";\n")
+		s, err := Load(regressDeclaration(v) + strings.Join(*ddl, ";\n") + ";\n")
 		if err == nil {
 			return s
 		}

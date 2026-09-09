@@ -20,7 +20,12 @@ OIDs into a per-extension range (`extBase`) so they never meet user objects; `Ty
 schema problem. Dumped so far: btree_gin, btree_gist, citext, cube, earthdistance, fuzzystrmatch,
 hstore, intarray, isn, ltree, pg_trgm, pgcrypto, seg, tablefunc, unaccent, uuid-ossp.
 
-- Regenerate: `go run ./internal/catalog/gen` (boots the oracle PG, `COPY ... TO STDOUT`, writes `data/*.tsv` + `data/VERSION`);
-  `-ext <name>` (repeatable) dumps an extension, `-list` shows what the oracle binary ships
-- Load: `catalog.Load()` parses once per process (~10 ms); lookups by OID / name / (source,target) pair
+- One directory per PostgreSQL major version: `data/<major>/` holds `VERSION`, the bootstrap TSVs
+  and `ext/`. A schema's `-- sqlshape: postgres <N>` picks the directory (`catalog.Load(major)`).
+- Regenerate: `go run ./internal/catalog/gen -pg 18` (boots the oracle PG of that major,
+  `COPY ... TO STDOUT`, writes `data/18/*.tsv` + `data/18/VERSION`); `-ext <name>` (repeatable)
+  dumps an extension, `-all-ext` every extension the default version has, `-list` shows what the
+  oracle binary ships
+- Load: `catalog.Load(major)` parses once per process per version (~10 ms); lookups by OID / name /
+  (source,target) pair
 - Column order in the TSVs is the contract between `gen/main.go` and `catalog.go`

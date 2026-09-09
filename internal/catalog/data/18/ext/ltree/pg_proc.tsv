@@ -1,0 +1,83 @@
+13495	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13496	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13497	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16387	ltree_in	f	16386	f	0	1	0	t	i	2275				public
+16388	ltree_out	f	2275	f	0	1	0	t	i	16386				public
+16390	ltree_cmp	f	23	f	0	2	0	t	i	16386 16386				public
+16391	ltree_lt	f	16	f	0	2	0	t	i	16386 16386				public
+16392	ltree_le	f	16	f	0	2	0	t	i	16386 16386				public
+16393	ltree_eq	f	16	f	0	2	0	t	i	16386 16386				public
+16394	ltree_ge	f	16	f	0	2	0	t	i	16386 16386				public
+16395	ltree_gt	f	16	f	0	2	0	t	i	16386 16386				public
+16396	ltree_ne	f	16	f	0	2	0	t	i	16386 16386				public
+16403	subltree	f	16386	f	0	3	0	t	i	16386 23 23				public
+16404	subpath	f	16386	f	0	3	0	t	i	16386 23 23				public
+16405	subpath	f	16386	f	0	2	0	t	i	16386 23				public
+16406	index	f	23	f	0	2	0	t	i	16386 16386				public
+16407	index	f	23	f	0	3	0	t	i	16386 16386 23				public
+16408	nlevel	f	23	f	0	1	0	t	i	16386				public
+16409	ltree2text	f	25	f	0	1	0	t	i	16386				public
+16410	text2ltree	f	16386	f	0	1	0	t	i	25				public
+16411	lca	f	16386	f	0	1	0	t	i	16389				public
+16412	lca	f	16386	f	0	2	0	t	i	16386 16386				public
+16413	lca	f	16386	f	0	3	0	t	i	16386 16386 16386				public
+16414	lca	f	16386	f	0	4	0	t	i	16386 16386 16386 16386				public
+16415	lca	f	16386	f	0	5	0	t	i	16386 16386 16386 16386 16386				public
+16416	lca	f	16386	f	0	6	0	t	i	16386 16386 16386 16386 16386 16386				public
+16417	lca	f	16386	f	0	7	0	t	i	16386 16386 16386 16386 16386 16386 16386				public
+16418	lca	f	16386	f	0	8	0	t	i	16386 16386 16386 16386 16386 16386 16386 16386				public
+16419	ltree_isparent	f	16	f	0	2	0	t	i	16386 16386				public
+16420	ltree_risparent	f	16	f	0	2	0	t	i	16386 16386				public
+16421	ltree_addltree	f	16386	f	0	2	0	t	i	16386 16386				public
+16422	ltree_addtext	f	16386	f	0	2	0	t	i	16386 25				public
+16423	ltree_textadd	f	16386	f	0	2	0	t	i	25 16386				public
+16424	ltreeparentsel	f	701	f	0	4	0	t	i	2281 26 2281 23				public
+16441	lquery_in	f	16440	f	0	1	0	t	i	2275				public
+16442	lquery_out	f	2275	f	0	1	0	t	i	16440				public
+16444	ltq_regex	f	16	f	0	2	0	t	i	16386 16440				public
+16445	ltq_rregex	f	16	f	0	2	0	t	i	16440 16386				public
+16450	lt_q_regex	f	16	f	0	2	0	t	i	16386 16443				public
+16451	lt_q_rregex	f	16	f	0	2	0	t	i	16443 16386				public
+16457	ltxtq_in	f	16456	f	0	1	0	t	i	2275				public
+16458	ltxtq_out	f	2275	f	0	1	0	t	i	16456				public
+16460	ltxtq_exec	f	16	f	0	2	0	t	i	16386 16456				public
+16461	ltxtq_rexec	f	16	f	0	2	0	t	i	16456 16386				public
+16467	ltree_gist_in	f	16466	f	0	1	0	t	i	2275				public
+16468	ltree_gist_out	f	2275	f	0	1	0	t	i	16466				public
+16470	ltree_consistent	f	16	f	0	5	0	t	i	2281 16386 21 26 2281				public
+16471	ltree_compress	f	2281	f	0	1	0	t	i	2281				public
+16472	ltree_decompress	f	2281	f	0	1	0	t	i	2281				public
+16473	ltree_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16474	ltree_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16475	ltree_union	f	16466	f	0	2	0	t	i	2281 2281				public
+16476	ltree_same	f	2281	f	0	3	0	t	i	16466 16466 2281				public
+16499	_ltree_isparent	f	16	f	0	2	0	t	i	16389 16386				public
+16500	_ltree_r_isparent	f	16	f	0	2	0	t	i	16386 16389				public
+16501	_ltree_risparent	f	16	f	0	2	0	t	i	16389 16386				public
+16502	_ltree_r_risparent	f	16	f	0	2	0	t	i	16386 16389				public
+16503	_ltq_regex	f	16	f	0	2	0	t	i	16389 16440				public
+16504	_ltq_rregex	f	16	f	0	2	0	t	i	16440 16389				public
+16505	_lt_q_regex	f	16	f	0	2	0	t	i	16389 16443				public
+16506	_lt_q_rregex	f	16	f	0	2	0	t	i	16443 16389				public
+16507	_ltxtq_exec	f	16	f	0	2	0	t	i	16389 16456				public
+16508	_ltxtq_rexec	f	16	f	0	2	0	t	i	16456 16389				public
+16529	_ltree_extract_isparent	f	16386	f	0	2	0	t	i	16389 16386				public
+16531	_ltree_extract_risparent	f	16386	f	0	2	0	t	i	16389 16386				public
+16533	_ltq_extract_regex	f	16386	f	0	2	0	t	i	16389 16440				public
+16535	_ltxtq_extract_exec	f	16386	f	0	2	0	t	i	16389 16456				public
+16537	_ltree_consistent	f	16	f	0	5	0	t	i	2281 16389 21 26 2281				public
+16538	_ltree_compress	f	2281	f	0	1	0	t	i	2281				public
+16539	_ltree_penalty	f	2281	f	0	3	0	t	i	2281 2281 2281				public
+16540	_ltree_picksplit	f	2281	f	0	2	0	t	i	2281 2281				public
+16541	_ltree_union	f	16466	f	0	2	0	t	i	2281 2281				public
+16542	_ltree_same	f	2281	f	0	3	0	t	i	16466 16466 2281				public
+16560	ltree_recv	f	16386	f	0	1	0	t	i	2281				public
+16561	ltree_send	f	17	f	0	1	0	t	i	16386				public
+16562	lquery_recv	f	16440	f	0	1	0	t	i	2281				public
+16563	lquery_send	f	17	f	0	1	0	t	i	16440				public
+16564	ltxtq_recv	f	16456	f	0	1	0	t	i	2281				public
+16565	ltxtq_send	f	17	f	0	1	0	t	i	16456				public
+16566	ltree_gist_options	f	2278	f	0	1	0	f	i	2281				public
+16567	_ltree_gist_options	f	2278	f	0	1	0	f	i	2281				public
+16570	hash_ltree	f	23	f	0	1	0	t	i	16386				public
+16571	hash_ltree_extended	f	20	f	0	2	0	t	i	16386 20				public

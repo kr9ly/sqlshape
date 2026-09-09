@@ -3,6 +3,7 @@ package catalog
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -29,9 +30,9 @@ const FirstNormalObjectID OID = 16384
 // extBase is where the renumbered OIDs of the i-th loaded extension start.
 func extBase(i int) OID { return 1<<28 + OID(i)<<20 }
 
-// Available lists the extensions with an embedded dump.
-func Available() []string {
-	entries, err := data.ReadDir("data/ext")
+// Available lists the extensions with an embedded dump for a PostgreSQL major version.
+func Available(major int) []string {
+	entries, err := data.ReadDir("data/" + strconv.Itoa(major) + "/ext")
 	if err != nil {
 		return nil
 	}
@@ -45,11 +46,12 @@ func Available() []string {
 	return out
 }
 
-// ReadExtension returns the metadata of a dumped extension, or an error if there is no dump.
-func ReadExtension(name string) (*Extension, error) {
-	b, err := data.ReadFile("data/ext/" + name + "/META")
+// ReadExtension returns the metadata of a dumped extension for a PostgreSQL major
+// version, or an error if there is no dump.
+func ReadExtension(major int, name string) (*Extension, error) {
+	b, err := data.ReadFile(fmt.Sprintf("data/%d/ext/%s/META", major, name))
 	if err != nil {
-		return nil, fmt.Errorf("extension %q: no dumped catalog (run: go run ./internal/catalog/gen -ext %s)", name, name)
+		return nil, fmt.Errorf("extension %q: no dumped catalog for PostgreSQL %d (run: go run ./internal/catalog/gen -pg %d -ext %s)", name, major, major, name)
 	}
 	e := &Extension{Name: name}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
@@ -74,7 +76,7 @@ func ReadExtension(name string) (*Extension, error) {
 func (c *Catalog) WithExtensions(names []string) (*Catalog, error) {
 	var exts []*Extension
 	for _, n := range names {
-		e, err := ReadExtension(n)
+		e, err := ReadExtension(c.Major, n)
 		if err != nil {
 			return nil, err
 		}
@@ -87,6 +89,7 @@ func (c *Catalog) WithExtensions(names []string) (*Catalog, error) {
 		}
 	}
 	out := newCatalog()
+	out.Major = c.Major
 	out.Version = c.Version
 	out.Types = append(out.Types, c.Types...)
 	out.Funcs = append(out.Funcs, c.Funcs...)
@@ -115,7 +118,7 @@ func (c *Catalog) WithExtensions(names []string) (*Catalog, error) {
 			next++
 			return m[o]
 		}
-		if err := out.load("data/ext/"+e.Name, "", remap); err != nil {
+		if err := out.load(fmt.Sprintf("data/%d/ext/%s", c.Major, e.Name), "", remap); err != nil {
 			return nil, fmt.Errorf("extension %s: %w", e.Name, err)
 		}
 	}

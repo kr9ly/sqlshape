@@ -1,0 +1,8 @@
+16386	ltree	b	U	f	-1	f	0	16389	0	0	-1	public
+16389	_ltree	b	A	f	-1	f	16386	0	0	0	-1	public
+16440	lquery	b	U	f	-1	f	0	16443	0	0	-1	public
+16443	_lquery	b	A	f	-1	f	16440	0	0	0	-1	public
+16456	ltxtquery	b	U	f	-1	f	0	16459	0	0	-1	public
+16459	_ltxtquery	b	A	f	-1	f	16456	0	0	0	-1	public
+16466	ltree_gist	b	U	f	-1	f	0	16469	0	0	-1	public
+16469	_ltree_gist	b	A	f	-1	f	16466	0	0	0	-1	public

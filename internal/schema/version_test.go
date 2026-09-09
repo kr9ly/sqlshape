@@ -45,8 +45,8 @@ func TestPostgresVersionDeclaration(t *testing.T) {
 	}
 
 	for sql, want := range map[string]string{
-		"-- sqlshape: postgres 16\n" + table:                              "supports PostgreSQL 17, 18",
-		"-- sqlshape: postgres x\n" + table:                               "want a major version number",
+		"-- sqlshape: postgres 16\n" + table:                                "supports PostgreSQL 17, 18",
+		"-- sqlshape: postgres x\n" + table:                                 "want a major version number",
 		"-- sqlshape: postgres 17\n" + table + "-- sqlshape: postgres 18\n": "declared twice",
 	} {
 		if _, err := analyze.Load(sql); err == nil || !strings.Contains(err.Error(), want) {

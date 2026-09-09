@@ -1,0 +1,7 @@
+13495	plpgsql_call_handler	f	2280	f	0	0	0	f	v					pg_catalog
+13496	plpgsql_inline_handler	f	2278	f	0	1	0	t	v	2281				pg_catalog
+13497	plpgsql_validator	f	2278	f	0	1	0	t	v	26				pg_catalog
+16386	unaccent	f	25	f	0	2	0	t	s	3769 25				public
+16387	unaccent	f	25	f	0	1	0	t	s	25				public
+16388	unaccent_init	f	2281	f	0	1	0	f	v	2281				public
+16389	unaccent_lexize	f	2281	f	0	4	0	f	v	2281 2281 2281 2281				public

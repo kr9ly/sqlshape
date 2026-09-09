@@ -1,12 +1,14 @@
 // Command gen dumps the bootstrap catalog (pg_catalog objects) of the oracle's
-// PostgreSQL into internal/catalog/data/*.tsv, and extension catalogs into
-// internal/catalog/data/ext/<name>/. Run from the repo root:
+// PostgreSQL into internal/catalog/data/<major>/*.tsv, and extension catalogs into
+// internal/catalog/data/<major>/ext/<name>/. Run from the repo root:
 //
-//	go run ./internal/catalog/gen                 # bootstrap catalog
-//	go run ./internal/catalog/gen -ext citext     # one extension (repeatable)
-//	go run ./internal/catalog/gen -list           # extensions the oracle binary ships
+//	go run ./internal/catalog/gen -pg 18                 # bootstrap catalog
+//	go run ./internal/catalog/gen -pg 18 -ext citext     # one extension (repeatable)
+//	go run ./internal/catalog/gen -pg 18 -all-ext        # every extension 17's data has
+//	go run ./internal/catalog/gen -pg 18 -list           # extensions the oracle binary ships
 //
-// The TSVs are embedded by package catalog; regenerate when oracle.Version changes.
+// The TSVs are embedded by package catalog; regenerate when the oracle's release for the
+// major version changes (internal/oracle binaries).
 package main
 
 import (
@@ -18,7 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/oracle"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 )
 
 // Each query yields one TSV. Column order is the parsing contract in catalog.go.
@@ -109,12 +113,18 @@ SELECT DISTINCT objid FROM m`
 func main() {
 	var exts multi
 	list := flag.Bool("list", false, "list the extensions available in the oracle binary")
+	major := flag.Int("pg", int(pgparse.Default), "PostgreSQL major version to dump")
+	allExt := flag.Bool("all-ext", false, "dump every extension the default version's data has a dump for")
 	flag.Var(&exts, "ext", "dump this extension's catalog (repeatable)")
 	flag.Parse()
+	version := pgparse.Version(*major)
+	if *allExt {
+		exts = append(exts, catalog.Available(int(pgparse.Default))...)
+	}
 
 	ctx := context.Background()
 	if *list {
-		o := start(ctx)
+		o := start(ctx, version)
 		defer o.Close()
 		rows, err := o.Conn().Query(ctx, "SELECT name, default_version, coalesce(comment, '') FROM pg_available_extensions ORDER BY name")
 		if err != nil {
@@ -129,10 +139,14 @@ func main() {
 		}
 		return
 	}
+	dataDir := filepath.Join("internal", "catalog", "data", fmt.Sprint(*major))
 	if len(exts) == 0 {
-		o := start(ctx)
+		o := start(ctx, version)
 		defer o.Close()
-		outDir := filepath.Join("internal", "catalog", "data")
+		outDir := dataDir
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			log.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(outDir, "VERSION"), []byte(serverVersion(ctx, o)+"\n"), 0o644); err != nil {
 			log.Fatal(err)
 		}
@@ -141,7 +155,7 @@ func main() {
 	}
 	for _, ext := range exts {
 		// a fresh cluster per extension: what it owns is exactly what the database gained
-		o := start(ctx)
+		o := start(ctx, version)
 		if _, err := o.Conn().Exec(ctx, fmt.Sprintf("CREATE EXTENSION %s CASCADE", quoteIdent(ext))); err != nil {
 			log.Fatalf("%s: %v", ext, err)
 		}
@@ -159,7 +173,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s: %v", ext, err)
 		}
-		outDir := filepath.Join("internal", "catalog", "data", "ext", ext)
+		outDir := filepath.Join(dataDir, "ext", ext)
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
 			log.Fatal(err)
 		}
@@ -178,8 +192,8 @@ func main() {
 	}
 }
 
-func start(ctx context.Context) *oracle.Oracle {
-	o, err := oracle.Start(ctx, "")
+func start(ctx context.Context, v pgparse.Version) *oracle.Oracle {
+	o, err := oracle.StartVersion(ctx, v, "")
 	if err != nil {
 		log.Fatal(err)
 	}

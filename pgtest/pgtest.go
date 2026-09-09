@@ -27,7 +27,12 @@ type DB struct {
 
 // Start launches PostgreSQL (embedded binary, downloaded on first use) and applies schemaSQL.
 func Start(ctx context.Context, schemaSQL string) (*DB, error) {
-	o, err := oracle.Start(ctx, schemaSQL)
+	// the PostgreSQL the schema declares (`-- sqlshape: postgres <N>`)
+	v, err := schema.DeclaredVersion(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	o, err := oracle.StartVersion(ctx, v, schemaSQL)
 	if err != nil {
 		return nil, err
 	}
