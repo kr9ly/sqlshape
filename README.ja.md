@@ -22,14 +22,16 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 
 ## インストール
 
-検査器とマイグレーションコマンドは1つのバイナリになっている:
+検査器とマイグレーションコマンドは1つのバイナリになっている。Go 1.26以上で:
 
 ```
 $ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
 $ sqlshape version
 ```
 
-PostgreSQLのパーサ（libpg_query）をcgoでリンクするので、`go install`にはCコンパイラ（gccかclang）が必要。ビルド済みのバイナリ（Linuxはamd64とarm64、macOSはApple Silicon）は[releasesページ](https://github.com/kr9ly/sqlshape/releases)にある。Intel Macは`go install`でビルドする。
+ビルド済みのバイナリは[releasesページ](https://github.com/kr9ly/sqlshape/releases)にある。Linux・macOS・Windowsそれぞれamd64とarm64で、`sqlshape_<version>_<os>_<arch>.tar.gz`（Windowsは`.zip`）と`checksums.txt`。展開して`sqlshape`を`PATH`に置く。
+
+検査に他の準備は要らない。PostgreSQLのパーサ（libpg_query、対応するメジャー版ごとに1つ）はWebAssemblyとして埋め込まれwazeroで動くので、Cコンパイラもリンクするライブラリも無い。初回だけモジュールのコンパイルに1秒ほどかかり、結果はユーザーのキャッシュディレクトリ（Linuxでは`~/.cache/sqlshape`）に置かれる。`pgtest`とマイグレーション系コマンドは本物のPostgreSQLでスキーマを動かすので、初回に宣言した版のサーババイナリを同じキャッシュにダウンロードする（[migrations.ja.md](docs/migrations.ja.md)の要件を参照）。
 
 ランタイムは通常のGoモジュール:
 
@@ -43,6 +45,7 @@ $ go get github.com/kr9ly/sqlshape
 
 ```sql
 -- schema.sql
+-- sqlshape: postgres 17
 CREATE TABLE users (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email      text NOT NULL UNIQUE,
@@ -50,6 +53,8 @@ CREATE TABLE users (
     deleted_at timestamptz
 );
 ```
+
+`schema.sql`の最初の行が、どの版のPostgreSQL向けのスキーマかを名乗る。すべての文はその版の文法とカタログで判定される（17と18に対応）。
 
 ```go
 // users.go
