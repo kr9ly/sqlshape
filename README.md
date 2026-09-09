@@ -205,15 +205,20 @@ rename or the removal of an enum label, are declared in `schema.sql` with `-- @m
 
 ## Compatibility
 
-All of PostgreSQL 17's syntax is understood: SELECT and DML, MERGE, CTEs, window functions,
-GROUPING SETS, SQL/JSON, ranges, extensions such as citext and hstore, and DDL including views,
-functions (SQL and PL/pgSQL bodies), triggers and policies. The analyzer is a pure-Go implementation built from PostgreSQL's
-own catalog; checking never connects to a PostgreSQL.
+PostgreSQL 17 and 18; `schema.sql` declares which. The syntax is PostgreSQL's own: the parser is
+libpg_query of that version, so everything the server parses, the checker parses the same way —
+SELECT and DML, MERGE, CTEs, window functions, GROUPING SETS, SQL/JSON, ranges, `RETURNING old` /
+`new` and temporal keys on 18, extensions such as citext and hstore, and DDL including views,
+functions (SQL and PL/pgSQL bodies), triggers and policies. The analyzer is a pure-Go implementation
+built from that version's catalog; checking never connects to a PostgreSQL.
 
-"All" is backed by PostgreSQL's own regression suite: the 22,000 statements of `src/test/regress`
-are run through the analyzer and a real PostgreSQL 17 side by side, and parameter types, result
-columns and errors must agree. They disagree on 19, all of them things static analysis cannot
-decide (row-level security recursion, permissions, server internals). The comparison is part of
+The judgment is backed by PostgreSQL's own regression suite: the statements of `src/test/regress`
+are run through the analyzer and a real PostgreSQL of the same version side by side, and parameter
+types, result columns and errors must agree. On 17 they disagree on 19 of 22,103 statements, on 18
+on 31 of 23,384; every one is listed (`internal/analyze/testdata/regress_baseline_<version>.txt`),
+and each is either something static analysis cannot decide (row-level security recursion,
+permissions, server internals) or a case where the checker is right and the server's Describe
+cannot say (the NULLs of `RETURNING old` after an INSERT). The comparison is part of
 `go test ./...`, so a new disagreement fails the build.
 
 ## License

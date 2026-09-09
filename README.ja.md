@@ -157,9 +157,9 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 ## 互換性
 
-PostgreSQL 17の構文はすべて扱える。SELECTとDML、MERGE、CTE、ウィンドウ関数、GROUPING SETS、SQL/JSON、範囲型、citextやhstoreなどの拡張、ビュー・関数（SQLとPL/pgSQLの本体まで）・トリガー・ポリシーを含むDDL。アナライザーはPostgreSQL自身のカタログから組み上げたpure Goの実装で、検査時にPostgreSQLへ接続することはない。
+PostgreSQL 17と18に対応し、どちらかは`schema.sql`が宣言する。構文はPostgreSQL自身のものである。パーサはその版のlibpg_queryなので、サーバが読める文は検査器も同じように読む。SELECTとDML、MERGE、CTE、ウィンドウ関数、GROUPING SETS、SQL/JSON、範囲型、18の`RETURNING old` / `new`と時制キー、citextやhstoreなどの拡張、ビュー・関数（SQLとPL/pgSQLの本体まで）・トリガー・ポリシーを含むDDL。アナライザーはその版のカタログから組み上げたpure Goの実装で、検査時にPostgreSQLへ接続することはない。
 
-「すべて」の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の22,000文を本物のPostgreSQL 17と並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは19件で、行レベルセキュリティの再帰、権限、サーバー内部のエラーなど、静的解析では判定できないもの。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
+判定の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の文を、アナライザーと同じ版の本物のPostgreSQLに並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは17で22,103文のうち19件、18で23,384文のうち31件。全件を`internal/analyze/testdata/regress_baseline_<version>.txt`に列挙してあり、どれも静的解析では判定できないもの（行レベルセキュリティの再帰、権限、サーバー内部のエラー）か、検査器が正しくサーバのDescribeには見えないもの（INSERTの`RETURNING old`がNULLであること）である。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
 
 ## License
 
