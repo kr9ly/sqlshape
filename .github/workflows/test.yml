@@ -50,11 +50,14 @@ jobs:
 
       # coverage counts every package except the catalog generator (a manual tool run
       # against a PostgreSQL) and the 5-statement main; the generated protobuf node types
-      # (internal/pgparse/pg_query.pb.go, 40k lines of accessors) are dropped from the profile
+      # (internal/pgparse/pg_query.pb.go, 40k lines of accessors) are dropped from the profile.
+      # -count=1: a cached test result replays the profile it recorded, with block positions
+      # from the sources of that run; after an edit to a package the cached package does not
+      # depend on, the stale blocks no longer line up and the merged total drops by ten points
       - name: Test
         run: |
           pkgs=$(go list ./... | grep -v -e /internal/catalog/gen -e /cmd/sqlshape | paste -sd,)
-          go test ./... -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
+          go test ./... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
           grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the
