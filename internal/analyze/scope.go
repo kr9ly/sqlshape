@@ -251,12 +251,18 @@ func newScope(parent *scope) *scope {
 }
 
 func (sc *scope) findCTE(name string) *cte {
+	c, _ := sc.findCTEScope(name)
+	return c
+}
+
+// findCTEScope is findCTE returning the scope that defines the CTE too.
+func (sc *scope) findCTEScope(name string) (*cte, *scope) {
 	for s := sc; s != nil; s = s.parent {
 		if c, ok := s.ctes[name]; ok {
-			return c
+			return c, s
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // byAlias finds a leaf rte by alias in this scope only.

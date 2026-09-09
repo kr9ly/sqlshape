@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"google.golang.org/protobuf/proto"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
 	"github.com/kr9ly/sqlshape/internal/pgparse"
@@ -169,7 +168,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 			node := sb.GetSortBy().GetNode()
 			matched := false
 			for _, d := range sel.DistinctClause {
-				if proto.Equal(d, node) || positionalMatch(d, node, cols) {
+				if equalIgnoringLocation(d, node) || positionalMatch(d, node, cols) {
 					matched = true
 					break
 				}
@@ -778,7 +777,8 @@ func (a *analyzer) fromItem(n *pgparse.Node, sc *scope) (*rte, *Error) {
 	case *pgparse.Node_RangeVar:
 		rv := v.RangeVar
 		if rv.Schemaname == "" {
-			if c := sc.findCTE(rv.Relname); c != nil {
+			if c, def := sc.findCTEScope(rv.Relname); c != nil {
+				a.noteCTERef(def, rv.Location)
 				if c.forbidden {
 					return nil, errAt(codeInvalidRecursion, rv.Location, "recursive reference to query %q must not appear within its non-recursive term", rv.Relname)
 				}

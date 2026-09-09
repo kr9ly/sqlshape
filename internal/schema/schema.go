@@ -1020,6 +1020,10 @@ func (s *Schema) createDomain(st *pgparse.CreateDomainStmt, loc int32) {
 	t := s.Types.addUser(schema, name, 'd', 0, base.OID, 0)
 	t.Typmod = base.Typmod
 	d := &Domain{}
+	if st.CollClause != nil {
+		parts := strs(st.CollClause.Collname)
+		d.Collation = parts[len(parts)-1]
+	}
 	for _, cn := range st.Constraints {
 		c := cn.GetConstraint()
 		switch c.GetContype() {

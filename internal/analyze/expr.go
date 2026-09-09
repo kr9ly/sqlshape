@@ -678,6 +678,18 @@ func (a *analyzer) columnRef(c *pgparse.ColumnRef, sc *scope) (*expr, *Error) {
 }
 
 func (a *analyzer) typeCast(tc *pgparse.TypeCast, sc *scope) (*expr, *Error) {
+	e, err := a.typeCastValue(tc, sc)
+	if err != nil {
+		return nil, err
+	}
+	// a domain declared with a collation gives the cast result that collation
+	if d := a.s.Types.Domains[e.oid()]; d != nil && d.Collation != "" && e.coll.strength <= collImplicit {
+		e.coll = collation{strength: collImplicit, name: d.Collation, loc: tc.Location}
+	}
+	return e, nil
+}
+
+func (a *analyzer) typeCastValue(tc *pgparse.TypeCast, sc *scope) (*expr, *Error) {
 	target, rerr := a.s.ResolveType(tc.TypeName)
 	if rerr != nil {
 		return nil, errAt(codeUndefinedObject, tc.TypeName.Location, "%v", rerr)
@@ -2016,6 +2028,22 @@ type aggFrame struct {
 	inDirect    bool
 	// nested: aggregates written inside the arguments, with the level each belongs to
 	nested []nestedAgg
+	// cteRefs: CTEs referenced inside the arguments, with the scope defining each (an
+	// outer-level aggregate may not use a CTE defined below its level, PostgreSQL 18)
+	cteRefs []cteRef
+}
+
+type cteRef struct {
+	def *scope
+	loc int32
+}
+
+// noteCTERef records, for every aggregate whose arguments are being analyzed, a CTE
+// reference and the scope that defines the CTE.
+func (a *analyzer) noteCTERef(def *scope, loc int32) {
+	for _, fr := range a.aggFrames {
+		fr.cteRefs = append(fr.cteRefs, cteRef{def: def, loc: loc})
+	}
 }
 
 type nestedAgg struct {
@@ -2067,6 +2095,15 @@ func (a *analyzer) settleAggFrame(fr *aggFrame, f *pgparse.FuncCall) (*scope, *E
 		for s := fr.sc; s != nil && s != owner; s = s.parent {
 			if s.fromOf == owner {
 				return nil, errAt(codeGroupingError, f.Location, "aggregate functions are not allowed in FROM clause of their own query level")
+			}
+		}
+		if a.s.Version.Or() >= pgparse.PG18 {
+			// the aggregate is evaluated at the outer level, where a CTE of the subquery
+			// between does not exist (18; 17 went on and failed the GROUP BY check)
+			for _, ref := range fr.cteRefs {
+				if d, ok := ref.def.levelsUp(owner); ok && d > 0 {
+					return nil, errAt(codeFeatureNotSupported, ref.loc, "outer-level aggregate cannot use a nested CTE")
+				}
 			}
 		}
 	}

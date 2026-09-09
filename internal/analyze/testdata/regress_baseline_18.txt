@@ -1,20 +1,12 @@
 # regress probe: the statements on which the analyzer and PostgreSQL knowingly disagree.
 # test	class key	sha1(sql)	first line. Rewrite with: go test ./internal/analyze -run TestRegress -regress-update
-collate.icu.utf8	LENIENT 42P21	0eb6040c1d50	-- error
-collate.icu.utf8	LENIENT 42P21	1d75c34f31b8	-- error
-collate.icu.utf8	LENIENT 42P21	36e6cd433b6c	-- true
-collate.icu.utf8	LENIENT 42P21	8e4044a9ec64	-- true
 domain	DIFF column type	e89dc9ebcf60	-- check that domains inherit operations from base types
 domain	LENIENT 23514	1d019203dc12	-- fail
 enum	LENIENT 55P04	1f0366fc3704	SELECT 'new'::bogus
 enum	LENIENT 55P04	f831443bae5a	SELECT 'bad'::bogon
 generated_stored	DIFF nullability	52f477f0865a	MERGE INTO gtestm t USING (VALUES (1, 10), (2, 20)) v(id, f1) ON t.id = v.id
 generated_virtual	DIFF nullability	52f477f0865a	MERGE INTO gtestm t USING (VALUES (1, 10), (2, 20)) v(id, f1) ON t.id = v.id
-groupingsets	STRICT 42P10	8387a629e5de	select distinct on (a, b+1) a, b+1
-horology	LENIENT 22007	390bda323cf4	SELECT timestamp with time zone 'J2452271 T X03456.001e6-08'
-horology	LENIENT 22007	a6e27d4f5d0f	-- More examples we used to accept and should not
 merge	DIFF nullability	3f3fcfc3ff38	MERGE INTO sq_target t
-privileges	LENIENT 22P02	17316bfd0c38	SELECT '""=r*/""'::aclitem
 regproc	LENIENT 42704	855ab3d3e15a	SELECT regrole('"Nonexistent"')
 regproc	LENIENT 42704	8c8130752d2d	SELECT regrole('Nonexistent')
 regproc	LENIENT 42704	c50d8cbb5179	-- schemaname not applicable
@@ -36,9 +28,6 @@ rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
 rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
 rowsecurity	LENIENT 42P17	95339b0463ed	SELECT * FROM rec1
 rowsecurity	LENIENT 42P17	a45dc166872a	-- fail (infinite recursion)
-sqljson_queryfuncs	LENIENT 42804	5396694006d2	SELECT JSON_QUERY(jsonb '{"a": 123}', ('$' || '.' || 'a' || NULL)::date WITH WRAPPER)
-sqljson_queryfuncs	LENIENT 42804	6008ea307fa0	SELECT json_value('"aaa"', jsonpaths RETURNING json) FROM jsonpaths
 stats_import	STRICT 42P01	47102b2ef2b6	SELECT relname, relpages, reltuples, relallvisible, relallfrozen
 tablesample	LENIENT 42704	4d952dc0cc51	-- errors
 temp	STRICT 42P01	aecdb79a778f	SELECT * FROM temptest
-with	CODE 0A000->42803	cb57c38e3e5e	--

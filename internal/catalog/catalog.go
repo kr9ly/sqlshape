@@ -41,6 +41,7 @@ const (
 	OIDType                 OID = 26
 	RegProc                 OID = 24
 	Tid                     OID = 27
+	Aclitem                 OID = 1033
 	MacAddr8                OID = 774
 	Money                   OID = 790
 	RegProcedure            OID = 2202

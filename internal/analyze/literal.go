@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kr9ly/sqlshape/internal/catalog"
+	"github.com/kr9ly/sqlshape/internal/pgparse"
 	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
@@ -117,6 +118,10 @@ func (a *analyzer) validateLiteralTypmod(s string, to catalog.OID, typmod int32,
 	case catalog.Tid:
 		if !validTid(s) {
 			return bad("tid")
+		}
+	case catalog.Aclitem:
+		if msg := aclitemError(s, a.s.Version.Or() >= pgparse.PG18); msg != "" {
+			return errAt("22P02", loc, "%s", msg)
 		}
 	case catalog.Xid, catalog.Xid8, catalog.OIDType, catalog.Cid:
 		name := map[catalog.OID]string{catalog.Xid: "xid", catalog.Xid8: "xid8", catalog.OIDType: "oid", catalog.Cid: "cid"}[base]

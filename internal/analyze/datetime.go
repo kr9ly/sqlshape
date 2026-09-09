@@ -86,7 +86,13 @@ type dtSession struct {
 	// sessionAbbrevs: an abbreviation the session time zone itself uses (LMT, or a local
 	// abbreviation not in the abbreviation file) is accepted as that zone (PostgreSQL 18)
 	sessionAbbrevs bool
+	// strictNumbers: a number field is digits and decimal points only, and a fraction is
+	// digits only (PostgreSQL 18; 17 let strtod read "X03456" or ".001e6")
+	strictNumbers bool
 }
+
+// strict reports strictNumbers for a session that may be nil.
+func (s *dtSession) strict() bool { return s != nil && s.strictNumbers }
 
 type dtExtra struct {
 	timezone string
@@ -424,9 +430,12 @@ func adjustYears(val int64, scale int, in *itmIn) bool {
 }
 
 // parseFraction parses ".ddd" to end of string.
-func parseFraction(cp string) (float64, int) {
+func parseFraction(cp string, strict bool) (float64, int) {
 	if len(cp) == 1 {
 		return 0, 0
+	}
+	if strict && strings.Trim(cp[1:], "0123456789") != "" {
+		return 0, dtErrBadFormat // 18: nothing but digits after the "."
 	}
 	f, rest, ok := strtod(cp)
 	if !ok || rest != "" {
@@ -435,8 +444,8 @@ func parseFraction(cp string) (float64, int) {
 	return f, 0
 }
 
-func parseFractionalSecond(cp string) (int64, int) {
-	f, dterr := parseFraction(cp)
+func parseFractionalSecond(cp string, strict bool) (int64, int) {
+	f, dterr := parseFraction(cp, strict)
 	if dterr != 0 {
 		return 0, dterr
 	}
@@ -958,7 +967,7 @@ type itm struct {
 	usec     int64
 }
 
-func decodeTimeCommon(str string, rng int, tmask *int, it *itm) int {
+func decodeTimeCommon(str string, rng int, tmask *int, it *itm, strict bool) int {
 	*tmask = dtkTimeM
 	var cp string
 	var erange bool
@@ -988,7 +997,7 @@ func decodeTimeCommon(str string, rng int, tmask *int, it *itm) int {
 		}
 	case cp[0] == '.':
 		var dterr int
-		if fsec, dterr = parseFractionalSecond(cp); dterr != 0 {
+		if fsec, dterr = parseFractionalSecond(cp, strict); dterr != 0 {
 			return dterr
 		}
 		if it.hour > math.MaxInt32 || it.hour < math.MinInt32 {
@@ -1006,7 +1015,7 @@ func decodeTimeCommon(str string, rng int, tmask *int, it *itm) int {
 		cp = cp2
 		if cp != "" && cp[0] == '.' {
 			var dterr int
-			if fsec, dterr = parseFractionalSecond(cp); dterr != 0 {
+			if fsec, dterr = parseFractionalSecond(cp, strict); dterr != 0 {
 				return dterr
 			}
 		} else if cp != "" {
@@ -1023,9 +1032,9 @@ func decodeTimeCommon(str string, rng int, tmask *int, it *itm) int {
 	return 0
 }
 
-func decodeTime(str string, rng int, tmask *int, tm *pgTM, fsec *int64) int {
+func decodeTime(str string, rng int, tmask *int, tm *pgTM, fsec *int64, strict bool) int {
 	var it itm
-	if dterr := decodeTimeCommon(str, rng, tmask, &it); dterr != 0 {
+	if dterr := decodeTimeCommon(str, rng, tmask, &it, strict); dterr != 0 {
 		return dterr
 	}
 	if it.hour > math.MaxInt32 {
@@ -1035,9 +1044,9 @@ func decodeTime(str string, rng int, tmask *int, tm *pgTM, fsec *int64) int {
 	return 0
 }
 
-func decodeTimeForInterval(str string, rng int, tmask *int, in *itmIn) int {
+func decodeTimeForInterval(str string, rng int, tmask *int, in *itmIn, strict bool) int {
 	var it itm
-	if dterr := decodeTimeCommon(str, rng, tmask, &it); dterr != 0 {
+	if dterr := decodeTimeCommon(str, rng, tmask, &it, strict); dterr != 0 {
 		return dterr
 	}
 	in.usec = it.usec
@@ -1061,12 +1070,12 @@ func decodeNumber(flen int, str string, haveTextMonth bool, fmask int, tmask *in
 	val := int(v)
 	if cp != "" && cp[0] == '.' {
 		if len(str)-len(cp) > 2 {
-			if dterr := decodeNumberField(flen, str, fmask|dtkDateM, tmask, tm, fsec, is2digits); dterr < 0 {
+			if dterr := decodeNumberField(flen, str, fmask|dtkDateM, tmask, tm, fsec, is2digits, sess.strict()); dterr < 0 {
 				return dterr
 			}
 			return 0
 		}
-		f, dterr := parseFractionalSecond(cp)
+		f, dterr := parseFractionalSecond(cp, sess.strict())
 		if dterr != 0 {
 			return dterr
 		}
@@ -1130,7 +1139,7 @@ func decodeNumber(flen int, str string, haveTextMonth bool, fmask int, tmask *in
 		*tmask = dtkM(ftYear)
 		tm.year = val
 	case dtkM(ftYear) | dtkM(ftMonth) | dtkM(ftDay):
-		if dterr := decodeNumberField(flen, str, fmask, tmask, tm, fsec, is2digits); dterr < 0 {
+		if dterr := decodeNumberField(flen, str, fmask, tmask, tm, fsec, is2digits, sess.strict()); dterr < 0 {
 			return dterr
 		}
 		return 0
@@ -1144,15 +1153,20 @@ func decodeNumber(flen int, str string, haveTextMonth bool, fmask int, tmask *in
 }
 
 // decodeNumberField reads a run-together date or time; returns a DTK token or a DTERR.
-func decodeNumberField(length int, str string, fmask int, tmask *int, tm *pgTM, fsec *int64, is2digits *bool) int {
+func decodeNumberField(length int, str string, fmask int, tmask *int, tm *pgTM, fsec *int64, is2digits *bool, strict bool) int {
+	// 18: the field is digits and decimal points only (this also reads parts of DTK_DATE
+	// fields, which can carry letters); 17 let strtod sort it out
+	if strict && strings.Trim(str, "0123456789.") != "" {
+		return dtErrBadFormat
+	}
 	if dot := strings.IndexByte(str, '.'); dot >= 0 {
 		cp := str[dot:]
 		if len(cp) == 1 {
 			*fsec = 0
 		} else {
-			f, _, ok := strtod(cp)
-			if !ok {
-				return dtErrBadFormat
+			f, dterr := parseFraction(cp, strict)
+			if dterr != 0 {
+				return dterr
 			}
 			*fsec = int64(math.RoundToEven(f * 1000000))
 		}
@@ -1242,7 +1256,7 @@ func decodeDateTime(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 						return dtype, tm, fsec, tzp, dterr
 					}
 					head := field[:dash]
-					if dterr = decodeNumberField(len(head), head, fmask, &tmask, &tm, &fsec, &is2digits); dterr < 0 {
+					if dterr = decodeNumberField(len(head), head, fmask, &tmask, &tm, &fsec, &is2digits, sess.strict()); dterr < 0 {
 						return dtype, tm, fsec, tzp, dterr
 					}
 					tmask |= dtkM(ftTZ)
@@ -1264,7 +1278,7 @@ func decodeDateTime(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 				}
 				ptype = 0
 			}
-			if dterr := decodeTime(field, intervalFullRange, &tmask, &tm, &fsec); dterr != 0 {
+			if dterr := decodeTime(field, intervalFullRange, &tmask, &tm, &fsec, sess.strict()); dterr != 0 {
 				return dtype, tm, fsec, tzp, dterr
 			}
 			if timeOverflows(tm.hour, tm.min, tm.sec, fsec) {
@@ -1296,7 +1310,7 @@ func decodeDateTime(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 					tm.year, tm.mon, tm.mday = j2date(value)
 					isjulian = true
 					if cp != "" {
-						f, dterr := parseFraction(cp)
+						f, dterr := parseFraction(cp, sess.strict())
 						if dterr != 0 {
 							return dtype, tm, fsec, tzp, dterr
 						}
@@ -1304,7 +1318,7 @@ func decodeDateTime(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 						tmask |= dtkTimeM
 					}
 				case dtkTime:
-					if dterr := decodeNumberField(len(field), field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits); dterr < 0 {
+					if dterr := decodeNumberField(len(field), field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits, sess.strict()); dterr < 0 {
 						return dtype, tm, fsec, tzp, dterr
 					}
 					if tmask != dtkTimeM {
@@ -1324,11 +1338,11 @@ func decodeDateTime(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 						return dtype, tm, fsec, tzp, dterr
 					}
 				case dot >= 0 && dot > 2:
-					if dterr := decodeNumberField(flen, field, fmask, &tmask, &tm, &fsec, &is2digits); dterr < 0 {
+					if dterr := decodeNumberField(flen, field, fmask, &tmask, &tm, &fsec, &is2digits, sess.strict()); dterr < 0 {
 						return dtype, tm, fsec, tzp, dterr
 					}
 				case flen >= 6 && (fmask&dtkDateM == 0 || fmask&dtkTimeM == 0):
-					if dterr := decodeNumberField(flen, field, fmask, &tmask, &tm, &fsec, &is2digits); dterr < 0 {
+					if dterr := decodeNumberField(flen, field, fmask, &tmask, &tm, &fsec, &is2digits, sess.strict()); dterr < 0 {
 						return dtype, tm, fsec, tzp, dterr
 					}
 				default:
@@ -1509,7 +1523,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 					return tm, fsec, tzp, dterr
 				}
 				head := field[:dash]
-				dterr = decodeNumberField(len(head), head, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits)
+				dterr = decodeNumberField(len(head), head, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits, sess.strict())
 				if dterr < 0 {
 					return tm, fsec, tzp, dterr
 				}
@@ -1531,7 +1545,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 				}
 				ptype = 0
 			}
-			if dterr := decodeTime(field, intervalFullRange, &tmask, &tm, &fsec); dterr != 0 {
+			if dterr := decodeTime(field, intervalFullRange, &tmask, &tm, &fsec, sess.strict()); dterr != 0 {
 				return tm, fsec, tzp, dterr
 			}
 		case dtkTZ:
@@ -1560,7 +1574,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 					tm.year, tm.mon, tm.mday = j2date(value)
 					isjulian = true
 					if cp != "" {
-						f, dterr := parseFraction(cp)
+						f, dterr := parseFraction(cp, sess.strict())
 						if dterr != 0 {
 							return tm, fsec, tzp, dterr
 						}
@@ -1568,7 +1582,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 						tmask |= dtkTimeM
 					}
 				case dtkTime:
-					dterr := decodeNumberField(len(field), field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits)
+					dterr := decodeNumberField(len(field), field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits, sess.strict())
 					if dterr < 0 {
 						return tm, fsec, tzp, dterr
 					}
@@ -1590,7 +1604,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 							return tm, fsec, tzp, dterr
 						}
 					} else if dot > 2 {
-						dterr := decodeNumberField(flen, field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits)
+						dterr := decodeNumberField(flen, field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits, sess.strict())
 						if dterr < 0 {
 							return tm, fsec, tzp, dterr
 						}
@@ -1599,7 +1613,7 @@ func decodeTimeOnly(fields []string, ftypes []int, sess *dtSession, extra *dtExt
 						return tm, fsec, tzp, dtErrBadFormat
 					}
 				case flen > 4:
-					dterr := decodeNumberField(flen, field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits)
+					dterr := decodeNumberField(flen, field, fmask|dtkDateM, &tmask, &tm, &fsec, &is2digits, sess.strict())
 					if dterr < 0 {
 						return tm, fsec, tzp, dterr
 					}
@@ -1786,7 +1800,7 @@ func decodeInterval(fields []string, ftypes []int, rng int, sess *dtSession) (dt
 		ft := ftypes[i]
 		if ft == dtkTZ && strings.IndexByte(field[1:], ':') >= 0 {
 			var tm2 int
-			if decodeTimeForInterval(field[1:], rng, &tm2, &in) == 0 {
+			if decodeTimeForInterval(field[1:], rng, &tm2, &in, sess.strict()) == 0 {
 				tmask = tm2
 				if field[0] == '-' {
 					if in.usec == math.MinInt64 {
@@ -1805,7 +1819,7 @@ func decodeInterval(fields []string, ftypes []int, rng int, sess *dtSession) (dt
 		}
 		switch ft {
 		case dtkTime:
-			if dterr := decodeTimeForInterval(field, rng, &tmask, &in); dterr != 0 {
+			if dterr := decodeTimeForInterval(field, rng, &tmask, &in, sess.strict()); dterr != 0 {
 				return dtype, in, dterr
 			}
 			if forceNegative && in.usec > 0 {
@@ -1857,7 +1871,7 @@ func decodeInterval(fields []string, ftypes []int, rng int, sess *dtSession) (dt
 				}
 			case cp != "" && cp[0] == '.':
 				var dterr int
-				if fval, dterr = parseFraction(cp); dterr != 0 {
+				if fval, dterr = parseFraction(cp, sess.strict()); dterr != 0 {
 					return dtype, in, dterr
 				}
 				if field[0] == '-' {
@@ -2367,6 +2381,7 @@ func (a *analyzer) dtSession() *dtSession {
 	s := &dtSession{dateOrder: "mdy", tz: time.Local}
 	if a.s != nil {
 		s.sessionAbbrevs = a.s.Version.Or() >= pgparse.PG18
+		s.strictNumbers = s.sessionAbbrevs
 		order, style, zone := a.s.DateTimeSettings()
 		if order != "" {
 			s.dateOrder = order

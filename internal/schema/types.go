@@ -42,6 +42,8 @@ type Types struct {
 type Domain struct {
 	NotNull bool
 	Checks  []*Constraint // Kind Check, named <domain>_check like PG
+	// Collation is the COLLATE of CREATE DOMAIN, "" for the base type's default.
+	Collation string
 }
 
 func newTypes(cat *catalog.Catalog) *Types {

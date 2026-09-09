@@ -151,6 +151,17 @@ func (a *analyzer) jsonBehavior(b *pgparse.JsonBehavior, sc *scope, want catalog
 		if !a.canCoerce(e.oid(), want, assignmentCoercion) {
 			return errAt(codeCannotCoerce, loc(b.Expr), "cannot cast behavior expression of type %s to %s", a.s.Types.Format(e.typ), a.s.Types.Format(ref(want)))
 		}
+		// 18: the DEFAULT keeps its own collation, which must be the RETURNING type's (a
+		// literal has none of its own and takes the type's)
+		if a.s.Version.Or() >= pgparse.PG18 && e.oid() != catalog.Unknown && a.collatable(want) && e.coll.strength != collNone {
+			retColl := ""
+			if d := a.s.Types.Domains[want]; d != nil {
+				retColl = d.Collation
+			}
+			if e.coll.name != retColl {
+				return errAt(codeCollationMismatch, loc(b.Expr), "collation of DEFAULT expression conflicts with RETURNING clause")
+			}
+		}
 	}
 	return nil
 }
@@ -162,6 +173,13 @@ func (a *analyzer) jsonPathspec(n *pgparse.Node, sc *scope) *Error {
 	e, err := a.analyzeExpr(n, sc)
 	if err != nil {
 		return err
+	}
+	if a.s.Version.Or() >= pgparse.PG18 {
+		// 18 coerces the path to jsonpath and refuses what cannot be: a string is read as
+		// one, anything else is an error (17 looked the type up later and failed oddly)
+		if t := a.typ(a.baseType(e.oid())); e.oid() != catalog.Unknown && e.oid() != catalog.JSONPath && (t == nil || t.Category != 'S') {
+			return errAt(codeDatatypeMismatch, loc(n), "JSON path expression must be of type jsonpath, not of type %s", a.s.Types.Format(e.typ))
+		}
 	}
 	return a.bind(e, catalog.Text, loc(n))
 }
