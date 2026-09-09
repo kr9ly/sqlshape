@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kr9ly/sqlshape/mysql/internal/parsegen"
 )
@@ -20,9 +21,27 @@ func main() {
 	wasm := flag.Bool("wasm", false, "also build the wasm module with em++")
 	genOnly := flag.Bool("generate-only", false, "write the sources and stop before the toolchain")
 	corpus := flag.String("corpus", "", "write mysql-test/t split into statements to this file and exit")
+	actions := flag.Bool("actions", false, "print how far the grammar's semantic actions are read, and exit")
+	roots := flag.String("roots", "", "with -actions: comma-separated start rules; report the unread actions reachable from them")
 	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
 
+	if *actions {
+		yacc, err := os.ReadFile(filepath.Join(*src, "sql", "sql_yacc.yy"))
+		if err != nil {
+			fatal(err)
+		}
+		alts, err := parsegen.ReadActions(string(yacc))
+		if err != nil {
+			fatal(err)
+		}
+		if *roots != "" {
+			fmt.Print(parsegen.ReachReport(alts, strings.Split(*roots, ",")))
+		} else {
+			fmt.Print(parsegen.ActionReport(alts))
+		}
+		return
+	}
 	if *corpus != "" {
 		stmts, total, err := parsegen.SplitTestDir(filepath.Join(*src, "mysql-test", "t"))
 		if err != nil {

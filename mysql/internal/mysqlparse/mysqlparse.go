@@ -79,7 +79,10 @@ var (
 // Node is one CST node. Leaves have Start/End (byte offsets into the parsed text) and no
 // Children; inner nodes have Children and their span is that of their leaves.
 type Node struct {
-	Kind     Kind
+	Kind Kind
+	// Alt is which alternative of the rule was reduced, 0-based in grammar order; it selects
+	// the node's Shape. Leaves have Alt 0.
+	Alt      int
 	Start    int
 	End      int
 	Children []*Node
@@ -146,7 +149,7 @@ func Parse(sql string, mode Mode) (*Node, error) {
 }
 
 // decode reads the wire format parse.h describes: preorder, u16 kind with bit 15 on leaves,
-// then u32 start / u32 end for a leaf or u16 child count for a rule.
+// then u32 start / u32 end for a leaf or u16 alternative + u16 child count for a rule.
 func decode(b []byte) (*Node, error) {
 	pos := 0
 	var rec func() (*Node, error)
@@ -166,11 +169,12 @@ func decode(b []byte) (*Node, error) {
 			pos += 8
 			return n, nil
 		}
-		if pos+2 > len(b) {
+		if pos+4 > len(b) {
 			return nil, fmt.Errorf("mysqlparse: truncated node at %d", pos)
 		}
-		count := int(binary.LittleEndian.Uint16(b[pos:]))
-		pos += 2
+		n.Alt = int(binary.LittleEndian.Uint16(b[pos:]))
+		count := int(binary.LittleEndian.Uint16(b[pos+2:]))
+		pos += 4
 		if count > 0 {
 			n.Children = make([]*Node, count)
 			first := true

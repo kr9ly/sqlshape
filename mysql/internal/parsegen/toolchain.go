@@ -132,6 +132,16 @@ func (b *Build) Generate() (*Grammar, error) {
 		if err := writeFile(filepath.Join(b.Pkg, "kinds.go"), []byte(g.KindsGo("mysqlparse", ver.String()))); err != nil {
 			return nil, err
 		}
+		alts, err := ReadActions(string(yacc))
+		if err != nil {
+			return nil, err
+		}
+		if len(alts) != g.Alternatives {
+			return nil, fmt.Errorf("actions: read %d alternatives, the grammar has %d", len(alts), g.Alternatives)
+		}
+		if err := writeFile(filepath.Join(b.Pkg, "shapes.go"), []byte(ShapesGo("mysqlparse", ver.String(), g.Kinds, alts))); err != nil {
+			return nil, err
+		}
 	}
 	b.log("generated for MySQL %s: rules=%d alternatives=%d mid-rule-actions=%d kinds=%d", ver, g.Rules, g.Alternatives, g.MidRuleActions, len(g.Kinds))
 	return g, nil

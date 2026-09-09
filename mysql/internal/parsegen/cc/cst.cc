@@ -4,9 +4,10 @@
 #include "sql/parse_location.h"
 #include "sql/sql_lex.h"
 
-Node *mk(THD *thd, int kind, int n, ...) {
+Node *mk(THD *thd, int kind, int alt, int n, ...) {
   Node *nd = (Node *)calloc(1, sizeof *nd);
   nd->kind = (uint16_t)kind;
+  nd->alt = (uint16_t)alt;
   nd->n = n;
   nd->kids = (Node **)calloc(n ? n : 1, sizeof(Node *));
   va_list ap;

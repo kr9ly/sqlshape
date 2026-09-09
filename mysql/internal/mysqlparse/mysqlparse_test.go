@@ -154,3 +154,48 @@ func TestCorpus(t *testing.T) {
 		t.Errorf("acceptance fell to %.2f%%", rate*100)
 	}
 }
+
+func TestShape(t *testing.T) {
+	sql := "SELECT a FROM t WHERE b = 1"
+	root, err := Parse(sql, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var classes []string
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n.IsLeaf() {
+			return
+		}
+		if s := n.Shape(); s.Kind == ActNew {
+			classes = append(classes, s.Class)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	joined := strings.Join(classes, " ")
+	for _, want := range []string{"PT_select_stmt", "PT_query_specification", "PT_table_factor_table_ident", "PTI_comp_op", "PTI_where", "Item_int"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("shapes lack %s in %s", want, joined)
+		}
+	}
+	// the alternative index selects the shape: `where_clause` is the second alternative of
+	// opt_where_clause and has no action (bison's default $$ = $1)
+	k, _ := KindOf("opt_where_clause")
+	var where *Node
+	var find func(n *Node)
+	find = func(n *Node) {
+		if n.Kind == k {
+			where = n
+		}
+		for _, c := range n.Children {
+			find(c)
+		}
+	}
+	find(root)
+	if where == nil || where.Alt != 1 || where.Shape().Kind != ActDefault {
+		t.Errorf("opt_where_clause: %+v shape %+v", where, where.Shape())
+	}
+}

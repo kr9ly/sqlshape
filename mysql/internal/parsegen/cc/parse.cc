@@ -52,6 +52,7 @@ static void serialize(std::string &s, const Node *n, const char *base, uint32_t 
     return;
   }
   put16(s, n->kind);
+  put16(s, n->alt);
   put16(s, (uint32_t)n->n);
   for (int i = 0; i < n->n; i++) serialize(s, n->kids[i], base, len);
 }

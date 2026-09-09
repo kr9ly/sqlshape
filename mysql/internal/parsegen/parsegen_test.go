@@ -1,6 +1,7 @@
 package parsegen
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,11 +48,11 @@ epilogue();
 	for _, want := range []string{
 		`%token SELECT_SYM 258`,
 		"\n%%\n",
-		`  SELECT_SYM expr ';' { $$.node = mk(YYTHD, 0 /* stmt */, 3, L(YYTHD, 3, &@1), $2.node, L(YYTHD, 4, &@3)); *out = $$.node; }`,
-		`| %empty { $$.node = mk(YYTHD, 0 /* stmt */, 0); *out = $$.node; }`,
-		`| expr '+' expr %prec '+' { $$.node = mk(YYTHD, 1 /* expr */, 3, $1.node, L(YYTHD, 6, &@2), $3.node); }`,
-		`| NUM {} NUM { $$.node = mk(YYTHD, 1 /* expr */, 2, L(YYTHD, 5, &@1), L(YYTHD, 5, &@3)); }`,
-		"trailing:\n  NUM { $$.node = mk(YYTHD, 2 /* trailing */, 1, L(YYTHD, 5, &@1)); }\n;",
+		`  SELECT_SYM expr ';' { $$.node = mk(YYTHD, 0 /* stmt */, 0, 3, L(YYTHD, 3, &@1), $2.node, L(YYTHD, 4, &@3)); *out = $$.node; }`,
+		`| %empty { $$.node = mk(YYTHD, 0 /* stmt */, 1, 0); *out = $$.node; }`,
+		`| expr '+' expr %prec '+' { $$.node = mk(YYTHD, 1 /* expr */, 1, 3, $1.node, L(YYTHD, 6, &@2), $3.node); }`,
+		`| NUM {} NUM { $$.node = mk(YYTHD, 1 /* expr */, 2, 2, L(YYTHD, 5, &@1), L(YYTHD, 5, &@3)); }`,
+		"trailing:\n  NUM { $$.node = mk(YYTHD, 2 /* trailing */, 0, 1, L(YYTHD, 5, &@1)); }\n;",
 	} {
 		if !strings.Contains(g.Text, want) {
 			t.Errorf("missing %q in\n%s", want, g.Text)
@@ -61,6 +62,35 @@ epilogue();
 		if strings.Contains(strings.TrimPrefix(g.Text, grammarPrologue), gone) {
 			t.Errorf("%q should have been stripped", gone)
 		}
+	}
+}
+
+// The alternative index the generated actions record must be the one ReadActions assigns.
+func TestAlternativeIndexAgree(t *testing.T) {
+	src := "%start s\n%token A B\n%%\ns: A { $$= $1; } | B x { $$= NEW_PTN PT_x(@$, $2); } | %empty ;\nx: A\n | B { $$= nullptr; }\n%%\n"
+	g, err := StripGrammar(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alts, err := ReadActions(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"s/0/pass", "s/1/new", "s/2/default", "x/0/default", "x/1/empty"}
+	var got []string
+	for _, a := range alts {
+		got = append(got, fmt.Sprintf("%s/%d/%s", a.Rule, a.Index, a.Kind))
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("alts %v", got)
+	}
+	for _, m := range []string{"mk(YYTHD, 0 /* s */, 0, 1,", "mk(YYTHD, 0 /* s */, 1, 2,", "mk(YYTHD, 0 /* s */, 2, 0)", "mk(YYTHD, 1 /* x */, 0, 1,", "mk(YYTHD, 1 /* x */, 1, 1,"} {
+		if !strings.Contains(g.Text, m) {
+			t.Errorf("grammar lacks %q", m)
+		}
+	}
+	if g.Alternatives != len(alts) {
+		t.Errorf("StripGrammar saw %d alternatives, ReadActions %d", g.Alternatives, len(alts))
 	}
 }
 
