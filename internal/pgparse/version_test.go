@@ -35,6 +35,20 @@ func TestUpgrade17(t *testing.T) {
 	if _, err := PG17.Parse("SELECT 1 WHERE (1,2) < (3,4)"); err != nil {
 		t.Error(err)
 	}
+	// 17's constraints are enforced and its generated columns stored, as 18 says explicitly
+	ddl := "CREATE TABLE t (a int CHECK (a > 0), b int GENERATED ALWAYS AS (a * 2) STORED, FOREIGN KEY (a) REFERENCES p (id))"
+	tree, err = PG17.Parse(ddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree18, err = PG18.Parse(ddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree18.Version = tree.Version
+	if !proto.Equal(tree, tree18) {
+		t.Errorf("17 DDL differs from 18's:\n17: %v\n18: %v", tree, tree18)
+	}
 }
 
 func TestVersionGrammar(t *testing.T) {

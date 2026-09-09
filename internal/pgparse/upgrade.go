@@ -52,8 +52,21 @@ func (r rewrite) walk(node any) {
 var upgrades = map[Version]rewrite{
 	// 17 -> 18
 	PG17: {
-		keys: []string{`"returningList"`, `"inhcount"`, `"rctype"`, `"SinglePartitionSpec"`},
+		keys: []string{`"returningList"`, `"inhcount"`, `"rctype"`, `"SinglePartitionSpec"`, `"CONSTR_CHECK"`, `"CONSTR_FOREIGN"`, `"CONSTR_GENERATED"`},
 		apply: func(obj map[string]any) {
+			// 18 added ENFORCED / NOT ENFORCED (CHECK and FOREIGN KEY) and VIRTUAL / STORED
+			// generated columns; a 17 constraint is enforced and a 17 generated column is
+			// stored, which 18's grammar writes explicitly
+			switch obj["contype"] {
+			case "CONSTR_CHECK", "CONSTR_FOREIGN":
+				if _, ok := obj["is_enforced"]; !ok {
+					obj["is_enforced"] = true
+				}
+			case "CONSTR_GENERATED":
+				if _, ok := obj["generated_kind"]; !ok {
+					obj["generated_kind"] = "s"
+				}
+			}
 			// RETURNING grew options (RETURNING OLD/NEW): the list became a clause
 			if list, ok := obj["returningList"]; ok {
 				delete(obj, "returningList")

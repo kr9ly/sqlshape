@@ -361,6 +361,13 @@ func TestConstraintText(t *testing.T) {
 			`FOREIGN KEY ("customer_id") REFERENCES "customers" ("id") ON DELETE CASCADE ON UPDATE SET NULL DEFERRABLE`},
 		{"foreign key restrict/set default", &schema.Constraint{Kind: schema.ForeignKey, Columns: []string{"customer_id"}, RefTable: "customers", RefColumns: []string{"id"}, OnDelete: 'r', OnUpdate: 'd'},
 			`FOREIGN KEY ("customer_id") REFERENCES "customers" ("id") ON DELETE RESTRICT ON UPDATE SET DEFAULT`},
+		// PostgreSQL 18
+		{"temporal primary key", &schema.Constraint{Kind: schema.PrimaryKey, Columns: []string{"id", "valid_at"}, WithoutOverlaps: true},
+			`PRIMARY KEY ("id", "valid_at" WITHOUT OVERLAPS)`},
+		{"temporal unique", &schema.Constraint{Kind: schema.Unique, Columns: []string{"id", "valid_at"}, WithoutOverlaps: true},
+			`UNIQUE ("id", "valid_at" WITHOUT OVERLAPS)`},
+		{"temporal foreign key, not enforced", &schema.Constraint{Kind: schema.ForeignKey, Columns: []string{"pid", "valid_at"}, RefTable: "p", RefColumns: []string{"id", "valid_at"}, WithPeriod: true, NotEnforced: true},
+			`FOREIGN KEY ("pid", PERIOD "valid_at") REFERENCES "p" ("id", PERIOD "valid_at") NOT ENFORCED`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

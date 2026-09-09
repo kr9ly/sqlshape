@@ -471,7 +471,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		if reStdin.MatchString(sql) { // would wait for client data
 			continue
 		}
-		tree, err := pgparse.Parse(sql)
+		tree, err := p.version.Parse(sql)
 		if err != nil || len(tree.Stmts) == 0 {
 			p.count("unparsed")
 			exec(sql)
@@ -532,7 +532,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 				if s == nil {
 					s = loadRegressSchema(p.version, &ddl)
 				}
-				drops := dropTemps(stmts[:i])
+				drops := dropTemps(p.version, stmts[:i])
 				if st.DiscardStmt.Target == pgparse.DiscardMode_DISCARD_ALL {
 					drops = append(drops, sessionResets...)
 				}
@@ -616,7 +616,7 @@ func (p *regressProbe) runFile(o *oracle.Oracle, dbName, name string, promote, q
 		exec("DISCARD ALL")
 		conn.DeallocateAll(ctx)
 		conn.Exec(ctx, session)
-		ddl = append(ddl, dropTemps(stmts)...)
+		ddl = append(ddl, dropTemps(p.version, stmts)...)
 		ddl = append(ddl, sessionResets...)
 		p.baseDDL = ddl
 	}
@@ -628,10 +628,10 @@ var sessionResets = []string{"RESET search_path", "RESET datestyle", "RESET inte
 
 // dropTemps lists the DROPs for the temp tables and views the statements created and did
 // not drop (what the end of a session, or DISCARD TEMP, takes with it).
-func dropTemps(stmts []string) []string {
+func dropTemps(v pgparse.Version, stmts []string) []string {
 	temps := map[string]string{} // name → TABLE / VIEW / SEQUENCE
 	for _, sql := range stmts {
-		tree, err := pgparse.Parse(sql)
+		tree, err := v.Parse(sql)
 		if err != nil || len(tree.Stmts) != 1 {
 			continue
 		}
@@ -758,7 +758,7 @@ func (p *regressProbe) split(src string) []string {
 	text := strings.Join(lines, "\n")
 	text = reGset.ReplaceAllString(text, ";")
 	text = reMeta.ReplaceAllString(text, "")
-	stmts, err := pgparse.SplitWithScanner(text, true)
+	stmts, err := p.version.SplitWithScanner(text, true)
 	if err != nil {
 		p.t.Logf("split: %v", err)
 		return nil

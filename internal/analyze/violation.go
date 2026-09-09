@@ -196,11 +196,11 @@ func (a *analyzer) insertViolations(ins *pgparse.InsertStmt) []Violation {
 				out = append(out, Violation{Code: codeUniqueViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns})
 			}
 		case schema.ForeignKey:
-			if anyIn(con.Columns, inserted) {
+			if anyIn(con.Columns, inserted) && !con.NotEnforced {
 				out = append(out, Violation{Code: codeForeignKeyViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns, RefTable: con.RefTable})
 			}
 		case schema.Check:
-			if anyIn(checkColumns(con), inserted) {
+			if anyIn(checkColumns(con), inserted) && !con.NotEnforced {
 				out = append(out, Violation{Code: codeCheckViolation, Constraint: con.Name, Table: rel.Name, Columns: checkColumns(con)})
 			}
 		case schema.Exclude:
@@ -272,11 +272,11 @@ func (a *analyzer) updateViolations(rel *schema.Relation, set map[string]bool, s
 				out = append(out, Violation{Code: codeUniqueViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns})
 			}
 		case schema.ForeignKey:
-			if anyIn(con.Columns, set) {
+			if anyIn(con.Columns, set) && !con.NotEnforced {
 				out = append(out, Violation{Code: codeForeignKeyViolation, Constraint: con.Name, Table: rel.Name, Columns: con.Columns, RefTable: con.RefTable})
 			}
 		case schema.Check:
-			if anyIn(checkColumns(con), set) {
+			if anyIn(checkColumns(con), set) && !con.NotEnforced {
 				out = append(out, Violation{Code: codeCheckViolation, Constraint: con.Name, Table: rel.Name, Columns: checkColumns(con)})
 			}
 		case schema.Exclude:
@@ -346,7 +346,7 @@ func (a *analyzer) cascadingViolations(rel *schema.Relation, changed map[string]
 	var out []Violation
 	for _, other := range a.s.Relations {
 		for _, con := range other.Constraints {
-			if con.Kind != schema.ForeignKey || a.relByFullName(con.RefTable) != rel {
+			if con.Kind != schema.ForeignKey || con.NotEnforced || a.relByFullName(con.RefTable) != rel {
 				continue
 			}
 			action := con.OnUpdate

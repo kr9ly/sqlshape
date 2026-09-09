@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/kr9ly/sqlshape/internal/schema"
 )
 
 // TestViolations covers the failure-mode enumeration (violation.go) against testdata/schema.sql.
@@ -145,5 +147,49 @@ func TestIdentityUpdate(t *testing.T) {
 		case want != "" && (err == nil || !strings.HasPrefix(err.Error(), want)):
 			t.Errorf("%s: want %s, got %v", sql, want, err)
 		}
+	}
+}
+
+// TestNotEnforcedViolations: a NOT ENFORCED constraint (PostgreSQL 18) never raises, so
+// it is not a failure mode of the statements that touch its columns; an enforced one
+// beside it still is, and ALTER CONSTRAINT ... ENFORCED brings it back.
+func TestNotEnforcedViolations(t *testing.T) {
+	const ddl = `-- sqlshape: postgres 18
+CREATE TABLE p (id int PRIMARY KEY);
+CREATE TABLE t (
+  id int PRIMARY KEY,
+  pid int CONSTRAINT t_fk REFERENCES p (id) NOT ENFORCED,
+  n int CONSTRAINT t_ck CHECK (n > 0) NOT ENFORCED,
+  m int CONSTRAINT t_ck2 CHECK (m > 0)
+);
+`
+	codes := func(t *testing.T, s *schema.Schema, sql string) string {
+		r, err := Analyze(s, sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, v := range r.Violations {
+			got = append(got, v.Code+" "+v.Key())
+		}
+		sort.Strings(got)
+		return strings.Join(got, ", ")
+	}
+	s, err := Load(ddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := codes(t, s, "INSERT INTO t (id, pid, n, m) VALUES ($1, $2, $3, $4)"), "23502 t.id, 23505 t_pkey, 23514 t_ck2"; got != want {
+		t.Errorf("insert: got %q, want %q", got, want)
+	}
+	if got, want := codes(t, s, "DELETE FROM p WHERE id = $1"), ""; got != want {
+		t.Errorf("delete of the referenced row: got %q, want %q", got, want)
+	}
+	s, err = Load(ddl + "ALTER TABLE t ALTER CONSTRAINT t_fk ENFORCED, ALTER CONSTRAINT t_ck ENFORCED;\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := codes(t, s, "INSERT INTO t (id, pid, n, m) VALUES ($1, $2, $3, $4)"), "23502 t.id, 23503 t_fk, 23505 t_pkey, 23514 t_ck, 23514 t_ck2"; got != want {
+		t.Errorf("enforced again: got %q, want %q", got, want)
 	}
 }

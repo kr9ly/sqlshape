@@ -118,8 +118,11 @@ type Relation struct {
 	Kind    RelKind
 	RowType catalog.OID // the composite type of a row
 	// OfType is the composite type of a typed table (CREATE TABLE ... OF type), 0 otherwise.
-	OfType  catalog.OID
-	Columns []*Column
+	OfType catalog.OID
+	// notNullNames maps a named NOT NULL constraint (CONSTRAINT nn NOT NULL col,
+	// PostgreSQL 18) to its column, so DROP CONSTRAINT nn can lift the NOT NULL.
+	notNullNames map[string]string
+	Columns      []*Column
 	// Constraints: PK / UNIQUE / FK / CHECK on the table, plus unique indexes (as Unique).
 	Constraints []*Constraint
 	// Query is the defining query of a view / matview (nil for tables).
@@ -242,8 +245,11 @@ type Column struct {
 	NotNull   bool
 	Default   Expr // raw DEFAULT expression, nil if none
 	Identity  byte // 'a' always / 'd' by default / 0
-	Generated Expr // GENERATED ALWAYS AS (expr) STORED
-	Collation string
+	Generated Expr // GENERATED ALWAYS AS (expr)
+	// GeneratedVirtual: the generated column is VIRTUAL (computed on read, PostgreSQL 18)
+	// rather than STORED.
+	GeneratedVirtual bool
+	Collation        string
 	// Inherited: the column comes from a parent table (attinhcount > 0); LocalDef: the
 	// child declares it too (attislocal). Dropping the parent's column drops an inherited
 	// column without a local definition; a child cannot drop an inherited column.
@@ -279,6 +285,14 @@ type Constraint struct {
 	Predicate        Expr
 	NullsNotDistinct bool
 	Deferrable       bool
+	// WithoutOverlaps (PrimaryKey / Unique): the last column is a range or multirange and
+	// the key is temporal, PRIMARY KEY (id, valid_at WITHOUT OVERLAPS); WithPeriod
+	// (ForeignKey): the last column pair is PERIOD on both sides. PostgreSQL 18.
+	WithoutOverlaps bool
+	WithPeriod      bool
+	// NotEnforced (Check / ForeignKey): declared NOT ENFORCED (PostgreSQL 18), so the
+	// constraint never raises; it documents an intent the database does not check.
+	NotEnforced bool
 	// Exclude: the access method (e.g. "gist") and, one per Columns entry, the WITH
 	// operator (EXCLUDE USING gist (room WITH =, during WITH &&)). Predicate above doubles
 	// as its optional WHERE clause.
@@ -1253,17 +1267,23 @@ func (s *Schema) addColumn(rel *Relation, cd *pgparse.ColumnDef) {
 			s.createOwnedSequence(rel, cd.Colname, cd.GetLocation())
 		case pgparse.ConstrType_CONSTR_GENERATED:
 			col.Generated = c.RawExpr
+			col.GeneratedVirtual = c.GeneratedKind == "v"
 		case pgparse.ConstrType_CONSTR_PRIMARY:
 			col.NotNull = true
 			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: []string{col.Name}, Deferrable: c.Deferrable})
 		case pgparse.ConstrType_CONSTR_UNIQUE:
 			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: []string{col.Name}, NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable})
 		case pgparse.ConstrType_CONSTR_CHECK:
-			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Columns: []string{col.Name}, Expr: c.RawExpr})
+			s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Columns: []string{col.Name}, Expr: c.RawExpr, NotEnforced: !c.IsEnforced})
 		case pgparse.ConstrType_CONSTR_FOREIGN:
 			fk := s.foreignKey(c)
 			fk.Columns = []string{col.Name}
 			s.addConstraint(rel, fk)
+		case pgparse.ConstrType_CONSTR_ATTR_ENFORCED, pgparse.ConstrType_CONSTR_ATTR_NOT_ENFORCED:
+			// an attribute of the constraint written just before it
+			if n := len(rel.Constraints); n > 0 {
+				rel.Constraints[n-1].NotEnforced = c.GetContype() == pgparse.ConstrType_CONSTR_ATTR_NOT_ENFORCED
+			}
 		case pgparse.ConstrType_CONSTR_ATTR_DEFERRABLE, pgparse.ConstrType_CONSTR_ATTR_NOT_DEFERRABLE,
 			pgparse.ConstrType_CONSTR_ATTR_DEFERRED, pgparse.ConstrType_CONSTR_ATTR_IMMEDIATE:
 		default:
@@ -1274,7 +1294,7 @@ func (s *Schema) addColumn(rel *Relation, cd *pgparse.ColumnDef) {
 
 func (s *Schema) foreignKey(c *pgparse.Constraint) *Constraint {
 	rs, rn := s.rangeVar(c.Pktable)
-	fk := &Constraint{Name: c.Conname, Kind: ForeignKey, RefColumns: strs(c.PkAttrs), Deferrable: c.Deferrable, OnDelete: 'a', OnUpdate: 'a'}
+	fk := &Constraint{Name: c.Conname, Kind: ForeignKey, RefColumns: strs(c.PkAttrs), Deferrable: c.Deferrable, OnDelete: 'a', OnUpdate: 'a', WithPeriod: c.FkWithPeriod, NotEnforced: !c.IsEnforced}
 	if c.FkDelAction != "" {
 		fk.OnDelete = c.FkDelAction[0]
 	}
@@ -1307,16 +1327,34 @@ func (s *Schema) addTableConstraint(rel *Relation, c *pgparse.Constraint) {
 				s.problem(c.GetLocation(), "%s: primary key column %q does not exist", rel.Name, n)
 			}
 		}
-		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: cols, Deferrable: c.Deferrable})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: PrimaryKey, Columns: cols, Deferrable: c.Deferrable, WithoutOverlaps: c.WithoutOverlaps})
 		// a PRIMARY KEY added after the table exists (ALTER TABLE ... ADD CONSTRAINT ...
 		// PRIMARY KEY) makes its columns NOT NULL too; a no-op when this runs for the
 		// table's own inline/table-level constraints at CREATE TABLE time, since no view
 		// can depend on it yet.
 		s.notifyNotNullChange(rel)
 	case pgparse.ConstrType_CONSTR_UNIQUE:
-		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Unique, Columns: strs(c.Keys), NullsNotDistinct: c.NullsNotDistinct, Deferrable: c.Deferrable, WithoutOverlaps: c.WithoutOverlaps})
 	case pgparse.ConstrType_CONSTR_CHECK:
-		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Expr: c.RawExpr})
+		s.addConstraint(rel, &Constraint{Name: c.Conname, Kind: Check, Expr: c.RawExpr, NotEnforced: !c.IsEnforced})
+	case pgparse.ConstrType_CONSTR_NOTNULL:
+		// CONSTRAINT name NOT NULL col (PostgreSQL 18): the column's NOT NULL, under a name
+		// DROP CONSTRAINT can take away again
+		for _, n := range strs(c.Keys) {
+			col := rel.Column(n)
+			if col == nil {
+				s.problem(c.GetLocation(), "%s: NOT NULL column %q does not exist", rel.Name, n)
+				continue
+			}
+			col.NotNull = true
+			if c.Conname != "" {
+				if rel.notNullNames == nil {
+					rel.notNullNames = map[string]string{}
+				}
+				rel.notNullNames[c.Conname] = n
+			}
+		}
+		s.notifyNotNullChange(rel)
 	case pgparse.ConstrType_CONSTR_FOREIGN:
 		fk := s.foreignKey(c)
 		fk.Columns = strs(c.FkAttrs)
@@ -1541,8 +1579,29 @@ func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
 		case pgparse.AlterTableType_AT_DropConstraint:
 			n := len(rel.Constraints)
 			rel.Constraints = filterConstraints(rel.Constraints, func(c *Constraint) bool { return c.Name != cmd.Name })
-			if len(rel.Constraints) == n && !cmd.MissingOk {
+			if colName, ok := rel.notNullNames[cmd.Name]; ok {
+				if col := rel.Column(colName); col != nil {
+					col.NotNull = false
+					s.notifyNotNullChange(rel)
+				}
+				delete(rel.notNullNames, cmd.Name)
+			} else if len(rel.Constraints) == n && !cmd.MissingOk {
 				s.problem(loc, "%s: constraint %q does not exist", rel.Name, cmd.Name)
+			}
+		case pgparse.AlterTableType_AT_AlterConstraint:
+			// ALTER CONSTRAINT name [NOT] ENFORCED / DEFERRABLE ... (PostgreSQL 18 form)
+			if ac := cmd.Def.GetAtalterConstraint(); ac != nil {
+				for _, c := range rel.Constraints {
+					if c.Name != ac.Conname {
+						continue
+					}
+					if ac.AlterEnforceability {
+						c.NotEnforced = !ac.IsEnforced
+					}
+					if ac.AlterDeferrability {
+						c.Deferrable = ac.Deferrable
+					}
+				}
 			}
 		case pgparse.AlterTableType_AT_AddIdentity:
 			if col := rel.Column(cmd.Name); col != nil && col.Identity == 0 {
@@ -1665,7 +1724,7 @@ func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
 			pgparse.AlterTableType_AT_DetachPartitionFinalize,
 			pgparse.AlterTableType_AT_ValidateConstraint, pgparse.AlterTableType_AT_ReplicaIdentity, pgparse.AlterTableType_AT_SetLogged,
 			pgparse.AlterTableType_AT_SetUnLogged, pgparse.AlterTableType_AT_SetTableSpace, pgparse.AlterTableType_AT_SetStorage,
-			pgparse.AlterTableType_AT_SetCompression, pgparse.AlterTableType_AT_AlterConstraint, pgparse.AlterTableType_AT_ResetRelOptions,
+			pgparse.AlterTableType_AT_SetCompression, pgparse.AlterTableType_AT_ResetRelOptions,
 			pgparse.AlterTableType_AT_SetAccessMethod,
 			pgparse.AlterTableType_AT_DropOids,
 			pgparse.AlterTableType_AT_SetOptions, pgparse.AlterTableType_AT_ResetOptions, pgparse.AlterTableType_AT_GenericOptions,

@@ -337,6 +337,9 @@ func colProps(s *schema.Schema, c *schema.Column) map[string]string {
 	}
 	if c.Generated != nil {
 		p["generated"] = schema.Deparse(c.Generated)
+		if c.GeneratedVirtual {
+			p["generated kind"] = "virtual"
+		}
 	}
 	return p
 }
@@ -372,6 +375,15 @@ func conProps(c *schema.Constraint) map[string]string {
 	}
 	if c.Deferrable {
 		p["deferrable"] = "true"
+	}
+	if c.WithoutOverlaps {
+		p["without overlaps"] = "true"
+	}
+	if c.WithPeriod {
+		p["period"] = "true"
+	}
+	if c.NotEnforced {
+		p["not enforced"] = "true"
 	}
 	return p
 }

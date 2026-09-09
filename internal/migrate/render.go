@@ -28,7 +28,11 @@ func columnText(s *schema.Schema, c *schema.Column, notNull bool) string {
 	var b strings.Builder
 	b.WriteString(q(c.Name) + " " + typeText(s, c))
 	if c.Generated != nil {
-		b.WriteString(" GENERATED ALWAYS AS (" + schema.Deparse(c.Generated) + ") STORED")
+		kind := " STORED"
+		if c.GeneratedVirtual {
+			kind = " VIRTUAL"
+		}
+		b.WriteString(" GENERATED ALWAYS AS (" + schema.Deparse(c.Generated) + ")" + kind)
 	}
 	if c.Identity != 0 {
 		b.WriteString(" GENERATED " + identityWord(c.Identity) + " AS IDENTITY")
@@ -91,15 +95,15 @@ func identityWord(id byte) string {
 func constraintText(s *schema.Schema, c *schema.Constraint) string {
 	switch c.Kind {
 	case schema.PrimaryKey:
-		return "PRIMARY KEY (" + qlist(c.Columns) + ")"
+		return "PRIMARY KEY (" + keyList(c) + ")"
 	case schema.Unique:
 		t := "UNIQUE"
 		if c.NullsNotDistinct {
 			t += " NULLS NOT DISTINCT"
 		}
-		return t + " (" + qlist(c.Columns) + ")"
+		return t + " (" + keyList(c) + ")"
 	case schema.ForeignKey:
-		t := "FOREIGN KEY (" + qlist(c.Columns) + ") REFERENCES " + qdot(c.RefTable) + " (" + qlist(c.RefColumns) + ")"
+		t := "FOREIGN KEY (" + periodList(c.Columns, c.WithPeriod) + ") REFERENCES " + qdot(c.RefTable) + " (" + periodList(c.RefColumns, c.WithPeriod) + ")"
 		if w := actionWord(c.OnDelete); w != "" {
 			t += " ON DELETE " + w
 		}
@@ -109,9 +113,16 @@ func constraintText(s *schema.Schema, c *schema.Constraint) string {
 		if c.Deferrable {
 			t += " DEFERRABLE"
 		}
+		if c.NotEnforced {
+			t += " NOT ENFORCED"
+		}
 		return t
 	case schema.Check:
-		return "CHECK (" + schema.Deparse(c.Expr) + ")"
+		t := "CHECK (" + schema.Deparse(c.Expr) + ")"
+		if c.NotEnforced {
+			t += " NOT ENFORCED"
+		}
+		return t
 	case schema.Exclude:
 		var elems []string
 		for i, col := range c.Columns {
@@ -128,6 +139,23 @@ func constraintText(s *schema.Schema, c *schema.Constraint) string {
 		return t
 	}
 	return ""
+}
+
+// keyList renders a PRIMARY KEY / UNIQUE column list, the last column WITHOUT OVERLAPS
+// for a temporal key.
+func keyList(c *schema.Constraint) string {
+	if !c.WithoutOverlaps || len(c.Columns) == 0 {
+		return qlist(c.Columns)
+	}
+	return qlist(c.Columns[:len(c.Columns)-1]) + ", " + q(c.Columns[len(c.Columns)-1]) + " WITHOUT OVERLAPS"
+}
+
+// periodList renders a FOREIGN KEY column list, the last column PERIOD for a temporal key.
+func periodList(cols []string, period bool) string {
+	if !period || len(cols) == 0 {
+		return qlist(cols)
+	}
+	return qlist(cols[:len(cols)-1]) + ", PERIOD " + q(cols[len(cols)-1])
 }
 
 func actionWord(a byte) string {
