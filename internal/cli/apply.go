@@ -64,6 +64,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err := problems(tgt.text); err != nil {
 		return fmt.Errorf("%s: %w", schemaPath, err)
 	}
+	warnServerVersion(ctx, stderr, *db, tgt.canonical.Version)
 	current, currentText, err := dump.Load(ctx, *db, tgt.canonical)
 	if err != nil {
 		return err

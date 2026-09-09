@@ -57,6 +57,7 @@ func runDiff(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	var current *schema.Schema
 	var currentText string
 	if *db != "" {
+		warnServerVersion(ctx, stderr, *db, tgt.canonical.Version)
 		current, currentText, err = dump.Load(ctx, *db, tgt.canonical)
 		if err != nil {
 			return err

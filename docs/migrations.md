@@ -139,10 +139,12 @@ a one-row change and a `MERGE`, where an enum needs the type recreated under eve
 
 - `pg_dump` on `PATH` or named by `$SQLSHAPE_PG_DUMP`; its major version must be at least the
   database's.
-- The comparisons run `schema.sql` on a private PostgreSQL 17 that `sqlshape` downloads on first
-  use and caches under `~/.cache/sqlshape` (`$SQLSHAPE_PG_CACHE`). The first run takes a few
-  seconds for the download; afterwards it starts in a quarter of a second. Your database is
-  never used for this.
+- The comparisons run `schema.sql` on a private PostgreSQL of the major version the schema
+  declares (`-- sqlshape: postgres 17`), which `sqlshape` downloads on first use and caches under
+  `~/.cache/sqlshape` (`$SQLSHAPE_PG_CACHE`). The first run takes a few seconds for the download;
+  afterwards it starts in a quarter of a second. Your database is never used for this. When the
+  database runs another major version than the schema declares, the commands say so on stderr
+  and go on: the DDL is judged by the declared version's rules.
 - `-schema PATH` names `schema.sql`, or a `schema/` directory whose `*.sql` files apply in name
   order; the default is the nearest one from the working directory up.
 

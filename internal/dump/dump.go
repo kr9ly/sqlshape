@@ -109,6 +109,20 @@ func Load(ctx context.Context, connString string, seeds *schema.Schema) (*schema
 	return s, text, nil
 }
 
+// ServerVersion asks the database at connString which PostgreSQL it runs ("17.5").
+func ServerVersion(ctx context.Context, connString string) (string, error) {
+	conn, err := pgx.Connect(ctx, connString)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close(ctx)
+	var v string
+	if err := conn.QueryRow(ctx, "SHOW server_version").Scan(&v); err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
 // versionOf is the PostgreSQL version a canonical form is judged with: the seeds schema's
 // when there is one, else the version schemaSQL declares, else the default.
 func versionOf(seeds *schema.Schema, schemaSQL string) pgparse.Version {

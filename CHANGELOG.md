@@ -14,7 +14,8 @@ release it is a candidate for.
   and every statement are judged with 18's grammar and catalog: `RETURNING old` / `new` (with
   `WITH (OLD AS ..., NEW AS ...)`), `WITHOUT OVERLAPS` keys and `PERIOD` foreign keys, `NOT ENFORCED`
   constraints (which are no failure mode), named `NOT NULL` constraints, `VIRTUAL` generated columns.
-  `pgtest` and the migration commands run the declared version's PostgreSQL.
+  `pgtest` and the migration commands run the declared version's PostgreSQL; `diff`, `apply` and
+  `verify-schema` warn when the database runs another major version than the schema declares.
 
 ### Changed
 

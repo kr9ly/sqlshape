@@ -48,6 +48,7 @@ func runVerify(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := problems(tgt.text); err != nil {
 		return fmt.Errorf("%s: %w", schemaPath, err)
 	}
+	warnServerVersion(ctx, stderr, *db, tgt.canonical.Version)
 	current, _, err := dump.Load(ctx, *db, tgt.canonical)
 	if err != nil {
 		return err
