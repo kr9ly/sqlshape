@@ -25,6 +25,8 @@ type Build struct {
 	Pkg string
 	// ASTPkg is the directory of Go package mysqlast; when set, Generate writes views.go there.
 	ASTPkg string
+	// CatPkg is the directory of Go package catalog; when set, Generate writes functions.go there.
+	CatPkg string
 	Log    func(format string, args ...any)
 }
 
@@ -154,6 +156,22 @@ func (b *Build) Generate() (*Grammar, error) {
 			if err := writeFile(filepath.Join(b.ASTPkg, "views.go"), []byte(ViewsGo("mysqlast", ver.String(), alts, names))); err != nil {
 				return nil, err
 			}
+		}
+		if b.CatPkg != "" {
+			cat, err := ReadCatalog(b.Src)
+			if err != nil {
+				return nil, err
+			}
+			var grammarClasses []string
+			for _, a := range alts {
+				if a.Kind == ActNew && strings.HasPrefix(a.Class, "Item_") {
+					grammarClasses = append(grammarClasses, a.Class)
+				}
+			}
+			if err := writeFile(filepath.Join(b.CatPkg, "functions.go"), []byte(CatalogGo("catalog", ver.String(), cat, grammarClasses))); err != nil {
+				return nil, err
+			}
+			b.log("%s", strings.SplitN(cat.Report(), "\n", 2)[0])
 		}
 	}
 	b.log("generated for MySQL %s: rules=%d alternatives=%d mid-rule-actions=%d kinds=%d", ver, g.Rules, g.Alternatives, g.MidRuleActions, len(g.Kinds))

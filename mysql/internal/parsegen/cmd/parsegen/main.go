@@ -21,14 +21,34 @@ func main() {
 	wasm := flag.Bool("wasm", false, "also build the wasm module with em++")
 	genOnly := flag.Bool("generate-only", false, "write the sources and stop before the toolchain")
 	corpus := flag.String("corpus", "", "write mysql-test/t split into statements to this file and exit")
+	catalog := flag.Bool("catalog", false, "print what the server source says about its functions (registry, classes, resolve_type), and exit")
 	actions := flag.Bool("actions", false, "print how far the grammar's semantic actions are read, and exit")
 	show := flag.String("show", "", "with -actions: comma-separated rule/alt pairs whose symbols and action to print")
 	guards := flag.Bool("guards", false, "with -actions: list the error checks dropped from the actions (with -roots: only those reachable)")
 	roots := flag.String("roots", "", "with -actions: comma-separated start rules; report the unread actions reachable from them")
+	catpkg := flag.String("catpkg", "", "directory of package catalog: write functions.go there")
 	astpkg := flag.String("astpkg", "", "directory of package mysqlast: write views.go there")
 	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
 
+	if *catalog {
+		cat, err := parsegen.ReadCatalog(*src)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Print(cat.Report())
+		if len(flag.Args()) > 0 { // class names to dump
+			for _, name := range flag.Args() {
+				c := cat.Classes[name]
+				if c == nil {
+					fmt.Println(name, ": not found")
+					continue
+				}
+				fmt.Printf("%s : %s (family %s, resolve via %s) %s\n  %s\n", c.Name, c.Base, c.Family, c.InheritsResolve, c.Header, strings.Join(c.Facts, "\n  "))
+			}
+		}
+		return
+	}
 	if *actions {
 		yacc, err := os.ReadFile(filepath.Join(*src, "sql", "sql_yacc.yy"))
 		if err != nil {
@@ -85,7 +105,7 @@ func main() {
 		}
 		*out = filepath.Join(home, ".cache", "sqlshape", "mysqlparse", v.String())
 	}
-	b := &parsegen.Build{Src: *src, Out: *out, Wasm: *wasm, Pkg: *pkg, ASTPkg: *astpkg, Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }}
+	b := &parsegen.Build{Src: *src, Out: *out, Wasm: *wasm, Pkg: *pkg, ASTPkg: *astpkg, CatPkg: *catpkg, Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }}
 	if _, err := b.Generate(); err != nil {
 		fatal(err)
 	}
