@@ -131,6 +131,10 @@ type analyzer struct {
 	// inHaving are the blocks whose HAVING is being typed: a nested query's unqualified
 	// name may be one of their select aliases
 	inHaving []*relation
+	// subFacts are the subqueries' bodies by their PT_subquery node, for the EXISTS / IN
+	// predicates; claimed are the bodies such a predicate carries (not Children then)
+	subFacts map[*mysqlast.Node]*facts.Scope
+	claimed  map[*facts.Scope]bool
 }
 
 // write is what a statement stores, for the failure modes (violations.go).
@@ -634,6 +638,9 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 			sc.joins = append(sc.joins, jc)
 		}
 		return nil
+	case "PT_table_factor_joined_table":
+		// (a JOIN b ON ...) as one side of a join: the nest is its joins
+		return a.tableRef(sc, n.Arg("joined_table"), nullable)
 	case "PT_table_reference_list_parens":
 		list, _ := n.Arg("table_list").(mysqlast.List)
 		for _, t := range list {
@@ -751,6 +758,7 @@ func (a *analyzer) view(v *schema.View) ([]Column, *facts.Scope, error) {
 		names = append(names, c)
 	}
 	cols, err = renamed(cols, names, v.Name, -1)
+	clearPositions(body) // offsets into the view's definition mean nothing to the statement
 	return cols, body, err
 }
 

@@ -105,6 +105,15 @@ require never on delete FAIL ledger is declared `+"`require never on delete`"+`:
 		// a view's body is judged as the schema's own definition (TestDefinitions), not
 		// again by the statements that read it
 		{`SELECT id FROM all_orders WHERE tenant_id = $1`, ``},
+		// a subquery's body is judged where it stands: under the EXISTS / IN predicate
+		{`SELECT oi.id FROM order_items oi WHERE oi.tenant_id = $1 AND EXISTS (SELECT 1 FROM orders o WHERE o.id = oi.order_id AND o.tenant_id = $1 AND o.deleted_at IS NULL)`, `
+require pinned(tenant_id) statement
+visible where deleted_at IS NULL statement
+require pinned(tenant_id) statement`},
+		{`SELECT oi.id FROM order_items oi WHERE oi.tenant_id = $1 AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.deleted_at IS NULL)`, `
+require pinned(tenant_id) statement
+visible where deleted_at IS NULL statement
+require pinned(tenant_id) FAIL orders.tenant_id is not pinned: every statement on orders must fix tenant_id by equality (or assign it)`},
 		{"-- sqlshape: unfiltered orders\nSELECT id FROM orders WHERE tenant_id = $1", `
 visible where deleted_at IS NULL waived orders: ` + "`visible where deleted_at IS NULL`" + ` is waived by this statement
 require pinned(tenant_id) statement`},

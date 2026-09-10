@@ -29,6 +29,9 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 			}
 		}
 		for _, c := range conjuncts(w) {
+			if constTrue(c) {
+				continue // the server removes it (WHERE 1 = 1)
+			}
 			a.predFacts(sc, fs, c, nil)
 			a.nullRejecting(sc, c, nil)
 		}
@@ -61,7 +64,11 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 	}
 	closeFixed(fs)
 	if sc.kids != nil {
-		fs.Children = append(fs.Children, *sc.kids...)
+		for _, k := range *sc.kids {
+			if !a.claimed[k] { // a subquery body hangs off its EXISTS / IN predicate instead
+				fs.Children = append(fs.Children, k)
+			}
+		}
 	}
 	a.shape(sc, fs, body)
 	return fs
@@ -226,6 +233,35 @@ func (a *analyzer) predFacts(sc *scope, fs *facts.Scope, c mysqlast.Value, restr
 				return
 			}
 		}
+	case "PTI_exists_subselect":
+		if body := a.subBody(n.Arg("subselect")); body != nil {
+			a.claimed[body] = true
+			pr.Op, pr.Sub = facts.Exists, body
+			fs.Preds = append(fs.Preds, pr)
+			return
+		}
+	case "Item_in_subselect":
+		// x IN (SELECT y ...): a witness row of the body with y = x
+		if body := a.subBody(n.Arg("pt_subquery")); body != nil {
+			if info := a.blocks[body]; info != nil && len(info.sc.items) == 1 && info.sc.items[0].leaf1 > 0 {
+				out := facts.ColRef{Leaf: info.sc.items[0].leaf1 - 1, Column: info.sc.items[0].leafCol}
+				var term facts.Term
+				ok := false
+				if col, isCol := a.colFact(sc, n.Arg("left_expr")); isCol {
+					term, ok = facts.Term{Kind: facts.Outer, Col: col}, true
+				} else {
+					term, ok = a.termFacts(sc, n.Arg("left_expr"))
+				}
+				if ok {
+					with := *body
+					with.Preds = append(append([]facts.Pred{}, body.Preds...), facts.Pred{Op: facts.Eq, Col: out, Term: term, Origin: facts.FromStatement})
+					a.claimed[body] = true
+					pr.Op, pr.Sub = facts.Exists, &with
+					fs.Preds = append(fs.Preds, pr)
+					return
+				}
+			}
+		}
 	case "Item_func_isnull", "Item_func_isnotnull":
 		if col, ok := a.colFact(sc, n.Arg("a")); ok && allowed(col, restrict) {
 			pr.Op, pr.Col = facts.IsNull, col
@@ -258,6 +294,99 @@ func (a *analyzer) predFacts(sc *scope, fs *facts.Scope, c mysqlast.Value, restr
 		}
 	}
 	fs.Preds = append(fs.Preds, pr)
+}
+
+// subBody is the facts of a subquery analyzed earlier in this statement.
+func (a *analyzer) subBody(v mysqlast.Value) *facts.Scope {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "PT_subquery" {
+		return nil
+	}
+	body := a.subFacts[n]
+	if body == nil {
+		return nil
+	}
+	if a.claimed == nil {
+		a.claimed = map[*facts.Scope]bool{}
+	}
+	return body
+}
+
+// constTrue reports a condition the server folds away: a non-zero integer literal, TRUE,
+// a comparison of two equal literals, a conjunction of such (nil is no condition).
+func constTrue(v mysqlast.Value) bool {
+	if v == nil {
+		return true
+	}
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return false
+	}
+	switch n.Class {
+	case "Item_func_true":
+		return true
+	case "Item_int", "Item_uint":
+		return intOr(n.Arg("i"), intOr(n.Arg("str"), 0)) != 0
+	case "Item_cond_and":
+		for _, c := range n.Args {
+			if !constTrue(c) {
+				return false
+			}
+		}
+		return true
+	case "PTI_comp_op":
+		if op, _ := n.Arg("boolfunc2creator").(mysqlast.Op); op == "=" || op == "<=>" {
+			l, lok := n.Arg("left").(*mysqlast.Node)
+			r, rok := n.Arg("right").(*mysqlast.Node)
+			return lok && rok && isLiteral(l) && isLiteral(r) && mysqlast.Sprint(l) == mysqlast.Sprint(r)
+		}
+	}
+	return false
+}
+
+// whereExpr is the WHERE condition under its PTI_where wrapper (nil for none).
+func whereExpr(v mysqlast.Value) mysqlast.Value {
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return nil
+	}
+	if n.Class == "PTI_where" {
+		return n.Arg("expr")
+	}
+	return n
+}
+
+// isLiteral reports a literal node.
+func isLiteral(n *mysqlast.Node) bool {
+	switch n.Class {
+	case "Item_int", "Item_uint", "Item_decimal", "Item_float", "PTI_text_literal_text_string", "PTI_text_literal_nchar_string",
+		"PTI_text_literal_underscore_charset", "Item_hex_string", "Item_bin_string", "Item_func_true", "Item_func_false":
+		return true
+	}
+	return false
+}
+
+// clearPositions drops the offsets of a view body's facts: they index the view's
+// definition, not the statement.
+func clearPositions(fs *facts.Scope) {
+	if fs == nil {
+		return
+	}
+	fs.At = -1
+	for i := range fs.Leaves {
+		fs.Leaves[i].Position = -1
+		if fs.Leaves[i].Body != nil && fs.Leaves[i].Kind != facts.View {
+			clearPositions(fs.Leaves[i].Body)
+		}
+	}
+	for _, p := range fs.Preds {
+		if p.Op == facts.Exists && p.Sub != nil {
+			clearPositions(p.Sub)
+		}
+	}
+	for _, c := range fs.Children {
+		clearPositions(c)
+	}
 }
 
 // eqFacts records one scalar equality left = right when a side is a column of the block:
@@ -491,6 +620,12 @@ func (a *analyzer) termFacts(sc *scope, v mysqlast.Value) (facts.Term, bool) {
 	}
 	if a.readsBlock(sc, v) {
 		return facts.Term{}, false
+	}
+	if isColumnRef(n) && sc.outer != nil {
+		// a column of the enclosing block: the link a correlated subquery witnesses through
+		if col, ok := a.colFact(sc.outer, n); ok {
+			return facts.Term{Kind: facts.Outer, Col: col}, true
+		}
 	}
 	if _, isSub := v.(*mysqlast.Node); isSub && containsClass(v, "PT_subquery") && !constItem(v) {
 		return facts.Term{}, false // a subquery's value is not known before the statement runs (unless it reads no table)

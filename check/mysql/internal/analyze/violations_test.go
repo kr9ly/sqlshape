@@ -151,13 +151,16 @@ func TestChildren(t *testing.T) {
 	}{
 		{"SELECT d.id FROM (SELECT id FROM users WHERE id = 1) d", "derived d; [users]"},
 		{"WITH c AS (SELECT id, user_id FROM orders) SELECT id FROM c WHERE user_id = $1", "cte c; [orders]"},
-		{"SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "table users; [orders]"},
+		{"SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "table users; "}, // the body hangs off the Exists predicate
+		{"SELECT id FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "table users; [orders]"},
 		{"SELECT id FROM users GROUP BY id WITH ROLLUP", "table users, grouping sets; "},
 		{"SELECT name, count(*) FROM users GROUP BY 1", "table users, group name; "},
 		{"SELECT count(*) FROM users", "table users, single; "},
 		{"SELECT id FROM users WHERE id = (SELECT MAX(user_id) FROM orders)", "table users; [orders]"},
 		{"SELECT id FROM users UNION SELECT user_id FROM orders WHERE id = 1", "UNION may combine rows; [users] [orders]"},
-		{"UPDATE users SET name = $1 WHERE id IN (SELECT user_id FROM orders)", "table users; [orders]"},
+		{"UPDATE users SET name = $1 WHERE id IN (SELECT user_id FROM orders)", "table users; "},
+		{"UPDATE users SET name = $1 WHERE id NOT IN (SELECT user_id FROM orders)", "table users; [orders]"},
+		{"UPDATE users SET name = $1 WHERE id IN (SELECT user_id + 1 FROM orders)", "table users; [orders]"},
 		{"INSERT INTO orders (id, user_id, total) SELECT id, id, 0 FROM users WHERE id = $1", "table orders; [users]"},
 	}
 	for _, c := range cases {
@@ -261,5 +264,56 @@ func TestAnalyzeView(t *testing.T) {
 	}
 	if len(vr.Facts.Top.Groups) != 1 || len(vr.Facts.Uses) != 1 {
 		t.Errorf("v_stats: groups %v, uses %v", vr.Facts.Top.Groups, vr.Facts.Uses)
+	}
+}
+
+// TestExistsPred covers the EXISTS / IN subquery conjuncts: the body is the predicate's
+// own scope, its correlation to the outer row an Outer term, and `x IN (SELECT y ...)` is
+// the body with y = x added.
+func TestExistsPred(t *testing.T) {
+	s := load(t)
+	cases := []struct {
+		sql  string
+		want string // the predicate's shape: sub leaves, then the body's Eq predicates
+	}{
+		{"SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "exists[orders] user_id=outer(0.id)"},
+		{"SELECT id FROM users u WHERE u.id IN (SELECT o.user_id FROM orders o WHERE o.total > 1)", "exists[orders] user_id=outer(0.id)"},
+		{"SELECT id FROM users WHERE $1 IN (SELECT user_id FROM orders)", "exists[orders] user_id=param(1)"},
+		{"SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total = $1)", "exists[orders] user_id=outer(0.id) total=param(1)"},
+	}
+	for _, c := range cases {
+		r, err := Analyze(s, c.sql)
+		if err != nil {
+			t.Errorf("%s: %v", c.sql, err)
+			continue
+		}
+		got := ""
+		for _, p := range r.Facts.Top.Preds {
+			if p.Op != facts.Exists || p.Sub == nil {
+				continue
+			}
+			got += "exists["
+			for _, l := range p.Sub.Leaves {
+				got += l.Table
+			}
+			got += "]"
+			for _, q := range p.Sub.Preds {
+				if q.Op != facts.Eq {
+					continue
+				}
+				got += " " + q.Col.Column + "="
+				switch q.Term.Kind {
+				case facts.Outer:
+					got += fmt.Sprintf("outer(%d.%s)", q.Term.Col.Leaf, q.Term.Col.Column)
+				case facts.Param:
+					got += fmt.Sprintf("param(%d)", q.Term.Param)
+				default:
+					got += "?"
+				}
+			}
+		}
+		if got != c.want {
+			t.Errorf("%s:\n got  %s\n want %s", c.sql, got, c.want)
+		}
 	}
 }

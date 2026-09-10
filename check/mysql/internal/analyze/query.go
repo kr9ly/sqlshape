@@ -64,7 +64,14 @@ func (a *analyzer) subqueryFacts(v mysqlast.Value, outer *scope) ([]Column, *fac
 	}
 	a.depth++
 	defer func() { a.depth-- }()
-	return a.queryExpressionFacts(n.Arg("query_expression"), outer)
+	cols, body, err := a.queryExpressionFacts(n.Arg("query_expression"), outer)
+	if err == nil && body != nil {
+		if a.subFacts == nil {
+			a.subFacts = map[*mysqlast.Node]*facts.Scope{}
+		}
+		a.subFacts[n] = body
+	}
+	return cols, body, err
 }
 
 // orderBy resolves the items of an ORDER BY / GROUP BY list the way the server does
@@ -139,7 +146,11 @@ func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, w
 		return err
 	}
 	if block == nil {
-		return fmt.Errorf("analyze: an expression in the ORDER BY of a set operation is not supported yet")
+		// a set operation's ORDER BY sees only the result columns: type the expression
+		// against them as a relation of their own
+		result := scope{rels: []relation{{cols: cols}}}
+		_, err := a.expr(result, n, where)
+		return err
 	}
 	_, err := a.expr(*block, n, where)
 	return err
@@ -151,9 +162,7 @@ func (a *analyzer) subquery(v mysqlast.Value, outer *scope) ([]Column, error) {
 	if !ok || n.Class != "PT_subquery" {
 		return nil, fmt.Errorf("analyze: subquery not understood: %s", mysqlast.Sprint(v))
 	}
-	a.depth++
-	defer func() { a.depth-- }()
-	cols, body, err := a.queryExpressionFacts(n.Arg("query_expression"), outer)
+	cols, body, err := a.subqueryFacts(n, outer)
 	outer.child(body) // a subquery of a condition or a select list is a nested block of the enclosing one
 	return cols, err
 }
@@ -214,6 +223,10 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 	a.inHaving = a.inHaving[:len(a.inHaving)-1]
 	if err != nil {
 		return nil, nil, err
+	}
+	if q, ok := body.Arg("opt_qualify_clause").(*mysqlast.Node); ok {
+		// 8.4 accepts the clause only under the hypergraph optimizer, which is off
+		return nil, nil, &Error{Message: "'QUALIFY clause' can be used only if the hypergraph optimizer is enabled.", Code: 6037, Position: a.ph.Back(q.Start)}
 	}
 	sc.facts = a.block(&sc, body)
 	if err := a.groupCheck(&sc, body); err != nil {
@@ -451,7 +464,7 @@ func oneRow(v mysqlast.Value) bool {
 	switch n.Class {
 	case "PT_query_specification":
 		from, _ := n.Arg("from_clause").(mysqlast.List)
-		return len(from) == 0 && n.Arg("opt_where_clause") == nil && n.Arg("opt_having_clause") == nil
+		return len(from) == 0 && constTrue(whereExpr(n.Arg("opt_where_clause"))) && n.Arg("opt_having_clause") == nil
 	case "PT_query_expression":
 		return !possiblyEmpty(n)
 	case "PT_union":

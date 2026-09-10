@@ -26,9 +26,7 @@ CREATE TABLE t1 (
 // fullGroupCases are statements a real mysqld (8.4, sql_mode ONLY_FULL_GROUP_BY) accepts
 // (0) or rejects with the error number given: the group-invariance check, the HAVING
 // resolution rule, DISTINCT with ORDER BY, aggregates in ORDER BY. TestFullGroupOracle
-// keeps them the server's verdicts. Not here: a parenthesized join in a join (the analyzer
-// does not read PT_table_factor_joined_table yet) and an expression in the ORDER BY of a set
-// operation.
+// keeps them the server's verdicts.
 var fullGroupCases = []struct {
 	sql  string
 	code int
@@ -102,6 +100,15 @@ var fullGroupCases = []struct {
 	{"SELECT y.c FROM t1 x LEFT JOIN t1 y ON y.b = x.a GROUP BY x.a", 1055},
 	{"SELECT y.c FROM t1 x LEFT JOIN t1 y ON y.u = x.a AND y.c > 0 GROUP BY x.a", 0},
 	{"SELECT y.c FROM t1 x LEFT JOIN t1 y ON y.u = x.a OR y.b = 1 GROUP BY x.a", 1055},
+	{"SELECT z.c FROM t1 x LEFT JOIN (t1 y JOIN t1 z ON z.u = y.a) ON y.pk = x.a GROUP BY x.a", 0},
+	{"SELECT z.c FROM t1 x LEFT JOIN (t1 y LEFT JOIN t1 z ON z.u = y.a) ON y.pk = x.a GROUP BY x.a", 0},
+	{"SELECT z.c FROM t1 x LEFT JOIN (t1 y LEFT JOIN t1 z ON z.u = y.a) ON y.pk = x.a GROUP BY y.a", 0},
+	{"SELECT z.c FROM t1 x LEFT JOIN (t1 y LEFT JOIN t1 z ON z.u = y.b) ON y.pk = x.a GROUP BY y.b", 0},
+	{"SELECT z.c FROM t1 x LEFT JOIN (t1 y LEFT JOIN t1 z ON z.pk = y.a + 0) ON y.pk = x.a GROUP BY x.a", 1055},
+	{"SELECT a FROM t1 UNION SELECT a FROM t1 ORDER BY a + 1", 0},
+	{"SELECT a FROM t1 UNION SELECT a FROM t1 ORDER BY 1 + 1", 0},
+	{"SELECT a FROM t1 UNION SELECT a FROM t1 ORDER BY b + 1", 1054},
+	{"SELECT a FROM t1 GROUP BY a QUALIFY ROW_NUMBER() OVER (ORDER BY c) = 1", 6037},
 	{"SELECT c FROM t1 GROUP BY u HAVING u IS NOT NULL", 1055},
 	{"SELECT c FROM t1 WHERE u IN (1, 2) GROUP BY u", 0},
 	{"SELECT MAX(c) FROM t1 GROUP BY a ORDER BY b", 1055},

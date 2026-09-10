@@ -47,6 +47,12 @@ func init() {
 		l, _ := kids[5].(List)
 		return &Node{Class: "Item_func_in", Names: []string{"list", "is_negation"}, Args: []Value{append(List{kids[0], kids[3]}, l...), Const("false")}, Start: n.Start, End: n.End}, nil
 	})
+	// predicate: bit_expr not IN_SYM table_subquery -> NOT (Item_in_subselect): two nodes in
+	// one action
+	register("predicate", "bit_expr not IN_SYM table_subquery", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		in := &Node{Class: "Item_in_subselect", Names: []string{"left_expr", "pt_subquery"}, Args: []Value{kids[0], kids[3]}, Start: n.Start, End: n.End}
+		return &Node{Class: "PTI_truth_transform", Names: []string{"expr", "truth_test"}, Args: []Value{in, Const("Item::BOOL_NEGATED")}, Start: n.Start, End: n.End}, nil
+	})
 	// predicate: bit_expr not IN_SYM '(' expr ',' expr_list ')' -> Item_func_in(..., true)
 	register("predicate", "bit_expr not IN_SYM '(' expr ',' expr_list ')'", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		l, _ := kids[6].(List)
