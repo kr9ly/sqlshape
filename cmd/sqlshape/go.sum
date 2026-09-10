@@ -19,8 +19,8 @@ github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo
 github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
 github.com/kr9ly/sqlshape v1.3.0-rc.1 h1:lyYp9yZcM0Vu3lGRbFDaw0vSdrXR8DCetOAnoRLpcYk=
 github.com/kr9ly/sqlshape v1.3.0-rc.1/go.mod h1:Dk6yM8w1GHSZEcPXE0x7fufmqNAl6zq2+QmQSdVE4Pc=
-github.com/kr9ly/sqlshape/mysql v1.3.0-rc.1 h1:8R71mKu8EXCRr9rb1qiAX7bSW25+Re9PtUspa+BIafM=
-github.com/kr9ly/sqlshape/mysql v1.3.0-rc.1/go.mod h1:cYTYBDdXr5R/tZVGguAaIco8PznkNbiqS1LoZuFJsq0=
+github.com/kr9ly/sqlshape/mysql v1.3.0-rc.1 h1:qtMo32PMDdQYSJTDMWvwmT1BnpwE59MuWwK4GsS+m1A=
+github.com/kr9ly/sqlshape/mysql v1.3.0-rc.1/go.mod h1:J8q1u+Bupk/8M9tgHz6OoBSwWY3hTwvwjqmMB0Uh/mo=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

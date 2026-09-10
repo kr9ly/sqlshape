@@ -11,17 +11,20 @@
 #      vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z;
 #   3. fills the go.sum of mysql/ and cmd/sqlshape with the sums of those versions. The tags
 #      exist only here so far, so it points `go` at this clone (GOPRIVATE makes it fetch
-#      the module through git, and git is told to read it from here) in a fresh module cache; module zips hash by content, so the sums match
-#      what the public proxy computes once the tags are pushed. The commit is amended and
-#      the tags moved onto it (the root and mysql zips do not contain cmd/sqlshape's
-#      go.sum, so their sums stay valid);
+#      the module through git, and git is told to read it from here) in a fresh module
+#      cache; module zips hash by content, so the sums match what the public proxy computes
+#      once the tags are pushed. The commit is amended and the tags moved onto it, and the
+#      tidy is repeated against the moved tags until nothing changes (tidy may rewrite
+#      mysql/go.mod, whose hash cmd/sqlshape's go.sum records);
 #   4. builds cmd/sqlshape the way `go install …/cmd/sqlshape@vX.Y.Z` will (outside the
 #      workspace, from the tagged modules), and runs the smoke test on the result;
 #   5. pushes the commit and the three tags. The root tag triggers .github/workflows/release.yml.
 #
 # Between step 2 and the push the workspace does not build: every `go` command reads the
 # required versions' go.mod from the proxy, and they are not there yet. A failure before
-# the push rolls the commit and tags back.
+# the push rolls the commit and tags back. Do not ask the public proxy about the version
+# before the push (not even a curl of its .info): a miss is cached for a while and
+# `go install` and the release workflow then fail on "unknown revision".
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$(pwd)
@@ -77,12 +80,21 @@ for t in "${tags[@]}"; do git tag -a "$t" -m "sqlshape $version"; done
 trap 'rollback; cleanup' ERR
 export GOWORK=off GOPRIVATE=github.com/kr9ly/sqlshape GOMODCACHE="$cache"
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$root.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/kr9ly/sqlshape
-(cd mysql && go mod tidy)
-(cd cmd/sqlshape && go mod tidy)
-if [ -n "$(git status --porcelain)" ]; then
+# Repeated until nothing changes: tidy may rewrite mysql/go.mod itself (a dependency that
+# became direct), and cmd/sqlshape's go.sum records the hash of mysql/go.mod at the tag, so
+# after an amend the tag has to move and cmd/sqlshape has to be tidied again against it.
+# The root zip contains neither nested module, so its sums hold across the amends.
+for _ in 1 2 3 4; do
+  (cd mysql && go mod tidy)
+  (cd cmd/sqlshape && go mod tidy)
+  if [ -z "$(git status --porcelain)" ]; then break; fi
   git add mysql/go.sum cmd/sqlshape/go.sum mysql/go.mod cmd/sqlshape/go.mod
   git commit -q --amend --no-edit
   for t in "${tags[@]}"; do git tag -f -a "$t" -m "sqlshape $version" >/dev/null; done
+  GOMODCACHE="$cache" go clean -modcache   # the tags moved; what was fetched from them is stale
+done
+if [ -n "$(git status --porcelain)" ]; then
+  echo "release: go.mod / go.sum did not settle" >&2; false
 fi
 
 # 4. the binary as `go install` will build it, and the smoke test over the examples
