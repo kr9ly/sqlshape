@@ -14,3 +14,14 @@ CREATE TABLE orders (
   note TEXT,
   CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users (id)
 );
+
+-- sqlshape: require pinned(tenant_id)
+CREATE TABLE tenant_notes (
+  id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  tenant_id BIGINT UNSIGNED NOT NULL,
+  body TEXT NOT NULL,
+  UNIQUE KEY tenant_notes_tenant_body (tenant_id, body(64))
+);
+
+-- sqlshape: waive tenant_notes pinned(tenant_id)
+CREATE VIEW all_notes AS SELECT id, tenant_id, body FROM tenant_notes;

@@ -146,9 +146,16 @@ func init() {
 	register("opt_charset_with_opt_binary", "character_set charset_name opt_bin_mod", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		return &Struct{Fields: map[string]Value{"charset": kids[1], "force_binary": Const("false"), "binary": kids[2]}, Order: []string{"charset", "force_binary", "binary"}}, nil
 	})
-	// reference_list: ident -> [Key_part_spec(ident, 0, ORDER_ASC)]
+	// reference_list: ident -> [Key_part_spec(ident, 0, ORDER_ASC)]; a composite key appends
+	refPart := func(n *mysqlparse.Node, id Value) Value {
+		return &Node{Class: "Key_part_spec", Names: []string{"column_name", "prefix_length", "order"}, Args: []Value{field(id, "str"), Number(0), Const("ORDER_ASC")}, Start: n.Start, End: n.End}
+	}
 	register("reference_list", "ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
-		return List{&Node{Class: "Key_part_spec", Names: []string{"column_name", "prefix_length", "order"}, Args: []Value{field(kids[0], "str"), Number(0), Const("ORDER_ASC")}, Start: n.Start, End: n.End}}, nil
+		return List{refPart(n, kids[0])}, nil
+	})
+	register("reference_list", "reference_list ',' ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		l, _ := kids[0].(List)
+		return append(l, refPart(n, kids[2])), nil
 	})
 	// ident_string_list: ident -> [ident]
 	register("ident_string_list", "ident", listOf(1))

@@ -3,7 +3,6 @@ package analyze
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 type analyzer struct {
@@ -256,29 +256,8 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	return r, aerr
 }
 
-var sqlDirective = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*([a-z ]+?)[ \t]+(.+?)[ \t]*$`)
-
-// waivers reads the statement's opt-outs: `-- sqlshape: unfiltered a, b` (the predicate
-// obligations of a and b) and `-- sqlshape: waive a pinned(x), b` (one named obligation,
-// or every obligation, of a table).
-func waivers(sql string) map[string][]string {
-	out := map[string][]string{}
-	for _, m := range sqlDirective.FindAllStringSubmatch(sql, -1) {
-		switch m[1] {
-		case "unfiltered":
-			for _, it := range strings.Split(m[2], ",") {
-				if it = strings.TrimSpace(it); it != "" {
-					out = schema.AddWaiver(out, it, "unfiltered")
-				}
-			}
-		case "waive":
-			for table, spec := range schema.Waivers(m[2]) {
-				out = schema.AddWaiver(out, table, spec...)
-			}
-		}
-	}
-	return out
-}
+// waivers reads the statement's opt-outs (`-- sqlshape: unfiltered ...`, `waive ...`).
+func waivers(sql string) map[string][]string { return obligation.StatementWaivers(sql) }
 
 // funcParam is a SQL-function parameter visible in its body by name and as $n.
 type funcParam struct {

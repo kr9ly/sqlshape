@@ -10,12 +10,14 @@ package analyze
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/v2/x/placeholder"
 )
 
@@ -28,6 +30,10 @@ type Result struct {
 	// obligations): its kind, the top scope's leaves, predicates, fixed columns and
 	// equalities, its writes. Nil when the statement is one the analyzer does not record.
 	Facts *facts.Facts
+	// Violations are the constraints the statement may violate (violations.go).
+	Violations []Violation
+	// Uses are the relation columns the statement references (a view's as the view's).
+	Uses []facts.Use
 }
 
 // Param is one placeholder: the type its context gives it, when the context is one the
@@ -44,7 +50,8 @@ type Column struct {
 	Known    bool // the type was inferred; false leaves Type empty
 	Nullable bool
 
-	base *schema.Column // the base table column this is a plain reference to, if any
+	base      *schema.Column // the base table column this is a plain reference to, if any
+	baseTable *schema.Table  // its table
 }
 
 // Error is what MySQL would raise for the statement.
@@ -70,11 +77,15 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count())}
+	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count()), waived: obligation.StatementWaivers(sql)}
 	if err := a.statement(root); err != nil {
 		return nil, err
 	}
-	return &Result{Params: a.params, Columns: a.columns, Facts: a.facts}, nil
+	sort.SliceStable(a.uses, func(i, j int) bool { return a.uses[i].Position < a.uses[j].Position })
+	if a.facts != nil {
+		a.facts.Uses = a.uses
+	}
+	return &Result{Params: a.params, Columns: a.columns, Facts: a.facts, Violations: a.violations(), Uses: a.uses}, nil
 }
 
 type analyzer struct {
@@ -87,6 +98,46 @@ type analyzer struct {
 	facts   *facts.Facts    // the statement's record, assembled by statement
 	depth   int             // query nesting: 0 at the statement's own block
 	setOp   int             // > 0 while inside a set operation's arms
+	// uses are the relation columns the statement references, each once, in order of
+	// first appearance; readUses marks those read (not only assigned). assigning is set
+	// while an INSERT's column list or an UPDATE's SET targets are resolved.
+	uses      []facts.Use
+	useIdx    map[string]int
+	readUses  map[string]bool
+	assigning bool
+	// waived are the statement's opt-outs (`-- sqlshape: unfiltered t`, `waive t ...`), by
+	// table; viewWaived are those of the views being expanded, innermost last
+	waived     map[string][]string
+	viewWaived []map[string][]string
+	// definingView is the view AnalyzeView is analyzing: its body's references are its own
+	// uses (a view expanded inside a statement contributes none)
+	definingView string
+	// write is the statement's write, for the failure modes: its target, the columns
+	// assigned with what is stored in them, and IGNORE / ON DUPLICATE KEY UPDATE
+	write *write
+}
+
+// write is what a statement stores, for the failure modes (violations.go).
+type write struct {
+	kind   facts.StmtKind
+	table  *schema.Table
+	values []assignment
+	// ignore: INSERT / UPDATE / DELETE IGNORE turns every constraint error into a warning
+	ignore bool
+	// onDuplicate: INSERT ... ON DUPLICATE KEY UPDATE absorbs the unique violations and
+	// updates these columns instead
+	onDuplicate []assignment
+	// insertsAll: an INSERT without a column list, or a SET-form one, names every column
+	inserted map[string]bool
+	// query: the values come from a query (INSERT ... SELECT), nullability per column
+	query bool
+}
+
+// assignment is one value stored into a column.
+type assignment struct {
+	col      *schema.Column
+	nullable bool
+	param    int // the bare placeholder stored ($n), 0 otherwise
 }
 
 // relation is a table in scope, under its alias: a base table, or a derived one (a
@@ -101,6 +152,7 @@ type relation struct {
 	view      string        // the view's name when the relation is a view
 	target    bool          // a write's target
 	body      *facts.Scope  // a derived relation's own block, for the proof to look into
+	cte       bool          // a common table expression
 }
 
 // columns lists the relation's columns as a SELECT * expands them (a base table's
@@ -119,7 +171,7 @@ func (r *relation) columns() []Column {
 		if col.Invisible {
 			continue
 		}
-		out = append(out, Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col})
+		out = append(out, Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col, baseTable: r.table})
 	}
 	return out
 }
@@ -143,7 +195,7 @@ func (r *relation) column(name string) (colRef, bool) {
 	if col == nil {
 		return colRef{}, false
 	}
-	return colRef{rel: r, col: col, c: Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col}}, true
+	return colRef{rel: r, col: col, c: Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col, baseTable: r.table}}, true
 }
 
 // scope is the relations a name resolves against: the query's own, then, for a
@@ -162,6 +214,17 @@ type scope struct {
 	// joins are the join conditions of the FROM clause, for the facts: which conjuncts
 	// hold, and for an outer join which leaves they are allowed to restrict.
 	joins []joinCond
+	// kids collects the nested blocks analyzed under this one (derived tables, the
+	// subqueries of its conditions and select list): the facts' Children. Shared by the
+	// copies of the scope; nil when the block does not record them.
+	kids *[]*facts.Scope
+}
+
+// child records a nested block's facts under this one.
+func (sc *scope) child(fs *facts.Scope) {
+	if sc != nil && sc.kids != nil && fs != nil {
+		*sc.kids = append(*sc.kids, fs)
+	}
 }
 
 // joinCond is one join's condition as the facts see it.
@@ -221,11 +284,16 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 	if rel.table == nil {
 		return fmt.Errorf("analyze: INSERT into a view is not supported yet")
 	}
+	rel.target = true
+	w := &write{kind: facts.Insert, table: rel.table, ignore: isTrue(arg(n, "ignore", 2)), inserted: map[string]bool{}}
+	a.write = w
 	// the column list names the targets; without one the row lists every column in order
 	var targets []*schema.Column
 	if cols, ok := arg(n, "column_list", 5).(mysqlast.List); ok && len(cols) > 0 {
 		for _, c := range cols {
+			a.assigning = true
 			col, err := a.targetColumn(rel, c, "field list")
+			a.assigning = false
 			if err != nil {
 				return err
 			}
@@ -234,15 +302,25 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 	} else {
 		targets = rel.table.Columns
 	}
+	for _, c := range targets {
+		w.inserted[c.Name] = true
+	}
+	a.facts = &facts.Facts{Kind: facts.Insert, Top: &facts.Scope{At: -1, Leaves: []facts.Leaf{a.leafFacts(*rel)}}}
+	var values []facts.Term
 	if q := arg(n, "insert_query_expression", 7); q != nil {
 		// INSERT ... SELECT: the query's columns feed the targets in order; a bare
 		// placeholder in its select list takes the target's type
-		cols, err := a.queryExpression(q, nil)
+		cols, body, err := a.queryExpressionFacts(q, nil)
 		if err != nil {
 			return err
 		}
 		if len(cols) != len(targets) {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
+		}
+		w.query = true
+		for i, c := range cols {
+			w.values = append(w.values, assignment{col: targets[i], nullable: c.Nullable || !c.Known})
+			values = append(values, facts.Term{Kind: facts.Known, Text: "?"})
 		}
 		if qe, ok := q.(*mysqlast.Node); ok {
 			if body, ok := qe.Arg("body").(*mysqlast.Node); ok && body.Class == "PT_query_specification" {
@@ -254,27 +332,47 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 				}
 			}
 		}
+		if body != nil {
+			a.facts.Source = body
+			a.facts.Top.Children = append(a.facts.Top.Children, body)
+		}
 	}
 	rows, _ := arg(n, "row_value_list", 6).(mysqlast.List)
-	a.facts = a.writeFacts(facts.Insert, rel, targets, len(rows) == 1 && arg(n, "insert_query_expression", 7) == nil)
-	for _, row := range rows {
+	switch {
+	case arg(n, "insert_query_expression", 7) != nil:
+	case len(rows) == 1:
+		a.facts.Top.Single = true
+	case len(rows) > 1:
+		a.facts.Top.Many = fmt.Sprintf("VALUES has %d rows", len(rows))
+	}
+	for ri, row := range rows {
 		vals, _ := row.(mysqlast.List)
 		if len(vals) != len(targets) {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
 		}
 		for i, v := range vals {
-			a.assign(scope{rels: []relation{*rel}}, targets[i], v)
+			as := a.assign(scope{rels: []relation{*rel}}, targets[i], v)
+			w.values = append(w.values, as)
+			if ri == 0 {
+				values = append(values, a.storedTerm(scope{rels: []relation{*rel}}, v))
+			}
 		}
 	}
+	a.facts.Writes = []facts.Write{a.writeFacts(facts.Insert, rel, targets, values)}
 	dupCols, _ := arg(n, "opt_on_duplicate_column_list", 10).(mysqlast.List)
 	dupVals, _ := arg(n, "opt_on_duplicate_value_list", 11).(mysqlast.List)
+	if len(dupCols) > 0 {
+		w.onDuplicate = []assignment{}
+	}
 	for i, c := range dupCols {
+		a.assigning = true
 		col, err := a.targetColumn(rel, c, "field list")
+		a.assigning = false
 		if err != nil {
 			return err
 		}
 		if i < len(dupVals) {
-			a.assign(scope{rels: []relation{*rel}}, col, dupVals[i])
+			w.onDuplicate = append(w.onDuplicate, a.assign(scope{rels: []relation{*rel}}, col, dupVals[i]))
 		}
 	}
 	return nil
@@ -285,16 +383,21 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 	if err != nil {
 		return err
 	}
-	sc, err := a.from(n.Arg("join_table_list"), scope{ctes: ctes})
+	sc, err := a.from(n.Arg("join_table_list"), scope{ctes: ctes, kids: new([]*facts.Scope)})
 	if err != nil {
 		return err
 	}
 	cols, _ := n.Arg("column_list").(mysqlast.List)
 	vals, _ := n.Arg("value_list").(mysqlast.List)
 	var assigned []*schema.Column
+	var values []facts.Term
 	var target *relation
+	w := &write{kind: facts.Update, ignore: isTrue(n.Arg("opt_ignore"))}
+	a.write = w
 	for i, c := range cols {
+		a.assigning = true
 		col, err := a.column(sc, c, "field list")
+		a.assigning = false
 		if err != nil {
 			return err
 		}
@@ -303,9 +406,13 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		}
 		col.rel.target = true
 		target = col.rel
+		if w.table == nil {
+			w.table = col.rel.table
+		}
 		assigned = append(assigned, col.col)
 		if i < len(vals) {
-			a.assign(sc, col.col, vals[i])
+			w.values = append(w.values, a.assign(sc, col.col, vals[i]))
+			values = append(values, a.storedTerm(sc, vals[i]))
 		}
 	}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
@@ -317,8 +424,12 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 	if err := a.limit(n.Arg("opt_limit_clause")); err != nil {
 		return err
 	}
-	a.facts = a.writeFacts(facts.Update, target, assigned, limitOne(n.Arg("opt_limit_clause")))
+	a.facts = &facts.Facts{Kind: facts.Update, AtMostOne: limitOne(n.Arg("opt_limit_clause"))}
+	if target != nil && target.table != nil {
+		a.facts.Writes = []facts.Write{a.writeFacts(facts.Update, target, assigned, values)}
+	}
 	a.facts.Top = a.block(&sc, n)
+	a.facts.Top.Children = append(a.facts.Top.Children, cteBodies(ctes)...)
 	return nil
 }
 
@@ -335,7 +446,8 @@ func (a *analyzer) delete(n *mysqlast.Node) error {
 		return fmt.Errorf("analyze: DELETE from a view or a common table expression is not supported yet")
 	}
 	rel.target = true
-	sc := scope{rels: []relation{*rel}, ctes: ctes}
+	a.write = &write{kind: facts.Delete, table: rel.table, ignore: deleteIgnore(n.Arg("opt_delete_options"))}
+	sc := scope{rels: []relation{*rel}, ctes: ctes, kids: new([]*facts.Scope)}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
 		return err
 	}
@@ -345,9 +457,45 @@ func (a *analyzer) delete(n *mysqlast.Node) error {
 	if err := a.limit(n.Arg("opt_delete_limit_clause")); err != nil {
 		return err
 	}
-	a.facts = a.writeFacts(facts.Delete, rel, nil, limitOne(n.Arg("opt_delete_limit_clause")))
+	a.facts = &facts.Facts{Kind: facts.Delete, AtMostOne: limitOne(n.Arg("opt_delete_limit_clause")), Writes: []facts.Write{a.writeFacts(facts.Delete, rel, nil, nil)}}
 	a.facts.Top = a.block(&sc, n)
+	a.facts.Top.Children = append(a.facts.Top.Children, cteBodies(ctes)...)
 	return nil
+}
+
+// deleteIgnore reads IGNORE among DELETE's options.
+func deleteIgnore(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case mysqlast.Flags:
+		for _, f := range x {
+			if strings.Contains(strings.ToUpper(string(f)), "IGNORE") {
+				return true
+			}
+		}
+		return false
+	case mysqlast.List:
+		for _, e := range x {
+			if deleteIgnore(e) {
+				return true
+			}
+		}
+	case *mysqlast.Struct:
+		return isTrue(x.Fields["ignore"]) || isTrue(x.Fields["opt_ignore"])
+	case *mysqlast.Node:
+		return isTrue(x.Arg("ignore")) || isTrue(x.Arg("opt_ignore"))
+	}
+	return strings.Contains(strings.ToUpper(str(v)), "IGNORE") // the options come as "DELETE_IGNORE|..."
+}
+
+// cteBodies lists the recorded bodies of a WITH clause's items.
+func cteBodies(ctes []relation) []*facts.Scope {
+	var out []*facts.Scope
+	for _, c := range ctes {
+		if c.body != nil {
+			out = append(out, c.body)
+		}
+	}
+	return out
 }
 
 // arg reads a named argument, or the positional one when the node carries no names (a
@@ -410,6 +558,7 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 		if cols, err = renamed(cols, names, alias, a.ph.Back(n.Start)); err != nil {
 			return err
 		}
+		sc.child(body)
 		return a.addRelation(sc, &relation{alias: alias, cols: cols, nullable: nullable, body: body}, n.Start)
 	case "PT_joined_table_on", "PT_joined_table_using", "PT_cross_join":
 		jt := str(n.Arg("type"))
@@ -499,6 +648,7 @@ func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, er
 		for i := len(sc.ctes) - 1; i >= 0; i-- {
 			if strings.EqualFold(sc.ctes[i].alias, name) {
 				r := sc.ctes[i]
+				r.cte = true
 				rel = &r
 				break
 			}
@@ -539,10 +689,18 @@ func (a *analyzer) view(v *schema.View) ([]Column, *facts.Scope, error) {
 	}
 	a.views[v.Name] = true
 	defer delete(a.views, v.Name)
-	// the view's placeholders, if any, are not ours: keep the statement's parameter table
-	saved := a.params
+	waived := v.Waived
+	if waived == nil {
+		waived = map[string][]string{} // the view's own, not the reading statement's
+	}
+	a.viewWaived = append(a.viewWaived, waived)
+	defer func() { a.viewWaived = a.viewWaived[:len(a.viewWaived)-1] }()
+	// the view's placeholders, if any, are not ours: keep the statement's parameter table;
+	// its text is the definition's (the facts' opaque predicates read their text from it)
+	saved, savedText, savedPh := a.params, a.text, a.ph
 	a.params = nil
-	defer func() { a.params = saved }()
+	a.text, a.ph = v.Definition, identityMap(v.Definition)
+	defer func() { a.params, a.text, a.ph = saved, savedText, savedPh }()
 	a.depth++
 	cols, body, err := a.queryExpressionFacts(v.Query, nil)
 	a.depth--
@@ -558,6 +716,12 @@ func (a *analyzer) view(v *schema.View) ([]Column, *facts.Scope, error) {
 	}
 	cols, err = renamed(cols, names, v.Name, -1)
 	return cols, body, err
+}
+
+// identityMap is the placeholder map of a text without placeholders.
+func identityMap(text string) placeholder.Map {
+	_, ph := placeholder.Rewrite(text)
+	return ph
 }
 
 // renamed applies a derived relation's column list: the same count, the new names.
@@ -637,6 +801,7 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 		}
 		switch len(found) {
 		case 1:
+			a.use(found[0], at)
 			return found[0], nil
 		case 0:
 			continue
@@ -648,6 +813,39 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 		qualified = table + "." + field
 	}
 	return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
+}
+
+// use records a resolved reference to a table's or a view's column, once, in order of
+// first appearance; a reference inside a view's body is the view's, not the statement's.
+func (a *analyzer) use(ref colRef, at int) {
+	inView := len(a.views) > 0 && !(a.definingView != "" && len(a.views) == 1 && a.views[a.definingView])
+	if inView || ref.rel == nil {
+		return
+	}
+	table := ref.rel.view
+	if ref.rel.table != nil {
+		table = ref.rel.table.Name
+	}
+	if table == "" {
+		return
+	}
+	key := table + "." + ref.c.Name
+	if a.useIdx == nil {
+		a.useIdx = map[string]int{}
+		a.readUses = map[string]bool{}
+	}
+	if !a.assigning {
+		a.readUses[key] = true
+	}
+	if i, ok := a.useIdx[key]; ok {
+		a.uses[i].Assigned = !a.readUses[key]
+		if p := int32(a.ph.Back(at)); p < a.uses[i].Position {
+			a.uses[i].Position = p // the select list is typed after FROM and WHERE: first appearance is by position
+		}
+		return
+	}
+	a.useIdx[key] = len(a.uses)
+	a.uses = append(a.uses, facts.Use{Table: table, Column: ref.c.Name, Position: int32(a.ph.Back(at)), Assigned: !a.readUses[key]})
 }
 
 // lookupItem resolves a name against the block's typed select list (HAVING, and the
@@ -707,7 +905,7 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			}
 			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable}
 			if ref, ok := a.plainColumn(sc, expr); ok {
-				c.base = ref.c.base
+				c.base, c.baseTable = ref.c.base, ref.c.baseTable
 			}
 			out = append(out, c)
 		default:
@@ -784,13 +982,28 @@ func (a *analyzer) limit(v mysqlast.Value) error {
 	return nil
 }
 
-// assign types v, stored into col: a placeholder takes the column's type.
-func (a *analyzer) assign(sc scope, col *schema.Column, v mysqlast.Value) {
+// assign types v, stored into col: a placeholder takes the column's type. The assignment
+// says whether the value may be NULL (a placeholder always may; the checker drops the NOT
+// NULL violation when the Go type cannot be nil).
+func (a *analyzer) assign(sc scope, col *schema.Column, v mysqlast.Value) assignment {
 	if isParam(v) {
 		a.setParam(v, col.Type)
-		return
+		return assignment{col: col, nullable: true, param: a.ph.Number(nodeStart(v))}
 	}
-	a.expr(sc, v, "field list") //nolint:errcheck // an INSERT's expressions: errors surface as unknown types
+	if n, ok := v.(*mysqlast.Node); ok && n.Class == "Item_default_value" {
+		return assignment{col: col, nullable: col.Default == nil && !col.NotNull}
+	}
+	t, _ := a.expr(sc, v, "field list") // an INSERT's expressions: errors surface as unknown types
+	return assignment{col: col, nullable: !t.known || t.nullable}
+}
+
+// storedTerm is the value stored into a column as the facts spell it: a parameter, a
+// literal, a value known before the statement runs, or an expression (Known "?").
+func (a *analyzer) storedTerm(sc scope, v mysqlast.Value) facts.Term {
+	if t, ok := a.termFacts(&sc, v); ok {
+		return t
+	}
+	return facts.Term{Kind: facts.Known, Text: "?"}
 }
 
 // nodeStart is v's start offset in the text, -1 when it has none.

@@ -174,7 +174,7 @@ func TestRuntime(t *testing.T) {
 	}{1, "-1.00"}); !mysql.Violates(err, "orders_total_check") {
 		t.Fatalf("check: %v", err)
 	}
-	if _, err := mysql.Exec(ctx, db, insertNoName, struct{ Email string }{"n@example.com"}); !mysql.Violates(err, "name") {
+	if _, err := mysql.Exec(ctx, db, insertNoName, struct{ Email string }{"n@example.com"}); !mysql.Violates(err, "users.name") || !mysql.Violates(err, "name") {
 		t.Fatalf("not null: %v", err)
 	}
 

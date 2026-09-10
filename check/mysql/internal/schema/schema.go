@@ -54,6 +54,9 @@ type Table struct {
 	// Definition is the CREATE TABLE text; Alters the ALTER TABLE texts applied after it.
 	Definition string
 	Alters     []string
+	// Directives are the `-- sqlshape: ...` lines written above the CREATE, normalized:
+	// the obligations x/obligation parses.
+	Directives []string
 }
 
 // Column is a table column.
@@ -128,6 +131,12 @@ type View struct {
 	Algorithm   string
 	CheckOption string
 	Definition  string
+	// Directives are the `-- sqlshape: ...` lines written above the CREATE (obligations);
+	// Unfiltered / Waived are the view's own opt-outs (`unfiltered t`, `waive t ...`): the
+	// obligations its body does not owe, by table, carried on the body's leaves.
+	Directives []string
+	Unfiltered map[string]bool
+	Waived     map[string][]string
 }
 
 // Table returns the table named name, or nil.
@@ -329,6 +338,7 @@ func (s *Schema) createTable(n *mysqlast.Node, st mysqlparse.Statement, at func(
 	if x.OptPartitioning() != nil {
 		t.Partitioned = true
 	}
+	s.tableDirectives(t, st.SQL, st.Offset)
 	s.Tables = append(s.Tables, t)
 }
 
@@ -621,6 +631,7 @@ func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
 	for _, c := range list(n.Arg("column_list")) {
 		v.Columns = append(v.Columns, str(c))
 	}
+	s.viewDirectives(v, st.SQL, st.Offset)
 	if old := s.View(name); old != nil {
 		if n.Arg("replace") == nil {
 			s.problem(st.Offset, "CREATE VIEW %s: view already exists", name)

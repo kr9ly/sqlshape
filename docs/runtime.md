@@ -191,7 +191,8 @@ by the same rules; the receive types are the driver's (`int64` / `uint64`, `stri
 and JSON), which is the table the checker uses. A constraint violation comes back as a
 `*mysql.ConstraintError` whose `Key` is the schema's name for it — the UNIQUE key's name,
 the FOREIGN KEY's `CONSTRAINT` name, the CHECK constraint's name, the column for NOT NULL —
-and `mysql.Violates(err, key)` tests for it. `ExecOne` judges `RowsAffected`, which MySQL
+and `mysql.Violates(err, key)` tests for it (`users.name`, as the expect line spells a NOT NULL
+column, matches too). `ExecOne` judges `RowsAffected`, which MySQL
 counts as changed rows: an UPDATE to the values a row already has reports `ErrNoRows`
 unless the DSN sets `clientFoundRows=true`.
 

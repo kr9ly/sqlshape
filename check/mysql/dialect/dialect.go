@@ -5,10 +5,12 @@ package dialect
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/analyze"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 // Name is the dialect's name in the schema declaration.
@@ -26,7 +28,13 @@ func load(schemaSQL string) (dialect.Analyzer, error) {
 	return &mysql{s: s}, nil
 }
 
-type mysql struct{ s *schema.Schema }
+type mysql struct {
+	s *schema.Schema
+	// views are the view queries analyzed once (schema.go), viewErrs the definitions that
+	// did not analyze
+	views    map[*schema.View]*analyze.ViewResult
+	viewErrs []dialect.Definition
+}
 
 func (m *mysql) Problems() []string {
 	var out []string
@@ -39,19 +47,87 @@ func (m *mysql) Problems() []string {
 func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
 	r, err := analyze.Analyze(m.s, sql)
 	if err != nil {
-		if ae, ok := err.(*analyze.Error); ok {
-			return nil, &dialect.Error{Message: ae.Message, Code: "MySQL error " + strconv.Itoa(ae.Code), Position: ae.Position}
-		}
-		return nil, err
+		return nil, errorOf(err)
 	}
-	out := &dialect.Result{Facts: r.Facts}
+	out := &dialect.Result{Facts: r.Facts, Uses: r.Uses}
 	for _, p := range r.Params {
 		out.Params = append(out.Params, dialect.Param{Type: typeOf(p.Type, p.Known)})
 	}
 	for _, c := range r.Columns {
 		out.Columns = append(out.Columns, dialect.Column{Name: c.Name, Type: typeOf(c.Type, c.Known), Nullable: c.Nullable})
 	}
+	for _, v := range r.Violations {
+		out.Violations = append(out.Violations, dialect.Violation{Key: v.Key(), Code: "MySQL error " + strconv.Itoa(v.Code), Table: v.Table,
+			Columns: v.Columns, Constraint: v.Constraint, Detail: describeViolation(v), Param: v.Param})
+	}
+	if r.Facts != nil {
+		out.Relations = relationRefs(r.Facts)
+	}
 	return out, nil
+}
+
+// errorOf spells an analyzer error in the contract; other errors pass through.
+func errorOf(err error) error {
+	if ae, ok := err.(*analyze.Error); ok {
+		return &dialect.Error{Message: ae.Message, Code: "MySQL error " + strconv.Itoa(ae.Code), Position: ae.Position}
+	}
+	return err
+}
+
+// describeViolation spells a possible violation the way the checker reports it.
+func describeViolation(v analyze.Violation) string {
+	cols := strings.Join(v.Columns, ", ")
+	code := ", MySQL error " + strconv.Itoa(v.Code)
+	switch v.Code {
+	case 1062:
+		if v.Constraint == "PRIMARY" {
+			return "PRIMARY KEY (" + cols + ") on " + v.Table + code
+		}
+		return "UNIQUE " + v.Constraint + " (" + cols + ") on " + v.Table + code
+	case 1452:
+		return "FOREIGN KEY " + v.Constraint + " (" + cols + ") on " + v.Table + " REFERENCES " + v.RefTable + code
+	case 1451:
+		return "FOREIGN KEY " + v.Constraint + " (" + cols + ") on " + v.Table + " REFERENCES " + v.RefTable + ": a row of " + v.Table + " still refers to the one changed" + code
+	case 1048:
+		return "NOT NULL on " + v.Table + "." + cols + code
+	case 3819:
+		return "CHECK " + v.Constraint + " on " + v.Table + " (" + cols + ")" + code
+	}
+	return v.Key() + code
+}
+
+// relationRefs lists the tables and views the statement's facts reference, at every depth,
+// each once: what the boundary checks (-schemas, -no-tables) and the consumers index read.
+func relationRefs(f *facts.Facts) []dialect.RelationRef {
+	var out []dialect.RelationRef
+	seen := map[string]int{}
+	var walk func(sc *facts.Scope)
+	walk = func(sc *facts.Scope) {
+		if sc == nil {
+			return
+		}
+		for _, l := range sc.Leaves {
+			if l.Table == "" || (l.Kind != facts.Table && l.Kind != facts.View) {
+				continue
+			}
+			if i, ok := seen[l.Table]; ok {
+				out[i].Target = out[i].Target || l.Role == facts.Target
+				continue
+			}
+			seen[l.Table] = len(out)
+			out = append(out, dialect.RelationRef{Name: l.Table, Kind: l.Kind, Position: int(l.Position), Target: l.Role == facts.Target})
+		}
+		for _, p := range sc.Preds {
+			if p.Op == facts.Exists {
+				walk(p.Sub)
+			}
+		}
+		for _, ch := range sc.Children {
+			walk(ch)
+		}
+	}
+	walk(f.Top)
+	return out
 }
 
 func typeOf(t schema.Type, known bool) dialect.Type {

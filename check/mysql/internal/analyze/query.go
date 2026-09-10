@@ -30,7 +30,7 @@ func (a *analyzer) queryExpressionFacts(v mysqlast.Value, outer *scope) ([]Colum
 	}
 	sc := outer.derived()
 	sc.ctes = append(append([]relation{}, sc.ctes...), ctes...)
-	cols, block, err := a.bodyScope(qe.Arg("body"), sc)
+	cols, block, body, err := a.bodyScope(qe.Arg("body"), sc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -42,9 +42,11 @@ func (a *analyzer) queryExpressionFacts(v mysqlast.Value, outer *scope) ([]Colum
 	if err := a.limit(qe.Arg("limit")); err != nil {
 		return nil, nil, err
 	}
-	var body *facts.Scope
-	if block != nil {
-		body = block.facts
+	if body != nil {
+		if limitOne(qe.Arg("limit")) {
+			body.Single = true
+		}
+		body.Children = append(body.Children, cteBodies(ctes)...)
 	}
 	return cols, body, nil
 }
@@ -143,39 +145,47 @@ func (a *analyzer) subquery(v mysqlast.Value, outer *scope) ([]Column, error) {
 	}
 	a.depth++
 	defer func() { a.depth-- }()
-	return a.queryExpression(n.Arg("query_expression"), outer)
+	cols, body, err := a.queryExpressionFacts(n.Arg("query_expression"), outer)
+	outer.child(body) // a subquery of a condition or a select list is a nested block of the enclosing one
+	return cols, err
 }
 
 // body types a query expression body: a single SELECT, a set operation over bodies, or a
 // parenthesized query expression. sc is the scope the body's FROM clauses start from.
 func (a *analyzer) body(v mysqlast.Value, sc scope) ([]Column, error) {
-	cols, _, err := a.bodyScope(v, sc)
+	cols, _, _, err := a.bodyScope(v, sc)
 	return cols, err
 }
 
 // bodyScope is body, also returning the block's scope when the body is one SELECT (nil
-// for a set operation), for the ORDER BY at the expression level.
-func (a *analyzer) bodyScope(v mysqlast.Value, sc scope) ([]Column, *scope, error) {
+// for a set operation), for the ORDER BY at the expression level, and the body's facts: the
+// block's, or a set operation's level (which may combine rows) with the arms under it.
+func (a *analyzer) bodyScope(v mysqlast.Value, sc scope) ([]Column, *scope, *facts.Scope, error) {
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
-		return nil, nil, fmt.Errorf("analyze: query body not understood: %s", mysqlast.Sprint(v))
+		return nil, nil, nil, fmt.Errorf("analyze: query body not understood: %s", mysqlast.Sprint(v))
 	}
 	switch n.Class {
 	case "PT_query_specification":
-		return a.querySpecification(n, sc)
+		cols, block, err := a.querySpecification(n, sc)
+		if block == nil {
+			return cols, nil, nil, err
+		}
+		return cols, block, block.facts, err
 	case "PT_query_expression":
-		cols, err := a.queryExpression(n, sc.outer)
-		return cols, nil, err
+		cols, body, err := a.queryExpressionFacts(n, sc.outer)
+		return cols, nil, body, err
 	case "PT_union", "PT_except", "PT_intersect":
-		cols, err := a.setOperation(n, sc)
-		return cols, nil, err
+		cols, fs, err := a.setOperation(n, sc)
+		return cols, nil, fs, err
 	}
-	return nil, nil, fmt.Errorf("analyze: %s is not supported yet", n.Class)
+	return nil, nil, nil, fmt.Errorf("analyze: %s is not supported yet", n.Class)
 }
 
 // querySpecification types one SELECT block and returns its columns and its scope. HAVING
 // and GROUP BY see the select list's names as well as the tables' (a MySQL extension).
 func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, *scope, error) {
+	sc.kids = new([]*facts.Scope)
 	sc, err := a.from(body.Arg("from_clause"), sc)
 	if err != nil {
 		return nil, nil, err
@@ -209,28 +219,48 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 // setOperation types UNION / EXCEPT / INTERSECT: the column names are the first
 // operand's, each column's type is the operands' aggregated as the server does for a
 // UNION (Item_type_holder over field_type_merge), and it is nullable when any operand's is.
-func (a *analyzer) setOperation(n *mysqlast.Node, sc scope) ([]Column, error) {
+func (a *analyzer) setOperation(n *mysqlast.Node, sc scope) ([]Column, *facts.Scope, error) {
+	// the level has no leaves of its own: its facts say a set operation may combine rows,
+	// and the arms are the blocks under it
+	fs := &facts.Scope{At: -1, Many: setOpName(n.Class) + " may combine rows"}
+	if a.depth == 0 && a.setOp == 0 && a.facts != nil && a.facts.Kind == facts.Select && a.facts.Top == nil {
+		a.facts.Top = fs
+	}
 	a.setOp++
 	defer func() { a.setOp-- }()
 	list, _ := n.Arg("list").(mysqlast.List)
 	var out []Column
 	for i, arm := range list {
-		cols, err := a.body(arm, sc)
+		cols, _, armFacts, err := a.bodyScope(arm, sc)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if armFacts != nil {
+			fs.Children = append(fs.Children, armFacts)
 		}
 		if i == 0 {
 			out = cols
 			continue
 		}
 		if len(cols) != len(out) {
-			return nil, &Error{Message: "The used SELECT statements have a different number of columns", Code: 1222, Position: a.ph.Back(n.Start)}
+			return nil, nil, &Error{Message: "The used SELECT statements have a different number of columns", Code: 1222, Position: a.ph.Back(n.Start)}
 		}
 		for j := range out {
 			out[j] = mergeColumn(out[j], cols[j])
 		}
 	}
-	return out, nil
+	return out, fs, nil
+}
+
+// setOpName spells a set operation's node class the way the statement does.
+func setOpName(class string) string {
+	switch class {
+	case "PT_except":
+		return "EXCEPT"
+	case "PT_intersect":
+		return "INTERSECT"
+	}
+	return "UNION"
 }
 
 // mergeColumn is the type of a set operation's column over two operands' columns.
@@ -264,11 +294,16 @@ func (a *analyzer) with(v mysqlast.Value, outer *scope) ([]relation, error) {
 		sc := outer.derived()
 		sc.ctes = append(append([]relation{}, sc.ctes...), ctes...)
 		var cols []Column
+		var body *facts.Scope
 		var err error
 		if recursive {
 			cols, err = a.recursiveCTE(name, names, cte.Args[3], sc)
 		} else {
+			sc.kids = new([]*facts.Scope) // the body's facts, to hang under the query that has the WITH
 			if cols, err = a.subquery(cte.Args[3], &sc); err == nil {
+				if len(*sc.kids) > 0 {
+					body = (*sc.kids)[0]
+				}
 				if !mergeable(subqueryExpression(cte.Args[3])) {
 					cols = materialized(cols, subqueryExpression(cte.Args[3]))
 				}
@@ -278,7 +313,7 @@ func (a *analyzer) with(v mysqlast.Value, outer *scope) ([]relation, error) {
 		if err != nil {
 			return nil, err
 		}
-		ctes = append(ctes, relation{alias: name, cols: cols})
+		ctes = append(ctes, relation{alias: name, cols: cols, body: body, cte: true})
 	}
 	return ctes, nil
 }

@@ -54,6 +54,21 @@ release it is a candidate for.
   server does: positions, select-list aliases, a table column shadowing an alias in
   `GROUP BY`, `HAVING` reaching the select list; unknown names are reported in MySQL's
   words (`in 'order clause'`, `in 'group statement'`, `in 'having clause'`).
+- The obligations and the failure modes on MySQL, through the same contract PostgreSQL uses.
+  The `-- sqlshape:` directives above a `CREATE TABLE` / `CREATE VIEW` (`require ...`,
+  `aggregate`, `context`, `sensitive`, `transitions`, `visible where`; a view's `unfiltered` /
+  `waive`) are read by the MySQL schema loader, a declared predicate is typed against the
+  table by the MySQL analyzer, and every statement (and every view body) is judged: the
+  analyzer now records the columns a statement uses, the nested blocks (derived tables, CTE
+  bodies, the subqueries of its conditions, the arms of a set operation) and what a write
+  stores. `-- sqlshape: expect` on MySQL: a write may violate a `PRIMARY` / `UNIQUE` key
+  (MySQL error 1062; a key the server numbers itself, or one left NULL, cannot), a `FOREIGN
+  KEY` (1452 from the child, 1451 from the parent it still refers to, following `ON DELETE /
+  UPDATE CASCADE`), a `CHECK` (3819) and NOT NULL (1048, `table.column`, dropped when the Go
+  type cannot be nil); `INSERT / UPDATE / DELETE IGNORE` violates nothing and `ON DUPLICATE
+  KEY UPDATE` absorbs the insert's unique violations. The constraints are named as the server
+  reports them (`PRIMARY`, `orders_ibfk_1`, `t_chk_1`), verified against a running `mysqld`;
+  `mysql.Violates(err, "users.name")` matches a NOT NULL violation by that spelling.
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result

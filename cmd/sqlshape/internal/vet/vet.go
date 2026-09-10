@@ -118,6 +118,8 @@ func (ls *loadedSchema) judge(what string, f *facts.Facts) {
 	}
 	for _, d := range obligation.Check(ct.Contract(), ls.decls, f, ct) {
 		switch {
+		case d.Obligation.Body.ViaView:
+			// a view's body is the sanctioned reader of a `require via view` table
 		case d.Failed():
 			ls.problems = append(ls.problems, what+": "+d.Message)
 		case d.Message != "":

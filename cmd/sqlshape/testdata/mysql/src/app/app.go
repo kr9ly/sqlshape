@@ -95,3 +95,55 @@ var orderOfUser = sqlshape.One[int64, struct{ ID uint64 }](`SELECT o.id FROM ord
 var countUsers = sqlshape.One[int64, struct{}](`SELECT count(*) FROM users`)
 
 var markActive = sqlshape.One[struct{}, struct{ ID uint64 }](`UPDATE users SET active = 1 WHERE id = {{.ID}}`)
+
+// Failure modes: the expect line names the constraints a write may violate, as the server
+// names them (the key's name, the CONSTRAINT's, table.column for NOT NULL)
+type NewOrder struct {
+	ID     uint64
+	UserID uint64
+	Total  string
+}
+
+var insertOrder = sqlshape.Query[struct{}, NewOrder]("-- sqlshape: expect PRIMARY, fk_orders_user\nINSERT INTO orders (id, user_id, total) VALUES ({{.ID}}, {{.UserID}}, {{.Total}})")
+
+var insertOrderBare = sqlshape.Query[struct{}, NewOrder](`INSERT INTO orders (id, user_id, total) VALUES ({{.ID}}, {{.UserID}}, {{.Total}})`) // want `may violate PRIMARY \(PRIMARY KEY \(id\) on orders, MySQL error 1062\)` `may violate fk_orders_user \(FOREIGN KEY fk_orders_user \(user_id\) on orders REFERENCES users, MySQL error 1452\)`
+
+var insertOrderNullable = sqlshape.Query[struct{}, struct {
+	ID     uint64
+	UserID *uint64
+	Total  string
+}]("-- sqlshape: expect PRIMARY, fk_orders_user\nINSERT INTO orders (id, user_id, total) VALUES ({{.ID}}, {{.UserID}}, {{.Total}})") // want `may violate orders.user_id \(NOT NULL on orders.user_id, MySQL error 1048\)`
+
+var insertOrderIgnore = sqlshape.Query[struct{}, NewOrder](`INSERT IGNORE INTO orders (id, user_id, total) VALUES ({{.ID}}, {{.UserID}}, {{.Total}})`)
+
+var staleExpect = sqlshape.Query[struct{}, struct {
+	ID   uint64
+	Name string
+}]("-- sqlshape: expect fk_orders_user\nUPDATE users SET name = {{.Name}} WHERE id = {{.ID}}") // want `expects fk_orders_user but no expansion can violate it`
+
+var deleteUser = sqlshape.Query[struct{}, struct{ ID uint64 }](`DELETE FROM users WHERE id = {{.ID}}`) // want `may violate fk_orders_user \(FOREIGN KEY fk_orders_user \(user_id\) on orders REFERENCES users: a row of orders still refers to the one changed, MySQL error 1451\)`
+
+// Obligations: `require pinned(tenant_id)` on tenant_notes, judged through the contract
+var noteByID = sqlshape.Query[string, struct{ ID uint64 }](`SELECT body FROM tenant_notes WHERE id = {{.ID}}`) // want `tenant_notes.tenant_id is not pinned: every statement on tenant_notes must fix tenant_id by equality \(or assign it\)`
+
+var noteByTenant = sqlshape.Query[string, struct {
+	ID       uint64
+	TenantID uint64
+}](`SELECT body FROM tenant_notes WHERE id = {{.ID}} AND tenant_id = {{.TenantID}}`)
+
+var noteViaView = sqlshape.Query[string, struct{ ID uint64 }](`SELECT body FROM all_notes WHERE id = {{.ID}}`)
+
+var noteWaived = sqlshape.Query[string, struct{ ID uint64 }]("-- sqlshape: waive tenant_notes pinned(tenant_id)\nSELECT body FROM tenant_notes WHERE id = {{.ID}}")
+
+type NewNote struct {
+	ID       uint64
+	TenantID uint64
+	Body     string
+}
+
+var insertNote = sqlshape.Query[struct{}, NewNote]("-- sqlshape: expect PRIMARY, tenant_notes_tenant_body\nINSERT INTO tenant_notes (id, tenant_id, body) VALUES ({{.ID}}, {{.TenantID}}, {{.Body}})") // want `expects tenant_notes_tenant_body but no expansion can violate it`
+
+var moveNote = sqlshape.Query[struct{}, struct {
+	ID       uint64
+	TenantID uint64
+}]("-- sqlshape: expect PRIMARY\nUPDATE tenant_notes SET id = {{.ID}} WHERE tenant_id = {{.TenantID}}")

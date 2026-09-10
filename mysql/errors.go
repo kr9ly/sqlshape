@@ -28,10 +28,21 @@ func (e *ConstraintError) Error() string {
 
 func (e *ConstraintError) Unwrap() error { return e.Err }
 
-// Violates reports whether err is a violation of the named constraint (or table.column NOT NULL).
+// Violates reports whether err is a violation of the named constraint. A NOT NULL violation
+// is named table.column, the way the checker's expect line spells it; the server's message
+// names the column alone, so the bare column matches too.
 func Violates(err error, key string) bool {
 	var ce *ConstraintError
-	return errors.As(err, &ce) && ce.Key == key
+	if !errors.As(err, &ce) {
+		return false
+	}
+	if ce.Key == key {
+		return true
+	}
+	if ce.Number == 1048 || ce.Number == 1364 {
+		return strings.HasSuffix(key, "."+ce.Key)
+	}
+	return false
 }
 
 var (
