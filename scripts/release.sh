@@ -77,10 +77,11 @@ trap 'rollback' ERR
 
 # 2. requires, commit, tags: every require of a sqlshape module moves to the version
 for m in "${modules[@]}"; do
-  sed -i -E "s#^(\s*github\.com/kr9ly/sqlshape(/[a-z/]+)? )v[0-9][^ ]*#\1$version#" "$m/go.mod"
+  sed -i -E "s#^(\s*(require )?github\.com/kr9ly/sqlshape(/[a-z/]+)? )v[0-9][^ ]*#\1$version#" "$m/go.mod"
 done
 git add -- $(present)
-git commit -q -m "release: $version"
+# always a commit of its own, even when no require moved (a first release): the tidy step amends it
+git commit -q --allow-empty -m "release: $version"
 for t in "${tags[@]}"; do git tag -a "$t" -m "sqlshape $version"; done
 
 # 3. go.sum from this clone: `go` fetches github.com/kr9ly/sqlshape through git, and git is
