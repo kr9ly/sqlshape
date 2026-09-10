@@ -116,7 +116,19 @@ RDBMSを使うアプリケーションに要るのは4つ。SQLの構文と型�
 
 追従。新しいメジャー版は「版を1つ足す」作業で、手順は[`internal/pgparse/README.md`](../internal/pgparse/README.md)にまとめてある。libpg_queryのリリースを待つ形は変わらない（18は8か月遅れた）。サポート窓はPGの5年に合わせるが、まず17と18の2版でこの構造を作った。メジャー間で判定が変わるのは、構文の追加、カタログの追加・オーバーロードによる曖昧化・稀な削除、予約語の追加、ごく稀な型規則の変更で、regressコーパスの差分がそれを列挙する。
 
-### スコープ外
+#### 検査器が本体で、ランタイムは DB ごとの別ライブラリ（2.0）
+
+裁定 2026-09-10。sqlshape の約束は「`schema.sql`に対してテンプレートの有限展開を静的に検査する」で、それはマーカー`sqlshape.Query[R, P](tmpl)` / `One`ひとつで閉じる。SafeQL が使うクライアントライブラリを問わないのと同じ位置に立つ: 検査対象はマーカーで、ランタイムは「あると便利な 1 実装」。
+
+- ルートモジュール`github.com/kr9ly/sqlshape`は依存ゼロの核だけを持つ: `Query` / `One` / `Stmt` / `Render`（テンプレートの意味論 — `{{.X}}`のプレースホルダ化と分岐の有限集合）と、依存の無い検査器の共有部（`internal/expand` / `dialect` / `facts` / `obligation`）。利用者の go.mod に pgx も wazero も載らない
+- ランタイムは DB ごとの別モジュールで、互いに似ていなくてよい。`sqlshape/postgres`は pgx の自然な形（`iter.Seq2`、Batch、Copy、pgtype のスキャナ、`MatView`、`ConstraintError`）、`sqlshape/mysql`は database/sql の形（`?`描画、`*sql.Rows`）。共通シグネチャは作らない。受け型の表はドライバごと
+- マーカーは設定できる。既定は`sqlshape.Query` / `One`、`-query=pkg.Func`で利用者自身の generic 関数`F[R, P any](string) T`を登録できる。ランタイムを自作してよい。定数の生 SQL（`db.Query(ctx, "SELECT …")`）は R / P 無しの薄い検査（構文・名前・パラメータ個数）
+- 失うものは明示する: `-raw-sql=forbid`の「検査済み SQL しか実行されない」、`expect`行と`ConstraintError`の対応、`One`の実行時`ErrManyRows`はランタイム側の契約で、sqlshape のランタイムを使ったときだけ成立する。docs は「静的に約束すること」と「ランタイムを使えば加わること」を分けて書く
+- 検査器も DB ごとのモジュール: `sqlshape/check/postgres`（Apache。analyze / schema / catalog / pgparse / oracle / verify / dump / diff / migrate。パッケージは公開だがツール向けで互換性の約束はしない）と`sqlshape/check/mysql`（GPLv2、旧`mysql/`）。`sqlshape/pgtest`は check/postgres の上。`sqlshape/cmd/sqlshape`（GPLv2）が vet と cli を内包して全部を積む。7 モジュールを 1 つの版番号でロックステップ、2.0.0 から
+- DB × 言語の行列: Go の各 DB が`sqlshape/<db>`、TypeScript は別リポジトリの`@sqlshape/<db>`、`check/<db>`は言語非依存で共有、言語フロントエンド（vet）は`cmd/`側
+- 退けた案: ルートに PG ランタイムを残して MySQL だけ別モジュール（依存の混入が残る）、ランタイム間で`Run(ctx, db, stmt, p)`の関数形を揃える（揃える理由が無い）
+
+## スコープ外
 
 FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（embedded PGの統計は本番と違う。性能の助言は構造的に判定できるもの、インデックスの先頭列とビューへの述語押し込みに限る）。初期リリースではPostgreSQL以外のRDBMS（下記「検討中」のMySQL参照）。
 
