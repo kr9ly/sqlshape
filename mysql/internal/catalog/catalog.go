@@ -23,7 +23,12 @@ type Item struct {
 	Base            string
 	Family          string
 	InheritsResolve string
-	Facts           []string
+	// FixFields is the base fix_fields an override calls ("own" when none); "" when the
+	// class does not override fix_fields. FixNullable says that override sets the
+	// nullability itself, last.
+	FixFields   string
+	FixNullable bool
+	Facts       []string
 }
 
 // Lookup returns the registry entry for name (any case), or nil.

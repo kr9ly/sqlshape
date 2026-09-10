@@ -383,6 +383,42 @@ func facts(class string) []string {
 	return nil
 }
 
+// strictNullable is whether Item_str_func::fix_fields runs for class: in strict mode (the
+// default sql_mode) it makes every string function nullable. It runs unless a class on the
+// way up overrides fix_fields without calling it (MAKE_SET, ST_GEOHASH).
+func strictNullable(class string) bool {
+	seen := map[string]bool{}
+	for cur := class; cur != "" && !seen[cur]; {
+		if cur == "Item_str_func" {
+			return true
+		}
+		seen[cur] = true
+		it, ok := catalog.Items[cur]
+		if !ok {
+			return false
+		}
+		switch it.FixFields {
+		case "":
+			cur = it.Base
+		case "own":
+			return false
+		default:
+			cur = it.FixFields // the override calls this base's fix_fields: follow it
+		}
+	}
+	return false
+}
+
+// factBinary reads a binary result collation from the facts.
+func factBinary(fs []string) bool {
+	for _, f := range fs {
+		if strings.Contains(f, "my_charset_bin") {
+			return true
+		}
+	}
+	return false
+}
+
 // isA reports whether class is, or derives from, base.
 func isA(class, base string) bool {
 	seen := map[string]bool{}
@@ -400,8 +436,8 @@ func isA(class, base string) bool {
 	return false
 }
 
-// factType is the type a `set_data_type_*` fact fixes, when exactly one such fact is
-// unconditional; "" when the facts leave it to the arguments.
+// factType is the type the `set_data_type_*` facts fix: the last one, since a class's
+// resolve_type runs after the base's it calls; "" when they leave it to the arguments.
 func factType(fs []string) string {
 	found := ""
 	for _, f := range fs {
@@ -438,16 +474,60 @@ func factType(fs []string) string {
 		case strings.HasPrefix(f, "set_data_type(MYSQL_TYPE_"):
 			name = strings.TrimSuffix(strings.TrimPrefix(f, "set_data_type(MYSQL_TYPE_"), ")")
 		case strings.HasPrefix(f, "set_data_type_from_item("), strings.HasPrefix(f, "set_data_type("):
-			return "" // follows an argument or a computed type
+			found = "" // follows an argument or a computed type
+			continue
 		default:
 			continue
-		}
-		if found != "" && found != name {
-			return "" // two branches set different types: the arguments decide
 		}
 		found = name
 	}
 	return found
+}
+
+// explicitCharset reports a fact that gives a string result a character set of its own
+// (default_charset(), the connection's, a named one): without one, Item_str_func's result
+// is a binary string unless agg_arg_charsets_for_string_result takes the arguments'.
+func explicitCharset(fs []string) bool {
+	for _, f := range fs {
+		if strings.Contains(f, "my_charset_bin") {
+			continue
+		}
+		if strings.Contains(f, "charset") || strings.Contains(f, "collation") || strings.Contains(f, "agg_arg_charsets") {
+			return true
+		}
+	}
+	return false
+}
+
+// aggregatesCharset reports agg_arg_charsets_for_string_result / _for_comparison: the
+// result's character set is the arguments'.
+func aggregatesCharset(fs []string) bool {
+	for _, f := range fs {
+		if strings.HasPrefix(f, "agg_arg_charsets") {
+			return true
+		}
+	}
+	return false
+}
+
+// fixNullable reports whether the nearest fix_fields override on the way up sets the
+// nullability itself, in which case it follows the arguments whatever resolve_type said.
+// The family roots (Item_str_func, Item_geometry_func, Item_sum ...) do not count: what
+// their fix_fields does is modelled as the family's rule.
+func fixNullable(class string) bool {
+	seen := map[string]bool{}
+	for cur := class; cur != "" && !seen[cur]; {
+		seen[cur] = true
+		it, ok := catalog.Items[cur]
+		if !ok || familyRoots()[cur] {
+			return false
+		}
+		if it.FixFields != "" {
+			return it.FixNullable
+		}
+		cur = it.Base
+	}
+	return false
 }
 
 // factNullable reads set_nullable(true) / set_nullable(false); ok is false when the facts
@@ -531,4 +611,20 @@ func atoi(s string) (int, bool) {
 		n = -n
 	}
 	return n, true
+}
+
+var roots map[string]bool
+
+// familyRoots are the classes that name a family: what their own resolve_type and
+// fix_fields do is the family's rule, not a class's override.
+func familyRoots() map[string]bool {
+	if roots == nil {
+		roots = map[string]bool{"Item_func": true}
+		for _, it := range catalog.Items {
+			if it.Family != "" {
+				roots[it.Family] = true
+			}
+		}
+	}
+	return roots
 }

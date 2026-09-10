@@ -43,6 +43,13 @@ type ItemClass struct {
 	Facts []string
 	// InheritsResolve is set when resolve_type() defers to a base class's.
 	InheritsResolve string
+	// FixFields is set when the class overrides fix_fields(): the base class's fix_fields it
+	// calls, or "own" when it calls none (Item_str_func::fix_fields is where strict mode
+	// makes every string function nullable, so the chain decides who inherits that).
+	FixFields string
+	// FixNullable is set when that fix_fields sets nullability itself, after everything
+	// resolve_type and the bases decided.
+	FixNullable bool
 	// Header is the file that declares the class.
 	Header string
 }
@@ -70,7 +77,12 @@ var (
 	reClassDecl     = regexp.MustCompile(`(?m)^class\s+(Item_[A-Za-z_0-9]*)\s*(?:final\s*)?:\s*public\s+([A-Za-z_0-9:<>]+)`)
 	reResolveType   = regexp.MustCompile(`(?m)^bool\s+(Item_[A-Za-z_0-9]+)::resolve_type(?:_inner)?\(THD\s*\*\s*\w*\)\s*\{`)
 	reFact          = regexp.MustCompile(`\b(set_data_type_[a-z_0-9]+|set_data_type|set_nullable|param_type_is_default|param_type_uses_non_param|aggregate_type|aggregate_num_type|aggregate_string_properties|agg_arg_charsets_for_string_result|agg_arg_charsets_for_comparison|fix_char_length|count_datetime_length|set_data_type_from_item|reject_geometry_args|null_on_null)\s*\(`)
-	reBaseResolve   = regexp.MustCompile(`if\s*\(\s*(Item_[A-Za-z_0-9]+)::resolve_type\(`)
+	reBaseResolve   = regexp.MustCompile(`(?:if\s*\(\s*|return\s+)(Item_[A-Za-z_0-9]+)::resolve_type\(`)
+	reFixFields     = regexp.MustCompile(`(?m)^bool\s+(Item_[A-Za-z_0-9]+)::fix_fields\(THD\s*\*\s*\w*,\s*Item\s*\*\*\s*\w*\)\s*\{`)
+	reInlineFix     = regexp.MustCompile(`\bbool\s+fix_fields\(THD\s*\*\s*\w*,\s*Item\s*\*\*\s*\w*\)\s*override\s*\{`)
+	reBaseFix       = regexp.MustCompile(`(Item_[A-Za-z_0-9]+)::fix_fields\(`)
+	reBodyUnsigned  = regexp.MustCompile(`\bunsigned_flag\s*=\s*true\s*;`)
+	reBodyBinary    = regexp.MustCompile(`collation\.set\(\s*&my_charset_bin`)
 	reInlineResolve = regexp.MustCompile(`\bbool\s+resolve_type\(THD\s*\*\s*\w*\)\s*(?:const\s*)?override\s*\{`)
 	reAssignFact    = regexp.MustCompile(`\b(max_length|decimals|unsigned_flag|collation\.set|set_nullable)\s*(=|\()\s*([^;]+);`)
 )
@@ -237,6 +249,25 @@ func ReadCatalog(src string) (*Catalog, error) {
 					c.readFacts(body)
 				}
 			}
+			if im := reInlineFix.FindStringIndex(class); im != nil {
+				if body, err := balanced(class, im[1]-1, '{', '}'); err == nil {
+					c.readFixFields(body)
+				}
+			}
+			// what a constructor states about the result is a fact too (set_nullable(true) in
+			// MAKEDATE's, unsigned_flag = true in CRC32's)
+			ctor := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\s*\((?:[^()]|\([^()]*\))*\)\s*(?::[^{;]*)?\{`)
+			for _, cm := range ctor.FindAllStringIndex(class, -1) {
+				if body, err := balanced(class, cm[1]-1, '{', '}'); err == nil {
+					c.readFacts(body)
+				}
+			}
+			if reBodyUnsigned.MatchString(class) {
+				c.Facts = append(c.Facts, "unsigned_flag=true")
+			}
+			if reBodyBinary.MatchString(class) {
+				c.Facts = append(c.Facts, "collation.set=&my_charset_bin)")
+			}
 		}
 	}
 	for _, c := range cat.Classes {
@@ -264,6 +295,19 @@ func ReadCatalog(src string) (*Catalog, error) {
 				cat.Classes[name] = c
 			}
 			c.readFacts(body)
+		}
+		for _, m := range reFixFields.FindAllStringSubmatchIndex(text, -1) {
+			name := text[m[2]:m[3]]
+			body, err := balanced(text, m[1]-1, '{', '}')
+			if err != nil {
+				continue
+			}
+			c := cat.Classes[name]
+			if c == nil {
+				c = &ItemClass{Name: name}
+				cat.Classes[name] = c
+			}
+			c.readFixFields(body)
 		}
 	}
 	if err := readTypeTables(src, cat); err != nil {
@@ -404,6 +448,12 @@ func CatalogGo(pkg, version string, cat *Catalog, grammarClasses []string) strin
 		if c.InheritsResolve != "" {
 			fmt.Fprintf(&b, ", InheritsResolve: %s", strconv.Quote(c.InheritsResolve))
 		}
+		if c.FixFields != "" {
+			fmt.Fprintf(&b, ", FixFields: %s", strconv.Quote(c.FixFields))
+		}
+		if c.FixNullable {
+			b.WriteString(", FixNullable: true")
+		}
 		if len(c.Facts) > 0 {
 			b.WriteString(", Facts: []string{")
 			for i, f := range c.Facts {
@@ -542,6 +592,24 @@ func readTypeTables(src string, cat *Catalog) error {
 	}
 	cat.ResultKinds = kinds
 	return nil
+}
+
+// readFixFields records a fix_fields override: the base fix_fields it calls, or "own".
+func (c *ItemClass) readFixFields(body string) {
+	c.FixFields = "own"
+	if m := reBaseFix.FindStringSubmatch(body); m != nil {
+		c.FixFields = m[1]
+	}
+	// an unconditional set_nullable(true / false) is a fact; anything else computed there
+	// is the override deciding for itself
+	switch {
+	case strings.Contains(body, "set_nullable(true)"):
+		c.Facts = append(c.Facts, "set_nullable(true)")
+	case strings.Contains(body, "set_nullable(false)"):
+		c.Facts = append(c.Facts, "set_nullable(false)")
+	case strings.Contains(body, "set_nullable("):
+		c.FixNullable = true
+	}
 }
 
 // readFacts reads the declarative statements of a resolve_type body into the class's

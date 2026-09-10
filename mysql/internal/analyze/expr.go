@@ -374,6 +374,21 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 		a.setParamField(args[0], "DATETIME")
 		a.setParamField(args[1], "DATETIME")
 		return known("bigint", true), nil
+	case "X_instantiator", "Y_instantiator", "Latitude_instantiator", "Longitude_instantiator":
+		if len(args) == 1 { // the observer reads a coordinate; with two arguments the mutator returns the geometry
+			a.setParamField(args[0], "GEOMETRY")
+			return known("double", anyNullable(ts)), nil
+		}
+	case "Srid_instantiator":
+		if len(args) == 1 {
+			a.setParamField(args[0], "GEOMETRY")
+			return known("bigint", anyNullable(ts)), nil
+		}
+	case "From_unixtime_instantiator":
+		if len(args) == 1 { // Item_func_from_unixtime; with a format it is DATE_FORMAT
+			a.setParamField(args[0], "NEWDECIMAL")
+			return known("datetime", true), nil
+		}
 	}
 	return a.classType(f.Class, args, ts), nil
 }
@@ -404,7 +419,9 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 	}
 	fam := catalog.FamilyOf(class)
 	switch {
-	case fam == "Item_str_func", fam == "Item_str_ascii_func", fam == "Item_static_string_func", fam == "Item_temporal_hybrid_func":
+	case fixNullable(class):
+		nullable = anyNullable(ts) // its fix_fields decides, last
+	case strictNullable(class):
 		nullable = true // Item_str_func::fix_fields: nullable in strict mode, the default
 	case fam == "Item_json_func":
 		nullable = true // Item_json_func's constructor
@@ -432,6 +449,25 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		}
 	case isA(class, "Item_func_min_max"):
 		t = aggregate(ts)
+		if t.known && t.typ.Name == "json" {
+			t = known("varchar", t.nullable) // GREATEST / LEAST compare JSON as strings
+		}
+	case fam == "Item_temporal_hybrid_func":
+		// ADDTIME / SUBTIME / TIMESTAMP(): a TIME stays TIME, any other temporal first argument
+		// makes a DATETIME, a string stays a string. STR_TO_DATE: a DATETIME unless the
+		// format is a constant (not read). DATE_ADD is built by the grammar, not here.
+		name := "VARCHAR"
+		switch {
+		case class == "Item_func_str_to_date":
+			name = "DATETIME"
+		case len(ts) > 0 && ts[0].known && ts[0].typ.Name == "time":
+			name = "TIME"
+		case len(ts) > 0 && ts[0].known && isTemporal(ts[0].typ):
+			name = "DATETIME"
+		}
+		if typ, ok := fromFieldType(name, false); ok {
+			t = typed{typ: typ, known: true}
+		}
 	case isA(class, "Item_func_coalesce"):
 		t = aggregate(ts)
 		nullable = true
@@ -443,6 +479,11 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 	case isA(class, "Item_func_nullif"):
 		if len(ts) > 0 {
 			t = ts[0]
+			if t.known && kindOf(t.typ) == "STRING_RESULT" && t.typ.Name != "json" { // set_data_type_string: temporal values included
+				typ, _ := fromFieldType("VARCHAR", isBinary(t.typ))
+				typ.Length = t.typ.Length
+				t.typ = typ
+			}
 			nullable = true
 		}
 	case isA(class, "Item_sum_hybrid"): // MIN / MAX
@@ -458,6 +499,19 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 				t = known("decimal", true)
 			}
 		}
+	case class == "Item_func_unix_timestamp":
+		// a bigint, or a decimal with the fractional seconds of the argument (a string or a
+		// number converts to DATETIME(6) first)
+		t = known("bigint", false)
+		if len(ts) > 0 && ts[0].known {
+			switch {
+			case isTemporal(ts[0].typ) && ts[0].typ.Dec <= 0, kindOf(ts[0].typ) == "INT_RESULT":
+			default:
+				t = known("decimal", false)
+			}
+		} else if len(ts) > 0 {
+			t = known("decimal", false)
+		}
 	case isA(class, "Item_sum_count"):
 		t = known("bigint", false)
 	case isA(class, "Item_sum_bit"):
@@ -471,14 +525,14 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		t = known("bigint", false)
 	case class == "Item_cume_dist" || class == "Item_percent_rank":
 		t = known("double", false)
+	case fam == "Item_bool_func":
+		t = boolean(nullable)
 	default:
 		name := factType(fs)
 		if name == "" {
 			switch fam {
 			case "Item_int_func", "Item_sum_int":
 				name = "LONGLONG"
-			case "Item_bool_func":
-				t = boolean(nullable)
 			case "Item_str_func", "Item_str_ascii_func", "Item_static_string_func":
 				name = "VARCHAR"
 			case "Item_real_func", "Item_dec_func", "Item_sum_num":
@@ -496,9 +550,22 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 			}
 		}
 		if name != "" {
-			binary := false
-			if fam == "Item_str_func" && len(ts) > 0 && ts[0].known && isBinary(ts[0].typ) && strings.Contains(strings.Join(fs, ";"), "args[0]->max_char_length") {
-				binary = true // string functions of a binary string keep it binary
+			// the result collation: binary when the facts say so, or when an Item_str_func
+			// sets none (Item's default collation is binary); the arguments' when the facts
+			// aggregate them, which a binary argument makes binary
+			binary := factBinary(fs)
+			switch {
+			case binary:
+			case strings.Contains(strings.Join(fs, ";"), "args[0]->collation"):
+				binary = len(ts) > 0 && ts[0].known && isBinary(ts[0].typ)
+			case aggregatesCharset(fs):
+				for _, x := range ts {
+					if x.known && isBinary(x.typ) {
+						binary = true
+					}
+				}
+			case fam == "Item_str_func" && !explicitCharset(fs):
+				binary = true
 			}
 			if typ, ok := fromFieldType(name, binary); ok {
 				t = typed{typ: typ, known: true}

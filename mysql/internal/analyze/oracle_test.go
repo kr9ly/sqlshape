@@ -74,15 +74,17 @@ func TestOracle(t *testing.T) {
 	t.Logf("server %s: %d statements agree; %d columns the analyzer leaves untyped", o.Version, len(analyzeCases), untyped)
 }
 
-// typeKey reduces a type to what the wire metadata can confirm: the type name and its
-// signedness (lengths and the TEXT sizes are not compared).
+// typeKey reduces a type to what the wire metadata can confirm and Go cares about: the
+// type name and its signedness, with the character string types as one class and the
+// binary string types as another (the analyzer does not compute lengths, which is what
+// decides VARCHAR against TEXT on the wire; Go receives both the same way).
 func typeKey(t schema.Type) string {
 	name := t.Name
 	switch name {
-	case "tinytext", "mediumtext", "longtext":
-		name = "text"
-	case "tinyblob", "mediumblob", "longblob":
-		name = "blob"
+	case "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set":
+		name = "string"
+	case "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob":
+		name = "binary"
 	}
 	if t.Unsigned {
 		return name + " unsigned"
@@ -96,10 +98,10 @@ func oracleKey(c oracle.Column) string {
 	unsigned := strings.HasPrefix(name, "unsigned ")
 	name = strings.TrimPrefix(name, "unsigned ")
 	switch name {
-	case "tinytext", "mediumtext", "longtext":
-		name = "text"
-	case "tinyblob", "mediumblob", "longblob":
-		name = "blob"
+	case "char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set":
+		name = "string"
+	case "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob":
+		name = "binary"
 	}
 	if unsigned {
 		return name + " unsigned"

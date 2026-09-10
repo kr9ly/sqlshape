@@ -104,12 +104,22 @@ func (s *Schema) typeOf(v mysqlast.Value, at func(mysqlast.Value) int) Type {
 		}
 	case "PT_char_type":
 		t.Name = enumName(str(n.Arg("char_type")))
-		t.Length = intOr(n.Arg("length"), -1)
+		length, charset, forceBinary := n.Arg("length"), n.Arg("charset"), n.Arg("force_binary")
+		if str(forceBinary) == "my_charset_bin" {
+			// BINARY(n) / VARBINARY(n): the action calls the (type, length, charset) constructor,
+			// which parsegen named by the (type, charset, force_binary) one of the same arity
+			length, charset, forceBinary = charset, forceBinary, nil
+		}
+		t.Length = intOr(length, -1)
 		if t.Name == "char" && t.Length < 0 {
 			t.Length = 1
 		}
-		t.Charset = charsetName(n.Arg("charset"))
-		t.Binary = isTrue(n.Arg("force_binary"))
+		t.Charset = charsetName(charset)
+		t.Binary = isTrue(forceBinary)
+		if t.Charset == "binary" {
+			t.Name = map[string]string{"char": "binary", "varchar": "varbinary"}[t.Name]
+			t.Charset = ""
+		}
 	case "PT_blob_type":
 		t.Name = blobName(str(n.Arg("blob_type")), n.Arg("charset") != nil)
 		t.Length = intOr(n.Arg("length"), -1)
@@ -190,7 +200,7 @@ func blobName(blobType string, text bool) string {
 func charsetName(v mysqlast.Value) string {
 	s := str(v)
 	switch s {
-	case "&my_charset_bin":
+	case "&my_charset_bin", "my_charset_bin":
 		return "binary"
 	case "national_charset_info":
 		return "utf8mb3"
