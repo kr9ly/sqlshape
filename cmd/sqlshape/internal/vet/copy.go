@@ -8,9 +8,8 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 // sqlshape.Copy[R](table, cols...) declares a bulk load. The checker verifies the table
@@ -68,31 +67,27 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 		return
 	}
 	table, cols := strs[0], strs[1:]
-	sch, n := "public", table
-	if i := strings.LastIndex(table, "."); i >= 0 {
-		sch, n = table[:i], table[i+1:]
-	}
-	rel := c.s.Relation(sch, n)
+	rel := c.sch.Relation(table)
 	if rel == nil {
 		report("Copy: table %q does not exist", table)
 		return
 	}
-	if rel.Kind != schema.Table {
+	if rel.Kind != facts.Table {
 		report("Copy: %q is not a table (COPY FROM loads tables)", table)
 		return
 	}
 	for i, name := range cols {
 		if col := rel.Column(name); col != nil {
-			c.index.AddColumn(rel.FullName(), col.Name, c.site(call, call.Args[i+1].Pos()))
+			c.index.AddColumn(rel.Name, col.Name, c.site(call, call.Args[i+1].Pos()))
 		}
 	}
 	if len(cols) == 0 {
 		for _, col := range rel.Columns {
-			c.index.AddColumn(rel.FullName(), col.Name, c.site(call, call.Args[0].Pos()))
+			c.index.AddColumn(rel.Name, col.Name, c.site(call, call.Args[0].Pos()))
 		}
 	}
 	if noTables {
-		report("table %s is written directly; with -no-tables application code reads views and calls functions only", rel.FullName())
+		report("table %s is written directly; with -no-tables application code reads views and calls functions only", rel.Name)
 	}
 	if schemasFlag != "" {
 		allowed := false
@@ -102,7 +97,7 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 			}
 		}
 		if !allowed {
-			report("%s is outside the schemas this code may reference (%s)", rel.FullName(), schemasFlag)
+			report("%s is outside the schemas this code may reference (%s)", rel.Name, schemasFlag)
 		}
 	}
 	// fields of R
@@ -143,7 +138,7 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 			report("Copy into %s: column %q does not exist", table, name)
 			continue
 		}
-		if col.Generated != nil {
+		if col.Generated {
 			report("Copy into %s: column %q is generated and cannot be copied into", table, name)
 			continue
 		}
@@ -153,7 +148,7 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 			continue
 		}
 		fed[f.col] = true
-		c.meet(f.v.Type(), pgdialect.TypeOf(c.s, col.Type), pgdialect.SourceOf(c.s, &analyze.Source{Table: rel.FullName(), Column: col.Name, NotNull: col.NotNull, Assigned: true}), call.Pos(), "field "+f.name)
+		c.meet(f.v.Type(), col.Type, c.sch.Source(rel.Name, col.Name), call.Pos(), "field "+f.name)
 		c.copyFit(report, col, f.v.Type(), "field "+f.name)
 	}
 	for _, f := range flat {
@@ -165,15 +160,15 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 }
 
 // copyFit checks one column against the Go type feeding it (parameter direction).
-func (c *checker) copyFit(report func(string, ...any), col *schema.Column, gt types.Type, what string) {
-	f := c.paramFit(col.Type, gt)
+func (c *checker) copyFit(report func(string, ...any), col *dialect.SchemaColumn, gt types.Type, what string) {
+	f := c.fitPG(col.Type, gt, true)
 	switch {
 	case !f.ok:
-		report("Copy: %s is %s but column %q is %s", what, gt, col.Name, c.s.Types.Format(col.Type))
+		report("Copy: %s is %s but column %q is %s", what, gt, col.Name, col.Type.Name)
 	case f.lossy != "":
 		report("Copy: %s: %s", what, f.lossy)
 	case f.unknown:
-		report("Copy: %s: no known Go mapping for %s, not checked", what, c.s.Types.Format(col.Type))
+		report("Copy: %s: no known Go mapping for %s, not checked", what, col.Type.Name)
 	}
 	if f.ok && col.NotNull && f.nullable {
 		report("Copy: %s is %s but column %q is NOT NULL: a nil value fails the load", what, gt, col.Name)
@@ -182,16 +177,16 @@ func (c *checker) copyFit(report func(string, ...any), col *schema.Column, gt ty
 
 // copyOmitted reports the columns the load leaves to their defaults that have none and
 // forbid NULL: COPY fills them with NULL and the first row fails.
-func (c *checker) copyOmitted(report func(string, ...any), rel *schema.Relation, cols []string) {
+func (c *checker) copyOmitted(report func(string, ...any), rel *dialect.Relation, cols []string) {
 	listed := map[string]bool{}
 	for _, n := range cols {
 		listed[n] = true
 	}
 	for _, col := range rel.Columns {
-		if listed[col.Name] || !col.NotNull || col.Default != nil || col.Identity != 0 || col.Generated != nil {
+		if listed[col.Name] || !col.NotNull || col.HasDefault || col.Identity || col.Generated {
 			continue
 		}
-		report("Copy into %s: column %q is NOT NULL without a default and is not copied", rel.FullName(), col.Name)
+		report("Copy into %s: column %q is NOT NULL without a default and is not copied", rel.Name, col.Name)
 	}
 }
 

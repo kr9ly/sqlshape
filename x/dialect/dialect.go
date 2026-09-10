@@ -17,6 +17,9 @@ package dialect
 import (
 	"fmt"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -44,10 +47,8 @@ func Declared(schemaSQL string) (Declaration, error) {
 	schemaSQL = strings.TrimPrefix(schemaSQL, "\ufeff") // a byte order mark is not part of the SQL
 	for _, m := range directiveLine.FindAllStringSubmatch(schemaSQL, -1) {
 		name := m[1]
-		if name != Postgres {
-			if _, ok := Lookup(name); !ok {
-				continue
-			}
+		if _, ok := Lookup(name); !ok && name != Postgres {
+			continue
 		}
 		if d.Name != "" && (d.Name != name || d.Version != m[2]) {
 			return Declaration{}, fmt.Errorf("schema: the dialect is declared twice, as `%s %s` and `%s %s`", d.Name, d.Version, name, m[2])
@@ -255,6 +256,82 @@ type Traits struct {
 	NullWrappers []string
 }
 
+// Schema is what the checker asks of a loaded schema beyond analyzing statements: its
+// relations, for Copy and MatView and the doc comments it writes; the schema's own
+// definitions, judged like statements; its advice. A dialect's Analyzer offers it by
+// implementing Schemaed.
+type Schema interface {
+	// Relation resolves a name the way a program writes it ("orders", "sales.orders");
+	// nil when the schema has none.
+	Relation(name string) *Relation
+	Relations() []*Relation
+	// Definitions are the schema's own statements — view bodies, function bodies, policy
+	// predicates — each with the facts the obligations are judged on, its notes, and the
+	// error that stopped its analysis.
+	Definitions() []Definition
+	// Advice are the schema-level advisories (-strict): what the schema does less well than
+	// it looks.
+	Advice() []string
+	// Type resolves a type by the name a `// sqlshape: type X` declaration writes.
+	Type(name string) (Type, bool)
+	// Source describes a column of a relation the way a statement's Source would (its
+	// identity, its value set, its default); nil when the column does not exist.
+	Source(table, column string) *Source
+}
+
+// Schemaed is an Analyzer that also gives the checker its Schema.
+type Schemaed interface {
+	Schema() Schema
+}
+
+// Contracted is an Analyzer whose schema the obligations can be declared on and judged
+// against (x/obligation): its Contract, and the lowering of a declared predicate.
+type Contracted interface {
+	Contract() obligation.Schema
+	Lower(expr string, rel obligation.Relation) ([]facts.Pred, error)
+}
+
+// Relation is a table or view as the checker sees it.
+type Relation struct {
+	Name    string // as the facts spell it (schema-qualified unless in the default schema)
+	Schema  string
+	Kind    facts.RelKind
+	Columns []SchemaColumn
+	Comment string
+	// Unique: the relation has a unique index over whole columns without a predicate
+	// (what REFRESH MATERIALIZED VIEW CONCURRENTLY needs).
+	Unique bool
+}
+
+// Column finds a column by name.
+func (r *Relation) Column(name string) *SchemaColumn {
+	for i := range r.Columns {
+		if r.Columns[i].Name == name {
+			return &r.Columns[i]
+		}
+	}
+	return nil
+}
+
+// SchemaColumn is a relation's column as declared.
+type SchemaColumn struct {
+	Name       string
+	Type       Type
+	NotNull    bool
+	HasDefault bool
+	Identity   bool // the database numbers it (an identity / serial column); a value may still be given
+	Generated  bool // a generated column: computed from other columns, never written
+	Comment    string
+}
+
+// Definition is one of the schema's own statements as the checker judges it.
+type Definition struct {
+	What  string // "view order_summary", "function pay: line 3", "policy p on t"
+	Facts *facts.Facts
+	Notes []Note
+	Err   string // what stopped the analysis, "" when it went through
+}
+
 // Error is a statement the database itself would reject.
 type Error struct {
 	Message  string
@@ -302,4 +379,40 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return append([]string{Postgres}, names...)
+}
+
+// ReadSchema reads the schema at path: a .sql file, or a directory whose *.sql files are
+// concatenated in name order (so `schema/010_types.sql`, `schema/020_tables.sql`, ...
+// apply like one file), each preceded by a comment naming it so that a problem's position
+// can be traced back.
+func ReadSchema(path string) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		b, err := os.ReadFile(path)
+		return string(b), err
+	}
+	files, err := filepath.Glob(filepath.Join(path, "*.sql"))
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("%s: no *.sql files", path)
+	}
+	sort.Strings(files)
+	var b strings.Builder
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "-- file: %s\n", filepath.Base(f))
+		b.Write(src)
+		if len(src) > 0 && src[len(src)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String(), nil
 }

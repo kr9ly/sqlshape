@@ -47,10 +47,14 @@ func (c *checker) suggestTypeComment(rType types.Type, r *dialect.Result) {
 		}
 		table = col.Source.Table
 	}
-	comment := c.s.Comments[table]
-	if table == "" || comment == "" {
+	if table == "" {
 		return
 	}
+	rel := c.sch.Relation(table)
+	if rel == nil || rel.Comment == "" {
+		return
+	}
+	comment := rel.Comment
 	spec, decl := c.typeSpec(named.Obj().Pos())
 	if spec == nil || spec.Doc != nil || (decl != nil && decl.Doc != nil) {
 		return

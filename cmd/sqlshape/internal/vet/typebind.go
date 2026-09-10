@@ -5,9 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"regexp"
-	"strings"
 
-	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
@@ -70,13 +68,9 @@ func (c *checker) collectDeclaredTypes() {
 					continue
 				}
 				dt := declaredType{pg: m[1]}
-				sch, name := "", m[1]
-				if i := strings.LastIndex(name, "."); i >= 0 {
-					sch, name = name[:i], name[i+1:]
-				}
-				if c.s != nil {
-					if t := c.s.Types.Lookup(sch, name); t != nil {
-						dt.named = pgdialect.NamedOf(c.s, t.OID)
+				if c.sch != nil {
+					if t, ok := c.sch.Type(m[1]); ok {
+						dt.named = t.Named
 					} else {
 						c.pass.Reportf(ts.Name.Pos(), "sqlshape: type %s: PostgreSQL type %q does not exist in the schema", obj.Name(), m[1])
 					}
@@ -102,13 +96,9 @@ func (c *checker) declaredOf(t types.Type) (declaredType, bool) {
 		return declaredType{}, false
 	}
 	dt := declaredType{pg: f.PG}
-	sch, name := "", f.PG
-	if i := strings.LastIndex(name, "."); i >= 0 {
-		sch, name = name[:i], name[i+1:]
-	}
-	if c.s != nil {
-		if pt := c.s.Types.Lookup(sch, name); pt != nil {
-			dt.named = pgdialect.NamedOf(c.s, pt.OID)
+	if c.sch != nil {
+		if t, ok := c.sch.Type(f.PG); ok {
+			dt.named = t.Named
 		}
 	}
 	c.declared[named.Obj()] = dt

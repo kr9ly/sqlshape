@@ -9,6 +9,7 @@ import (
 	"golang.org/x/tools/go/analysis/checker"
 	"golang.org/x/tools/go/packages"
 
+	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
@@ -113,3 +114,7 @@ func impactText(list []impact, prefix string) string {
 	}
 	return b.String()
 }
+
+// The consumers index runs the checker over the packages; the checker needs the
+// PostgreSQL dialect registered, which importing its adapter does.
+var _ = pgdialect.Load

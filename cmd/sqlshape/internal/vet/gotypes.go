@@ -6,8 +6,6 @@ import (
 	"strings"
 	"unicode"
 
-	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
@@ -68,20 +66,6 @@ func isByteSlice(t types.Type) bool {
 	return ok && (k == types.Byte || k == types.Uint8)
 }
 
-// match decides whether Go type t can carry PG type pg (domains flattened) as a result.
-func (c *checker) match(pg schema.TypeRef, t types.Type) fit {
-	return c.matchDir(pg, t, false)
-}
-
-// matchDir is match in one direction: param = false for a result column scanned into t,
-// param = true for a Go value encoded as a parameter. The table of what fits is the
-// dialect's (check/postgres/dialect.TypeOf spells pgx's); the grammar it is read with is
-// gofit.go's. A Go type that declares the PostgreSQL type it carries (`// sqlshape: type
-// X`) is judged by that declaration alone.
-func (c *checker) matchDir(pg schema.TypeRef, t types.Type, param bool) fit {
-	return c.fitPG(pgdialect.TypeOf(c.s, pg), t, param)
-}
-
 // fitPG is fitType with this package's declared type bindings applied first.
 func (c *checker) fitPG(dt dialect.Type, t types.Type, param bool) fit {
 	if inner, nullable := unwrapNullable(t); inner != nil {
@@ -103,7 +87,7 @@ func (c *checker) traits() dialect.Traits {
 	if c.ls != nil && c.ls.dialect != nil {
 		return c.ls.dialect.Traits()
 	}
-	return pgdialect.Traits
+	return dialect.Traits{}
 }
 
 // structField is one column-bearing field of a result struct, embedded structs flattened.
@@ -247,10 +231,4 @@ func snake(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// paramFit is match in the Go → PG direction: the Go value must fit the PG parameter type,
-// so the lossy cases are the ones where Go is wider than PG (the dialect's Param list).
-func (c *checker) paramFit(pg schema.TypeRef, t types.Type) fit {
-	return c.matchDir(pg, t, true)
 }

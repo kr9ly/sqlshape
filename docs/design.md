@@ -134,7 +134,7 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 
 ## コード配置
 
-層の規則（`x/boundary_test.go` が import グラフで検査する）: `x/*` は stdlib と `x/*` しか import しない（契約と共有部）。言語フロントエンド `cmd/sqlshape/internal/vet` は `x/*` と自分の internal だけ。方言アダプタ `check/<db>/dialect` は自分の `check/<db>/*` と `x/*` だけ。フロントエンドが `check/postgres` に直接届いている辺は負債として同テストに列挙し、ゼロにする。
+層の規則（`x/boundary_test.go` が import グラフで検査する、負債リストは空）: `x/*` は stdlib と `x/*` しか import しない（契約と共有部）。言語フロントエンド `cmd/sqlshape/internal/vet` は `x/*` と自分の internal だけ — 方言は `x/dialect.Register` で名乗り、`cmd/sqlshape/main.go` の blank import が積む。方言アダプタ `check/<db>/dialect` は自分の `check/<db>/*` と `x/*` だけで、`dialect.Analyzer`（文の解析）に加えて `Schemaed`（関係・定義・助言・型・出所）と `Contracted`（義務の contract と lowering）を実装する。
 
 | package | 役割 |
 |---|---|
@@ -152,7 +152,7 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 | `x/facts` | アナライザーと義務検査の間のデータ契約。文種・スコープの木・葉・正規化述語・等値の辺・固定列・代入集合。パーサのノードを含まず、方言を知らない |
 | `x/cardinality` | One の証明を facts の上で（方言非依存）: 全 leaf のユニークキーが等式で固定される、join の辺で知識を運ぶ、派生表は自分の scope で、producer の AtMostOne はそのまま |
 | `x/obligation` | 境界の規則（方言非依存）。`obligation.Schema` / `Relation` interface 越しにスキーマを見る（PG は `schema.Schema.Contract()` が適合）。schema.sqlの`require` / `visible where`とvetのフラグを義務に読み、事実に対して履行を判定する（[obligations.md](obligations.md)）。`analyze`にも`vet`にも依存しない |
-| `cmd/sqlshape/internal/vet` | `go/analysis`アナライザー。結果列 ↔ `R`、`$n` ↔ `P`、束縛、expect行、SuggestedFix。境界の規則は`obligation`に委ね、フラグを義務に展開して渡す |
+| `cmd/sqlshape/internal/vet` | `go/analysis`アナライザー。`x/dialect` の契約だけを読む（PG 固有型なし）。結果列 ↔ `R`、`$n` ↔ `P`、束縛、expect行、SuggestedFix。境界の規則は`obligation`に委ね、フラグを義務に展開して渡す |
 | `check/postgres/oracle` | 差分テストのオラクルとしての本物のPG（embedded-postgres）。検査時には使わない |
 | `check/postgres/dump` / `diff` / `migrate` / `consumers` / `cli` | マイグレーション側。pg_dumpによる正準形、オブジェクト単位のdiff、DDL生成と終点検証、消費者索引、サブコマンド |
 

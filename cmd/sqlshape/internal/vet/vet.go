@@ -24,9 +24,6 @@ import (
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
 	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
@@ -85,18 +82,11 @@ var (
 
 // loadedSchema is a schema plus the findings about the schema itself, reported once per package.
 type loadedSchema struct {
-	s        *schema.Schema
 	problems []string
-	// dialect is set instead of s when the schema declares a dialect other than
-	// PostgreSQL: statements are then judged through internal/dialect (dialect.go)
+	// dialect judges the statements; dialectName is what the schema declared (postgres
+	// when it declared nothing)
 	dialect     dialect.Analyzer
 	dialectName string
-	// fnRefs are the relations each analyzable function body references (adviseSchema:
-	// SECURITY DEFINER functions past row-level security)
-	fnRefs map[*schema.Function][]analyze.RelationRef
-	// fnAdvice are the advisory notes of function bodies (a PL/pgSQL EXECUTE of a string
-	// built at run time), reported with -strict
-	fnAdvice map[*schema.Function][]analyze.Note
 	// decls are the obligations schema.sql declares (`visible where`, `require ...`);
 	// the flags' obligations are added per run, since flags change between runs
 	decls []obligation.Obligation
@@ -105,17 +95,28 @@ type loadedSchema struct {
 	caveats []string
 }
 
-// lowerer is internal/obligation's view of the PostgreSQL analyzer.
-type lowerer struct{ s *schema.Schema }
+// contract is the dialect's schema contract for the obligations, nil when it has none.
+func (ls *loadedSchema) contract() dialect.Contracted {
+	ct, _ := ls.dialect.(dialect.Contracted)
+	return ct
+}
 
-func (l lowerer) Lower(expr string, rel obligation.Relation) ([]facts.Pred, error) {
-	return analyze.Lower(l.s, expr, l.s.ByFullName(rel.FullName()))
+// schema is the dialect's schema for the checker, nil when it has none.
+func (ls *loadedSchema) schema() dialect.Schema {
+	if sd, ok := ls.dialect.(dialect.Schemaed); ok {
+		return sd.Schema()
+	}
+	return nil
 }
 
 // judge runs the schema's own obligations over one statement of the schema (a view or
 // function body) and files the failures as problems, the caveats for -strict.
 func (ls *loadedSchema) judge(what string, f *facts.Facts) {
-	for _, d := range obligation.Check(ls.s.Contract(), ls.decls, f, lowerer{ls.s}) {
+	ct := ls.contract()
+	if ct == nil || f == nil {
+		return
+	}
+	for _, d := range obligation.Check(ct.Contract(), ls.decls, f, ct) {
 		switch {
 		case d.Failed():
 			ls.problems = append(ls.problems, what+": "+d.Message)
@@ -131,7 +132,7 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if s, ok := schemaCache[path]; ok {
 		return s, nil
 	}
-	src, err := schema.ReadText(path)
+	src, err := dialect.ReadSchema(path)
 	if err != nil {
 		return nil, err
 	}
@@ -139,89 +140,43 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	if decl.Name != "" && decl.Name != dialect.Postgres {
-		load, _ := dialect.Lookup(decl.Name)
-		an, err := load(src)
-		if err != nil {
-			return nil, err
-		}
-		ls := &loadedSchema{dialect: an, dialectName: decl.Name, problems: an.Problems()}
-		schemaCache[path] = ls
-		return ls, nil
+	name := decl.Name
+	if name == "" {
+		name = dialect.Postgres
 	}
-	if err := schema.RequireVersion(path, src); err != nil {
-		return nil, err
+	load, ok := dialect.Lookup(name)
+	if !ok {
+		return nil, fmt.Errorf("%s: dialect %q is not available in this build", path, name)
 	}
-	s, err := analyze.Load(src)
+	an, err := load(src)
 	if err != nil {
 		return nil, err
 	}
-	ls := &loadedSchema{s: s, dialect: pgdialect.New(s), dialectName: dialect.Postgres, fnRefs: map[*schema.Function][]analyze.RelationRef{}, fnAdvice: map[*schema.Function][]analyze.Note{}}
-	for _, p := range s.Problems {
-		ls.problems = append(ls.problems, p.String())
-	}
-	var oblProblems []obligation.Problem
-	ls.decls, oblProblems = obligation.Declarations(s.Contract())
-	for _, p := range oblProblems {
-		ls.problems = append(ls.problems, fmt.Sprintf("%s: directive %q: %s", p.Subject, p.Source, p.Message))
-	}
-	// function bodies (LANGUAGE sql and plpgsql) are checked like PG does at CREATE time
-	for _, fn := range s.Functions {
-		fr, err := analyze.AnalyzeFunction(s, fn)
-		if err != nil {
-			ls.problems = append(ls.problems, fmt.Sprintf("function %s: %v", fn.Name, err))
-			continue
-		}
-		ls.fnRefs[fn] = fr.Relations
-		for _, st := range fr.Statements {
-			what := "function " + fn.Name
-			if st.Line > 0 {
-				what = fmt.Sprintf("%s: line %d", what, st.Line)
-			}
-			ls.judge(what, st.Facts)
-		}
-		for _, n := range fr.Notes {
-			if n.Advisory() {
-				ls.fnAdvice[fn] = append(ls.fnAdvice[fn], n)
-			} else {
-				ls.problems = append(ls.problems, fmt.Sprintf("function %s: %s", fn.Name, n.Message))
-			}
+	ls := &loadedSchema{dialect: an, dialectName: name, problems: an.Problems()}
+	if ct := ls.contract(); ct != nil {
+		var oblProblems []obligation.Problem
+		ls.decls, oblProblems = obligation.Declarations(ct.Contract())
+		for _, p := range oblProblems {
+			ls.problems = append(ls.problems, fmt.Sprintf("%s: directive %q: %s", p.Subject, p.Source, p.Message))
 		}
 	}
-	// row-level security policies: predicates type-checked like CREATE POLICY does, and
-	// policies on a table whose row security is off do not apply at all
-	for _, rel := range s.Relations {
-		for _, pol := range rel.Policies {
-			notes, err := analyze.AnalyzePolicy(s, rel, pol)
-			if err != nil {
-				ls.problems = append(ls.problems, fmt.Sprintf("policy %s on %s: %v", pol.Name, rel.FullName(), err))
+	// the schema's own statements (function bodies, policies, view bodies) are checked like
+	// the database does at CREATE time, and judged by the schema's own obligations
+	if sd := ls.schema(); sd != nil {
+		for _, d := range sd.Definitions() {
+			prefix := ""
+			if d.What != "" {
+				prefix = d.What + ": "
 			}
-			for _, n := range notes {
-				if !n.Advisory() {
-					ls.problems = append(ls.problems, fmt.Sprintf("policy %s on %s: %s", pol.Name, rel.FullName(), n.Message))
-				}
+			if d.Err != "" {
+				ls.problems = append(ls.problems, prefix+d.Err)
+				continue
 			}
-		}
-		if len(rel.Policies) > 0 && !rel.RowSecurity {
-			ls.problems = append(ls.problems, fmt.Sprintf("%s has policies but row level security is not enabled, so they do not apply: ALTER TABLE %s ENABLE ROW LEVEL SECURITY", rel.FullName(), rel.FullName()))
-		}
-	}
-	// view bodies: sqlshape's own findings (policies, domains) are the view's
-	for _, rel := range s.Relations {
-		if rel.Kind != schema.View && rel.Kind != schema.MatView {
-			continue
-		}
-		r, err := analyze.AnalyzeView(s, rel)
-		if err != nil {
-			ls.problems = append(ls.problems, fmt.Sprintf("view %s: %v", rel.Name, err))
-			continue
-		}
-		for _, n := range r.Notes {
-			if !n.Advisory() {
-				ls.problems = append(ls.problems, fmt.Sprintf("view %s: %s", rel.Name, n.Message))
+			for _, n := range d.Notes {
+				ls.problems = append(ls.problems, prefix+n.Message)
 			}
+			ls.judge(d.What, d.Facts)
 		}
-		ls.judge("view "+rel.Name, r.Facts)
 	}
 	schemaCache[path] = ls
 	return ls, nil
@@ -253,8 +208,9 @@ func findSchema(pass *analysis.Pass) (string, error) {
 
 type checker struct {
 	pass     *analysis.Pass
-	s        *schema.Schema
 	ls       *loadedSchema
+	sch      dialect.Schema     // the dialect's schema, nil when it gives none
+	ct       dialect.Contracted // the dialect's contract for the obligations, nil when it gives none
 	strict   bool
 	bindings map[*types.TypeName]*binding
 	// constDecls: this package's constant declarations, for mapping concatenated templates back to source
@@ -315,12 +271,11 @@ func run(pass *analysis.Pass) (any, error) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: load %s: %v", path, err)
 		return index, nil
 	}
-	s := ls.s
-	c := &checker{pass: pass, s: s, ls: ls, strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
+	c := &checker{pass: pass, ls: ls, sch: ls.schema(), ct: ls.contract(), strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
-	if s == nil {
+	if c.sch == nil {
 		c.runDialect(calls, matviews)
 		return index, nil
 	}
@@ -329,7 +284,9 @@ func run(pass *analysis.Pass) (any, error) {
 		for _, p := range ls.caveats {
 			pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 		}
-		c.adviseSchema(calls[0].Pos())
+		for _, a := range c.sch.Advice() {
+			pass.Reportf(calls[0].Pos(), "sqlshape: schema: %s", a)
+		}
 	}
 	// the flags are shorthand for declarations: a context's waive lifts them the same way
 	ctxName, ctxProblem := packageContext(pass)
@@ -338,7 +295,9 @@ func run(pass *analysis.Pass) (any, error) {
 	} else if ctxName != "" && !slices.Contains(obligation.Contexts(ls.decls), ctxName) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: context %q is not declared in %s (declared: %s)", ctxName, path, strings.Join(obligation.Contexts(ls.decls), ", "))
 	}
-	c.decls = obligation.InContext(append(ls.decls, obligation.FromFlags(s.Contract(), requireCols, noTables, noTableReads)...), ctxName)
+	if c.ct != nil {
+		c.decls = obligation.InContext(append(ls.decls, obligation.FromFlags(c.ct.Contract(), requireCols, noTables, noTableReads)...), ctxName)
+	}
 	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
 	}
@@ -1128,11 +1087,11 @@ func (c *checker) checkReferences(e *expand.Expansion, r *dialect.Result, lit li
 			report(at, "%s is outside the schemas this code may reference (%s)%s", ref.Name, schemasFlag, where)
 		}
 	}
-	if c.s == nil {
+	if c.ct == nil {
 		return // the obligations need the schema's contract, which this dialect does not give yet
 	}
 	seen := map[string]bool{}
-	for _, d := range obligation.Check(c.s.Contract(), c.decls, r.Facts, lowerer{c.s}) {
+	for _, d := range obligation.Check(c.ct.Contract(), c.decls, r.Facts, c.ct) {
 		if d.Message == "" || (!d.Failed() && !c.strict) || seen[d.Message] {
 			continue
 		}
@@ -1142,74 +1101,6 @@ func (c *checker) checkReferences(e *expand.Expansion, r *dialect.Result, lit li
 			tp = e.TemplatePos(int(d.Position))
 		}
 		report(lit.pos(tp), "%s%s", d.Message, where)
-	}
-}
-
-// adviseSchema reports advisory findings about the schema itself (-strict).
-func (c *checker) adviseSchema(at token.Pos) {
-	c.adviseRowSecurity(at)
-	for _, fn := range c.s.Functions {
-		for _, n := range c.ls.fnAdvice[fn] {
-			c.pass.Reportf(at, "sqlshape: schema: function %s: %s", fn.Name, n.Message)
-		}
-	}
-	for _, rel := range c.s.Relations {
-		if rel.Kind == schema.Table {
-			// a value set kept as an enum cannot lose or reorder a label without the type
-			// being rebuilt under every column (see migrate); a seeded lookup table changes
-			// with a MERGE, its rows can carry a label and an order, and the checker reads
-			// it just as well
-			for _, col := range rel.Columns {
-				if t := pgdialect.TypeOf(c.s, col.Type); t.Kind == dialect.Enum && !rel.Temp {
-					c.pass.Reportf(at, "sqlshape: schema: %s.%s is enum %s: a seeded lookup table (rows in schema.sql, referenced by a foreign key) is easier to change — an enum cannot drop or reorder a label without being recreated under every column — and is checked the same way", rel.FullName(), col.Name, t.Named)
-				}
-			}
-		}
-		if rel.Kind != schema.MatView {
-			continue
-		}
-		unique := false
-		for _, con := range rel.Constraints {
-			if con.Kind == schema.Unique && con.Predicate == nil {
-				unique = true
-			}
-		}
-		if !unique {
-			c.pass.Reportf(at, "sqlshape: schema: materialized view %s has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible", rel.FullName())
-		}
-	}
-}
-
-// adviseRowSecurity: the ways a row-level security setup does less than it looks like.
-func (c *checker) adviseRowSecurity(at token.Pos) {
-	for _, rel := range c.s.Relations {
-		if rel.Kind != schema.Table || !rel.RowSecurity {
-			continue
-		}
-		if len(rel.Policies) == 0 {
-			c.pass.Reportf(at, "sqlshape: schema: %s has row level security enabled and no policy: every role but the owner sees no rows", rel.FullName())
-		}
-		for _, pol := range rel.Policies {
-			for _, name := range analyze.SettingReads(pol) {
-				c.pass.Reportf(at, "sqlshape: schema: policy %s on %s reads current_setting(%q, true): a session that never set it gets NULL, so the predicate hides every row silently; without missing_ok the session fails loudly instead", pol.Name, rel.FullName(), name)
-			}
-		}
-		if rel.ForceRowSecurity {
-			continue
-		}
-		// a SECURITY DEFINER function runs as its owner, whom the policies do not bind
-		// unless the table forces them
-		for fn, refs := range c.ls.fnRefs {
-			if !fn.SecurityDefiner {
-				continue
-			}
-			for _, ref := range refs {
-				if ref.Schema == rel.Schema && ref.Name == rel.Name {
-					c.pass.Reportf(at, "sqlshape: schema: function %s is SECURITY DEFINER and reaches %s, whose policies do not bind the owner: rows are unrestricted inside it (ALTER TABLE %s FORCE ROW LEVEL SECURITY applies them)", fn.Name, rel.FullName(), rel.FullName())
-					break
-				}
-			}
-		}
 	}
 }
 
@@ -1230,18 +1121,14 @@ func (c *checker) checkMatView(call *ast.CallExpr) {
 		return
 	}
 	name := constant.StringVal(tv.Value)
-	sch, n := "", name
-	if i := strings.LastIndex(name, "."); i >= 0 {
-		sch, n = name[:i], name[i+1:]
-	}
-	rel := c.s.Relation(sch, n)
+	rel := c.sch.Relation(name)
 	switch {
 	case rel == nil:
 		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: materialized view %q does not exist", name)
-	case rel.Kind != schema.MatView:
+	case rel.Kind != facts.MatView:
 		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: %q is not a materialized view", name)
 	default:
-		c.index.AddRelation(rel.FullName(), c.site(call, call.Args[0].Pos()))
+		c.index.AddRelation(rel.Name, c.site(call, call.Args[0].Pos()))
 	}
 }
 

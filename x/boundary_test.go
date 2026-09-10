@@ -14,23 +14,15 @@ import (
 //	cmd/sqlshape/internal/vet    the Go frontend: x/* and the binary's own internals only
 //	check/<db>/dialect           a dialect's adapter: its own check/<db>/* and x/* only
 //
-// The frontend still reaches into check/postgres directly (the PostgreSQL path predates
-// x/dialect); those edges are listed in debt below and the list is meant to shrink to
-// nothing. A new edge outside the rules fails this test.
+// An edge outside the rules fails this test unless it is listed in debt below, a list
+// that must name only edges that still exist; it is empty, and meant to stay so.
 const module = "github.com/kr9ly/sqlshape/"
 
 // debt are the known violations, package → imports it may still have.
-var debt = map[string][]string{
-	module + "cmd/sqlshape/v2/internal/vet": {
-		module + "check/postgres/v2/analyze",
-		module + "check/postgres/v2/dialect", // the adapter, until PostgreSQL registers through x/dialect like MySQL
-		module + "check/postgres/v2/pgparse",
-		module + "check/postgres/v2/schema",
-	},
-}
+var debt = map[string][]string{}
 
 func TestImportBoundary(t *testing.T) {
-	pkgs := list(t, "./...", "./cmd/sqlshape/...", "./check/mysql/dialect") // check/postgres has no dialect adapter yet: the frontend reaches into it (debt)
+	pkgs := list(t, "./...", "./cmd/sqlshape/...", "./check/postgres/dialect", "./check/mysql/dialect")
 	for _, p := range pkgs {
 		rel := strings.TrimPrefix(p.ImportPath, module)
 		var allow func(imp string) bool

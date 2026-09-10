@@ -9,7 +9,8 @@ import (
 
 	"golang.org/x/tools/go/analysis/singlechecker"
 
-	_ "github.com/kr9ly/sqlshape/check/mysql/v2/dialect" // a schema.sql declaring `-- sqlshape: mysql 8.4`
+	_ "github.com/kr9ly/sqlshape/check/mysql/v2/dialect"    // a schema.sql declaring `-- sqlshape: mysql 8.4`
+	_ "github.com/kr9ly/sqlshape/check/postgres/v2/dialect" // `-- sqlshape: postgres 17`, and the default
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/cli"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/vet"
 )

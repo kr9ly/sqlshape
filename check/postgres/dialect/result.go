@@ -13,6 +13,11 @@ import (
 // of asking about a statement, whatever the dialect.
 type Analyzer struct {
 	S *schema.Schema
+
+	defined  bool
+	defs     []dialect.Definition
+	fnRefs   map[*schema.Function][]analyze.RelationRef
+	fnAdvice map[*schema.Function][]analyze.Note
 }
 
 // New wraps a loaded schema.
