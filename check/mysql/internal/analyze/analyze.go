@@ -52,6 +52,10 @@ type Column struct {
 
 	base      *schema.Column // the base table column this is a plain reference to, if any
 	baseTable *schema.Table  // its table
+	// leaf1 / leafCol: the relation of the producing block (1-based index into its rels,
+	// 0 when the column is not a plain reference) and the column's name there
+	leaf1   int
+	leafCol string
 }
 
 // Error is what MySQL would raise for the statement.
@@ -115,6 +119,18 @@ type analyzer struct {
 	// write is the statement's write, for the failure modes: its target, the columns
 	// assigned with what is stored in them, and IGNORE / ON DUPLICATE KEY UPDATE
 	write *write
+	// outerRefs are the column references a nested query resolved in an enclosing block
+	// (fullgroup.go reads them: a correlated reference is a column of the block it names)
+	outerRefs []outerRef
+	// blocks are the SELECT blocks typed so far, by their facts, for the functional
+	// dependencies a derived table's body gives (fullgroup.go)
+	blocks map[*facts.Scope]*blockInfo
+	// fdConst says of an equality's known side (pred text + term text) whether the server
+	// treats it as a constant for functional dependencies (a literal, not a parameter)
+	fdConst map[string]bool
+	// inHaving are the blocks whose HAVING is being typed: a nested query's unqualified
+	// name may be one of their select aliases
+	inHaving []*relation
 }
 
 // write is what a statement stores, for the failure modes (violations.go).
@@ -153,6 +169,7 @@ type relation struct {
 	target    bool          // a write's target
 	body      *facts.Scope  // a derived relation's own block, for the proof to look into
 	cte       bool          // a common table expression
+	merged    bool          // a derived relation the server merges into the query (not materialized)
 }
 
 // columns lists the relation's columns as a SELECT * expands them (a base table's
@@ -218,6 +235,24 @@ type scope struct {
 	// subqueries of its conditions and select list): the facts' Children. Shared by the
 	// copies of the scope; nil when the block does not record them.
 	kids *[]*facts.Scope
+	// nnMarks are the columns the block's conjuncts reject NULL for (a comparison, LIKE,
+	// BETWEEN, IN, IS NOT NULL with the column as a direct argument), each with the
+	// nullable side of the outer join whose ON says so (nil: the WHERE), for the functional
+	// dependencies (fullgroup.go)
+	nnMarks []nnMark
+	// ndJoins are the nullable sides of the outer joins whose ON is not deterministic:
+	// its equalities give no dependency
+	ndJoins [][]int
+	// info is the block's record for the ONLY_FULL_GROUP_BY and DISTINCT checks, set by
+	// querySpecification
+	info *blockInfo
+}
+
+// nnMark is a column a conjunct rejects NULL for; restrict is the outer join's nullable
+// side when the conjunct is its ON (nil for the WHERE).
+type nnMark struct {
+	col      facts.ColRef
+	restrict []int
 }
 
 // child records a nested block's facts under this one.
@@ -551,7 +586,8 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 		if err != nil {
 			return err
 		}
-		if !mergeable(subqueryExpression(n.Arg("subquery"))) {
+		merged := mergeable(subqueryExpression(n.Arg("subquery")))
+		if !merged {
 			cols = materialized(cols, subqueryExpression(n.Arg("subquery")))
 		}
 		names, _ := n.Arg("column_names").(mysqlast.List)
@@ -559,7 +595,7 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 			return err
 		}
 		sc.child(body)
-		return a.addRelation(sc, &relation{alias: alias, cols: cols, nullable: nullable, body: body}, n.Start)
+		return a.addRelation(sc, &relation{alias: alias, cols: cols, nullable: nullable, body: body, merged: merged}, n.Start)
 	case "PT_joined_table_on", "PT_joined_table_using", "PT_cross_join":
 		jt := str(n.Arg("type"))
 		left, right := nullable, nullable
@@ -664,9 +700,9 @@ func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, er
 			}
 			// a view is merged into the query unless it says TEMPTABLE or its query cannot be
 			// merged; a merged view's plain column references are updatable
-			rel = &relation{alias: v.Name, cols: cols, updatable: true, view: v.Name, body: body}
+			rel = &relation{alias: v.Name, cols: cols, updatable: true, view: v.Name, body: body, merged: true}
 			if v.Algorithm == "TEMPTABLE" || !mergeable(v.Query) {
-				rel.cols, rel.updatable = materialized(cols, v.Query), false
+				rel.cols, rel.updatable, rel.merged = materialized(cols, v.Query), false, false
 			}
 		} else {
 			return nil, &Error{Message: fmt.Sprintf("Table '%s' doesn't exist", name), Code: 1146, Position: a.ph.Back(n.Start)}
@@ -789,7 +825,13 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 		}
 	}
 	for s := &sc; s != nil; s = s.outer {
+		if s != &sc && table == "" && a.typingHaving(s) {
+			if ref, ok := a.lookupItem(*s, field); ok {
+				return ref, nil
+			}
+		}
 		var found []colRef
+		var leaf int
 		for i := range s.rels {
 			rel := &s.rels[i]
 			if table != "" && !strings.EqualFold(rel.alias, table) {
@@ -797,11 +839,15 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 			}
 			if ref, ok := rel.column(field); ok {
 				found = append(found, ref)
+				leaf = i
 			}
 		}
 		switch len(found) {
 		case 1:
 			a.use(found[0], at)
+			if s != &sc {
+				a.outerRefs = append(a.outerRefs, outerRef{block: &s.rels[0], leaf: leaf, col: found[0].c.Name, at: at, where: where})
+			}
 			return found[0], nil
 		case 0:
 			continue
@@ -813,6 +859,20 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 		qualified = table + "." + field
 	}
 	return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
+}
+
+// typingHaving reports a block whose HAVING is being typed.
+func (a *analyzer) typingHaving(s *scope) bool {
+	id := blockID(s)
+	if id == nil {
+		return false
+	}
+	for _, h := range a.inHaving {
+		if h == id {
+			return true
+		}
+	}
+	return false
 }
 
 // use records a resolved reference to a table's or a view's column, once, in order of
@@ -885,7 +945,10 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 					continue
 				}
 				matched = true
-				out = append(out, rel.columns()...)
+				for _, c := range rel.columns() {
+					c.leaf1, c.leafCol = i+1, c.Name
+					out = append(out, c)
+				}
 			}
 			if !matched {
 				if table != "" {
@@ -906,6 +969,12 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable}
 			if ref, ok := a.plainColumn(sc, expr); ok {
 				c.base, c.baseTable = ref.c.base, ref.c.baseTable
+				for i := range sc.rels {
+					if &sc.rels[i] == ref.rel || sc.rels[i].alias == ref.rel.alias {
+						c.leaf1, c.leafCol = i+1, ref.c.Name
+						break
+					}
+				}
 			}
 			out = append(out, c)
 		default:

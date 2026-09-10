@@ -39,6 +39,11 @@ func (a *analyzer) queryExpressionFacts(v mysqlast.Value, outer *scope) ([]Colum
 	if err := a.orderBy(qe.Arg("order"), cols, block, "order clause"); err != nil {
 		return nil, nil, err
 	}
+	if block != nil {
+		if err := a.orderCheck(block, qe.Arg("order")); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := a.limit(qe.Arg("limit")); err != nil {
 		return nil, nil, err
 	}
@@ -77,22 +82,25 @@ func (a *analyzer) orderBy(v mysqlast.Value, cols []Column, block *scope, where 
 	if list == nil {
 		list, _ = n.Arg("group_list").(mysqlast.List)
 	}
-	for _, it := range list {
+	for k, it := range list {
 		item := it
 		if oe, ok := it.(*mysqlast.Node); ok && oe.Class == "PT_order_expr" {
 			item = oe.Arg("item")
 		}
-		if err := a.orderItem(item, cols, block, where); err != nil {
+		if err := a.orderItem(item, cols, block, where, k+1); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, where string) error {
+func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, where string, num int) error {
 	n, ok := item.(*mysqlast.Node)
 	if !ok {
 		return nil
+	}
+	if block == nil && where == "order clause" && (isAggregateLike(n) || isWindowFunction(n) || containsAggregate(n)) {
+		return &Error{Message: fmt.Sprintf("Expression #%d of ORDER BY contains aggregate function and applies to a UNION, EXCEPT or INTERSECT", num), Code: 3028, Position: a.ph.Back(n.Start)}
 	}
 	switch n.Class {
 	case "Item_int", "Item_uint":
@@ -201,10 +209,16 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 	if err := a.orderBy(body.Arg("opt_group_clause"), cols, &sc, "group statement"); err != nil {
 		return nil, nil, err
 	}
-	if err := a.condition(sc, body.Arg("opt_having_clause"), "having clause"); err != nil {
+	a.inHaving = append(a.inHaving, blockID(&sc))
+	err = a.condition(sc, body.Arg("opt_having_clause"), "having clause")
+	a.inHaving = a.inHaving[:len(a.inHaving)-1]
+	if err != nil {
 		return nil, nil, err
 	}
 	sc.facts = a.block(&sc, body)
+	if err := a.groupCheck(&sc, body); err != nil {
+		return nil, nil, err
+	}
 	// the statement's own block (not a subquery's, not a set operation's arm) is what the
 	// contracts are judged on
 	if a.depth == 0 && a.setOp == 0 && a.facts != nil && a.facts.Kind == facts.Select && a.facts.Top == nil {
@@ -295,6 +309,7 @@ func (a *analyzer) with(v mysqlast.Value, outer *scope) ([]relation, error) {
 		sc.ctes = append(append([]relation{}, sc.ctes...), ctes...)
 		var cols []Column
 		var body *facts.Scope
+		var merged bool
 		var err error
 		if recursive {
 			cols, err = a.recursiveCTE(name, names, cte.Args[3], sc)
@@ -304,7 +319,8 @@ func (a *analyzer) with(v mysqlast.Value, outer *scope) ([]relation, error) {
 				if len(*sc.kids) > 0 {
 					body = (*sc.kids)[0]
 				}
-				if !mergeable(subqueryExpression(cte.Args[3])) {
+				merged = mergeable(subqueryExpression(cte.Args[3]))
+				if !merged {
 					cols = materialized(cols, subqueryExpression(cte.Args[3]))
 				}
 				cols, err = renamed(cols, names, name, a.ph.Back(cte.Start))
@@ -313,7 +329,7 @@ func (a *analyzer) with(v mysqlast.Value, outer *scope) ([]relation, error) {
 		if err != nil {
 			return nil, err
 		}
-		ctes = append(ctes, relation{alias: name, cols: cols, body: body, cte: true})
+		ctes = append(ctes, relation{alias: name, cols: cols, body: body, cte: true, merged: merged})
 	}
 	return ctes, nil
 }

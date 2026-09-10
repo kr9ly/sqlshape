@@ -77,7 +77,12 @@ type Stats struct {
 	Oldest *time.Time
 }
 
-var stats = sqlshape.Query[Stats, struct{}](`SELECT count(*) AS n, SUM(o.total) AS total, u.active = 1 AS active, MIN(u.created_at) AS oldest FROM users u JOIN orders o ON o.user_id = u.id`) // want `field Total is string but column "total" may be NULL`
+var stats = sqlshape.Query[Stats, struct{}](`SELECT count(*) AS n, SUM(o.total) AS total, u.active = 1 AS active, MIN(u.created_at) AS oldest FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 1`) // want `field Total is string but column "total" may be NULL`
+
+// ONLY_FULL_GROUP_BY: a column outside the aggregates is not determined by the group
+var mixed = sqlshape.Query[Stats, struct{}](`SELECT count(*) AS n, SUM(o.total) AS total, u.active = 1 AS active, MIN(u.created_at) AS oldest FROM users u JOIN orders o ON o.user_id = u.id`) // want `In aggregated query without GROUP BY, expression #3 of SELECT list contains nonaggregated column 'u.active'; this is incompatible with sql_mode=only_full_group_by \(MySQL error 1140\)`
+
+var notDependent = sqlshape.Query[Stats, struct{}](`SELECT count(*) AS n, SUM(o.total) AS total, u.active = 1 AS active, MIN(u.created_at) AS oldest FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.name`) // want `Expression #3 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'u.active' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by \(MySQL error 1055\)`
 
 var unknownFn = sqlshape.Query[int64, struct{}](`SELECT NOPE(id) FROM users`) // want `FUNCTION NOPE does not exist \(MySQL error 1305\)`
 

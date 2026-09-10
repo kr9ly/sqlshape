@@ -30,6 +30,7 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 		}
 		for _, c := range conjuncts(w) {
 			a.predFacts(sc, fs, c, nil)
+			a.nullRejecting(sc, c, nil)
 		}
 	}
 	for _, j := range sc.joins {
@@ -43,6 +44,10 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 		if j.on != nil {
 			for _, c := range conjuncts(j.on) {
 				a.predFacts(sc, fs, c, restrict)
+				a.nullRejecting(sc, c, restrict)
+			}
+			if restrict != nil && !deterministic(j.on) {
+				sc.ndJoins = append(sc.ndJoins, restrict)
 			}
 		}
 		for _, name := range j.using {
@@ -50,6 +55,7 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 			r, okr := a.colIn(sc, j.right, name)
 			if okl && okr {
 				a.equalityFacts(fs, l, r, restrict)
+				sc.nnMarks = append(sc.nnMarks, nnMark{l, restrict}, nnMark{r, restrict})
 			}
 		}
 	}
@@ -157,6 +163,11 @@ func (a *analyzer) leafFacts(r relation) facts.Leaf {
 	}
 	if r.table == nil && r.body != nil {
 		lf.Body = r.body
+		for _, c := range r.cols {
+			if c.leaf1 > 0 {
+				lf.Outputs = append(lf.Outputs, facts.Output{Name: c.Name, Col: facts.ColRef{Leaf: c.leaf1 - 1, Column: c.leafCol}})
+			}
+		}
 	}
 	if lf.Table != "" {
 		// the opt-outs: the statement's, or inside a view's body the view's own directives
@@ -200,22 +211,19 @@ func (a *analyzer) predFacts(sc *scope, fs *facts.Scope, c mysqlast.Value, restr
 	switch n.Class {
 	case "PTI_comp_op":
 		if op, _ := n.Arg("boolfunc2creator").(mysqlast.Op); op == "=" {
-			l, okl := a.colFact(sc, n.Arg("left"))
-			r, okr := a.colFact(sc, n.Arg("right"))
-			switch {
-			case okl && okr:
-				a.equalityFacts(fs, l, r, restrict)
+			left, right := n.Arg("left"), n.Arg("right")
+			if lr, rr := rowElements(left), rowElements(right); lr != nil && rr != nil && len(lr) == len(rr) {
+				// (a, b) = (c, d) is a = c AND b = d
+				for i := range lr {
+					if !a.eqFacts(sc, fs, lr[i], rr[i], restrict, pr) {
+						fs.Preds = append(fs.Preds, pr)
+						return
+					}
+				}
 				return
-			case okl || okr:
-				col, other := l, n.Arg("right")
-				if okr {
-					col, other = r, n.Arg("left")
-				}
-				if term, ok := a.termFacts(sc, other); ok && allowed(col, restrict) {
-					fs.Preds = append(fs.Preds, facts.Pred{Op: facts.Eq, Col: col, Term: term, Text: pr.Text, Restricts: pr.Restricts, Origin: facts.FromStatement})
-					fs.Fixed = append(fs.Fixed, col)
-					return
-				}
+			}
+			if a.eqFacts(sc, fs, left, right, restrict, pr) {
+				return
 			}
 		}
 	case "Item_func_isnull", "Item_func_isnotnull":
@@ -250,6 +258,93 @@ func (a *analyzer) predFacts(sc *scope, fs *facts.Scope, c mysqlast.Value, restr
 		}
 	}
 	fs.Preds = append(fs.Preds, pr)
+}
+
+// eqFacts records one scalar equality left = right when a side is a column of the block:
+// col = col as an equality with its edges, col = term as a fixing predicate. It reports
+// whether the equality was recorded (false: the caller keeps the conjunct opaque).
+func (a *analyzer) eqFacts(sc *scope, fs *facts.Scope, left, right mysqlast.Value, restrict []int, pr facts.Pred) bool {
+	l, okl := a.colFact(sc, left)
+	r, okr := a.colFact(sc, right)
+	switch {
+	case okl && okr:
+		a.equalityFacts(fs, l, r, restrict)
+		return true
+	case okl || okr:
+		col, other := l, right
+		if okr {
+			col, other = r, left
+		}
+		if term, ok := a.termFacts(sc, other); ok && allowed(col, restrict) {
+			fs.Preds = append(fs.Preds, facts.Pred{Op: facts.Eq, Col: col, Term: term, Text: pr.Text, Restricts: pr.Restricts, Origin: facts.FromStatement})
+			fs.Fixed = append(fs.Fixed, col)
+			if term.Kind == facts.Known {
+				// what the server counts as a constant (Item::const_item, or an outer
+				// reference), for the functional dependencies; not a parameter
+				if a.fdConst == nil {
+					a.fdConst = map[string]bool{}
+				}
+				a.fdConst[pr.Text+"\x00"+term.Text] = isColumnRef(other) || constItem(other)
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// rowElements lists the elements of an Item_row (nil for any other value).
+func rowElements(v mysqlast.Value) []mysqlast.Value {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "Item_row" {
+		return nil
+	}
+	return append([]mysqlast.Value{n.Arg("head")}, exprArgsTail(n)...)
+}
+
+// nullRejecting marks the block's columns a conjunct rejects NULL for: the direct
+// arguments of a comparison (not <=>), LIKE, BETWEEN, IN or IS NOT NULL, through NOT and
+// IS TRUE / FALSE (Item_func::not_null_tables as Group_check::analyze_conjunct reads it).
+// restrict is the nullable side when the conjunct is an outer join's ON.
+func (a *analyzer) nullRejecting(sc *scope, c mysqlast.Value, restrict []int) {
+	n, ok := c.(*mysqlast.Node)
+	if !ok {
+		return
+	}
+	if n.Class == "PTI_truth_transform" {
+		n, ok = n.Arg("expr").(*mysqlast.Node)
+		if !ok {
+			return
+		}
+	}
+	var args []mysqlast.Value
+	switch n.Class {
+	case "PTI_comp_op":
+		if op, _ := n.Arg("boolfunc2creator").(mysqlast.Op); op == "<=>" {
+			return
+		}
+		for _, side := range []mysqlast.Value{n.Arg("left"), n.Arg("right")} {
+			if els := rowElements(side); els != nil {
+				args = append(args, els...)
+			} else {
+				args = append(args, side)
+			}
+		}
+	case "Item_func_like":
+		args = []mysqlast.Value{n.Arg("a"), n.Arg("b")}
+	case "Item_func_between":
+		args = []mysqlast.Value{n.Arg("a"), n.Arg("b"), n.Arg("c")}
+	case "Item_func_in":
+		args, _ = n.Arg("list").(mysqlast.List)
+	case "Item_func_isnotnull":
+		args = []mysqlast.Value{n.Arg("a")}
+	default:
+		return
+	}
+	for _, v := range args {
+		if col, ok := a.colFact(sc, v); ok {
+			sc.nnMarks = append(sc.nnMarks, nnMark{col, restrict})
+		}
+	}
 }
 
 // opaqueText renders a conjunct the language does not decompose, with every column
@@ -397,8 +492,8 @@ func (a *analyzer) termFacts(sc *scope, v mysqlast.Value) (facts.Term, bool) {
 	if a.readsBlock(sc, v) {
 		return facts.Term{}, false
 	}
-	if _, isSub := v.(*mysqlast.Node); isSub && containsClass(v, "PT_subquery") {
-		return facts.Term{}, false // a subquery's value is not known before the statement runs
+	if _, isSub := v.(*mysqlast.Node); isSub && containsClass(v, "PT_subquery") && !constItem(v) {
+		return facts.Term{}, false // a subquery's value is not known before the statement runs (unless it reads no table)
 	}
 	return facts.Term{Kind: facts.Known, Text: a.textOf(n)}, true
 }
@@ -528,6 +623,28 @@ func (a *analyzer) allAggregates(items mysqlast.Value) bool {
 		}
 	}
 	return true
+}
+
+// containsAggregate reports an aggregate or window function anywhere in v.
+func containsAggregate(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case *mysqlast.Node:
+		if isAggregateLike(x) || isWindowFunction(x) {
+			return true
+		}
+		for _, arg := range x.Args {
+			if containsAggregate(arg) {
+				return true
+			}
+		}
+	case mysqlast.List:
+		for _, e := range x {
+			if containsAggregate(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isAggregate reports an aggregate function call (COUNT, SUM, MIN, MAX, AVG, GROUP_CONCAT,

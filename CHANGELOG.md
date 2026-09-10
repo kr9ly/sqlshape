@@ -69,6 +69,23 @@ release it is a candidate for.
   KEY UPDATE` absorbs the insert's unique violations. The constraints are named as the server
   reports them (`PRIMARY`, `orders_ibfk_1`, `t_chk_1`), verified against a running `mysqld`;
   `mysql.Violates(err, "users.name")` matches a NOT NULL violation by that spelling.
+- The MySQL server's checks on a grouped, aggregated or `DISTINCT` block, as sql_mode
+  `ONLY_FULL_GROUP_BY` runs them (`Group_check`): a select-list, `HAVING`, `ORDER BY` or window
+  `PARTITION BY` / `ORDER BY` expression must be a `GROUP BY` expression, an aggregate, or made
+  of columns functionally dependent on the group columns -- through a table's `PRIMARY` /
+  `UNIQUE` key (a nullable key column only where a conjunct rejects its NULL), the `WHERE` and
+  inner-join equalities `col = col` and `col = constant` (a literal or an outer reference; not a
+  parameter), an outer join's `ON` into its nullable side (a `WHERE` that rejects the nullable
+  side's NULL makes the join inner, a non-deterministic `ON` gives nothing), and a derived
+  table's, view's or CTE's body seen through its outputs; `ROLLUP` allows only the group
+  expressions themselves. MySQL error 1055 with `GROUP BY`, 1140 for an aggregated query without
+  it (whose `ORDER BY` the server drops unchecked). With them the rules the check rests on: a
+  column named outside an aggregate in `HAVING` must be a select-list column or alias or a `GROUP
+  BY` column (1054, also for a nested query's reference to it), with `DISTINCT` an `ORDER BY`
+  expression not in the select list may read only select-list columns (3065), and an aggregate in
+  the `ORDER BY` of a query that aggregates nowhere else (3029) or of a set operation (3028) is
+  rejected. 376 statements agree with a running `mysqld`. The derived leaves of the facts now
+  carry `Outputs` on MySQL too, so `One` looks into a derived table's or view's body.
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result

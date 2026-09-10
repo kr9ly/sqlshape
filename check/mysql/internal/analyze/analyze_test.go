@@ -237,8 +237,8 @@ var oneCases = []struct {
 	{"SELECT id FROM users WHERE id IN ($1, $2)", false},
 	{"SELECT id FROM users WHERE id = (SELECT MAX(user_id) FROM orders)", false},
 	{"SELECT d.id FROM (SELECT id FROM users WHERE id = 1) d", true},
-	{"SELECT d.id FROM (SELECT id FROM users) d WHERE d.id = 1", false},
-	{"SELECT id FROM v_users WHERE id = $1", false},
+	{"SELECT d.id FROM (SELECT id FROM users) d WHERE d.id = 1", true}, // the derived table's output is users.id: the proof looks into the body
+	{"SELECT id FROM v_users WHERE id = $1", true},
 	{"SELECT id FROM users UNION SELECT user_id FROM orders WHERE id = 1", false},
 	{"INSERT INTO users (name) VALUES ($1)", true},
 	{"INSERT INTO users (name) VALUES ($1), ($2)", false},
