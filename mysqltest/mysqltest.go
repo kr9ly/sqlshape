@@ -8,6 +8,13 @@
 // Start copies it to a temporary directory and runs mysqld there on a unix socket, with
 // networking off, then loads the schema into a database named sqlshape. Close stops the
 // server and removes the directory.
+//
+// The server runs as the schema declares it: every `-- sqlshape: server <variable> =
+// <value>` line becomes a --<variable>=<value> option of mysqld (a variable mysqld does not
+// know keeps it from starting), so the checker, the application's tests and the schema
+// agree on sql_mode and lower_case_table_names. lower_case_table_names is fixed when the
+// data directory is initialized, so a value other than 0 has a template of its own
+// (mysqld-<version>-lctn<N>).
 package mysqltest
 
 import (
@@ -25,6 +32,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // ErrNoServer is returned by Start when no mysqld is on PATH; tests skip on it.
@@ -39,6 +47,7 @@ type DB struct {
 	db      *sql.DB
 	cfg     *mysql.Config
 	cmd     *exec.Cmd
+	exited  chan struct{} // closed when mysqld has exited (cmd.Wait returned)
 	dir     string
 }
 
@@ -54,7 +63,19 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	template, err := ensureTemplate(ctx, mysqld, version)
+	settings, err := dialect.Settings(schemaSQL)
+	if err != nil {
+		return nil, fmt.Errorf("mysqltest: %w", err)
+	}
+	var options []string
+	lctn := "0"
+	for _, s := range settings {
+		options = append(options, "--"+strings.ReplaceAll(s.Name, "_", "-")+"="+s.Value)
+		if s.Name == "lower_case_table_names" {
+			lctn = s.Value
+		}
+	}
+	template, err := ensureTemplate(ctx, mysqld, version, lctn)
 	if err != nil {
 		return nil, err
 	}
@@ -68,16 +89,17 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 		return nil, err
 	}
 	sock := filepath.Join(dir, "mysql.sock")
-	cmd := exec.CommandContext(ctx, mysqld, "--no-defaults", "--datadir="+data, "--socket="+sock,
-		"--skip-networking", "--mysqlx=OFF", "--pid-file="+filepath.Join(dir, "mysqld.pid"),
-		"--log-error="+filepath.Join(dir, "error.log"), "--secure-file-priv=", "--skip-log-bin",
-		"--innodb-buffer-pool-size=32M", "--innodb-redo-log-capacity=8M", "--performance-schema=OFF")
+	cmd := exec.CommandContext(ctx, mysqld, append([]string{"--no-defaults", "--datadir=" + data, "--socket=" + sock,
+		"--skip-networking", "--mysqlx=OFF", "--pid-file=" + filepath.Join(dir, "mysqld.pid"),
+		"--log-error=" + filepath.Join(dir, "error.log"), "--secure-file-priv=", "--skip-log-bin",
+		"--innodb-buffer-pool-size=32M", "--innodb-redo-log-capacity=8M", "--performance-schema=OFF"}, options...)...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	if err := cmd.Start(); err != nil {
 		os.RemoveAll(dir)
 		return nil, err
 	}
-	d := &DB{Version: version, cmd: cmd, dir: dir}
+	d := &DB{Version: version, cmd: cmd, dir: dir, exited: make(chan struct{})}
+	go func() { cmd.Wait(); close(d.exited) }()
 	d.cfg = mysql.NewConfig()
 	d.cfg.User, d.cfg.Net, d.cfg.Addr = "root", "unix", sock
 	d.cfg.ParseTime = true
@@ -89,8 +111,9 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	}
 	d.db = sql.OpenDB(conn)
 	if err := d.wait(ctx); err != nil {
+		log := errorLog(filepath.Join(dir, "error.log"))
 		d.Close()
-		return nil, fmt.Errorf("mysqltest: mysqld did not come up: %w (see %s)", err, filepath.Join(dir, "error.log"))
+		return nil, fmt.Errorf("mysqltest: mysqld did not come up: %w%s", err, log)
 	}
 	if err := d.load(ctx, schemaSQL); err != nil {
 		d.Close()
@@ -99,7 +122,8 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	return d, nil
 }
 
-// wait pings until the socket answers.
+// wait pings until the socket answers, or mysqld has exited (an option it rejects, a data
+// directory it cannot use), or a minute has passed.
 func (d *DB) wait(ctx context.Context) error {
 	deadline := time.Now().Add(60 * time.Second)
 	for {
@@ -107,15 +131,41 @@ func (d *DB) wait(ctx context.Context) error {
 		if err == nil {
 			return nil
 		}
-		if d.cmd.ProcessState != nil || time.Now().After(deadline) {
+		select {
+		case <-d.exited:
+			return fmt.Errorf("mysqld exited: %w", err)
+		default:
+		}
+		if time.Now().After(deadline) {
 			return err
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-d.exited:
+			return fmt.Errorf("mysqld exited: %w", err)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// errorLog is the [ERROR] lines of mysqld's log, for the message of a server that did not
+// come up; "" when there are none (the path is named instead).
+func errorLog(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return " (see " + path + ")"
+	}
+	var lines []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, "[ERROR]") {
+			lines = append(lines, strings.TrimSpace(l))
+		}
+	}
+	if len(lines) == 0 {
+		return " (see " + path + ")"
+	}
+	return "\n  " + strings.Join(lines, "\n  ")
 }
 
 // load creates the database and applies the schema.
@@ -155,13 +205,11 @@ func (d *DB) Close() {
 	}
 	if d.cmd != nil && d.cmd.Process != nil {
 		d.cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { d.cmd.Wait(); close(done) }()
 		select {
-		case <-done:
+		case <-d.exited:
 		case <-time.After(30 * time.Second):
 			d.cmd.Process.Kill()
-			<-done
+			<-d.exited
 		}
 	}
 	if d.dir != "" {
@@ -184,13 +232,17 @@ func serverVersion(ctx context.Context, mysqld string) (string, error) {
 }
 
 // ensureTemplate initializes the per-version data directory once, under a lock against
-// another process doing the same.
-func ensureTemplate(ctx context.Context, mysqld, version string) (string, error) {
+// another process doing the same. lctn is the lower_case_table_names the directory is
+// initialized with ("0" for the default), part of its name when not the default.
+func ensureTemplate(ctx context.Context, mysqld, version, lctn string) (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
 	base := filepath.Join(cache, "sqlshape", "mysqld-"+version)
+	if lctn != "0" {
+		base += "-lctn" + lctn
+	}
 	template := filepath.Join(base, "template")
 	if _, err := os.Stat(filepath.Join(template, "mysql.ibd")); err == nil {
 		return template, nil
@@ -209,7 +261,8 @@ func ensureTemplate(ctx context.Context, mysqld, version string) (string, error)
 	tmp := filepath.Join(base, "template.tmp")
 	os.RemoveAll(tmp)
 	cmd := exec.CommandContext(ctx, mysqld, "--no-defaults", "--initialize-insecure", "--datadir="+tmp,
-		"--log-error="+filepath.Join(base, "initialize.log"), "--innodb-redo-log-capacity=8M")
+		"--log-error="+filepath.Join(base, "initialize.log"), "--innodb-redo-log-capacity=8M",
+		"--lower-case-table-names="+lctn)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("mysqltest: mysqld --initialize-insecure: %w\n%s", err, out)
 	}

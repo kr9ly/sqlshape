@@ -31,8 +31,13 @@ func init() {
 	register("type", "nvarchar field_length opt_bin_mod", national("VARCHAR", true))
 	// type: YEAR_SYM opt_field_length field_options -> PT_year_type (the length is ignored, UNSIGNED deprecated)
 	register("type", "YEAR_SYM opt_field_length field_options", build("PT_year_type"))
-	// real_type: REAL_SYM -> DOUBLE (FLOAT under MODE_REAL_AS_FLOAT, which the AST does not carry)
-	register("real_type", "REAL_SYM", constant("Numeric_type::DOUBLE"))
+	// real_type: REAL_SYM -> DOUBLE, FLOAT under sql_mode REAL_AS_FLOAT
+	register("real_type", "REAL_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		if b.Mode&mysqlparse.RealAsFloat != 0 {
+			return Const("Numeric_type::FLOAT"), nil
+		}
+		return Const("Numeric_type::DOUBLE"), nil
+	})
 	// unicode: UNICODE_SYM [BINARY] -> the ucs2 charset / ucs2_bin collation
 	register("unicode", "UNICODE_SYM", constant("ucs2"))
 	register("unicode", "UNICODE_SYM BINARY_SYM", constant("ucs2_bin"))

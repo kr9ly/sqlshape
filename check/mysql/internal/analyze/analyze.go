@@ -81,14 +81,14 @@ func (e *Error) Error() string { return fmt.Sprintf("%s (MySQL error %d)", e.Mes
 // Analyze types sql, whose placeholders are `$n`, against s.
 func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	text, ph := placeholder.Rewrite(sql)
-	cst, err := mysqlparse.Parse(text, 0)
+	cst, err := mysqlparse.Parse(text, s.Settings.ParseMode())
 	if err != nil {
 		if pe, ok := err.(*mysqlparse.Error); ok {
 			return nil, &Error{Message: pe.Message, Code: 1064, Position: ph.Back(pe.Offset)}
 		}
 		return nil, err
 	}
-	root, err := mysqlast.Build(text, cst)
+	root, err := mysqlast.BuildMode(text, cst, s.Settings.ParseMode())
 	if err != nil {
 		if u, ok := err.(*mysqlast.Unsupported); ok && strings.Contains(u.Text, "syntax error") {
 			// a construct the grammar accepts and the server's action rejects
@@ -96,7 +96,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		}
 		return nil, err
 	}
-	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count()), waived: obligation.StatementWaivers(sql)}
+	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count()), waived: canonicalWaivers(s, obligation.StatementWaivers(sql))}
 	if err := a.statement(root); err != nil {
 		return nil, err
 	}
@@ -108,6 +108,16 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 		a.facts.Uses = a.uses
 	}
 	return &Result{Params: a.params, Columns: a.columns, Facts: a.facts, Violations: a.violations(), Uses: a.uses}, nil
+}
+
+// canonicalWaivers keys a statement's opt-outs by the tables' stored names, which the facts'
+// leaves carry (lower_case_table_names decides how a directive's spelling matches).
+func canonicalWaivers(s *schema.Schema, waived map[string][]string) map[string][]string {
+	out := map[string][]string{}
+	for table, specs := range waived {
+		out = obligation.AddWaiver(out, s.CanonicalName(table), specs...)
+	}
+	return out
 }
 
 type analyzer struct {
@@ -171,6 +181,10 @@ type write struct {
 	inserted map[string]bool
 	// query: the values come from a query (INSERT ... SELECT), nullability per column
 	query bool
+	// rows: the VALUES rows (0 for the query form). Without strict mode only a single-row
+	// INSERT / REPLACE rejects a NULL for a NOT NULL column (1048); more rows, a query and
+	// an UPDATE store the type's implicit default with a warning instead
+	rows int
 	// replace: REPLACE INTO -- a colliding row is deleted first, so no key is violated
 	// but the rows referring to the replaced one are (1451)
 	replace bool
@@ -455,6 +469,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		}
 	}
 	rows, _ := arg(n, "row_value_list", 6).(mysqlast.List)
+	w.rows = len(rows)
 	switch {
 	case arg(n, "insert_query_expression", 7) != nil:
 	case len(rows) == 1:

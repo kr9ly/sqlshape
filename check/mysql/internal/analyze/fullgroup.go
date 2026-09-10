@@ -6,10 +6,13 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
+	"github.com/kr9ly/sqlshape/v2/x/sqlmode"
 )
 
 // The server's checks on a grouped, aggregated or DISTINCT block, as sql_mode
-// ONLY_FULL_GROUP_BY (the default) runs them after resolution:
+// ONLY_FULL_GROUP_BY (the default) runs them after resolution (without the flag only the
+// HAVING resolution rule and the ORDER BY aggregate rules remain, which the server applies
+// in any mode):
 //
 //   - Group_check (aggregate_check.cc): every expression of the select list, the ORDER BY,
 //     the HAVING and the windows' PARTITION BY / ORDER BY must be group-invariant -- equal
@@ -118,7 +121,7 @@ func (a *analyzer) groupCheck(sc *scope, body *mysqlast.Node) error {
 			return err
 		}
 	}
-	if !info.aggregated {
+	if !info.aggregated || !a.fullGroupBy() {
 		return nil
 	}
 	fd := a.fdClosure(info, true, nil, nil, nil)
@@ -218,7 +221,7 @@ func (a *analyzer) orderCheck(block *scope, order mysqlast.Value) error {
 			}
 		}
 	}
-	if info.explicit {
+	if info.explicit && a.fullGroupBy() {
 		for i, item := range items {
 			if a.inSelectList(info, item) || info.matchesGroup(item) {
 				continue
@@ -228,7 +231,7 @@ func (a *analyzer) orderCheck(block *scope, order mysqlast.Value) error {
 			}
 		}
 	}
-	if info.distinct {
+	if info.distinct && a.fullGroupBy() {
 		for i, item := range items {
 			if a.inSelectList(info, item) {
 				continue
@@ -240,6 +243,9 @@ func (a *analyzer) orderCheck(block *scope, order mysqlast.Value) error {
 	}
 	return nil
 }
+
+// fullGroupBy is whether the declared sql_mode has ONLY_FULL_GROUP_BY.
+func (a *analyzer) fullGroupBy() bool { return a.s.Settings.SQLMode.Has(sqlmode.OnlyFullGroupBy) }
 
 func (a *analyzer) groupError(info *blockInfo, num int, place, col string, at int) error {
 	if info.explicit {

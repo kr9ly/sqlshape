@@ -8,6 +8,27 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Added
+
+- The schema declares the server settings its judgments depend on, one per line next to the
+  version: `-- sqlshape: server sql_mode = 'ANSI,STRICT_ALL_TABLES'`,
+  `-- sqlshape: server lower_case_table_names = 1`. MySQL reads these two (any other variable, a
+  mode 8.4 does not have, or a value out of range is a problem of the schema; PostgreSQL reads no
+  variable yet and reports each one). The checker follows them: the parser's bits
+  (`ANSI_QUOTES`, `PIPES_AS_CONCAT`, `IGNORE_SPACE`, `NO_BACKSLASH_ESCAPES`,
+  `HIGH_NOT_PRECEDENCE`, `REAL_AS_FLOAT`), `ONLY_FULL_GROUP_BY` for the group check, strict mode
+  for the nullability of string functions and the 1048 failure mode (without it only a single-row
+  `INSERT` / `REPLACE` rejects a `NULL`), `NO_UNSIGNED_SUBTRACTION`, and `lower_case_table_names`
+  for how table and view names compare (1 lower-cases them, 2 ignores case). Without a
+  declaration the checker assumes the server's defaults, as it did. `mysqltest.Start` passes the
+  declared variables to `mysqld`, so the application's tests and the analyzer's conformance
+  tests run under the declared mode (22 statements and 6 writes verified against 8.4 under
+  `''`, `ANSI` and `NO_UNSIGNED_SUBTRACTION`); `mysql.Verify(ctx, db, schemaSQL)` compares a
+  connection's session `@@sql_mode` and the server's `lower_case_table_names` with the
+  declaration. `x/sqlmode` holds MySQL's sql_mode names and bits.
+- `mysqltest.Start` fails as soon as `mysqld` exits (an option it rejects) instead of waiting a
+  minute, and quotes the `[ERROR]` lines of its log.
+
 ## [2.0.0] - 2026-09-10
 
 ### Changed

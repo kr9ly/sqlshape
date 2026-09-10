@@ -17,14 +17,14 @@ import (
 func Lower(s *schema.Schema, expr string, t *schema.Table) ([]facts.Pred, error) {
 	prefix := "SELECT 1 FROM `" + t.Name + "` WHERE "
 	text, ph := placeholder.Rewrite(prefix + expr)
-	cst, err := mysqlparse.Parse(text, 0)
+	cst, err := mysqlparse.Parse(text, s.Settings.ParseMode())
 	if err != nil {
 		if pe, ok := err.(*mysqlparse.Error); ok {
 			return nil, &Error{Message: pe.Message, Code: 1064, Position: max(ph.Back(pe.Offset)-len(prefix), 0)}
 		}
 		return nil, err
 	}
-	root, err := mysqlast.Build(text, cst)
+	root, err := mysqlast.BuildMode(text, cst, s.Settings.ParseMode())
 	if err != nil {
 		return nil, err
 	}

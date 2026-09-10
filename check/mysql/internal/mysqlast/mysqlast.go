@@ -110,6 +110,7 @@ type Hook func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error)
 // Builder folds one statement.
 type Builder struct {
 	SQL   string
+	Mode  mysqlparse.Mode // the sql_mode the statement was parsed under
 	hooks map[hookKey]Hook
 }
 
@@ -120,8 +121,11 @@ type hookKey struct {
 
 // Build folds the CST of sql into an AST: the statement's node, without the grammar's
 // start-rule wrapping and its END_OF_INPUT.
-func Build(sql string, root *mysqlparse.Node) (Value, error) {
-	b := &Builder{SQL: sql, hooks: hooks}
+func Build(sql string, root *mysqlparse.Node) (Value, error) { return BuildMode(sql, root, 0) }
+
+// BuildMode is Build under a sql_mode: REAL_AS_FLOAT decides what REAL means.
+func BuildMode(sql string, root *mysqlparse.Node, mode mysqlparse.Mode) (Value, error) {
+	b := &Builder{SQL: sql, Mode: mode, hooks: hooks}
 	v, err := b.Value(root)
 	if err != nil {
 		return nil, err

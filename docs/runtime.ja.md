@@ -129,7 +129,13 @@ u, err      := mysql.Get(ctx, db, UserByEmail, p)               // One: Get / Fi
 
 テンプレートの`{{.X}}`はワイヤ上ではMySQLの位置指定`?`になり、引数はプレースホルダの出現順に並べ直される（2回使ったパラメータは2回送る）。行は同じ規則でフィールドに対応し、受け型はドライバのもの（`int64` / `uint64`、`DECIMAL`は`string`、日時は`parseTime=true`で`time.Time`、バイナリ文字列とJSONは`[]byte`）で、検査器が使う表と同じである。制約違反は`*mysql.ConstraintError`として返り、その`Key`はスキーマ上の名前 — UNIQUEキーの名前、FOREIGN KEYの`CONSTRAINT`名、CHECK制約の名前、NOT NULLなら列名 — なので`mysql.Violates(err, key)`で判定できる。`ExecOne`は`RowsAffected`で判定するが、MySQLは変更のあった行を数えるので、既に同じ値の行へのUPDATEはDSNに`clientFoundRows=true`が無いと`ErrNoRows`になる。
 
-MySQLにはBatch、Copy、MatViewは無い。`mysqltest.Start(ctx, schemaSQL)`はPATHの`mysqld`をスキーマを載せて起こし（アプリケーションのテスト用）、無ければ`mysqltest.ErrNoServer`を返す。
+MySQLにはBatch、Copy、MatViewは無い。`mysqltest.Start(ctx, schemaSQL)`はPATHの`mysqld`をスキーマを載せて起こし（アプリケーションのテスト用）、無ければ`mysqltest.ErrNoServer`を返す。サーバはスキーマが宣言した設定（`-- sqlshape: server sql_mode = '...'`、`lower_case_table_names = N`。[checks.md](checks.ja.md#スキーマはサーバの設定を名乗るserver)）で起こすので、テストは検査器が判定したのと同じモードで走る。
+
+```go
+if err := mysql.Verify(ctx, db, schemaSQL); err != nil { ... }
+```
+
+`mysql.Verify`は接続のセッションの`@@sql_mode`とサーバの`lower_case_table_names`を読み、スキーマの宣言（無ければサーバの既定値）と違えばエラーを返す。DSNの`sql_mode=...`、プールのセッション初期化、別の設定で立てたサーバは、検査器が判定に使わなかった規則で文を走らせることになる。プールを開いた直後に1回呼ぶ。
 
 ## 自前のランタイムでは得られないもの
 

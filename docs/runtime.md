@@ -198,7 +198,20 @@ unless the DSN sets `clientFoundRows=true`.
 
 There is no Batch, Copy or MatView on MySQL. `mysqltest.Start(ctx, schemaSQL)` boots the
 `mysqld` on PATH with the schema loaded, for the application's tests, and returns
-`mysqltest.ErrNoServer` when there is none.
+`mysqltest.ErrNoServer` when there is none. It starts the server with the settings the schema
+declares (`-- sqlshape: server sql_mode = '...'`, `lower_case_table_names = N`;
+[checks.md](checks.md#the-schema-names-the-servers-settings-server)), so the tests run under
+the mode the checker judged by.
+
+```go
+if err := mysql.Verify(ctx, db, schemaSQL); err != nil { ... }
+```
+
+`mysql.Verify` asks the connection for its session `@@sql_mode` and the server's
+`lower_case_table_names` and returns an error when they differ from what the schema declares
+(the server's defaults when it declares none): a DSN's `sql_mode=...`, a pool's session setup
+or a server configured otherwise would run the statements under rules the checker did not
+judge them by. Call it once at start-up, after opening the pool.
 
 ## What a runtime of your own does not get
 

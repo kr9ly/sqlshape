@@ -33,10 +33,14 @@ import (
 //go:embed wasm/mysqlparse_8.4.wasm
 var wasm84 []byte
 
-// Mode carries the sql_mode bits the lexer reads, with MySQL's own values.
+// Mode carries the sql_mode bits the parser reads, with MySQL's own values (the low 32
+// bits of x/sqlmode.Mode: every bit the lexer or the AST reads is below 2^32). The lexer
+// reads ANSI_QUOTES, IGNORE_SPACE, NO_BACKSLASH_ESCAPES, HIGH_NOT_PRECEDENCE and
+// PIPES_AS_CONCAT (`||` is OR_OR_SYM or OR2_SYM); mysqlast reads REAL_AS_FLOAT.
 type Mode uint32
 
 const (
+	RealAsFloat        Mode = 1
 	PipesAsConcat      Mode = 2
 	ANSIQuotes         Mode = 4
 	IgnoreSpace        Mode = 8

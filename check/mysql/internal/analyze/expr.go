@@ -7,6 +7,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/catalog"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/sqlmode"
 )
 
 func isParam(v mysqlast.Value) bool {
@@ -264,6 +265,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "")
 		t := numOp(ts[0], ts[1], n.Class == "Item_func_mod")
+		if n.Class == "Item_func_minus" && a.s.Settings.SQLMode.Has(sqlmode.NoUnsignedSubtraction) {
+			t.typ.Unsigned = false // Item_func_minus::result_precision under NO_UNSIGNED_SUBTRACTION
+		}
 		if n.Class == "Item_func_mod" {
 			t.nullable = true // x % 0 is NULL
 		}
@@ -497,8 +501,8 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 	switch {
 	case fixNullable(class):
 		nullable = anyNullable(ts) // its fix_fields decides, last
-	case strictNullable(class):
-		nullable = true // Item_str_func::fix_fields: nullable in strict mode, the default
+	case strictNullable(class) && a.s.Settings.Strict():
+		nullable = true // Item_str_func::fix_fields: nullable in strict mode (the default)
 	case fam == "Item_json_func":
 		nullable = true // Item_json_func's constructor
 	case strings.HasPrefix(class, "Item_typecast_"):

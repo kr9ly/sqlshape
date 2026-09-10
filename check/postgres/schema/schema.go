@@ -19,6 +19,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
@@ -503,10 +504,20 @@ func LoadWithHooks(cat *catalog.Catalog, schemaSQL string, viewHook, notNullHook
 	if err != nil {
 		return nil, fmt.Errorf("parse schema: %w", err)
 	}
+	// `-- sqlshape: server <variable> = <value>` declares a server variable the judgments
+	// depend on; the PostgreSQL analyzer reads none yet (its judgments follow the server's
+	// defaults: search_path is the schema's own SET), so every one is a problem
+	settings, err := dialect.Settings(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	var extProblems []Problem
+	for _, st := range settings {
+		extProblems = append(extProblems, Problem{Location: int32(st.Position), Message: fmt.Sprintf("server %s: not a variable sqlshape reads for PostgreSQL (none is, yet)", st.Name)})
+	}
 	// CREATE EXTENSION merges the extension's dumped catalog (types, functions, operators,
 	// casts) under everything else, so it is resolved before any statement is applied
 	var exts []string
-	var extProblems []Problem
 	for _, raw := range tree.Stmts {
 		ce := raw.Stmt.GetCreateExtensionStmt()
 		if ce == nil {
@@ -653,8 +664,8 @@ func AddWaiver(m map[string][]string, table string, specs ...string) map[string]
 func directives(text string) []string {
 	var out []string
 	for _, m := range directiveLine.FindAllStringSubmatch(text, -1) {
-		if versionLine.MatchString(m[0]) {
-			continue // the file's declaration, read by Load, not the statement's
+		if versionLine.MatchString(m[0]) || dialect.IsSetting(m[1]) {
+			continue // the file's declaration and its server settings, read by Load, not the statement's
 		}
 		out = append(out, m[1])
 	}

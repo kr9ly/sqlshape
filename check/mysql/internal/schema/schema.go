@@ -19,15 +19,75 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/sqlmode"
 )
 
 // Schema is the loaded schema.
 type Schema struct {
 	// Version is the declared MySQL version ("8.4"), from `-- sqlshape: mysql 8.4`.
-	Version  string
+	Version string
+	// Settings are the server variables the schema declares (`-- sqlshape: server ...`),
+	// the server's defaults where it declares none.
+	Settings Settings
 	Tables   []*Table
 	Views    []*View
 	Problems []Problem
+}
+
+// Settings are the server variables that change how statements are judged. The schema
+// declares them as `-- sqlshape: server <variable> = <value>` lines; these two are the
+// variables MySQL's loader reads, any other name is a problem.
+type Settings struct {
+	// SQLMode is the sql_mode, expanded (sqlmode.Default when undeclared). The parser reads
+	// its lexer bits; the analyzer ONLY_FULL_GROUP_BY, the strict flags, REAL_AS_FLOAT and
+	// NO_UNSIGNED_SUBTRACTION.
+	SQLMode sqlmode.Mode
+	// LowerCaseTableNames is lower_case_table_names: 0 compares table and view names
+	// case-sensitively (the Linux default), 1 stores them lower-cased and compares
+	// case-insensitively (Windows), 2 stores them as declared and compares
+	// case-insensitively (macOS).
+	LowerCaseTableNames int
+}
+
+// SettingNames are the server variables the loader reads.
+var SettingNames = []string{"sql_mode", "lower_case_table_names"}
+
+// ParseMode is the sql_mode as the parser takes it.
+func (st Settings) ParseMode() mysqlparse.Mode { return mysqlparse.Mode(uint32(st.SQLMode)) }
+
+// Strict is whether either strict flag is set (THD::is_strict_mode).
+func (st Settings) Strict() bool { return st.SQLMode.Strict() }
+
+// tableKey is the form a table or view name is stored and compared in.
+func (s *Schema) tableKey(name string) string {
+	if s.Settings.LowerCaseTableNames == 1 {
+		return strings.ToLower(name)
+	}
+	return name
+}
+
+// CanonicalName is the stored spelling of a table or view name written in a directive
+// (`unfiltered Users`, `waive USERS ...`): the declared table's or view's name when one
+// matches under lower_case_table_names, else the name in stored form. The facts name leaves
+// by the stored spelling, so a waiver keyed by it meets its leaf.
+func (s *Schema) CanonicalName(name string) string {
+	if t := s.Table(name); t != nil {
+		return t.Name
+	}
+	if v := s.View(name); v != nil {
+		return v.Name
+	}
+	return s.tableKey(name)
+}
+
+// sameTable compares two table or view names as the server does under
+// lower_case_table_names.
+func (s *Schema) sameTable(a, b string) bool {
+	if s.Settings.LowerCaseTableNames == 0 {
+		return a == b
+	}
+	return strings.EqualFold(a, b)
 }
 
 // Problem is a statement, or part of one, the loader could not apply.
@@ -139,12 +199,12 @@ type View struct {
 	Waived     map[string][]string
 }
 
-// Table returns the table named name, or nil. Table and view names are case-sensitive,
-// as they are on a server with lower_case_table_names=0 (the Linux default); column and
-// key names are not.
+// Table returns the table named name, or nil. Table and view names compare as the
+// declared lower_case_table_names says (case-sensitively at 0, the Linux default); column
+// and key names never mind case.
 func (s *Schema) Table(name string) *Table {
 	for _, t := range s.Tables {
-		if t.Name == name {
+		if s.sameTable(t.Name, name) {
 			return t
 		}
 	}
@@ -154,7 +214,7 @@ func (s *Schema) Table(name string) *Table {
 // View returns the view named name, or nil.
 func (s *Schema) View(name string) *View {
 	for _, v := range s.Views {
-		if v.Name == name {
+		if s.sameTable(v.Name, name) {
 			return v
 		}
 	}
@@ -217,11 +277,40 @@ func Load(schemaSQL string) (*Schema, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Schema{Version: v}
+	s := &Schema{Version: v, Settings: Settings{SQLMode: sqlmode.Default}}
+	settings, err := dialect.Settings(schemaSQL)
+	if err != nil {
+		return nil, err
+	}
+	for _, st := range settings {
+		s.setting(st)
+	}
 	for _, st := range mysqlparse.Split(schemaSQL) {
 		s.apply(st)
 	}
 	return s, nil
+}
+
+// setting applies one declared server variable.
+func (s *Schema) setting(st dialect.Setting) {
+	switch st.Name {
+	case "sql_mode":
+		m, err := sqlmode.Parse(st.Value)
+		if err != nil {
+			s.problem(st.Position, "server %s = '%s': %v", st.Name, st.Value, err)
+			return
+		}
+		s.Settings.SQLMode = m
+	case "lower_case_table_names":
+		n, err := strconv.Atoi(st.Value)
+		if err != nil || n < 0 || n > 2 {
+			s.problem(st.Position, "server %s = %s: want 0, 1 or 2", st.Name, st.Value)
+			return
+		}
+		s.Settings.LowerCaseTableNames = n
+	default:
+		s.problem(st.Position, "server %s: not a variable sqlshape reads for MySQL (%s)", st.Name, strings.Join(SettingNames, ", "))
+	}
 }
 
 func (s *Schema) problem(pos int, format string, args ...any) {
@@ -230,7 +319,7 @@ func (s *Schema) problem(pos int, format string, args ...any) {
 
 // apply parses one statement and folds it into the schema.
 func (s *Schema) apply(st mysqlparse.Statement) {
-	cst, err := mysqlparse.Parse(st.SQL, 0)
+	cst, err := mysqlparse.Parse(st.SQL, s.Settings.ParseMode())
 	if err != nil {
 		if pe, ok := err.(*mysqlparse.Error); ok {
 			s.problem(st.Offset+pe.Offset, "%s", pe.Message)
@@ -239,7 +328,7 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 		s.problem(st.Offset, "%v", err)
 		return
 	}
-	v, err := mysqlast.Build(st.SQL, cst)
+	v, err := mysqlast.BuildMode(st.SQL, cst, s.Settings.ParseMode())
 	if err != nil {
 		if u, ok := err.(*mysqlast.Unsupported); ok {
 			s.problem(st.Offset+u.Start, "unsupported construct %s: %q", u.Rule, u.Text)
@@ -311,7 +400,7 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 
 func (s *Schema) createTable(n *mysqlast.Node, st mysqlparse.Statement, at func(mysqlast.Value) int) {
 	x, _ := mysqlast.AsPTCreateTableStmt(n)
-	name := tableName(x.TableName())
+	name := s.tableKey(tableName(x.TableName()))
 	if s.Table(name) != nil {
 		if isTrue(x.OnlyIfNotExists()) {
 			return
@@ -376,7 +465,7 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 		t.addKey(k)
 	case "PT_foreign_key_definition":
 		x, _ := mysqlast.AsPTForeignKeyDefinition(n)
-		fk := &ForeignKey{Name: str(x.ConstraintName()), RefTable: tableName(x.ReferencedTable()),
+		fk := &ForeignKey{Name: str(x.ConstraintName()), RefTable: s.tableKey(tableName(x.ReferencedTable())),
 			OnDelete: fkOption(str(x.FkDeleteOpt())), OnUpdate: fkOption(str(x.FkUpdateOpt()))}
 		if fk.Name == "" {
 			fk.Name = str(x.KeyName())
@@ -627,7 +716,7 @@ func (s *Schema) createIndex(n *mysqlast.Node, st mysqlparse.Statement, at func(
 }
 
 func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
-	name := tableName(n.Arg("name"))
+	name := s.tableKey(tableName(n.Arg("name")))
 	v := &View{Name: name, Query: n.Arg("query"), Definition: st.SQL,
 		Algorithm: strings.TrimPrefix(str(n.Arg("algorithm")), "VIEW_ALGORITHM_"), CheckOption: strings.TrimPrefix(str(n.Arg("check_option")), "VIEW_CHECK_")}
 	for _, c := range list(n.Arg("column_list")) {
@@ -651,7 +740,7 @@ func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
 
 func (s *Schema) dropTable(name string) {
 	for i, t := range s.Tables {
-		if t.Name == name {
+		if s.sameTable(t.Name, name) {
 			s.Tables = append(s.Tables[:i], s.Tables[i+1:]...)
 			return
 		}
@@ -660,7 +749,7 @@ func (s *Schema) dropTable(name string) {
 
 func (s *Schema) dropView(name string) {
 	for i, v := range s.Views {
-		if v.Name == name {
+		if s.sameTable(v.Name, name) {
 			s.Views = append(s.Views[:i], s.Views[i+1:]...)
 			return
 		}
@@ -682,7 +771,7 @@ func (s *Schema) renameTables(n *mysqlast.Node, at func(mysqlast.Value) int) {
 			s.problem(at(p), "RENAME TABLE: pair not understood")
 			continue
 		}
-		from, to := tableName(p.Args[0]), tableName(p.Args[1])
+		from, to := tableName(p.Args[0]), s.tableKey(tableName(p.Args[1]))
 		if t := s.Table(from); t != nil {
 			t.Name = to
 		} else if v := s.View(from); v != nil {

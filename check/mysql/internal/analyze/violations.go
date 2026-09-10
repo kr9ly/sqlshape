@@ -67,9 +67,10 @@ func (a *analyzer) violations() []Violation {
 	case facts.Insert:
 		out = a.insertViolations(w)
 	case facts.Update:
-		out = a.updateViolations(w.table, w.values, nil)
+		strict := a.s.Settings.Strict()
+		out = a.updateViolations(w.table, w.values, nil, strict)
 		for _, m := range w.more {
-			out = append(out, a.updateViolations(m.table, m.values, nil)...)
+			out = append(out, a.updateViolations(m.table, m.values, nil, strict)...)
 		}
 	case facts.Delete:
 		out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
@@ -103,9 +104,14 @@ func (a *analyzer) insertViolations(w *write) []Violation {
 			out = append(out, Violation{Code: codeCheckViolation, Constraint: t.CheckName(c), Table: t.Name, Columns: cols})
 		}
 	}
-	out = append(out, notNullViolations(t, w.values)...)
+	// a NULL for a NOT NULL column: an error in strict mode, and for a single-row INSERT
+	// (its ON DUPLICATE KEY UPDATE included) in any mode
+	notNull := a.s.Settings.Strict() || w.rows == 1
+	if notNull {
+		out = append(out, notNullViolations(t, w.values)...)
+	}
 	if w.onDuplicate != nil {
-		out = append(out, a.updateViolations(t, w.onDuplicate, nil)...)
+		out = append(out, a.updateViolations(t, w.onDuplicate, nil, notNull)...)
 	}
 	if w.replace {
 		// the row a REPLACE displaces is deleted: the rows referring to it object
@@ -140,7 +146,7 @@ func leftNull(t *schema.Table, cols []string, inserted map[string]bool) bool {
 
 // updateViolations: the constraints an UPDATE (or the update of ON DUPLICATE KEY UPDATE)
 // storing values into t may violate.
-func (a *analyzer) updateViolations(t *schema.Table, values []assignment, skip map[string]bool) []Violation {
+func (a *analyzer) updateViolations(t *schema.Table, values []assignment, skip map[string]bool, notNull bool) []Violation {
 	set := map[string]bool{}
 	for _, as := range values {
 		set[as.col.Name] = true
@@ -164,7 +170,9 @@ func (a *analyzer) updateViolations(t *schema.Table, values []assignment, skip m
 			out = append(out, Violation{Code: codeCheckViolation, Constraint: t.CheckName(c), Table: t.Name, Columns: cols})
 		}
 	}
-	out = append(out, notNullViolations(t, values)...)
+	if notNull {
+		out = append(out, notNullViolations(t, values)...)
+	}
 	out = append(out, a.referencingViolations(t, set, false, map[*schema.Table]bool{})...)
 	return dedupe(out)
 }

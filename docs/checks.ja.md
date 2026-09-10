@@ -31,6 +31,7 @@
 - [第3部 — 文の外側](#第3部--文の外側)
   - [スキーマはPostgreSQLの版を名乗る（`postgres`）](#スキーマはpostgresqlの版を名乗るpostgres)
   - [スキーマはMySQLの版を名乗る（`mysql`）](#スキーマはmysqlの版を名乗るmysql)
+  - [スキーマはサーバの設定を名乗る（`server`）](#スキーマはサーバの設定を名乗るserver)
   - [sqlshapeを通さないSQLを書かない（`-raw-sql`）](#sqlshapeを通さないsqlを書かない-raw-sql)
   - [パッケージは自分のスキーマだけを参照する（`-schemas`）](#パッケージは自分のスキーマだけを参照する-schemas)
   - [スキーマ自体の問題](#スキーマ自体の問題)
@@ -1103,6 +1104,39 @@ MySQLがPostgreSQLと違うところでは、検査器はMySQLに従う。
 - 名前解決。`ORDER BY`、`GROUP BY`、`HAVING`はサーバと同じにselect listの別名を見る（`GROUP BY`では同名のテーブル列が勝つ）。派生表には別名が要る（1248）。`QUALIFY`は8.4がhypergraph optimizer無しで弾くとおりに弾く（6037）。
 
 検査器のMySQL側（`check/mysql`）はMySQLのパーサを内包し、GNU General Public License v2で配布する。READMEを参照。
+
+### スキーマはサーバの設定を名乗る（`server`）
+
+文の判定を変えるサーバ変数は、版と並べて1行に1つ宣言する。検査器、テスト用サーバ、本番の接続の三者を同じ設定に揃えるための行である。宣言が無ければ検査器はサーバの既定値を仮定する。MySQL 8.4なら既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`、つまりLinuxで初期化したままのサーバである。
+
+```sql
+-- sqlshape: mysql 8.4
+-- sqlshape: server sql_mode = 'ANSI,STRICT_ALL_TABLES'
+-- sqlshape: server lower_case_table_names = 1
+CREATE TABLE ...
+```
+
+NG
+
+- その方言が読まない変数。MySQLでは`sql_mode`と`lower_case_table_names`以外、PostgreSQLでは今のところ全部（判定はサーバの既定値に従い、`search_path`はスキーマ自身の`SET`で扱う）
+- 8.4に無い`sql_mode`の名前、0・1・2以外の`lower_case_table_names`
+- 空白を含む値を文字列リテラルにしていない、同じ変数を2回宣言している
+
+OK
+
+- `sql_mode`はカンマ区切りの名前（大文字小文字は問わない）、空文字列、組み合わせモードの`ANSI`と`TRADITIONAL`。組み合わせはサーバと同じに展開する
+- `lower_case_table_names`は0、1、2
+
+検査器はこれらに次のように従う。
+
+- パーサは字句解析のビットをそのまま読む。`ANSI_QUOTES`なら二重引用符は識別子、`PIPES_AS_CONCAT`なら`||`は`CONCAT`（無ければ`OR`）。`IGNORE_SPACE`、`NO_BACKSLASH_ESCAPES`、`HIGH_NOT_PRECEDENCE`もサーバどおりに効く。`REAL_AS_FLOAT`なら`REAL`列は`DOUBLE`ではなく`FLOAT`（`float32`）になる
+- `ONLY_FULL_GROUP_BY`は上のグループ検査（1055、1140、`DISTINCT`の3065）の有無を決める。`HAVING`の名前解決（1054）と`ORDER BY`の集約の規則（3029、3028）はサーバと同じくどのモードでもかかる
+- 厳密モード（`STRICT_TRANS_TABLES`か`STRICT_ALL_TABLES`）は2つを決める。文字列関数（`CONCAT`、`SUBSTRING`、`LOWER`など）がNULL可になるのは厳密モードのときだけで、無ければ`NOT NULL`列の`CONCAT(name, 'x')`は`*string`ではなく`string`で受ける。`NOT NULL`列への`NULL`が失敗モード（1048）になるのも厳密モードのときで、無ければ1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけが`NULL`を拒み、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、検査器はそれらに1048を挙げない
+- `NO_UNSIGNED_SUBTRACTION`なら符号なし同士の減算は符号付き（`uint64`ではなく`int64`）になる
+- 残りの名前（`NO_ZERO_DATE`、`ERROR_FOR_DIVISION_BY_ZERO`、`NO_ENGINE_SUBSTITUTION`、`PAD_CHAR_TO_FULL_LENGTH`など）は実行時にしか効かない。検査器は受け付けて、テスト用サーバに渡すだけである
+- `lower_case_table_names = 1`は表名とビュー名を小文字にして持つ。サーバの報告と同じである（`SELECT * FROM Users`は表`users`を読み、factsも境界の検査もその名前で見る）。2は宣言どおりの綴りで持ち、大文字小文字を無視して照合する。0は`Users`と`users`を区別する（1146）。ディレクティブ（`unfiltered`、`waive`、義務）が名乗る表名も同じ規則で解決する。1と2ならどの綴りでも届き、0なら`CREATE`の綴りで書く
+
+サーバは宣言どおりに動く。`mysqltest.Start`は宣言した変数をそのまま`mysqld`の`--変数=値`オプションにする（`mysqld`が知らない変数なら起動しない。`lower_case_table_names`は専用のデータディレクトリを初期化する）ので、検査器が判定した文、アナライザー自身の照合テスト、アプリケーションのテストは1つのモードの下で走る。本番の接続には`mysql.Verify(ctx, db, schemaSQL)`がある。セッションの`@@sql_mode`（DSNやプールの初期化が上書きしうる）とサーバの`lower_case_table_names`を読み、宣言との差を返す（[runtime.md](runtime.ja.md#mysql)）。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 

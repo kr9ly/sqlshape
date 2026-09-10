@@ -44,6 +44,7 @@ statement: the Go code around it, and the schema itself.
 - [Part 3 — Outside the statement](#part-3--outside-the-statement)
   - [The schema names its PostgreSQL version (`postgres`)](#the-schema-names-its-postgresql-version-postgres)
   - [The schema names its MySQL version (`mysql`)](#the-schema-names-its-mysql-version-mysql)
+  - [The schema names the server's settings (`server`)](#the-schema-names-the-servers-settings-server)
   - [Do not run SQL that bypasses sqlshape (`-raw-sql`)](#do-not-run-sql-that-bypasses-sqlshape--raw-sql)
   - [A package references only its schemas (`-schemas`)](#a-package-references-only-its-schemas--schemas)
   - [Problems in the schema itself](#problems-in-the-schema-itself)
@@ -1363,6 +1364,71 @@ Where MySQL differs from PostgreSQL, the checker follows MySQL:
 
 The MySQL side of the checker (`check/mysql`) carries MySQL's parser and is licensed under the GNU
 General Public License v2; see the README.
+
+### The schema names the server's settings (`server`)
+
+A server variable that changes how a statement is judged is declared next to the version, one per
+line, so the checker, the test server and the production connection agree on it. Without the line
+the checker assumes the server's defaults; on MySQL 8.4 that is the default `sql_mode`
+(`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`)
+and `lower_case_table_names = 0`, a freshly initialized Linux server.
+
+```sql
+-- sqlshape: mysql 8.4
+-- sqlshape: server sql_mode = 'ANSI,STRICT_ALL_TABLES'
+-- sqlshape: server lower_case_table_names = 1
+CREATE TABLE ...
+```
+
+Rejected
+
+- a variable the dialect does not read: for MySQL anything but `sql_mode` and
+  `lower_case_table_names`; for PostgreSQL every variable, for now (its judgments follow the
+  server's defaults, and `search_path` is the schema's own `SET`)
+- a `sql_mode` name 8.4 does not have, a `lower_case_table_names` other than 0, 1 or 2
+- a value with spaces not written as a string literal, a variable declared twice
+
+Accepted
+
+- `sql_mode`: the names in any case, separated by commas, the empty string, and the combination
+  modes `ANSI` and `TRADITIONAL`, expanded as the server expands them
+- `lower_case_table_names`: 0, 1 or 2
+
+What the checker does with them:
+
+- The parser takes the lexer's bits: under `ANSI_QUOTES` a double-quoted name is an identifier,
+  under `PIPES_AS_CONCAT` the `||` is `CONCAT` (an `OR` otherwise), and `IGNORE_SPACE`,
+  `NO_BACKSLASH_ESCAPES` and `HIGH_NOT_PRECEDENCE` read as they do on the server. Under
+  `REAL_AS_FLOAT` a `REAL` column is a `FLOAT` (`float32`), not a `DOUBLE`.
+- `ONLY_FULL_GROUP_BY` turns the group check above on and off (1055, 1140 and the `DISTINCT`
+  rule 3065); the `HAVING` resolution rule (1054) and the aggregate-in-`ORDER BY` rules (3029,
+  3028) hold in every mode, as they do on the server.
+- Strict mode (`STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`) decides two things. A string
+  function (`CONCAT`, `SUBSTRING`, `LOWER`, ...) is nullable only in strict mode, so without it
+  `CONCAT(name, 'x')` over a `NOT NULL` column is `string`, not `*string`. And a `NULL` stored into
+  a `NOT NULL` column is a failure mode (1048) in strict mode; without it only a single-row
+  `INSERT` or `REPLACE` (its `ON DUPLICATE KEY UPDATE` included) still rejects the `NULL`, while
+  more rows, `INSERT ... SELECT` and `UPDATE` store the type's implicit default with a warning,
+  so the checker lists no 1048 for them.
+- `NO_UNSIGNED_SUBTRACTION` makes the difference of unsigned operands signed (`int64`, not
+  `uint64`).
+- The remaining names (`NO_ZERO_DATE`, `ERROR_FOR_DIVISION_BY_ZERO`, `NO_ENGINE_SUBSTITUTION`,
+  `PAD_CHAR_TO_FULL_LENGTH`, ...) act at run time only; the checker accepts them and passes them
+  to the test server.
+- `lower_case_table_names = 1` stores table and view names lower-cased, as the server reports
+  them (`SELECT * FROM Users` reads the table `users`, and so do the facts and the boundary
+  checks); `2` keeps the declared spelling and compares without case; `0` distinguishes
+  `Users` from `users` (1146). A directive (`unfiltered`, `waive`, the obligations) names a
+  table by the same rule: under 1 or 2 any spelling reaches it, under 0 the `CREATE`'s.
+
+The server runs as declared. `mysqltest.Start` passes every declared variable to `mysqld` as
+a `--variable=value` option (a variable `mysqld` does not know keeps it from starting; with
+`lower_case_table_names` it initializes a data directory of its own), so the statements the
+checker judged, the analyzer's own conformance tests and the application's tests all run under
+one mode. For the production connection, `mysql.Verify(ctx, db, schemaSQL)` reads the session's
+`@@sql_mode` (a DSN or a pool's setup may override it) and the server's
+`lower_case_table_names`, and reports a difference from the declaration
+([runtime.md](runtime.md#mysql)).
 
 ### Do not run SQL that bypasses sqlshape (`-raw-sql`)
 

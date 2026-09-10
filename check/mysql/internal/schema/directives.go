@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
@@ -17,7 +18,8 @@ import (
 var directiveLine = regexp.MustCompile(`^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[ \t]*$`)
 
 // leadingDirectives reads the directives among the comment lines in front of a statement
-// (the splitter keeps them with the statement); the file's version declaration is not one.
+// (the splitter keeps them with the statement); the file's version declaration and its
+// server settings are not one.
 func leadingDirectives(sql string) []string {
 	var out []string
 	for _, line := range strings.Split(sql, "\n") {
@@ -26,7 +28,7 @@ func leadingDirectives(sql string) []string {
 		case trimmed == "":
 			continue
 		case strings.HasPrefix(trimmed, "--"), strings.HasPrefix(trimmed, "#"):
-			if m := directiveLine.FindStringSubmatch(line); m != nil && !versionLine.MatchString(line) {
+			if m := directiveLine.FindStringSubmatch(line); m != nil && !versionLine.MatchString(line) && !dialect.IsSetting(m[1]) {
 				out = append(out, strings.Join(strings.Fields(m[1]), " "))
 			}
 			continue
@@ -68,6 +70,7 @@ func (s *Schema) viewDirectives(v *View, sql string, pos int) {
 		case strings.HasPrefix(lower, "unfiltered "):
 			for _, t := range strings.Split(d[len("unfiltered "):], ",") {
 				if t = strings.TrimSpace(t); t != "" {
+					t = s.CanonicalName(t)
 					if v.Unfiltered == nil {
 						v.Unfiltered = map[string]bool{}
 					}
@@ -77,7 +80,7 @@ func (s *Schema) viewDirectives(v *View, sql string, pos int) {
 			}
 		case strings.HasPrefix(lower, "waive "):
 			for table, spec := range obligation.Waivers(d[len("waive "):]) {
-				v.Waived = obligation.AddWaiver(v.Waived, table, spec...)
+				v.Waived = obligation.AddWaiver(v.Waived, s.CanonicalName(table), spec...)
 			}
 		default:
 			s.problem(pos, "view %s: unknown directive %q", v.Name, d)
