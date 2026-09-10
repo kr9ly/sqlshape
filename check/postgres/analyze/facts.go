@@ -13,7 +13,7 @@ import (
 
 // Facts production: the prover's equalities, the leaves it ran over and the write set,
 // written down in the dialect-neutral form of internal/facts. Nothing here decides
-// anything; internal/obligation does the judging. Every query level the statement has
+// anything; x/obligation does the judging. Every query level the statement has
 // (recordFixed's callers, plus MERGE's ON) becomes one facts.Scope; view bodies are
 // converted on demand and hung off the leaf that reads them.
 
@@ -586,7 +586,7 @@ func (a *analyzer) buildFacts(stmt *pgparse.Node, top *scope) *facts.Facts {
 // Lower reads a declared predicate over rel in the facts language: the expression is
 // parsed and type-checked against the table alone (an error is the declaration's), and
 // each conjunct becomes a facts.Pred whose ColRef.Leaf is 0, standing for the subject.
-// This is internal/obligation's Lowerer for PostgreSQL.
+// This is x/obligation's Lowerer for PostgreSQL.
 func Lower(s *schema.Schema, expr string, rel *schema.Relation) ([]facts.Pred, error) {
 	tree, err := s.Version.Parse("SELECT " + expr)
 	if err != nil {

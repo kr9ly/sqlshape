@@ -7,15 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 type advLowerer struct{ s *schema.Schema }
 
-func (l advLowerer) Lower(expr string, rel *schema.Relation) ([]facts.Pred, error) {
-	return Lower(l.s, expr, rel)
+func (l advLowerer) Lower(expr string, rel obligation.Relation) ([]facts.Pred, error) {
+	return Lower(l.s, expr, l.s.ByFullName(rel.FullName()))
 }
 
 func advPathName(p obligation.Path) string {
@@ -37,7 +37,7 @@ func advPathName(p obligation.Path) string {
 func advCheckLines(t *testing.T, s *schema.Schema, decls []obligation.Obligation, f *facts.Facts) string {
 	t.Helper()
 	var lines []string
-	for _, d := range obligation.Check(s, decls, f, advLowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, f, advLowerer{s}) {
 		line := d.Obligation.Source + " " + advPathName(d.Path)
 		if d.Message != "" {
 			line += " " + d.Message
@@ -137,7 +137,7 @@ CREATE TABLE staging_orders (
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -272,7 +272,7 @@ func TestAdvUsesAssignedNotHole(t *testing.T) {
 
 // facts.Use.Position is documented as "the 0-based byte offset of the reference in the
 // statement text" (internal/facts/facts.go). A column named only in GROUP BY still gets
-// its real byte offset, not a sentinel -- Position feeds internal/obligation/check.go's
+// its real byte offset, not a sentinel -- Position feeds x/obligation/check.go's
 // sensitive() diagnostics, so a `context X: may read <label>` violation on such a column
 // must be reported at the position where it actually appears.
 func TestAdvGroupByColumnPositionIsCorrect(t *testing.T) {

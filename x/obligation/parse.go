@@ -2,9 +2,8 @@ package obligation
 
 import (
 	"fmt"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 	"strings"
-
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // Parse reads one schema.sql directive (whitespace-normalized, without the `-- sqlshape:`
@@ -150,11 +149,11 @@ func parseKinds(list string) (Kinds, error) {
 // Declarations collects the obligations written in schema.sql: every relation's
 // `require ...` and `visible where ...` directives, and the expansion of each
 // `aggregate` declaration. Malformed ones come back as Problems.
-func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
+func Declarations(s Schema) ([]Obligation, []Problem) {
 	var out []Obligation
 	var problems []Problem
-	for _, rel := range s.Relations {
-		for _, d := range rel.Directives {
+	for _, rel := range s.Relations() {
+		for _, d := range rel.Directives() {
 			lower := strings.ToLower(d)
 			if strings.HasPrefix(lower, "sensitive ") || strings.HasPrefix(lower, "transitions ") {
 				o, err := columnRule(rel, d)
@@ -191,11 +190,11 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: err.Error()})
 				continue
 			}
-			if col := o.Body.Pinned + o.Body.Immutable; col != "" && !hasColumn(rel, col) {
-				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: fmt.Sprintf("%s has no column %s", rel.Name, col)})
+			if col := o.Body.Pinned + o.Body.Immutable; col != "" && !rel.HasColumn(col) {
+				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: fmt.Sprintf("%s has no column %s", rel.Name(), col)})
 				continue
 			}
-			if t := o.Body.Paired; t != "" && relByFullName(s, t) == nil {
+			if t := o.Body.Paired; t != "" && s.Relation(t) == nil {
 				problems = append(problems, Problem{Subject: rel.FullName(), Source: d, Message: fmt.Sprintf("paired: relation %s does not exist", t)})
 				continue
 			}
@@ -205,23 +204,10 @@ func Declarations(s *schema.Schema) ([]Obligation, []Problem) {
 	return out, problems
 }
 
-// hasColumn: the relation has the column (a view's are its frozen output columns).
-func hasColumn(rel *schema.Relation, col string) bool {
-	if rel.Column(col) != nil {
-		return true
-	}
-	for _, vc := range rel.Frozen {
-		if vc.Name == col {
-			return true
-		}
-	}
-	return false
-}
-
 // FromFlags expands vet's table-wide flags into per-table obligations, the sugar they
 // always were: -require-columns=a,b is `require pinned(a)` on every table that has the
 // column, -no-tables is `require via view on all`, -no-table-reads is `require via view`.
-func FromFlags(s *schema.Schema, requireColumns string, noTables, noTableReads bool) []Obligation {
+func FromFlags(s Schema, requireColumns string, noTables, noTableReads bool) []Obligation {
 	var out []Obligation
 	var cols []string
 	for _, c := range strings.Split(requireColumns, ",") {
@@ -229,8 +215,8 @@ func FromFlags(s *schema.Schema, requireColumns string, noTables, noTableReads b
 			cols = append(cols, c)
 		}
 	}
-	for _, rel := range s.Relations {
-		if rel.Kind != schema.Table {
+	for _, rel := range s.Relations() {
+		if rel.Kind() != facts.Table {
 			continue
 		}
 		switch {
@@ -240,7 +226,7 @@ func FromFlags(s *schema.Schema, requireColumns string, noTables, noTableReads b
 			out = append(out, Obligation{Subject: rel.FullName(), Kinds: OnRead, Body: Body{ViaView: true}, Source: "-no-table-reads"})
 		}
 		for _, c := range cols {
-			if rel.Column(c) != nil {
+			if rel.HasColumn(c) {
 				out = append(out, Obligation{Subject: rel.FullName(), Kinds: OnAll, Body: Body{Pinned: c}, Source: "-require-columns=" + requireColumns})
 			}
 		}
@@ -257,7 +243,7 @@ func FromFlags(s *schema.Schema, requireColumns string, noTables, noTableReads b
 //     a grandchild, to the member it hangs off (a join on the parent's key pins it);
 //   - one statement touches one aggregate: `alone` on the root and every child (read
 //     across aggregates through a view).
-func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obligation, error) {
+func aggregate(s Schema, root Relation, directive string) ([]Obligation, error) {
 	norm := strings.Join(strings.Fields(directive), " ")
 	rest := strings.TrimSpace(norm[len("aggregate "):])
 	name, list, ok := strings.Cut(rest, "(")
@@ -272,12 +258,12 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 			return nil, fmt.Errorf("%s: expected `lock <column>` after the children", norm)
 		}
 		lock = strings.TrimSpace(tail[len("lock "):])
-		if root.Column(lock) == nil {
+		if !root.HasColumn(lock) {
 			return nil, fmt.Errorf("%s: %s has no column %s", norm, root.FullName(), lock)
 		}
 	}
 	name = strings.TrimSpace(name)
-	if name != root.Name && name != root.FullName() {
+	if name != root.Name() && name != root.FullName() {
 		return nil, fmt.Errorf("%s: the declaration sits above %s, not %s", norm, root.FullName(), name)
 	}
 	src := "aggregate " + root.FullName()
@@ -286,17 +272,13 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 		// the version is named in every write to the root ...
 		out = append(out, Obligation{Subject: root.FullName(), Kinds: OnUpdate | OnDelete, Body: Body{Pinned: lock}, Source: src})
 	}
-	var children []*schema.Relation
+	var children []Relation
 	for _, c := range strings.Split(strings.TrimSuffix(list, ")"), ",") {
 		c = strings.TrimSpace(c)
 		if c == "" {
 			continue
 		}
-		sch, n, _ := strings.Cut(c, ".")
-		if n == "" {
-			sch, n = "", sch
-		}
-		child := s.Relation(sch, n)
+		child := s.Relation(c)
 		if child == nil {
 			return nil, fmt.Errorf("%s: child %s does not exist", norm, c)
 		}
@@ -304,23 +286,23 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 	}
 	// a child hangs off the root or off another member (a grandchild off its parent): the
 	// foreign key it must pin is the one into the aggregate, the root's first
-	isRoot := func(t string) bool { return t == root.FullName() || t == root.Name }
+	isRoot := func(t string) bool { return t == root.FullName() || t == root.Name() }
 	members := map[string]bool{}
 	for _, ch := range children {
-		members[ch.FullName()], members[ch.Name] = true, true
+		members[ch.FullName()], members[ch.Name()] = true, true
 	}
 	for _, child := range children {
-		var fk *schema.Constraint
-		for _, con := range child.Constraints {
-			if con.Kind == schema.ForeignKey && isRoot(con.RefTable) {
-				fk = con
+		var fk *ForeignKey
+		for _, con := range child.ForeignKeys() {
+			if isRoot(con.RefTable) {
+				fk = &con
 				break
 			}
 		}
 		if fk == nil {
-			for _, con := range child.Constraints {
-				if con.Kind == schema.ForeignKey && members[con.RefTable] && con.RefTable != child.FullName() && con.RefTable != child.Name {
-					fk = con
+			for _, con := range child.ForeignKeys() {
+				if members[con.RefTable] && con.RefTable != child.FullName() && con.RefTable != child.Name() {
+					fk = &con
 					break
 				}
 			}
@@ -344,24 +326,24 @@ func aggregate(s *schema.Schema, root *schema.Relation, directive string) ([]Obl
 // lockPredicate spells the EXISTS a child of a locked aggregate owes on UPDATE / DELETE:
 // a root row at the version the writer saw, reached through the child's foreign key and,
 // for a grandchild, its parent's.
-func lockPredicate(s *schema.Schema, root, child *schema.Relation, lock string) string {
+func lockPredicate(s Schema, root, child Relation, lock string) string {
 	var from []string
 	var where []string
 	cur := child
 	prev := ""
 	for depth := 0; depth < 8; depth++ {
-		var fk *schema.Constraint
-		for _, con := range cur.Constraints {
-			if con.Kind == schema.ForeignKey && (con.RefTable == root.FullName() || con.RefTable == root.Name) {
-				fk = con
+		var fk *ForeignKey
+		for _, con := range cur.ForeignKeys() {
+			if con.RefTable == root.FullName() || con.RefTable == root.Name() {
+				fk = &con
 				break
 			}
 		}
 		if fk == nil {
-			for _, con := range cur.Constraints {
-				if con.Kind == schema.ForeignKey && con.RefTable != cur.FullName() && con.RefTable != cur.Name {
-					if r := relByFullName(s, con.RefTable); r != nil && r != cur {
-						fk = con
+			for _, con := range cur.ForeignKeys() {
+				if con.RefTable != cur.FullName() && con.RefTable != cur.Name() {
+					if r := s.Relation(con.RefTable); r != nil && r.FullName() != cur.FullName() {
+						fk = &con
 						break
 					}
 				}
@@ -370,7 +352,10 @@ func lockPredicate(s *schema.Schema, root, child *schema.Relation, lock string) 
 		if fk == nil {
 			break
 		}
-		parent := relByFullName(s, fk.RefTable)
+		parent := s.Relation(fk.RefTable)
+		if parent == nil {
+			break
+		}
 		alias := fmt.Sprintf("a%d", depth)
 		from = append(from, parent.FullName()+" "+alias)
 		for k := range fk.Columns {
@@ -381,7 +366,7 @@ func lockPredicate(s *schema.Schema, root, child *schema.Relation, lock string) 
 			}
 			where = append(where, lhs+" = "+rhs)
 		}
-		if parent == root {
+		if parent.FullName() == root.FullName() {
 			where = append(where, alias+"."+lock+" = $1")
 			return "EXISTS (SELECT 1 FROM " + strings.Join(from, ", ") + " WHERE " + strings.Join(where, " AND ") + ")"
 		}
@@ -395,7 +380,7 @@ func lockPredicate(s *schema.Schema, root, child *schema.Relation, lock string) 
 // ...`) and the base obligations the context lifts (`waive <body>`). An entry point
 // selects one context (vet: the package's `// sqlshape: context <name>` or -context;
 // check: -context); InContext applies the selection.
-func context(rel *schema.Relation, directive string) ([]Obligation, error) {
+func context(rel Relation, directive string) ([]Obligation, error) {
 	norm := strings.Join(strings.Fields(directive), " ")
 	rest := strings.TrimSpace(norm[len("context "):])
 	name, items, ok := strings.Cut(rest, ":")
@@ -483,7 +468,7 @@ func Contexts(decls []Obligation) []string {
 //
 //	sensitive <label>: col, col        the columns carry the label
 //	transitions <col>: a -> b, b -> c | d   the column is a state machine
-func columnRule(rel *schema.Relation, directive string) (Obligation, error) {
+func columnRule(rel Relation, directive string) (Obligation, error) {
 	norm := strings.Join(strings.Fields(directive), " ")
 	o := Obligation{Subject: rel.FullName(), Kinds: OnAll, Source: norm}
 	head, body, ok := strings.Cut(norm, ":")
@@ -500,8 +485,8 @@ func columnRule(rel *schema.Relation, directive string) (Obligation, error) {
 		sens := &Sensitive{Label: name}
 		for _, c := range strings.Split(body, ",") {
 			if c = strings.TrimSpace(c); c != "" {
-				if !hasColumn(rel, c) {
-					return Obligation{}, fmt.Errorf("%s: %s has no column %s", norm, rel.Name, c)
+				if !rel.HasColumn(c) {
+					return Obligation{}, fmt.Errorf("%s: %s has no column %s", norm, rel.Name(), c)
 				}
 				sens.Columns = append(sens.Columns, c)
 			}
@@ -511,8 +496,8 @@ func columnRule(rel *schema.Relation, directive string) (Obligation, error) {
 		}
 		o.Body.Sensitive = sens
 	case "transitions":
-		if !hasColumn(rel, name) {
-			return Obligation{}, fmt.Errorf("%s: %s has no column %s", norm, rel.Name, name)
+		if !rel.HasColumn(name) {
+			return Obligation{}, fmt.Errorf("%s: %s has no column %s", norm, rel.Name(), name)
 		}
 		tr := &Transitions{Column: name, From: map[string][]string{}}
 		for _, edge := range strings.Split(body, ",") {

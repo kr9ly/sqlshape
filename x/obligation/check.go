@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 // Check judges every obligation against every leaf of f, at every depth, and returns
 // all applicable judgments in leaf order. Leaves inside a view's body are the view's
 // business (its definition was judged when the schema loaded) and are not visited.
-func Check(s *schema.Schema, decls []Obligation, f *facts.Facts, l Lowerer) []Discharge {
+func Check(s Schema, decls []Obligation, f *facts.Facts, l Lowerer) []Discharge {
 	if f == nil || f.Top == nil {
 		return nil
 	}
@@ -56,12 +55,12 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 		default:
 			continue
 		}
-		rel := relByFullName(c.s, w.Table)
+		rel := c.s.Relation(w.Table)
 		if rel == nil {
 			continue
 		}
 		sc, li := c.targetLeaf(c.f.Top, w.Table)
-		leaf := facts.Leaf{Table: w.Table, Alias: rel.Name, Kind: facts.Table, Role: facts.Target, Position: w.Position}
+		leaf := facts.Leaf{Table: w.Table, Alias: rel.Name(), Kind: facts.Table, Role: facts.Target, Position: w.Position}
 		if sc != nil {
 			leaf = sc.Leaves[li]
 		}
@@ -73,31 +72,31 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 			d := Discharge{Obligation: o, Leaf: leaf, Position: w.Position}
 			if waived(leaf, o) {
 				d.Path = Waived
-				d.Message = fmt.Sprintf("%s: `%s` is waived by this statement", rel.Name, o.Source)
+				d.Message = fmt.Sprintf("%s: `%s` is waived by this statement", rel.Name(), o.Source)
 				c.out = append(c.out, d)
 				continue
 			}
 			switch {
 			case o.Body.Never:
-				d.Message = fmt.Sprintf("%s is declared `%s`: no statement may do this to it", rel.Name, o.Source)
+				d.Message = fmt.Sprintf("%s is declared `%s`: no statement may do this to it", rel.Name(), o.Source)
 			case o.Body.Paired != "":
-				paired := relByFullName(c.s, o.Body.Paired)
+				paired := c.s.Relation(o.Body.Paired)
 				for _, other := range c.f.Writes {
 					if paired != nil && other.Table == paired.FullName() {
 						d.Path = ByStatement
 					}
 				}
 				if d.Path == 0 {
-					d.Message = fmt.Sprintf("a write to %s must also write %s in the same statement (a data-modifying WITH): %s", rel.Name, o.Body.Paired, o.Source)
+					d.Message = fmt.Sprintf("a write to %s must also write %s in the same statement (a data-modifying WITH): %s", rel.Name(), o.Body.Paired, o.Source)
 				}
 			case o.Body.Single:
 				switch {
 				case !main:
-					d.Message = fmt.Sprintf("%s requires a single-row %s, which cannot be proved for a write inside WITH", rel.Name, strings.ToUpper(w.Kind.String()))
+					d.Message = fmt.Sprintf("%s requires a single-row %s, which cannot be proved for a write inside WITH", rel.Name(), strings.ToUpper(w.Kind.String()))
 				case c.f.AtMostOne:
 					d.Path = ByStatement
 				default:
-					d.Message = fmt.Sprintf("%s requires a single-row %s: fix a unique key by equality (the One proof)", rel.Name, strings.ToUpper(w.Kind.String()))
+					d.Message = fmt.Sprintf("%s requires a single-row %s: fix a unique key by equality (the One proof)", rel.Name(), strings.ToUpper(w.Kind.String()))
 				}
 			case o.Body.Transitions != nil:
 				c.transition(sc, li, &w, o, rel, &d)
@@ -108,7 +107,7 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 				if sc != nil && containsRef(sc.Fixed, facts.ColRef{Leaf: li, Column: o.Body.Pinned}) {
 					d.Path = ByStatement
 				} else {
-					d.Message = fmt.Sprintf("%s.%s is pinned: an UPDATE assigning it must also fix %s by equality in WHERE, or the row moves to another %s", rel.Name, o.Body.Pinned, o.Body.Pinned, o.Body.Pinned)
+					d.Message = fmt.Sprintf("%s.%s is pinned: an UPDATE assigning it must also fix %s by equality in WHERE, or the row moves to another %s", rel.Name(), o.Body.Pinned, o.Body.Pinned, o.Body.Pinned)
 				}
 			default:
 				continue
@@ -151,7 +150,7 @@ func (c *checker) targetLeaf(sc *facts.Scope, table string) (*facts.Scope, int) 
 }
 
 type checker struct {
-	s        *schema.Schema
+	s        Schema
 	f        *facts.Facts
 	lower    Lowerer
 	lowered  map[string][]facts.Pred
@@ -185,26 +184,16 @@ func (c *checker) sensitive(decls []*Obligation) {
 		}
 		table, col := u.Table, u.Column
 		for depth := 0; depth < 16; depth++ { // follow a view column to the base column it passes through
-			rel := relByFullName(c.s, table)
-			if rel == nil || (rel.Kind != schema.View && rel.Kind != schema.MatView) {
+			rel := c.s.Relation(table)
+			if rel == nil || (rel.Kind() != facts.View && rel.Kind() != facts.MatView) {
 				break
 			}
-			var src *schema.ViewColumn
-			for i := range rel.Frozen {
-				if rel.Frozen[i].Name == col {
-					src = &rel.Frozen[i]
-				}
-			}
-			if src == nil || src.SrcTable == "" && src.SrcRel == nil {
+			srcTable, srcCol, ok := rel.ViewSource(col)
+			if !ok {
 				table = "" // an expression column: no base column, no label
 				break
 			}
-			if src.SrcRel != nil {
-				table = src.SrcRel.FullName()
-			} else {
-				table = src.SrcTable
-			}
-			col = src.SrcColumn
+			table, col = srcTable, srcCol
 		}
 		if table == "" {
 			continue
@@ -297,10 +286,10 @@ func (c *checker) kindAt(leaf facts.Leaf) Kinds {
 func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 	leaf := sc.Leaves[i]
 	d := Discharge{Obligation: o, Leaf: leaf, Position: leaf.Position}
-	rel := relByFullName(c.s, leaf.Table)
+	rel := c.s.Relation(leaf.Table)
 	if waived(leaf, o) {
 		d.Path = Waived
-		d.Message = fmt.Sprintf("%s: `%s` is waived by this statement", rel.Name, o.Source)
+		d.Message = fmt.Sprintf("%s: `%s` is waived by this statement", rel.Name(), o.Source)
 		c.out = append(c.out, d)
 		return
 	}
@@ -351,7 +340,7 @@ func (c *checker) judge(sc *facts.Scope, i int, o *Obligation) {
 
 // predicate: every conjunct of the declared expression must be implied by the level's
 // predicates about this leaf.
-func (c *checker) predicate(sc *facts.Scope, i int, o *Obligation, rel *schema.Relation, d *Discharge) {
+func (c *checker) predicate(sc *facts.Scope, i int, o *Obligation, rel Relation, d *Discharge) {
 	leaf := sc.Leaves[i]
 	want, err := c.lowerPredicate(o, rel)
 	if err != nil {
@@ -367,24 +356,24 @@ func (c *checker) predicate(sc *facts.Scope, i int, o *Obligation, rel *schema.R
 		}
 		if !found {
 			alias := leaf.Alias
-			if alias != rel.Name && alias != "" {
-				alias = rel.Name + " " + alias
+			if alias != rel.Name() && alias != "" {
+				alias = rel.Name() + " " + alias
 			}
 			if o.Kinds == OnRead {
-				d.Message = fmt.Sprintf("rows of %s are visible where %s: add that predicate for %s, or opt out with `-- sqlshape: unfiltered %s`", rel.Name, o.Body.Predicate, alias, rel.Name)
+				d.Message = fmt.Sprintf("rows of %s are visible where %s: add that predicate for %s, or opt out with `-- sqlshape: unfiltered %s`", rel.Name(), o.Body.Predicate, alias, rel.Name())
 			} else {
-				d.Message = fmt.Sprintf("%s requires %s here: add that predicate for %s, or opt out with `-- sqlshape: unfiltered %s`", rel.Name, o.Body.Predicate, alias, rel.Name)
+				d.Message = fmt.Sprintf("%s requires %s here: add that predicate for %s, or opt out with `-- sqlshape: unfiltered %s`", rel.Name(), o.Body.Predicate, alias, rel.Name())
 			}
 			return
 		}
 	}
 	d.Path = path
-	if path == ByPolicy && !rel.ForceRowSecurity {
-		d.Message = fmt.Sprintf("%s satisfies `%s` by row-security policy for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner", rel.Name, o.Body.Predicate)
+	if path == ByPolicy && !rel.ForceRowSecurity() {
+		d.Message = fmt.Sprintf("%s satisfies `%s` by row-security policy for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner", rel.Name(), o.Body.Predicate)
 	}
 }
 
-func (c *checker) lowerPredicate(o *Obligation, rel *schema.Relation) ([]facts.Pred, error) {
+func (c *checker) lowerPredicate(o *Obligation, rel Relation) ([]facts.Pred, error) {
 	key := o.Subject + "\x00" + o.Body.Predicate
 	if p, ok := c.lowered[key]; ok {
 		return p, c.lowerErr[key]
@@ -398,7 +387,7 @@ func (c *checker) lowerPredicate(o *Obligation, rel *schema.Relation) ([]facts.P
 }
 
 // pinned: the column is equal to a known value (or, on a write target, assigned).
-func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Relation, d *Discharge) {
+func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel Relation, d *Discharge) {
 	leaf := sc.Leaves[i]
 	col := o.Body.Pinned
 	ref := facts.ColRef{Leaf: i, Column: col}
@@ -409,7 +398,7 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Rela
 			d.Path = ByStatement
 			return
 		}
-		d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)", rel.Name, col, rel.Name, col)
+		d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)", rel.Name(), col, rel.Name(), col)
 		return
 	}
 	if c.f.Kind == facts.Merge && leaf.Role == facts.Target && c.mergeInsertOnly(leaf.Table) && c.assignedBy(leaf.Table, col, facts.Insert) {
@@ -431,15 +420,15 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel *schema.Rela
 	for _, p := range sc.Preds {
 		if p.Origin == facts.FromPolicy && applies(p, i) && p.Op == facts.Eq && p.Col == ref && p.Term.Kind != facts.Column {
 			d.Path = ByPolicy
-			if !rel.ForceRowSecurity {
-				d.Message = fmt.Sprintf("%s.%s is pinned by policy %s for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner", rel.Name, col, p.Name)
+			if !rel.ForceRowSecurity() {
+				d.Message = fmt.Sprintf("%s.%s is pinned by policy %s for roles subject to row security, not for the table's owner: FORCE ROW LEVEL SECURITY if the application connects as the owner", rel.Name(), col, p.Name)
 			}
 			return
 		}
 	}
-	d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name, col, rel.Name, col, occurrence(sc, i))
+	d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name(), col, rel.Name(), col, occurrence(sc, i))
 	if root, ok := strings.CutPrefix(o.Source, "aggregate "); ok {
-		d.Message = fmt.Sprintf("%s is a child of aggregate %s: reach it through %s (fix %s.%s by equality, or join on %s's key)", rel.Name, root, root, rel.Name, col, root)
+		d.Message = fmt.Sprintf("%s is a child of aggregate %s: reach it through %s (fix %s.%s by equality, or join on %s's key)", rel.Name(), root, root, rel.Name(), col, root)
 	}
 }
 
@@ -462,9 +451,9 @@ func occurrence(sc *facts.Scope, i int) string {
 // viaForeignKey: a composite foreign key from this table whose other columns are joined
 // by equality to the referenced table's columns carries the referenced column's pin
 // over (the referenced key is unique, so the rows agree on every column of it).
-func (c *checker) viaForeignKey(sc *facts.Scope, i int, rel *schema.Relation, col string) bool {
-	for _, con := range rel.Constraints {
-		if con.Kind != schema.ForeignKey || len(con.Columns) < 2 {
+func (c *checker) viaForeignKey(sc *facts.Scope, i int, rel Relation, col string) bool {
+	for _, con := range rel.ForeignKeys() {
+		if len(con.Columns) < 2 {
 			continue
 		}
 		at := -1
@@ -476,7 +465,7 @@ func (c *checker) viaForeignKey(sc *facts.Scope, i int, rel *schema.Relation, co
 		if at < 0 {
 			continue
 		}
-		refRel := relByFullName(c.s, con.RefTable)
+		refRel := c.s.Relation(con.RefTable)
 		if refRel == nil {
 			continue
 		}
@@ -505,11 +494,8 @@ func (c *checker) viaForeignKey(sc *facts.Scope, i int, rel *schema.Relation, co
 // viaParent: an aggregate member's foreign-key column is joined by equality to the
 // referenced column of a leaf of its parent table. The parent leaf owes the aggregate's
 // obligations itself, so the chain up to the root is judged link by link.
-func (c *checker) viaParent(sc *facts.Scope, i int, rel *schema.Relation, col string) bool {
-	for _, con := range rel.Constraints {
-		if con.Kind != schema.ForeignKey {
-			continue
-		}
+func (c *checker) viaParent(sc *facts.Scope, i int, rel Relation, col string) bool {
+	for _, con := range rel.ForeignKeys() {
 		at := -1
 		for k, cc := range con.Columns {
 			if cc == col {
@@ -519,7 +505,7 @@ func (c *checker) viaParent(sc *facts.Scope, i int, rel *schema.Relation, col st
 		if at < 0 {
 			continue
 		}
-		parent := relByFullName(c.s, con.RefTable)
+		parent := c.s.Relation(con.RefTable)
 		if parent == nil {
 			continue
 		}
@@ -549,7 +535,7 @@ func equalIn(sc *facts.Scope, i int, a, b facts.ColRef) bool {
 // its WHERE, to one of that state's predecessors (compare-and-set); a non-constant target
 // is refused, since no predecessor set can be checked for it. Not assigning the column
 // is not a transition.
-func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligation, rel *schema.Relation, d *Discharge) {
+func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligation, rel Relation, d *Discharge) {
 	tr := o.Body.Transitions
 	var value *facts.Term
 	for k, col := range w.Assigned {
@@ -563,17 +549,17 @@ func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligati
 		return
 	}
 	if value.Kind != facts.Const {
-		d.Message = fmt.Sprintf("%s.%s is a state machine: SET it to a declared state (a literal), not to %s", rel.Name, tr.Column, value)
+		d.Message = fmt.Sprintf("%s.%s is a state machine: SET it to a declared state (a literal), not to %s", rel.Name(), tr.Column, value)
 		return
 	}
 	to := stateOf(value.Const)
 	froms, ok := tr.From[to]
 	if !ok {
-		d.Message = fmt.Sprintf("%s.%s is a state machine: %q is not a state anything transitions to (declared: %s)", rel.Name, tr.Column, to, strings.Join(tr.Order, ", "))
+		d.Message = fmt.Sprintf("%s.%s is a state machine: %q is not a state anything transitions to (declared: %s)", rel.Name(), tr.Column, to, strings.Join(tr.Order, ", "))
 		return
 	}
 	if sc == nil {
-		d.Message = fmt.Sprintf("%s.%s: the current state of an UPDATE inside WITH cannot be checked", rel.Name, tr.Column)
+		d.Message = fmt.Sprintf("%s.%s: the current state of an UPDATE inside WITH cannot be checked", rel.Name(), tr.Column)
 		return
 	}
 	col := facts.ColRef{Leaf: i, Column: tr.Column}
@@ -604,14 +590,14 @@ func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligati
 				declared = declared || f == from
 			}
 			if !declared {
-				d.Message = fmt.Sprintf("%s.%s: %s -> %s is not a declared transition (%s comes from %s)", rel.Name, tr.Column, from, to, to, strings.Join(froms, " | "))
+				d.Message = fmt.Sprintf("%s.%s: %s -> %s is not a declared transition (%s comes from %s)", rel.Name(), tr.Column, from, to, to, strings.Join(froms, " | "))
 				return
 			}
 		}
 		d.Path = ByStatement
 		return
 	}
-	d.Message = fmt.Sprintf("%s.%s: SET %s = '%s' must fix the current state in WHERE (%s = '%s')", rel.Name, tr.Column, tr.Column, to, tr.Column, strings.Join(froms, "' or '"))
+	d.Message = fmt.Sprintf("%s.%s: SET %s = '%s' must fix the current state in WHERE (%s = '%s')", rel.Name(), tr.Column, tr.Column, to, tr.Column, strings.Join(froms, "' or '"))
 }
 
 // stateOf reads a state name out of a constant's text: the analyzer spells a constant as
@@ -624,9 +610,9 @@ func stateOf(c string) string {
 }
 
 // immutable: an UPDATE (or MERGE) may not assign the column.
-func (c *checker) immutable(o *Obligation, rel *schema.Relation, d *Discharge) {
+func (c *checker) immutable(o *Obligation, rel Relation, d *Discharge) {
 	if c.assigned(rel.FullName(), o.Body.Immutable) {
-		d.Message = fmt.Sprintf("%s.%s is immutable: the statement must not assign it", rel.Name, o.Body.Immutable)
+		d.Message = fmt.Sprintf("%s.%s is immutable: the statement must not assign it", rel.Name(), o.Body.Immutable)
 		return
 	}
 	d.Path = ByStatement
@@ -907,16 +893,4 @@ func containsRef(rs []facts.ColRef, r facts.ColRef) bool {
 		}
 	}
 	return false
-}
-
-// relByFullName resolves the schema-qualified-unless-public name the facts use.
-func relByFullName(s *schema.Schema, name string) *schema.Relation {
-	sch, n, ok := strings.Cut(name, ".")
-	if !ok {
-		return s.Relation("", name)
-	}
-	if rel := s.Relation(sch, n); rel != nil {
-		return rel
-	}
-	return s.Relation("", name)
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
@@ -28,7 +28,7 @@ CREATE TABLE ledger2 (
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -39,7 +39,7 @@ CREATE TABLE ledger2 (
 	}
 	var found bool
 	var lines []string
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		lines = append(lines, d.Obligation.Source+" "+pathName(d.Path))
 		if d.Obligation.Body.Never {
 			found = true
@@ -64,7 +64,7 @@ CREATE TABLE orders (
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -77,7 +77,7 @@ CREATE TABLE orders (
 	}
 	var found bool
 	var lines []string
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		lines = append(lines, d.Obligation.Source+" "+pathName(d.Path)+" "+d.Message)
 		if d.Obligation.Body.Transitions != nil {
 			found = true
@@ -103,7 +103,7 @@ CREATE TABLE ledger (id bigint PRIMARY KEY, amount int NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -114,7 +114,7 @@ CREATE TABLE ledger (id bigint PRIMARY KEY, amount int NOT NULL);
 	}
 	var lines []string
 	var fail bool
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		lines = append(lines, d.Obligation.Source+" "+pathName(d.Path)+" "+d.Message)
 		if d.Obligation.Body.Never && d.Failed() {
 			fail = true
@@ -139,7 +139,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -155,7 +155,7 @@ WHEN MATCHED THEN UPDATE SET status = 'paid'`
 	}
 	var lines []string
 	var sawPaidFail bool
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		line := d.Obligation.Source + " " + pathName(d.Path) + " " + d.Message
 		lines = append(lines, line)
 		if strings.Contains(d.Message, "paid") {
@@ -184,7 +184,7 @@ func sensLines(t *testing.T, s *schema.Schema, decls []obligation.Obligation, sq
 	}
 	var lines []string
 	var anyFail bool
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		if d.Obligation.Body.Sensitive == nil {
 			continue
 		}
@@ -203,7 +203,7 @@ func TestAdvSensitive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -249,7 +249,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL, other_id bigin
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -259,7 +259,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL, other_id bigin
 			return "ANALYZE ERROR: " + err.Error()
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			if d.Obligation.Body.Transitions == nil {
 				continue
 			}
@@ -306,7 +306,7 @@ CREATE TABLE ledger (id bigint PRIMARY KEY, amount int NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -316,7 +316,7 @@ CREATE TABLE ledger (id bigint PRIMARY KEY, amount int NOT NULL);
 			return "ANALYZE ERROR: " + err.Error()
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			if d.Obligation.Body.Single && d.Obligation.Subject != "orders" && d.Obligation.Subject != "app.orders" {
 				continue
 			}
@@ -370,7 +370,7 @@ CREATE FUNCTION all_memos() RETURNS SETOF memos LANGUAGE sql AS $$ SELECT * FROM
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -381,7 +381,7 @@ CREATE FUNCTION all_memos() RETURNS SETOF memos LANGUAGE sql AS $$ SELECT * FROM
 			t.Fatalf("%s: %v", fn.Name, err)
 		}
 		for _, st := range fr.Statements {
-			for _, d := range obligation.Check(s, decls, st.Facts, lowerer{s}) {
+			for _, d := range obligation.Check(s.Contract(), decls, st.Facts, lowerer{s}) {
 				if d.Failed() {
 					failed = append(failed, fn.Name+": "+d.Obligation.Source)
 				}

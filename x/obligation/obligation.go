@@ -15,7 +15,6 @@ package obligation
 import (
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
@@ -142,7 +141,45 @@ func (b Body) Spec() string {
 // rebinds it to the leaf under judgment. A conjunct the language cannot decompose is
 // returned as Opaque with its canonical text.
 type Lowerer interface {
-	Lower(expr string, rel *schema.Relation) ([]facts.Pred, error)
+	Lower(expr string, rel Relation) ([]facts.Pred, error)
+}
+
+// Schema is what the obligations need to know about the database, whatever the dialect:
+// its relations, by name and in declaration order. A dialect's schema loader adapts to it
+// (check/postgres/schema: Schema.Contract).
+type Schema interface {
+	Relations() []Relation
+	// Relation resolves a name the way the facts spell it (schema-qualified unless in the
+	// default schema, else bare); nil when the schema has none.
+	Relation(name string) Relation
+}
+
+// Relation is one table or view as the obligations see it.
+type Relation interface {
+	// Name is the bare name, FullName the one the facts use as Leaf.Table.
+	Name() string
+	FullName() string
+	Kind() facts.RelKind
+	// HasColumn: a table's column, or a view's output column.
+	HasColumn(col string) bool
+	// Directives are the `-- sqlshape: ...` lines written above the CREATE, normalized.
+	Directives() []string
+	ForeignKeys() []ForeignKey
+	// ViewSource is the base column a view's output column passes through unchanged (a
+	// label travels along it); ok is false for a table, an expression column, or an
+	// unknown column.
+	ViewSource(col string) (table, column string, ok bool)
+	// ForceRowSecurity: the table's row-security policies bind its owner too (PostgreSQL's
+	// FORCE ROW LEVEL SECURITY); a policy then satisfies a predicate for every role.
+	ForceRowSecurity() bool
+}
+
+// ForeignKey is a REFERENCES constraint as the obligations use it: to pin a child through
+// its parent and to spell the aggregate's lock predicate.
+type ForeignKey struct {
+	Columns    []string
+	RefTable   string // as FullName spells it
+	RefColumns []string
 }
 
 // Path is how an obligation was discharged, for audit output and diagnostics.

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 // A `transitions` target with two or more declared predecessors (`shipped -> returned,
@@ -23,7 +23,7 @@ CREATE TABLE parcels (id bigint PRIMARY KEY, status text NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -33,7 +33,7 @@ CREATE TABLE parcels (id bigint PRIMARY KEY, status text NOT NULL);
 		t.Fatalf("%s: %v", sql, err)
 	}
 	var lines []string
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		line := d.Leaf.Table + " " + pathName(d.Path)
 		if d.Message != "" {
 			line += ": " + d.Message
@@ -60,7 +60,7 @@ CREATE TABLE parcels (id bigint PRIMARY KEY, status text NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -70,7 +70,7 @@ CREATE TABLE parcels (id bigint PRIMARY KEY, status text NOT NULL);
 		t.Fatalf("%s: %v", sql, err)
 	}
 	var lines []string
-	for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+	for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 		line := d.Leaf.Table + " " + pathName(d.Path)
 		if d.Message != "" {
 			line += ": " + d.Message
@@ -102,7 +102,7 @@ func TestAdvStrictHolesNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -112,7 +112,7 @@ func TestAdvStrictHolesNotFound(t *testing.T) {
 			t.Fatalf("%s: %v", sql, err)
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			line := d.Leaf.Table + " " + pathName(d.Path)
 			if d.Message != "" {
 				line += ": " + d.Message

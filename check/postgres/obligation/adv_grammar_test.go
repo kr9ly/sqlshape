@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 // A directive written above a statement that takes none (ALTER TABLE, COMMENT ON) is
@@ -24,7 +24,7 @@ func TestAdvDirectiveAboveOtherStatementIsAProblem(t *testing.T) {
 		if len(s.Problems) != 1 || !strings.Contains(s.Problems[0].Message, `directive "require pinned(tenant_id) on select" is written above a statement that takes no directives`) {
 			t.Errorf("%s: problems = %+v", stmt, s.Problems)
 		}
-		if decls, _ := obligation.Declarations(s); len(decls) != 0 {
+		if decls, _ := obligation.Declarations(s.Contract()); len(decls) != 0 {
 			t.Errorf("%s: the directive attached to something: %+v", stmt, decls)
 		}
 	}
@@ -42,7 +42,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, note text NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	t.Logf("decls=%+v problems=%+v", decls, problems)
 	if len(problems) == 0 {
 		for _, o := range decls {
@@ -71,7 +71,7 @@ CREATE TABLE "App".order_items (id bigint PRIMARY KEY, order_id bigint NOT NULL 
 	if len(s.Problems) > 0 {
 		t.Fatalf("schema problems: %+v", s.Problems)
 	}
-	_, problems := obligation.Declarations(s)
+	_, problems := obligation.Declarations(s.Contract())
 	if len(problems) == 0 {
 		t.Errorf("aggregate with quoted-schema child %q raised no Problem", `"App".order_items`)
 	} else {
@@ -93,7 +93,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, "Tenant Id" bigint NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, problems := obligation.Declarations(s)
+	_, problems := obligation.Declarations(s.Contract())
 	if len(problems) == 0 {
 		t.Errorf("expected a Problem for a quoted column name inside pinned(), got none (would mean it's silently accepted or silently broken)")
 	} else {
@@ -140,7 +140,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, tenant_id bigint NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) == 0 {
 		t.Errorf("`pinned(TENANT_ID)` against column `tenant_id` produced no Problem; decls=%+v", decls)
 	} else {
@@ -163,7 +163,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, status text NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, problems := obligation.Declarations(s)
+	all, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -224,7 +224,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY, note text NOT NULL);
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, problems := obligation.Declarations(s)
+	all, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}

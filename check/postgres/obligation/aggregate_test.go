@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 const aggregateSchema = `
@@ -26,7 +26,7 @@ func TestAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -84,7 +84,7 @@ aggregate orders statement`},
 			continue
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			line := d.Obligation.Source + " " + pathName(d.Path)
 			if d.Message != "" {
 				line += " " + d.Message
@@ -101,12 +101,12 @@ aggregate orders statement`},
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, problems = obligation.Declarations(bad)
+	_, problems = obligation.Declarations(bad.Contract())
 	if len(problems) != 1 || !strings.Contains(problems[0].Message, "sits above dummy, not currencies") {
 		t.Errorf("misplaced aggregate: %+v", problems)
 	}
 	bad, _ = analyze.Load(strings.Replace(aggregateSchema, "aggregate orders (order_items, order_notes, order_item_tags)", "aggregate orders (order_items, currencies)", 1))
-	_, problems = obligation.Declarations(bad)
+	_, problems = obligation.Declarations(bad.Contract())
 	if len(problems) != 1 || !strings.Contains(problems[0].Message, "currencies has no foreign key to orders or to another member") {
 		t.Errorf("child without fk: %+v", problems)
 	}

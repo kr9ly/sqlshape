@@ -1,6 +1,6 @@
 // Package facts is the data contract between a dialect's analyzer and the obligation
 // checker: what one analyzed statement (one expansion) provably does, written down
-// without any parser node, so that internal/obligation can judge declarations against it
+// without any parser node, so that x/obligation can judge declarations against it
 // without knowing which database the statement was written for.
 //
 // Everything here is "provable" in the sense of the One proof (analyze/card.go): an

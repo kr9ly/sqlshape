@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 const contextSchema = `
@@ -23,7 +23,7 @@ func TestContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, problems := obligation.Declarations(s)
+	all, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -47,7 +47,7 @@ func TestContext(t *testing.T) {
 			t.Fatalf("%s: %v", sql, err)
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, obligation.InContext(all, ctx), r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), obligation.InContext(all, ctx), r.Facts, lowerer{s}) {
 			line := d.Leaf.Table + " " + d.Obligation.Body.Spec() + " " + pathName(d.Path)
 			lines = append(lines, line)
 		}
@@ -86,7 +86,7 @@ func TestContext(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, p := obligation.Declarations(s2); len(p) != 1 {
+		if _, p := obligation.Declarations(s2.Contract()); len(p) != 1 {
 			t.Errorf("%s: problems %+v", bad, p)
 		}
 	}

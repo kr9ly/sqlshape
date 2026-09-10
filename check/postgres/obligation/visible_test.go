@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 // TestVisibleWhere: `-- sqlshape: visible where deleted_at IS NULL` on memos, the first
@@ -24,7 +24,7 @@ func TestVisibleWhere(t *testing.T) {
 	for _, p := range s.Problems {
 		t.Fatalf("schema: %s", p)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("declarations: %+v", problems)
 	}
@@ -59,7 +59,7 @@ func TestVisibleWhere(t *testing.T) {
 			t.Fatalf("%s: %v", c.sql, err)
 		}
 		var got []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			if d.Failed() {
 				got = append(got, d.Message)
 			}
@@ -81,14 +81,14 @@ func TestVisibleWhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ds := obligation.Check(bad, decls, r.Facts, lowerer{bad}); len(ds) != 1 || !ds[0].Failed() {
+	if ds := obligation.Check(bad.Contract(), decls, r.Facts, lowerer{bad}); len(ds) != 1 || !ds[0].Failed() {
 		t.Errorf("AnalyzeView: %+v", ds)
 	}
 	r, err = analyze.Analyze(bad, "SELECT id FROM all_memos")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ds := obligation.Check(bad, decls, r.Facts, lowerer{bad}); len(ds) != 0 {
+	if ds := obligation.Check(bad.Contract(), decls, r.Facts, lowerer{bad}); len(ds) != 0 {
 		t.Errorf("reader of bad view: %+v", ds)
 	}
 }

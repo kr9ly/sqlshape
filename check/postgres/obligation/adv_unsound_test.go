@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 // A statement that touches a table with an obligation is always diagnosed when it does
@@ -34,7 +34,7 @@ func TestAdvWriteThroughUpdatableViewIsJudgedByNever(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -46,7 +46,7 @@ func TestAdvWriteThroughUpdatableViewIsJudgedByNever(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", sql, err)
 		}
-		ds := obligation.Check(s, decls, r.Facts, lowerer{s})
+		ds := obligation.Check(s.Contract(), decls, r.Facts, lowerer{s})
 		var failed bool
 		for _, d := range ds {
 			if d.Failed() {
@@ -66,7 +66,7 @@ func TestAdvWriteThroughUpdatableViewIsJudgedByPinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -75,7 +75,7 @@ func TestAdvWriteThroughUpdatableViewIsJudgedByPinned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%s: %v", sql, err)
 	}
-	ds := obligation.Check(s, decls, r.Facts, lowerer{s})
+	ds := obligation.Check(s.Contract(), decls, r.Facts, lowerer{s})
 	var failed bool
 	for _, d := range ds {
 		if d.Failed() {
@@ -97,7 +97,7 @@ func TestAdvTruncateIsDiagnosedByNever(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -110,7 +110,7 @@ func TestAdvTruncateIsDiagnosedByNever(t *testing.T) {
 	if r.Facts == nil {
 		t.Fatalf("%s: analyze.Analyze reported no error but also no facts (r.Facts == nil): TRUNCATE is silently unjudged, not diagnosed", sql)
 	}
-	ds := obligation.Check(s, decls, r.Facts, lowerer{s})
+	ds := obligation.Check(s.Contract(), decls, r.Facts, lowerer{s})
 	var failed bool
 	for _, d := range ds {
 		if d.Failed() {
@@ -132,7 +132,7 @@ func TestAdvPinnedRejectsBareAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -145,7 +145,7 @@ func TestAdvPinnedRejectsBareAssignment(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", sql, err)
 		}
-		ds := obligation.Check(s, decls, r.Facts, lowerer{s})
+		ds := obligation.Check(s.Contract(), decls, r.Facts, lowerer{s})
 		var failed bool
 		var lines []string
 		for _, d := range ds {

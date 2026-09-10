@@ -26,7 +26,7 @@ type FunctionResult struct {
 	// per call in functionViolations).
 	Violations []Violation
 	// Statements are the body's statements as facts, for the obligations the schema
-	// declares (internal/obligation); Line is the PL/pgSQL line, 0 for a SQL body.
+	// declares (x/obligation); Line is the PL/pgSQL line, 0 for a SQL body.
 	Statements []FunctionStatement
 }
 

@@ -26,7 +26,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
@@ -107,14 +107,14 @@ type loadedSchema struct {
 // lowerer is internal/obligation's view of the PostgreSQL analyzer.
 type lowerer struct{ s *schema.Schema }
 
-func (l lowerer) Lower(expr string, rel *schema.Relation) ([]facts.Pred, error) {
-	return analyze.Lower(l.s, expr, rel)
+func (l lowerer) Lower(expr string, rel obligation.Relation) ([]facts.Pred, error) {
+	return analyze.Lower(l.s, expr, l.s.ByFullName(rel.FullName()))
 }
 
 // judge runs the schema's own obligations over one statement of the schema (a view or
 // function body) and files the failures as problems, the caveats for -strict.
 func (ls *loadedSchema) judge(what string, f *facts.Facts) {
-	for _, d := range obligation.Check(ls.s, ls.decls, f, lowerer{ls.s}) {
+	for _, d := range obligation.Check(ls.s.Contract(), ls.decls, f, lowerer{ls.s}) {
 		switch {
 		case d.Failed():
 			ls.problems = append(ls.problems, what+": "+d.Message)
@@ -160,7 +160,7 @@ func loadSchema(path string) (*loadedSchema, error) {
 		ls.problems = append(ls.problems, p.String())
 	}
 	var oblProblems []obligation.Problem
-	ls.decls, oblProblems = obligation.Declarations(s)
+	ls.decls, oblProblems = obligation.Declarations(s.Contract())
 	for _, p := range oblProblems {
 		ls.problems = append(ls.problems, fmt.Sprintf("%s: directive %q: %s", p.Subject, p.Source, p.Message))
 	}
@@ -337,7 +337,7 @@ func run(pass *analysis.Pass) (any, error) {
 	} else if ctxName != "" && !slices.Contains(obligation.Contexts(ls.decls), ctxName) {
 		pass.Reportf(calls[0].Pos(), "sqlshape: context %q is not declared in %s (declared: %s)", ctxName, path, strings.Join(obligation.Contexts(ls.decls), ", "))
 	}
-	c.decls = obligation.InContext(append(ls.decls, obligation.FromFlags(s, requireCols, noTables, noTableReads)...), ctxName)
+	c.decls = obligation.InContext(append(ls.decls, obligation.FromFlags(s.Contract(), requireCols, noTables, noTableReads)...), ctxName)
 	for _, call := range calls[:len(calls)-len(matviews)] {
 		c.checkCall(call)
 	}
@@ -1161,7 +1161,7 @@ func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit li
 		}
 	}
 	seen := map[string]bool{}
-	for _, d := range obligation.Check(c.s, c.decls, r.Facts, lowerer{c.s}) {
+	for _, d := range obligation.Check(c.s.Contract(), c.decls, r.Facts, lowerer{c.s}) {
 		if d.Message == "" || (!d.Failed() && !c.strict) || seen[d.Message] {
 			continue
 		}

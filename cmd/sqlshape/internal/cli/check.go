@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
@@ -47,7 +47,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err := problems(text); err != nil {
 		return fmt.Errorf("%s: %w", schemaPath, err)
 	}
-	decls, oblProblems := obligation.Declarations(s)
+	decls, oblProblems := obligation.Declarations(s.Contract())
 	if len(oblProblems) > 0 {
 		var lines []string
 		for _, p := range oblProblems {
@@ -59,7 +59,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("%s: context %q is not declared (declared: %s)", schemaPath, *ctxName, strings.Join(obligation.Contexts(decls), ", "))
 	}
 	// the flags are shorthand for declarations: a context's waive lifts them the same way
-	decls = obligation.InContext(append(decls, obligation.FromFlags(s, *requireCols, *noTables, *noTableReads)...), *ctxName)
+	decls = obligation.InContext(append(decls, obligation.FromFlags(s.Contract(), *requireCols, *noTables, *noTableReads)...), *ctxName)
 
 	inputs := fs.Args()
 	if len(inputs) == 0 {
@@ -97,7 +97,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 func checkSchemaBodies(s *schema.Schema, decls []obligation.Obligation, name string, quiet bool, w io.Writer) int {
 	failures := 0
 	judge := func(what string, f *facts.Facts) {
-		for _, d := range obligation.Check(s, decls, f, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, f, lowerer{s}) {
 			if d.Failed() {
 				failures++
 				fmt.Fprintf(w, "%s: %s: FAIL %s: %s: %s\n", name, what, d.Leaf.Table, d.Obligation.Source, d.Message)
@@ -197,7 +197,7 @@ func checkText(s *schema.Schema, decls []obligation.Obligation, name, text strin
 			fmt.Fprintf(w, "%s:%d: FAIL %v\n", name, line, err)
 			continue
 		}
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			at := lineAt(d.Position)
 			what := d.Leaf.Table + ": " + d.Obligation.Source
 			switch {
@@ -234,6 +234,6 @@ func pathName(p obligation.Path) string {
 // lowerer is internal/obligation's view of the PostgreSQL analyzer.
 type lowerer struct{ s *schema.Schema }
 
-func (l lowerer) Lower(expr string, rel *schema.Relation) ([]facts.Pred, error) {
-	return analyze.Lower(l.s, expr, rel)
+func (l lowerer) Lower(expr string, rel obligation.Relation) ([]facts.Pred, error) {
+	return analyze.Lower(l.s, expr, l.s.ByFullName(rel.FullName()))
 }

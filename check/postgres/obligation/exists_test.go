@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 const existsSchema = `
@@ -28,7 +28,7 @@ func TestExistsObligations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -48,7 +48,7 @@ func TestExistsObligations(t *testing.T) {
 			t.Fatalf("%s: %v", sql, err)
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			lines = append(lines, d.Leaf.Table+" "+shortSpec(d.Obligation)+" "+pathName(d.Path))
 		}
 		return strings.Join(lines, "\n")

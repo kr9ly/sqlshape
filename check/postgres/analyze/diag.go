@@ -107,7 +107,7 @@ type Result struct {
 	Fixed []Source
 	// Uses are the relation columns the statement depends on (see Use).
 	Uses []Use
-	// Facts is what the statement provably does, in the form internal/obligation judges
+	// Facts is what the statement provably does, in the form x/obligation judges
 	// (facts.go); nil for statements that are not SELECT / INSERT / UPDATE / DELETE / MERGE.
 	Facts *facts.Facts
 }

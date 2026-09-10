@@ -112,9 +112,9 @@ type analyzer struct {
 	// waived are the obligations the statement opts out of, by table (`-- sqlshape:
 	// unfiltered t1, t2` and `-- sqlshape: waive t1 pinned(x), t2` in the SQL text; see
 	// schema.Relation.Waived for the spec strings). Carried on the facts, judged by
-	// internal/obligation
+	// x/obligation
 	waived map[string][]string
-	// facts.go: the levels recorded for internal/obligation, the last DML target, and the
+	// facts.go: the levels recorded for x/obligation, the last DML target, and the
 	// view bodies already converted
 	factScopes     []factScope
 	writeRecs      []writeRec

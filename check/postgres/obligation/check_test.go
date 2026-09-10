@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
@@ -44,8 +44,8 @@ CREATE VIEW secret_titles AS SELECT id FROM secrets;
 
 type lowerer struct{ s *schema.Schema }
 
-func (l lowerer) Lower(expr string, rel *schema.Relation) ([]facts.Pred, error) {
-	return analyze.Lower(l.s, expr, rel)
+func (l lowerer) Lower(expr string, rel obligation.Relation) ([]facts.Pred, error) {
+	return analyze.Lower(l.s, expr, l.s.ByFullName(rel.FullName()))
 }
 
 func TestCheck(t *testing.T) {
@@ -53,7 +53,7 @@ func TestCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decls, problems := obligation.Declarations(s)
+	decls, problems := obligation.Declarations(s.Contract())
 	if len(problems) > 0 {
 		t.Fatalf("problems: %+v", problems)
 	}
@@ -138,7 +138,7 @@ require status <> 'closed' AND amount > 0 on update FAIL tickets requires status
 			continue
 		}
 		var lines []string
-		for _, d := range obligation.Check(s, decls, r.Facts, lowerer{s}) {
+		for _, d := range obligation.Check(s.Contract(), decls, r.Facts, lowerer{s}) {
 			line := d.Obligation.Source + " " + pathName(d.Path)
 			if d.Message != "" {
 				line += " " + d.Message
