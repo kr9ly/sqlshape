@@ -1,11 +1,12 @@
-package analyze
+// Package placeholder rewrites sqlshape's numbered placeholders (`$n`, what the template
+// expander emits for every dialect) into MySQL's positional `?`, and maps positions back.
+package placeholder
 
 import "strings"
 
-// placeholderMap is the rewrite of sqlshape's `$n` placeholders into MySQL's `?`, kept so
-// that a byte offset in the MySQL text maps back to the text the caller gave, and a `?`
-// maps to its n.
-type placeholderMap struct {
+// Map is the rewrite of `$n` placeholders into `?`, kept so that a byte offset in the
+// MySQL text maps back to the text the caller gave, and a `?` maps to its n.
+type Map struct {
 	// marks are the `?` positions in the MySQL text, in order, with their n
 	marks []mark
 	n     int // the highest n
@@ -17,11 +18,11 @@ type mark struct {
 	w  int // width of the original `$n`
 }
 
-// placeholders rewrites `$n` to `?`. A `$` inside a quoted string, a quoted identifier or
-// an identifier (`a$1` is a legal MySQL name) is left alone.
-func placeholders(sql string) (string, placeholderMap) {
+// Rewrite turns `$n` into `?`. A `$` inside a quoted string, a quoted identifier or an
+// identifier (`a$1` is a legal MySQL name) is left alone.
+func Rewrite(sql string) (string, Map) {
 	var b strings.Builder
-	var pm placeholderMap
+	var pm Map
 	var quote byte
 	ident := false
 	for i := 0; i < len(sql); i++ {
@@ -70,10 +71,14 @@ func isIdentByte(c byte) bool {
 	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80
 }
 
-func (pm placeholderMap) count() int { return pm.n }
+// Count is the highest n: how many parameters the statement takes.
+func (pm Map) Count() int { return pm.n }
 
-// back maps an offset in the MySQL text to the caller's text.
-func (pm placeholderMap) back(off int) int {
+// Marks is how many `?` the rewrite produced: the same n written twice is two marks.
+func (pm Map) Marks() int { return len(pm.marks) }
+
+// Back maps an offset in the MySQL text to the caller's text.
+func (pm Map) Back(off int) int {
 	if off < 0 {
 		return -1
 	}
@@ -87,8 +92,8 @@ func (pm placeholderMap) back(off int) int {
 	return off + shift
 }
 
-// number is the n of the `?` at off, 0 when there is none.
-func (pm placeholderMap) number(off int) int {
+// Number is the n of the `?` at off, 0 when there is none.
+func (pm Map) Number(off int) int {
 	for _, m := range pm.marks {
 		if m.at == off {
 			return m.n

@@ -14,6 +14,7 @@ import (
 
 	"github.com/kr9ly/sqlshape/mysql/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/mysql/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/mysql/internal/placeholder"
 	"github.com/kr9ly/sqlshape/mysql/internal/schema"
 )
 
@@ -50,11 +51,11 @@ func (e *Error) Error() string { return fmt.Sprintf("%s (MySQL error %d)", e.Mes
 
 // Analyze types sql, whose placeholders are `$n`, against s.
 func Analyze(s *schema.Schema, sql string) (*Result, error) {
-	text, ph := placeholders(sql)
+	text, ph := placeholder.Rewrite(sql)
 	cst, err := mysqlparse.Parse(text, 0)
 	if err != nil {
 		if pe, ok := err.(*mysqlparse.Error); ok {
-			return nil, &Error{Message: pe.Message, Code: 1064, Position: ph.back(pe.Offset)}
+			return nil, &Error{Message: pe.Message, Code: 1064, Position: ph.Back(pe.Offset)}
 		}
 		return nil, err
 	}
@@ -62,7 +63,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.count())}
+	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count())}
 	if err := a.statement(root); err != nil {
 		return nil, err
 	}
@@ -72,7 +73,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 type analyzer struct {
 	s       *schema.Schema
 	text    string // the statement with `?` placeholders, what mysqlparse saw
-	ph      placeholderMap
+	ph      placeholder.Map
 	params  []Param
 	columns []Column
 }
@@ -252,7 +253,7 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 		rel.nullable = nullable
 		for _, r := range sc.rels {
 			if strings.EqualFold(r.alias, rel.alias) {
-				return &Error{Message: fmt.Sprintf("Not unique table/alias: '%s'", rel.alias), Code: 1066, Position: a.ph.back(n.Start)}
+				return &Error{Message: fmt.Sprintf("Not unique table/alias: '%s'", rel.alias), Code: 1066, Position: a.ph.Back(n.Start)}
 			}
 		}
 		sc.rels = append(sc.rels, *rel)
@@ -312,7 +313,7 @@ func (a *analyzer) target(ident, alias mysqlast.Value) (*relation, error) {
 		if a.s.View(name) != nil {
 			return nil, fmt.Errorf("analyze: views are not supported yet (%s)", name)
 		}
-		return nil, &Error{Message: fmt.Sprintf("Table '%s' doesn't exist", name), Code: 1146, Position: a.ph.back(n.Start)}
+		return nil, &Error{Message: fmt.Sprintf("Table '%s' doesn't exist", name), Code: 1146, Position: a.ph.Back(n.Start)}
 	}
 	rel := &relation{alias: t.Name, table: t}
 	if s := str(alias); s != "" {
@@ -384,12 +385,12 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 				}
 			}
 			if !known {
-				return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.back(at)}
+				return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
 			}
 		}
-		return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.back(at)}
+		return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
 	}
-	return colRef{}, &Error{Message: fmt.Sprintf("Column '%s' in %s is ambiguous", field, where), Code: 1052, Position: a.ph.back(at)}
+	return colRef{}, &Error{Message: fmt.Sprintf("Column '%s' in %s is ambiguous", field, where), Code: 1052, Position: a.ph.Back(at)}
 }
 
 // items types the select list.
@@ -418,9 +419,9 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) error {
 			}
 			if !matched {
 				if table != "" {
-					return &Error{Message: fmt.Sprintf("Unknown table '%s'", table), Code: 1109, Position: a.ph.back(n.Start)}
+					return &Error{Message: fmt.Sprintf("Unknown table '%s'", table), Code: 1051, Position: a.ph.Back(n.Start)}
 				}
-				return &Error{Message: "No tables used", Code: 1096, Position: a.ph.back(n.Start)}
+				return &Error{Message: "No tables used", Code: 1096, Position: a.ph.Back(n.Start)}
 			}
 		case "PTI_expr_with_alias":
 			expr := n.Arg("expr")
@@ -449,6 +450,10 @@ func (a *analyzer) itemName(v mysqlast.Value) string {
 			return str(n.Arg("ident"))
 		case "PTI_simple_ident_q_2d", "PTI_simple_ident_q_3d":
 			return str(n.Arg("field"))
+		case "PTI_text_literal_text_string", "PTI_text_literal_nchar_string", "PTI_text_literal_underscore_charset":
+			if tok, ok := n.Arg("literal").(mysqlast.Token); ok {
+				return tok.Value // a string literal is named by its value, without the quotes
+			}
 		}
 		if n.Start >= 0 && n.End <= len(a.text) && n.Start < n.End {
 			return a.text[n.Start:n.End]

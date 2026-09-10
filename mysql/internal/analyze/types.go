@@ -241,7 +241,8 @@ func numOp(a, b typed, mod bool) typed {
 
 // num1 is Item_func_num1::set_numeric_type: the numeric type of a one-argument numeric
 // function follows its argument's result kind. intVal is Item_func_int_val (FLOOR,
-// CEILING), which turns a decimal into a decimal of scale 0.
+// CEILING), which turns a decimal into a bigint when its integer digits fit one, else a
+// decimal of scale 0.
 func num1(a typed, intVal bool) typed {
 	if !a.known {
 		return unknown
@@ -255,8 +256,16 @@ func num1(a typed, intVal bool) typed {
 		out = known("decimal", a.nullable)
 		out.typ.Unsigned = a.typ.Unsigned
 		if intVal {
-			out.typ.Dec = 0
-			out.typ.Length = a.typ.Length
+			precision := a.typ.Length - max(a.typ.Dec, 0)
+			if a.typ.Dec != 0 {
+				precision++
+			}
+			if a.typ.Length < 0 || precision+1 < 20 { // max_length (with the sign) < DECIMAL_LONGLONG_DIGITS - 2
+				out = known("bigint", a.nullable)
+			} else {
+				out.typ.Dec = 0
+				out.typ.Length = precision
+			}
 		}
 	default: // STRING_RESULT, REAL_RESULT
 		out = known("double", a.nullable)

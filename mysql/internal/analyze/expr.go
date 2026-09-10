@@ -20,7 +20,7 @@ func (a *analyzer) setParam(v mysqlast.Value, t schema.Type) {
 	if !ok || n.Class != "Item_param" {
 		return
 	}
-	i := a.ph.number(n.Start) - 1
+	i := a.ph.Number(n.Start) - 1
 	if i < 0 || i >= len(a.params) {
 		return
 	}
@@ -173,11 +173,10 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 	case "PTI_exists_subselect":
 		return boolean(false), nil // the subquery is not entered: its scope is its own
 	case "Item_in_subselect":
-		t, err := a.expr(sc, n.Arg("left_expr"), where)
-		if err != nil {
+		if _, err := a.expr(sc, n.Arg("left_expr"), where); err != nil {
 			return unknown, err
 		}
-		return boolean(t.nullable), nil
+		return boolean(true), nil // NULL when the subquery's column can be, which is not known without entering it
 	case "PTI_singlerow_subselect":
 		return unknown, nil
 
@@ -309,8 +308,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, err
 		}
 		if t.known && kindOf(t.typ) != "STRING_RESULT" {
-			t = known("varchar", t.nullable)
+			t = known("varchar", true)
 		}
+		t.nullable = true // an Item_str_func: nullable in strict mode (Item_str_func::fix_fields)
 		return t, nil
 
 	// the registry: a function named in the statement
@@ -360,10 +360,10 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 	}
 	f := catalog.Lookup(name)
 	if f == nil {
-		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.back(n.Start)}
+		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
 	}
 	if f.Min >= 0 && !f.Accepts(len(args)) {
-		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameter count in the call to native function '%s'", strings.ToUpper(name)), Code: 1582, Position: a.ph.back(n.Start)}
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameter count in the call to native function '%s'", strings.ToUpper(name)), Code: 1582, Position: a.ph.Back(n.Start)}
 	}
 	ts, err := a.exprs(sc, args, where)
 	if err != nil {
@@ -403,6 +403,14 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		nullable = nb
 	}
 	fam := catalog.FamilyOf(class)
+	switch {
+	case fam == "Item_str_func", fam == "Item_str_ascii_func", fam == "Item_static_string_func", fam == "Item_temporal_hybrid_func":
+		nullable = true // Item_str_func::fix_fields: nullable in strict mode, the default
+	case fam == "Item_json_func":
+		nullable = true // Item_json_func's constructor
+	case strings.HasPrefix(class, "Item_typecast_"):
+		nullable = true // a value the cast cannot convert becomes NULL
+	}
 	var t typed
 	switch {
 	// the hybrids: the arguments decide
@@ -547,7 +555,7 @@ func (a *analyzer) cast(sc scope, n *mysqlast.Node, where string) (typed, error)
 	case "UNSIGNED_INT":
 		t.typ.Name, t.typ.Unsigned = "bigint", true
 	case "CHAR":
-		t.typ.Name = "varchar"
+		t.typ.Name, t.nullable = "varchar", true // an Item_str_func: nullable in strict mode
 		if binary {
 			t.typ.Name = "varbinary"
 		}
@@ -555,7 +563,7 @@ func (a *analyzer) cast(sc scope, n *mysqlast.Node, where string) (typed, error)
 			t.typ.Length = arg.typ.Length
 		}
 	case "NCHAR":
-		t.typ.Name, t.typ.Charset = "varchar", "utf8mb3"
+		t.typ.Name, t.typ.Charset, t.nullable = "varchar", "utf8mb3", true
 	case "DECIMAL":
 		t.typ.Name = "decimal"
 		if length < 0 {
@@ -576,7 +584,7 @@ func (a *analyzer) cast(sc scope, n *mysqlast.Node, where string) (typed, error)
 	case "YEAR":
 		t.typ.Name, t.nullable = "year", true
 	case "JSON":
-		t.typ.Name = "json"
+		t.typ.Name, t.nullable = "json", true // Item_json_func: nullable by construction
 	case "POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION":
 		t.typ.Name = strings.ToLower(strings.TrimPrefix(target, "ITEM_CAST_"))
 	default:

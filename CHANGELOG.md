@@ -20,8 +20,9 @@ release it is a candidate for.
   `IF` / `COALESCE` / `GREATEST` through `field_type_merge`, casts, aggregates, and every function of
   the native registry through its Item class family and `resolve_type` facts, so a `SUM` is a
   nullable decimal, a comparison a `bigint(1)` a Go `bool` can carry, `LENGTH(?)` types its
-  placeholder as a string. What has no rule yet (subqueries, user variables, the temporal hybrids
-  such as `ADDTIME`) is accepted with a note; views, derived tables, set operations, `One`,
+  placeholder as a string. The rules are checked against a real mysqld (a local test, not a CI
+  dependency). What has no rule yet (subqueries, user variables, the temporal hybrids such as
+  `ADDTIME`) is accepted with a note; views, derived tables, set operations, `One`,
   `MatView`, `Copy` and the obligations are not supported yet. Parameters stay `{{.X}}` in the
   template; the analyzer speaks `?` to MySQL.
 
