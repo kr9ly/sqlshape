@@ -772,7 +772,15 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			if n.Position >= 0 {
 				tp = e.TemplatePos(n.Position)
 			}
-			report(lit.pos(tp), "%s%s", n.Message, where)
+			msg := n.Message
+			if n.Param > 0 {
+				for _, p := range e.Params {
+					if p.N == n.Param {
+						msg = strings.ReplaceAll(msg, fmt.Sprintf("$%d", n.Param), p.Path.String())
+					}
+				}
+			}
+			report(lit.pos(tp), "%s%s", msg, where)
 		}
 		if single {
 			// the dialect's own verdict when it proves cardinality itself, else the proof on facts
@@ -785,9 +793,6 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			}
 		}
 		c.checkParams(e, r, pType, lit, reportP, where)
-		if c.s != nil {
-			checkBareOrderBy(c.s.Version, e, lit, report, where)
-		}
 		d.addParams(e, r)
 		d.addResult(r)
 		for name, t := range c.checkResult(call.Pos(), r, rType, lit, reportR, where) {

@@ -1,6 +1,9 @@
 package analyze
 
 import (
+	"fmt"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
@@ -26,6 +29,9 @@ type Note struct {
 	Code     string
 	Message  string
 	Position int32 // 1-based, 0 if none
+	// Param is the parameter the note is about (1-based), 0 for none: the checker names it
+	// by its Go path where the message writes "$n".
+	Param int32
 }
 
 const (
@@ -37,6 +43,9 @@ const (
 	// in an EXCEPTION handler). Reported instead of silently defaulting to P0001, which
 	// would misreport what the RAISE actually throws.
 	noteSQLStateDynamic = "sqlstate-dynamic"
+	// noteBareOrder: a bare parameter as an ORDER BY / GROUP BY / PARTITION BY item sorts
+	// by a constant, never by the column its value names
+	noteBareOrder = "bare-order"
 	// advisory notes (the checker reports them with -strict)
 	noteUnorderedLimit = "unordered-limit"
 	noteEnumOrder      = "enum-order"
@@ -218,4 +227,34 @@ func (a *analyzer) domainAssign(e *expr, colType catalog.OID, relName, colName s
 		return
 	}
 	a.note(noteDomainMismatch, at, "domain mismatch: "+relName+"."+colName+" is "+d.Name+" but the value is "+a.s.Types.Format(e.typ)+" (cast to "+d.Name+" to assert the unit)")
+}
+
+// bareOrderNotes flags a bare parameter as an ORDER BY / GROUP BY / PARTITION BY item, in
+// any position of the list, decorated or not, inside a window definition too: it orders
+// by a constant, and the column name in the value is never looked at. The message writes
+// the parameter as $n; the checker spells it as the Go path.
+func (a *analyzer) bareOrderNotes(stmt *pgparse.Node) {
+	flag := func(kw string, target *pgparse.Node) {
+		ref := target.GetParamRef()
+		if ref == nil {
+			return
+		}
+		n := fmt.Sprintf("$%d", ref.Number)
+		a.notes = append(a.notes, Note{Code: noteBareOrder, Param: ref.Number, Position: ref.Location + 1,
+			Message: fmt.Sprintf("%s BY {{%s}} sorts by a constant, not by the column the value names: branch on it instead ({{if eq %s \"total\"}} total {{else}} id {{end}})", kw, n, n)})
+	}
+	schema.WalkNodes(stmt, func(n *pgparse.Node) {
+		switch v := n.Node.(type) {
+		case *pgparse.Node_SortBy:
+			flag("ORDER", v.SortBy.Node)
+		case *pgparse.Node_SelectStmt:
+			for _, g := range v.SelectStmt.GroupClause {
+				flag("GROUP", g)
+			}
+		case *pgparse.Node_WindowDef:
+			for _, p := range v.WindowDef.PartitionClause {
+				flag("PARTITION", p)
+			}
+		}
+	})
 }

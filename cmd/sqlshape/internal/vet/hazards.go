@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
@@ -137,48 +135,4 @@ var dollarTag = regexp.MustCompile(`^\$[A-Za-z_][A-Za-z_0-9]*\$|^\$\$`)
 
 func isIdentByte(c byte) bool {
 	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
-}
-
-// checkBareOrderBy reports a parameter standing alone as an ORDER BY / GROUP BY / window
-// PARTITION BY item: PostgreSQL sorts/groups by the constant value it received, never
-// looking at what column name (if any) the value names, so branching on the value's
-// content is the only way to select a column dynamically. This walks the parsed AST of
-// the expansion's rendered SQL (the same parse analyze.Analyze itself would produce) so a
-// bare parameter is caught in any position of the list, decorated with ASC/DESC/NULLS
-// FIRST/LAST or not, inside a window definition's PARTITION BY or ORDER BY too — not only
-// when it is the leading item of a plain ORDER BY / GROUP BY.
-func checkBareOrderBy(v pgparse.Version, e *expand.Expansion, lit literal, report func(token.Pos, string, ...any), where string) {
-	tree, err := v.Parse(e.SQL)
-	if err != nil {
-		return // analyze.Analyze reports the parse failure itself
-	}
-	byN := make(map[int32]*expand.Param, len(e.Params))
-	for i := range e.Params {
-		byN[int32(e.Params[i].N)] = &e.Params[i]
-	}
-	flag := func(kw string, target *pgparse.Node) {
-		ref := target.GetParamRef()
-		if ref == nil {
-			return
-		}
-		p, ok := byN[ref.Number]
-		if !ok {
-			return
-		}
-		report(lit.pos(e.TemplatePos(int(ref.Location))), "%s BY {{%s}} sorts by a constant, not by the column the value names: branch on it instead ({{if eq %s \"total\"}} total {{else}} id {{end}})%s", kw, p.Path, p.Path, where)
-	}
-	schema.WalkNodes(tree, func(n *pgparse.Node) {
-		switch v := n.Node.(type) {
-		case *pgparse.Node_SortBy:
-			flag("ORDER", v.SortBy.Node)
-		case *pgparse.Node_SelectStmt:
-			for _, g := range v.SelectStmt.GroupClause {
-				flag("GROUP", g)
-			}
-		case *pgparse.Node_WindowDef:
-			for _, p := range v.WindowDef.PartitionClause {
-				flag("PARTITION", p)
-			}
-		}
-	})
 }

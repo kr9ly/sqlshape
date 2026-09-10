@@ -144,6 +144,9 @@ type Note struct {
 	Message  string
 	Position int // 0-based byte offset into the SQL; -1 when unknown
 	Advisory bool
+	// Param is the parameter the note is about (1-based), 0 for none; the message writes
+	// it as "$n" and the checker substitutes the parameter's Go path.
+	Param int
 }
 
 // Violation is a constraint the statement may violate: what the runtime reports and the
