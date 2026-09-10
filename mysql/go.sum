@@ -12,8 +12,8 @@ github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7Ulw
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761/go.mod h1:5TJZWKEWniPve33vlWYSoGYefn3gLQRzjfDlhSJ9ZKM=
 github.com/jackc/pgx/v5 v5.10.0 h1:VhSvgU2jSli8o3AqIEOTJr7rZwAEUVo4E4XhR94Zfr0=
 github.com/jackc/pgx/v5 v5.10.0/go.mod h1:mal1tBGAFfLHvZzaYh77YS/eC6IX9OWbRV1QIIM0Jn4=
-github.com/kr9ly/sqlshape v1.3.0-rc.1 h1:lyYp9yZcM0Vu3lGRbFDaw0vSdrXR8DCetOAnoRLpcYk=
-github.com/kr9ly/sqlshape v1.3.0-rc.1/go.mod h1:Dk6yM8w1GHSZEcPXE0x7fufmqNAl6zq2+QmQSdVE4Pc=
+github.com/kr9ly/sqlshape v1.3.0-rc.2 h1:n+ZsV+imnRx88qM0gVkgHs6nFvB+ToCxrJY2tVlzf48=
+github.com/kr9ly/sqlshape v1.3.0-rc.2/go.mod h1:Dk6yM8w1GHSZEcPXE0x7fufmqNAl6zq2+QmQSdVE4Pc=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=

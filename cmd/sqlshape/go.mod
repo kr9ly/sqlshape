@@ -8,8 +8,8 @@ go 1.26.1
 // requires below to X.Y.Z and tags vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z on one
 // commit.
 require (
-	github.com/kr9ly/sqlshape v1.3.0-rc.1
-	github.com/kr9ly/sqlshape/mysql v1.3.0-rc.1
+	github.com/kr9ly/sqlshape v1.3.0-rc.2
+	github.com/kr9ly/sqlshape/mysql v1.3.0-rc.2
 )
 
 require golang.org/x/tools v0.49.0
