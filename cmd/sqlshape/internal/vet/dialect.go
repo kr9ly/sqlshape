@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
@@ -15,8 +16,8 @@ import (
 // The dialect path: a schema that declares a dialect other than PostgreSQL is judged
 // through internal/dialect. It checks what every dialect's Result can say — the statement
 // analyzes, its result columns fit R by name, type and nullability, its parameters fit P —
-// and nothing more yet: obligations, violations, cardinality (One), bindings and the
-// quick fixes stay on the PostgreSQL path until the Result carries them.
+// and, over its Facts, the One proof (x/cardinality). Obligations, violations, bindings and
+// the quick fixes stay on the PostgreSQL path until the Result carries what they need.
 
 // runDialect is run's tail for a non-PostgreSQL schema.
 func (c *checker) runDialect(calls, matviews []*ast.CallExpr) {
@@ -45,9 +46,6 @@ func (c *checker) checkCallDialect(call *ast.CallExpr) {
 	rType, pType, lit, res := cs.rType, cs.pType, cs.lit, cs.res
 	if c.strict {
 		c.reportUnusedParams(pType, res, call.Pos())
-	}
-	if cs.single {
-		pass.Reportf(call.Pos(), "sqlshape: One: %s cannot prove at most one row yet; use Query", c.ls.dialectName)
 	}
 	dd := &deduper{seen: map[string]int{}, expansions: len(res.Expansions)}
 	var held []heldDiag
@@ -93,6 +91,11 @@ func (c *checker) checkCallDialect(call *ast.CallExpr) {
 				report(lit.pos(0), "%v%s", err, where)
 			}
 			continue
+		}
+		if cs.single {
+			if ok, why := cardinality.AtMostOne(r.Facts); !ok {
+				report(lit.pos(0), "One: cannot prove at most one row: %s%s", why, where)
+			}
 		}
 		c.checkParamsDialect(e, r, pType, lit, report, where)
 		for name, t := range c.checkResultDialect(call.Pos(), r, rType, lit, report, where) {

@@ -84,3 +84,14 @@ var unknownFn = sqlshape.Query[int64, struct{}](`SELECT NOPE(id) FROM users`) //
 var union = sqlshape.Query[int64, struct{}](`SELECT 1 UNION SELECT 2`)
 
 var show = sqlshape.Query[int64, struct{}](`SHOW TABLES`) // want `is not supported yet`
+
+// One: proved from the schema's keys through the facts the MySQL analyzer records
+var userByID = sqlshape.One[User, struct{ ID uint64 }](`SELECT id, name, email, active, created_at FROM users WHERE id = {{.ID}}`)
+
+var userByName = sqlshape.One[User, struct{ Name string }](`SELECT id, name, email, active, created_at FROM users WHERE name = {{.Name}}`) // want `One: cannot prove at most one row: users: no unique key is fixed by equality \(keys: \(id\); fixed: name\)`
+
+var orderOfUser = sqlshape.One[int64, struct{ ID uint64 }](`SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id WHERE u.id = {{.ID}}`) // want `One: cannot prove at most one row: o: no unique key is fixed by equality`
+
+var countUsers = sqlshape.One[int64, struct{}](`SELECT count(*) FROM users`)
+
+var markActive = sqlshape.One[struct{}, struct{ ID uint64 }](`UPDATE users SET active = 1 WHERE id = {{.ID}}`)

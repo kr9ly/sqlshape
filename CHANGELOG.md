@@ -38,6 +38,15 @@ release it is a candidate for.
   (`Violates(err, "users_email_key")`). `github.com/kr9ly/sqlshape/mysqltest/v2` boots the
   `mysqld` on PATH with the application's schema for its tests (the analyzer's oracle runs on
   it too). `examples/5-mysql` shows the whole path.
+- `One` on MySQL, and the proof it rests on written once for every dialect: the analyzer
+  records a statement's facts (`x/facts`: leaves with their unique keys, the equalities of
+  WHERE and of the joins, what they fix) and `x/cardinality` proves from the facts alone that
+  at most one row is touched — a unique key fixed by equality, carried across joins, a
+  derived table proved inside, an aggregate without GROUP BY, `LIMIT 1`, a single `VALUES`
+  row. The MySQL analyzer also resolves `ORDER BY`, `GROUP BY` and `HAVING` the way the
+  server does: positions, select-list aliases, a table column shadowing an alias in
+  `GROUP BY`, `HAVING` reaching the select list; unknown names are reported in MySQL's
+  words (`in 'order clause'`, `in 'group statement'`, `in 'having clause'`).
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result

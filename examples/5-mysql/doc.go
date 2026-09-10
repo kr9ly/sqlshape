@@ -7,6 +7,6 @@
 // What differs from PostgreSQL is only what MySQL itself does differently: `?`
 // placeholders on the wire (the templates still write {{.X}}), DECIMAL received as its text,
 // an ENUM column as a string type the application can bind (Status), and the constraint
-// names MySQL reports (the UNIQUE key's name, the FOREIGN KEY's CONSTRAINT name). One is not
-// proven for MySQL yet, so single-row statements are Query here, run with First / Exec.
+// names MySQL reports (the UNIQUE key's name, the FOREIGN KEY's CONSTRAINT name). One is proved
+// from the schema's keys as on PostgreSQL (the customer's UNIQUE email, the order's primary key).
 package mysqlexample

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 )
 
 const testSchema = `-- sqlshape: mysql 8.4
@@ -115,6 +116,12 @@ var analyzeCases = []analyzeCase{
 	{"SELECT (SELECT 1), (SELECT id FROM users LIMIT 1), (SELECT 1 UNION SELECT id FROM users), (SELECT 1 WHERE (SELECT COUNT(*) FROM orders) > 0) FROM users", []string{"(SELECT 1) bigint(1)", "(SELECT id FROM users LIMIT 1) bigint unsigned null", "(SELECT 1 UNION SELECT id FROM users) decimal", "(SELECT 1 WHERE (SELECT COUNT(*) FROM orders) > 0) bigint(1) null"}, nil},
 	{"UPDATE v_users SET name = $1 WHERE id = $2", nil, []string{"varchar(100)", "bigint unsigned"}},
 	{"WITH t AS (SELECT id FROM users) SELECT id FROM users WHERE id IN (SELECT id FROM t)", []string{"id bigint unsigned"}, nil},
+	// ORDER BY / GROUP BY / HAVING: positions, select-list aliases, table columns
+	{"SELECT id AS n, COUNT(*) c FROM users GROUP BY n HAVING c > $1 AND n > 0 ORDER BY 2 DESC, n, users.id", []string{"n bigint unsigned", "c bigint"}, []string{"bigint"}},
+	{"SELECT id, name FROM users u GROUP BY id, name HAVING name = $1 ORDER BY u.name, id DESC LIMIT $2", []string{"id bigint unsigned", "name varchar(100)"}, []string{"varchar(100)", "bigint unsigned"}},
+	{"SELECT id AS name, COUNT(*) c FROM users GROUP BY name, id", []string{"name bigint unsigned", "c bigint"}, nil}, // GROUP BY name is the table column, not the alias
+	{"(SELECT id FROM users) UNION (SELECT user_id FROM orders) ORDER BY 1 LIMIT 3", []string{"id bigint unsigned"}, nil},
+	{"SELECT u.id, o.total FROM users u JOIN orders o ON o.user_id = u.id ORDER BY o.total DESC, u.created_at", []string{"id bigint unsigned", "total decimal(10,2)"}, nil},
 	// set operations: the first operand names the columns, the types merge
 	{"SELECT id, name FROM users UNION ALL SELECT id, note FROM orders", []string{"id bigint unsigned", "name text null"}, nil},
 	{"SELECT id FROM users UNION SELECT total FROM orders", []string{"id decimal"}, nil},
@@ -195,6 +202,69 @@ var errorCases = []errorCase{
 	{"WITH t AS (SELECT id FROM users) SELECT name FROM t", 1054, "Unknown column 'name' in 'field list'", 40},
 	{"SELECT x FROM (SELECT 1, 2) AS d(x)", 1353, "View's SELECT and view's field list have different column counts", 14},
 	{"UPDATE v_stats SET n = 1", 1288, "The target table v_stats of the UPDATE is not updatable", 19},
+	{"SELECT id FROM users ORDER BY nope", 1054, "Unknown column 'nope' in 'order clause'", 30},
+	{"SELECT id FROM users ORDER BY 2", 1054, "Unknown column '2' in 'order clause'", 30},
+	{"SELECT id FROM users GROUP BY nope", 1054, "Unknown column 'nope' in 'group statement'", 30},
+	{"SELECT id FROM users HAVING nope > 1", 1054, "Unknown column 'nope' in 'having clause'", 28},
+	{"SELECT id AS x, name AS x FROM users ORDER BY x", 1052, "Column 'x' in order clause is ambiguous", 46},
+	{"SELECT id FROM users UNION SELECT user_id FROM orders ORDER BY name", 1054, "Unknown column 'name' in 'order clause'", 63},
+	{"UPDATE users SET name = 'x' ORDER BY nope LIMIT 1", 1054, "Unknown column 'nope' in 'order clause'", 37},
+}
+
+// oneCases are the statements the One proof judges: proven means every expansion touches
+// at most one row, by the facts the analyzer records (x/cardinality does the proving).
+var oneCases = []struct {
+	sql    string
+	proven bool
+}{
+	{"SELECT id, name FROM users WHERE id = $1", true},
+	{"SELECT id, name FROM users WHERE name = $1", false},
+	{"SELECT id FROM users WHERE id = 1 AND name = 'x'", true},
+	{"SELECT id FROM users WHERE id = $1 OR name = $2", false},
+	{"SELECT id FROM users u WHERE u.id = $1 + 1", true},
+	{"SELECT COUNT(*) FROM users", true},
+	{"SELECT COUNT(*), MAX(id) FROM users WHERE name = 'x'", true},
+	{"SELECT COUNT(*) FROM users GROUP BY name", false},
+	{"SELECT id FROM users LIMIT 1", true},
+	{"SELECT id FROM users LIMIT 2", false},
+	{"SELECT 1", true},
+	{"SELECT u.id, o.total FROM users u JOIN orders o ON o.user_id = u.id WHERE o.id = $1", true},
+	{"SELECT u.id, o.total FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = $1", false},
+	{"SELECT u.id, o.total FROM users u JOIN orders o ON o.id = u.id WHERE u.id = $1", true},
+	{"SELECT u.id, o.total FROM users u LEFT JOIN orders o ON o.id = u.id WHERE u.id = $1", true},
+	{"SELECT u.id, o.total FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.id = $1", false},
+	{"SELECT u.id FROM users u JOIN orders o USING (id) WHERE o.id = $1", true},
+	{"SELECT id FROM users WHERE id IN ($1, $2)", false},
+	{"SELECT id FROM users WHERE id = (SELECT MAX(user_id) FROM orders)", false},
+	{"SELECT d.id FROM (SELECT id FROM users WHERE id = 1) d", true},
+	{"SELECT d.id FROM (SELECT id FROM users) d WHERE d.id = 1", false},
+	{"SELECT id FROM v_users WHERE id = $1", false},
+	{"SELECT id FROM users UNION SELECT user_id FROM orders WHERE id = 1", false},
+	{"INSERT INTO users (name) VALUES ($1)", true},
+	{"INSERT INTO users (name) VALUES ($1), ($2)", false},
+	{"INSERT INTO users (name) SELECT name FROM users", false},
+	{"UPDATE users SET name = $1 WHERE id = $2", true},
+	{"UPDATE users SET name = $1 WHERE name = $2", false},
+	{"UPDATE users SET name = $1 WHERE name = $2 LIMIT 1", true},
+	{"UPDATE users u JOIN orders o ON o.user_id = u.id SET o.note = $1 WHERE o.id = $2", true},
+	{"DELETE FROM users WHERE id = $1", true},
+	{"DELETE FROM users WHERE email = $1", false},
+	{"DELETE FROM users WHERE name = $1 LIMIT 1", true},
+}
+
+func TestOne(t *testing.T) {
+	s := load(t)
+	for _, c := range oneCases {
+		r, err := Analyze(s, c.sql)
+		if err != nil {
+			t.Errorf("%s: %v", c.sql, err)
+			continue
+		}
+		got, why := cardinality.AtMostOne(r.Facts)
+		if got != c.proven {
+			t.Errorf("%s: proven=%v (%s), want %v", c.sql, got, why, c.proven)
+		}
+	}
 }
 
 func TestErrors(t *testing.T) {

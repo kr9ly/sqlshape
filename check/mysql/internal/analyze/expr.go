@@ -427,7 +427,7 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 // family fixes the result kind, the facts refine the type, the nullability and the
 // placeholders' types; the hybrid families compute from the arguments.
 func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) typed {
-	fs := facts(class)
+	fs := classFacts(class)
 	// placeholders: param_type_is_default gives a type by position, param_type_uses_non_param the others' type
 	for _, f := range fs {
 		if from, to, ft, ok := paramDefault(f); ok {

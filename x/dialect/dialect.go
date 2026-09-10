@@ -16,6 +16,7 @@ package dialect
 
 import (
 	"fmt"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 	"regexp"
 	"sort"
 	"strings"
@@ -76,6 +77,10 @@ type Result struct {
 	// not type has a Type with no Go mapping.
 	Params  []Type
 	Columns []Column
+	// Facts is the statement's record for the contracts written on facts (x/facts): the
+	// One proof (x/cardinality) and the obligations are judged on it, whatever the
+	// dialect. Nil when the analyzer does not record the statement's shape.
+	Facts *facts.Facts
 }
 
 // Column is one result column.

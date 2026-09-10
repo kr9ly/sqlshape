@@ -97,6 +97,11 @@ type Leaf struct {
 	// own leaves live in that scope, and its predicates are inherited into the outer
 	// scope's Preds with Origin == FromView.
 	View *Scope
+	// UniqueKeys are the enforced unique keys of a table leaf (the primary key and the
+	// UNIQUE constraints whose columns are whole columns), each a column list, as the
+	// producer knows them from the schema: what the cardinality proof fixes rows by. Nil
+	// for a leaf that has none the producer can vouch for.
+	UniqueKeys [][]string
 }
 
 // RelKind is what the leaf is.

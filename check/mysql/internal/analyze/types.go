@@ -362,7 +362,7 @@ func isIntegerFieldType(ft string) bool {
 // facts gathers the resolve_type facts that apply to class: the class's own, after those
 // of the base whose resolve_type it calls first (InheritsResolve); a class without a
 // resolve_type of its own is judged by the nearest base that has one.
-func facts(class string) []string {
+func classFacts(class string) []string {
 	seen := map[string]bool{}
 	cur := class
 	for cur != "" && !seen[cur] {
@@ -374,7 +374,7 @@ func facts(class string) []string {
 		if len(it.Facts) > 0 || it.InheritsResolve != "" {
 			var out []string
 			if it.InheritsResolve != "" {
-				out = append(out, facts(it.InheritsResolve)...)
+				out = append(out, classFacts(it.InheritsResolve)...)
 			}
 			return append(out, it.Facts...)
 		}

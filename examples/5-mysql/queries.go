@@ -43,8 +43,7 @@ type NewCustomer struct{ Email, Name string }
 var CreateCustomer = sqlshape.Query[struct{}, NewCustomer](`
 	INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}})`)
 
-// One is not proven for MySQL yet (the checker says so): these are Query, run with First / Exec.
-var CustomerByEmail = sqlshape.Query[Customer, struct{ Email string }](`
+var CustomerByEmail = sqlshape.One[Customer, struct{ Email string }](`
 	SELECT id, email, name, created_at FROM customers WHERE email = {{.Email}}`)
 
 type NewOrder struct {
@@ -70,7 +69,7 @@ var ListOrders = sqlshape.Query[Order, ListOrdersParams](`
 	 ORDER BY o.id
 	 LIMIT {{.Limit}}`)
 
-var SetStatus = sqlshape.Query[struct{}, struct {
+var SetStatus = sqlshape.One[struct{}, struct {
 	ID     uint64
 	Status Status
 }](`UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}}`)

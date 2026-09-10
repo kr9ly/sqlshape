@@ -6,29 +6,133 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 // queryExpression types a PT_query_expression (WITH, a body, ORDER BY, LIMIT) and returns
 // its result columns. outer is the enclosing scope for a subquery, nil at the top.
 func (a *analyzer) queryExpression(v mysqlast.Value, outer *scope) ([]Column, error) {
+	cols, _, err := a.queryExpressionFacts(v, outer)
+	return cols, err
+}
+
+// queryExpressionFacts is queryExpression, also returning the block's facts when the body
+// is one SELECT (nil for a set operation): what a derived table or a view contributes to
+// the proof.
+func (a *analyzer) queryExpressionFacts(v mysqlast.Value, outer *scope) ([]Column, *facts.Scope, error) {
 	qe, ok := v.(*mysqlast.Node)
 	if !ok || qe.Class != "PT_query_expression" {
-		return nil, fmt.Errorf("analyze: query expression not understood: %s", mysqlast.Sprint(v))
+		return nil, nil, fmt.Errorf("analyze: query expression not understood: %s", mysqlast.Sprint(v))
 	}
 	ctes, err := a.with(qe.Arg("with_clause"), outer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sc := outer.derived()
 	sc.ctes = append(append([]relation{}, sc.ctes...), ctes...)
-	cols, err := a.body(qe.Arg("body"), sc)
+	cols, block, err := a.bodyScope(qe.Arg("body"), sc)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	// ORDER BY of the whole expression: against the result columns, and for a single
+	// SELECT also against its tables
+	if err := a.orderBy(qe.Arg("order"), cols, block, "order clause"); err != nil {
+		return nil, nil, err
 	}
 	if err := a.limit(qe.Arg("limit")); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return cols, nil
+	var body *facts.Scope
+	if block != nil {
+		body = block.facts
+	}
+	return cols, body, nil
+}
+
+// subqueryFacts is subquery, with the block's facts (see queryExpressionFacts).
+func (a *analyzer) subqueryFacts(v mysqlast.Value, outer *scope) ([]Column, *facts.Scope, error) {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "PT_subquery" {
+		return nil, nil, fmt.Errorf("analyze: subquery not understood: %s", mysqlast.Sprint(v))
+	}
+	a.depth++
+	defer func() { a.depth-- }()
+	return a.queryExpressionFacts(n.Arg("query_expression"), outer)
+}
+
+// orderBy resolves the items of an ORDER BY / GROUP BY list the way the server does
+// (find_order_in_list): an integer is a 1-based position in the select list; an
+// unqualified name is looked up in the select list first (an alias, or the column an
+// item is), then, for GROUP BY, a table column of the same name wins; what the select list
+// does not have resolves against the tables of the block (block nil: a set operation, whose
+// ORDER BY sees only the result columns). Any other expression is typed against the block.
+func (a *analyzer) orderBy(v mysqlast.Value, cols []Column, block *scope, where string) error {
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return nil
+	}
+	list, _ := n.Arg("order_list").(mysqlast.List)
+	if list == nil {
+		list, _ = n.Arg("group_list").(mysqlast.List)
+	}
+	for _, it := range list {
+		item := it
+		if oe, ok := it.(*mysqlast.Node); ok && oe.Class == "PT_order_expr" {
+			item = oe.Arg("item")
+		}
+		if err := a.orderItem(item, cols, block, where); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, where string) error {
+	n, ok := item.(*mysqlast.Node)
+	if !ok {
+		return nil
+	}
+	switch n.Class {
+	case "Item_int", "Item_uint":
+		pos := intOr(n.Arg("i"), 0)
+		if n.Class == "Item_uint" {
+			pos = intOr(n.Arg("str"), 0)
+		}
+		if pos < 1 || pos > len(cols) {
+			return &Error{Message: fmt.Sprintf("Unknown column '%d' in '%s'", pos, where), Code: 1054, Position: a.ph.Back(n.Start)}
+		}
+		return nil
+	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident":
+		name := str(n.Arg("ident"))
+		matches := 0
+		for _, c := range cols {
+			if strings.EqualFold(c.Name, name) {
+				matches++
+			}
+		}
+		if block != nil && where == "group statement" {
+			// a table column of the same name shadows a select-list alias (with a warning)
+			if _, err := a.lookup(*block, "", name, where, n.Start); err == nil {
+				return nil
+			}
+		}
+		if matches == 1 {
+			return nil
+		}
+		if matches > 1 {
+			return &Error{Message: fmt.Sprintf("Column '%s' in %s is ambiguous", name, where), Code: 1052, Position: a.ph.Back(n.Start)}
+		}
+		if block == nil {
+			return &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", name, where), Code: 1054, Position: a.ph.Back(n.Start)}
+		}
+		_, err := a.expr(*block, n, where)
+		return err
+	}
+	if block == nil {
+		return fmt.Errorf("analyze: an expression in the ORDER BY of a set operation is not supported yet")
+	}
+	_, err := a.expr(*block, n, where)
+	return err
 }
 
 // subquery types a PT_subquery (a parenthesized query expression).
@@ -37,46 +141,77 @@ func (a *analyzer) subquery(v mysqlast.Value, outer *scope) ([]Column, error) {
 	if !ok || n.Class != "PT_subquery" {
 		return nil, fmt.Errorf("analyze: subquery not understood: %s", mysqlast.Sprint(v))
 	}
+	a.depth++
+	defer func() { a.depth-- }()
 	return a.queryExpression(n.Arg("query_expression"), outer)
 }
 
 // body types a query expression body: a single SELECT, a set operation over bodies, or a
 // parenthesized query expression. sc is the scope the body's FROM clauses start from.
 func (a *analyzer) body(v mysqlast.Value, sc scope) ([]Column, error) {
+	cols, _, err := a.bodyScope(v, sc)
+	return cols, err
+}
+
+// bodyScope is body, also returning the block's scope when the body is one SELECT (nil
+// for a set operation), for the ORDER BY at the expression level.
+func (a *analyzer) bodyScope(v mysqlast.Value, sc scope) ([]Column, *scope, error) {
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
-		return nil, fmt.Errorf("analyze: query body not understood: %s", mysqlast.Sprint(v))
+		return nil, nil, fmt.Errorf("analyze: query body not understood: %s", mysqlast.Sprint(v))
 	}
 	switch n.Class {
 	case "PT_query_specification":
 		return a.querySpecification(n, sc)
 	case "PT_query_expression":
-		return a.queryExpression(n, sc.outer)
+		cols, err := a.queryExpression(n, sc.outer)
+		return cols, nil, err
 	case "PT_union", "PT_except", "PT_intersect":
-		return a.setOperation(n, sc)
+		cols, err := a.setOperation(n, sc)
+		return cols, nil, err
 	}
-	return nil, fmt.Errorf("analyze: %s is not supported yet", n.Class)
+	return nil, nil, fmt.Errorf("analyze: %s is not supported yet", n.Class)
 }
 
-// querySpecification types one SELECT block.
-func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, error) {
+// querySpecification types one SELECT block and returns its columns and its scope. HAVING
+// and GROUP BY see the select list's names as well as the tables' (a MySQL extension).
+func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, *scope, error) {
 	sc, err := a.from(body.Arg("from_clause"), sc)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := a.condition(sc, body.Arg("opt_where_clause"), "where clause"); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	cols, err := a.items(sc, body.Arg("item_list"))
+	if err != nil {
+		return nil, nil, err
+	}
+	sc.items = cols
+	if err := a.orderBy(body.Arg("opt_group_clause"), cols, &sc, "group statement"); err != nil {
+		return nil, nil, err
 	}
 	if err := a.condition(sc, body.Arg("opt_having_clause"), "having clause"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return a.items(sc, body.Arg("item_list"))
+	sc.facts = a.block(&sc, body)
+	// the statement's own block (not a subquery's, not a set operation's arm) is what the
+	// contracts are judged on
+	if a.depth == 0 && a.setOp == 0 && a.facts != nil && a.facts.Kind == facts.Select && a.facts.Top == nil {
+		a.facts.Top = sc.facts
+		if body.Arg("opt_group_clause") == nil && len(cols) > 0 && a.allAggregates(body.Arg("item_list")) {
+			a.facts.AtMostOne = true // an aggregate over the whole input is one row
+		}
+	}
+	return cols, &sc, nil
 }
 
 // setOperation types UNION / EXCEPT / INTERSECT: the column names are the first
 // operand's, each column's type is the operands' aggregated as the server does for a
 // UNION (Item_type_holder over field_type_merge), and it is nullable when any operand's is.
 func (a *analyzer) setOperation(n *mysqlast.Node, sc scope) ([]Column, error) {
+	a.setOp++
+	defer func() { a.setOp-- }()
 	list, _ := n.Arg("list").(mysqlast.List)
 	var out []Column
 	for i, arm := range list {

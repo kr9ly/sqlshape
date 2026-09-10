@@ -57,6 +57,6 @@ type Typed struct {
 
 var typed = sqlshape.Query[Typed, struct{}](`SELECT id, name FROM things`)
 
-var one = sqlshape.One[int64, struct{}](`SELECT id FROM things`) // want `One: testdb cannot prove at most one row yet`
+var one = sqlshape.One[int64, struct{}](`SELECT id FROM things`) // want `One: cannot prove at most one row: the statement.s shape is not analyzed for its cardinality`
 
 var mv = postgres.MatView("x") // want `MatView is not supported for testdb`

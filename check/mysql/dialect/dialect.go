@@ -44,7 +44,7 @@ func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
 		}
 		return nil, err
 	}
-	out := &dialect.Result{}
+	out := &dialect.Result{Facts: r.Facts}
 	for _, p := range r.Params {
 		out.Params = append(out.Params, typeOf(p.Type, p.Known))
 	}

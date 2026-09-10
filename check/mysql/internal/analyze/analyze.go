@@ -15,6 +15,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 	"github.com/kr9ly/sqlshape/v2/x/placeholder"
 )
 
@@ -23,6 +24,10 @@ type Result struct {
 	// Params are the placeholders by number ($1 is Params[0]).
 	Params  []Param
 	Columns []Column
+	// Facts is the statement's record for the contracts written on facts (One, the
+	// obligations): its kind, the top scope's leaves, predicates, fixed columns and
+	// equalities, its writes. Nil when the statement is one the analyzer does not record.
+	Facts *facts.Facts
 }
 
 // Param is one placeholder: the type its context gives it, when the context is one the
@@ -69,7 +74,7 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if err := a.statement(root); err != nil {
 		return nil, err
 	}
-	return &Result{Params: a.params, Columns: a.columns}, nil
+	return &Result{Params: a.params, Columns: a.columns, Facts: a.facts}, nil
 }
 
 type analyzer struct {
@@ -79,6 +84,9 @@ type analyzer struct {
 	params  []Param
 	columns []Column
 	views   map[string]bool // the views being expanded, against a cycle
+	facts   *facts.Facts    // the statement's record, assembled by statement
+	depth   int             // query nesting: 0 at the statement's own block
+	setOp   int             // > 0 while inside a set operation's arms
 }
 
 // relation is a table in scope, under its alias: a base table, or a derived one (a
@@ -89,6 +97,10 @@ type relation struct {
 	cols      []Column      // the derived relation's columns
 	updatable bool          // a derived relation whose plain column references write through (a mergeable view)
 	nullable  bool          // on the nullable side of an outer join
+	pos       int           // offset of the reference in the text
+	view      string        // the view's name when the relation is a view
+	target    bool          // a write's target
+	body      *facts.Scope  // a derived relation's own block, for the proof to look into
 }
 
 // columns lists the relation's columns as a SELECT * expands them (a base table's
@@ -141,6 +153,24 @@ type scope struct {
 	rels  []relation
 	outer *scope
 	ctes  []relation
+	// items are the block's select-list columns once typed: HAVING resolves a name that
+	// is not a table column against them (a MySQL extension).
+	items []Column
+	// facts is the block's record for the contracts (One and the obligations), filled by
+	// querySpecification; nil until then.
+	facts *facts.Scope
+	// joins are the join conditions of the FROM clause, for the facts: which conjuncts
+	// hold, and for an outer join which leaves they are allowed to restrict.
+	joins []joinCond
+}
+
+// joinCond is one join's condition as the facts see it.
+type joinCond struct {
+	on    mysqlast.Value // the ON expression, nil for USING
+	using []string       // USING (a, b)
+	left  []int          // leaf indices of the two sides
+	right []int
+	kind  string // JTT_INNER, JTT_LEFT, JTT_RIGHT ...
 }
 
 // derived makes a scope for a nested query: its relations start empty, the enclosing
@@ -171,11 +201,15 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 }
 
 func (a *analyzer) selectStmt(n *mysqlast.Node) error {
+	a.facts = &facts.Facts{Kind: facts.Select}
 	cols, err := a.queryExpression(n.Arg("qe"), nil)
 	if err != nil {
 		return err
 	}
 	a.columns = cols
+	if qe, ok := n.Arg("qe").(*mysqlast.Node); ok && limitOne(qe.Arg("limit")) {
+		a.facts.AtMostOne = true
+	}
 	return nil
 }
 
@@ -222,6 +256,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		}
 	}
 	rows, _ := arg(n, "row_value_list", 6).(mysqlast.List)
+	a.facts = a.writeFacts(facts.Insert, rel, targets, len(rows) == 1 && arg(n, "insert_query_expression", 7) == nil)
 	for _, row := range rows {
 		vals, _ := row.(mysqlast.List)
 		if len(vals) != len(targets) {
@@ -256,6 +291,8 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 	}
 	cols, _ := n.Arg("column_list").(mysqlast.List)
 	vals, _ := n.Arg("value_list").(mysqlast.List)
+	var assigned []*schema.Column
+	var target *relation
 	for i, c := range cols {
 		col, err := a.column(sc, c, "field list")
 		if err != nil {
@@ -264,6 +301,9 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		if col.col == nil {
 			return &Error{Message: fmt.Sprintf("The target table %s of the UPDATE is not updatable", col.rel.alias), Code: 1288, Position: a.ph.Back(nodeStart(c))}
 		}
+		col.rel.target = true
+		target = col.rel
+		assigned = append(assigned, col.col)
 		if i < len(vals) {
 			a.assign(sc, col.col, vals[i])
 		}
@@ -271,7 +311,15 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
 		return err
 	}
-	return a.limit(n.Arg("opt_limit_clause"))
+	if err := a.orderBy(n.Arg("opt_order_clause"), nil, &sc, "order clause"); err != nil {
+		return err
+	}
+	if err := a.limit(n.Arg("opt_limit_clause")); err != nil {
+		return err
+	}
+	a.facts = a.writeFacts(facts.Update, target, assigned, limitOne(n.Arg("opt_limit_clause")))
+	a.facts.Top = a.block(&sc, n)
+	return nil
 }
 
 func (a *analyzer) delete(n *mysqlast.Node) error {
@@ -286,11 +334,20 @@ func (a *analyzer) delete(n *mysqlast.Node) error {
 	if rel.table == nil {
 		return fmt.Errorf("analyze: DELETE from a view or a common table expression is not supported yet")
 	}
+	rel.target = true
 	sc := scope{rels: []relation{*rel}, ctes: ctes}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
 		return err
 	}
-	return a.limit(n.Arg("opt_delete_limit_clause"))
+	if err := a.orderBy(n.Arg("opt_order_clause"), nil, &sc, "order clause"); err != nil {
+		return err
+	}
+	if err := a.limit(n.Arg("opt_delete_limit_clause")); err != nil {
+		return err
+	}
+	a.facts = a.writeFacts(facts.Delete, rel, nil, limitOne(n.Arg("opt_delete_limit_clause")))
+	a.facts.Top = a.block(&sc, n)
+	return nil
 }
 
 // arg reads a named argument, or the positional one when the node carries no names (a
@@ -342,7 +399,7 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 		if isTrue(n.Arg("lateral")) {
 			outer = sc
 		}
-		cols, err := a.subquery(n.Arg("subquery"), outer)
+		cols, body, err := a.subqueryFacts(n.Arg("subquery"), outer)
 		if err != nil {
 			return err
 		}
@@ -353,7 +410,7 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 		if cols, err = renamed(cols, names, alias, a.ph.Back(n.Start)); err != nil {
 			return err
 		}
-		return a.addRelation(sc, &relation{alias: alias, cols: cols, nullable: nullable}, n.Start)
+		return a.addRelation(sc, &relation{alias: alias, cols: cols, nullable: nullable, body: body}, n.Start)
 	case "PT_joined_table_on", "PT_joined_table_using", "PT_cross_join":
 		jt := str(n.Arg("type"))
 		left, right := nullable, nullable
@@ -363,21 +420,33 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 		case strings.Contains(jt, "RIGHT"):
 			left = true
 		}
+		before := len(sc.rels)
 		if err := a.tableRef(sc, n.Arg("tab1_node"), left); err != nil {
 			return err
 		}
+		mid := len(sc.rels)
 		if err := a.tableRef(sc, n.Arg("tab2_node"), right); err != nil {
 			return err
 		}
+		jc := joinCond{left: indices(before, mid), right: indices(mid, len(sc.rels)), kind: jt}
 		if n.Class == "PT_joined_table_on" {
+			jc.on = n.Arg("on")
+			sc.joins = append(sc.joins, jc)
 			return a.condition(*sc, n.Arg("on"), "on clause")
 		}
 		if fields, ok := n.Arg("using_fields").(mysqlast.List); ok {
+			// USING (c): c must be a column of both sides (not ambiguous: it names the pair)
 			for _, f := range fields {
-				if _, err := a.column(*sc, f, "from clause"); err != nil {
-					return err
+				name := str(f)
+				if _, okl := a.colIn(sc, jc.left, name); !okl {
+					return &Error{Message: fmt.Sprintf("Unknown column '%s' in 'from clause'", name), Code: 1054, Position: a.ph.Back(nodeStart(f))}
 				}
+				if _, okr := a.colIn(sc, jc.right, name); !okr {
+					return &Error{Message: fmt.Sprintf("Unknown column '%s' in 'from clause'", name), Code: 1054, Position: a.ph.Back(nodeStart(f))}
+				}
+				jc.using = append(jc.using, name)
 			}
+			sc.joins = append(sc.joins, jc)
 		}
 		return nil
 	case "PT_table_reference_list_parens":
@@ -392,8 +461,18 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 	return fmt.Errorf("analyze: %s is not supported yet", n.Class)
 }
 
+// indices lists the integers in [from, to).
+func indices(from, to int) []int {
+	out := make([]int, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
 // addRelation puts rel into sc, rejecting a second relation under the same alias.
 func (a *analyzer) addRelation(sc *scope, rel *relation, at int) error {
+	rel.pos = at
 	for _, r := range sc.rels {
 		if strings.EqualFold(r.alias, rel.alias) {
 			return &Error{Message: fmt.Sprintf("Not unique table/alias: '%s'", rel.alias), Code: 1066, Position: a.ph.Back(at)}
@@ -429,13 +508,13 @@ func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, er
 		if t := a.s.Table(name); t != nil {
 			rel = &relation{alias: t.Name, table: t}
 		} else if v := a.s.View(name); v != nil {
-			cols, err := a.view(v)
+			cols, body, err := a.view(v)
 			if err != nil {
 				return nil, err
 			}
 			// a view is merged into the query unless it says TEMPTABLE or its query cannot be
 			// merged; a merged view's plain column references are updatable
-			rel = &relation{alias: v.Name, cols: cols, updatable: true}
+			rel = &relation{alias: v.Name, cols: cols, updatable: true, view: v.Name, body: body}
 			if v.Algorithm == "TEMPTABLE" || !mergeable(v.Query) {
 				rel.cols, rel.updatable = materialized(cols, v.Query), false
 			}
@@ -449,10 +528,11 @@ func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, er
 	return rel, nil
 }
 
-// view types a view's query, in a scope of its own (a view sees no CTE and no outer query).
-func (a *analyzer) view(v *schema.View) ([]Column, error) {
+// view types a view's query, in a scope of its own (a view sees no CTE and no outer query),
+// and returns its block's facts for the proof.
+func (a *analyzer) view(v *schema.View) ([]Column, *facts.Scope, error) {
 	if a.views[v.Name] {
-		return nil, fmt.Errorf("analyze: view %s refers to itself", v.Name)
+		return nil, nil, fmt.Errorf("analyze: view %s refers to itself", v.Name)
 	}
 	if a.views == nil {
 		a.views = map[string]bool{}
@@ -463,18 +543,21 @@ func (a *analyzer) view(v *schema.View) ([]Column, error) {
 	saved := a.params
 	a.params = nil
 	defer func() { a.params = saved }()
-	cols, err := a.queryExpression(v.Query, nil)
+	a.depth++
+	cols, body, err := a.queryExpressionFacts(v.Query, nil)
+	a.depth--
 	if err != nil {
 		if e, ok := err.(*Error); ok {
-			return nil, fmt.Errorf("analyze: view %s: %s (MySQL error %d)", v.Name, e.Message, e.Code)
+			return nil, nil, fmt.Errorf("analyze: view %s: %s (MySQL error %d)", v.Name, e.Message, e.Code)
 		}
-		return nil, fmt.Errorf("analyze: view %s: %w", v.Name, err)
+		return nil, nil, fmt.Errorf("analyze: view %s: %w", v.Name, err)
 	}
 	var names mysqlast.List
 	for _, c := range v.Columns {
 		names = append(names, c)
 	}
-	return renamed(cols, names, v.Name, -1)
+	cols, err = renamed(cols, names, v.Name, -1)
+	return cols, body, err
 }
 
 // renamed applies a derived relation's column list: the same count, the new names.
@@ -533,8 +616,14 @@ func (a *analyzer) column(sc scope, v mysqlast.Value, where string) (colRef, err
 
 // lookup resolves table.field (table may be "") in sc: the innermost query whose
 // relations know the name wins, an outer query is tried only when none of the inner one's
-// do (a correlated reference); two matches at one level are ambiguous.
+// do (a correlated reference); two matches at one level are ambiguous. In a HAVING clause
+// an unqualified name that no table has may be a select-list alias.
 func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef, error) {
+	if where == "having clause" && table == "" {
+		if ref, ok := a.lookupItem(sc, field); ok {
+			return ref, nil
+		}
+	}
 	for s := &sc; s != nil; s = s.outer {
 		var found []colRef
 		for i := range s.rels {
@@ -559,6 +648,24 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 		qualified = table + "." + field
 	}
 	return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
+}
+
+// lookupItem resolves a name against the block's typed select list (HAVING, and the
+// ORDER BY of the block): the item's column, with no schema column behind it.
+func (a *analyzer) lookupItem(sc scope, name string) (colRef, bool) {
+	var found *Column
+	for i := range sc.items {
+		if strings.EqualFold(sc.items[i].Name, name) {
+			if found != nil {
+				return colRef{}, false // ambiguous: let the tables decide, or the error say so
+			}
+			found = &sc.items[i]
+		}
+	}
+	if found == nil {
+		return colRef{}, false
+	}
+	return colRef{c: *found}, true
 }
 
 // items types the select list.

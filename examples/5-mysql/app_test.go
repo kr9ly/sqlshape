@@ -32,7 +32,7 @@ func TestOrders(t *testing.T) {
 	if _, err := mysql.Exec(ctx, db, CreateCustomer, NewCustomer{Email: "alice@example.com", Name: "Twin"}); !mysql.Violates(err, "customers_email_key") {
 		t.Fatalf("duplicate email: %v", err)
 	}
-	alice, err := mysql.First(ctx, db, CustomerByEmail, struct{ Email string }{"alice@example.com"})
+	alice, err := mysql.Get(ctx, db, CustomerByEmail, struct{ Email string }{"alice@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestOrders(t *testing.T) {
 	if err != nil || len(orders) != 1 || orders[0].Status != Pending || orders[0].Total != "12.50" || orders[0].Note != nil {
 		t.Fatalf("orders: %+v %v", orders, err)
 	}
-	if _, err := mysql.Exec(ctx, db, SetStatus, struct {
+	if _, err := mysql.ExecOne(ctx, db, SetStatus, struct {
 		ID     uint64
 		Status Status
 	}{orders[0].ID, Paid}); err != nil {
