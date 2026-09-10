@@ -95,7 +95,15 @@ func (c *checker) fitPG(dt dialect.Type, t types.Type, param bool) fit {
 			return f
 		}
 	}
-	return fitType(dt, t, param, pgdialect.Traits)
+	return fitType(dt, t, param, c.traits())
+}
+
+// traits are the loaded dialect's conventions for Go types.
+func (c *checker) traits() dialect.Traits {
+	if c.ls != nil && c.ls.dialect != nil {
+		return c.ls.dialect.Traits()
+	}
+	return pgdialect.Traits
 }
 
 // structField is one column-bearing field of a result struct, embedded structs flattened.

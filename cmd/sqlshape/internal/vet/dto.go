@@ -11,8 +11,6 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
@@ -63,10 +61,9 @@ func newDTO() *dto {
 }
 
 // addResult records the columns of one analyzed expansion.
-func (d *dto) addResult(c *checker, r *analyze.Result) {
+func (d *dto) addResult(r *dialect.Result) {
 	d.analyzed++
-	for _, ac := range r.Columns {
-		col := pgdialect.ColumnOf(c.s, ac)
+	for _, col := range r.Columns {
 		if col.Name == "" || col.Type.Kind == dialect.Void {
 			continue
 		}
@@ -80,7 +77,7 @@ func (d *dto) addResult(c *checker, r *analyze.Result) {
 }
 
 // addParams records the parameters of one expansion.
-func (d *dto) addParams(c *checker, e *expand.Expansion, r *analyze.Result) {
+func (d *dto) addParams(e *expand.Expansion, r *dialect.Result) {
 	for _, p := range e.Params {
 		if p.N-1 >= len(r.Params) {
 			continue
@@ -89,7 +86,7 @@ func (d *dto) addParams(c *checker, e *expand.Expansion, r *analyze.Result) {
 		if _, ok := d.params[key]; ok {
 			continue
 		}
-		prm := pgdialect.ParamOf(c.s, r.Params[p.N-1], r.ParamSources[p.N-1])
+		prm := r.Params[p.N-1]
 		d.params[key] = &dtoParam{path: p.Path, typ: prm.Type, src: prm.Source}
 		d.prmOrder = append(d.prmOrder, key)
 	}

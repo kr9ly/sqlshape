@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
@@ -36,7 +35,7 @@ func (c *checker) suggestFieldComment(fv *types.Var, col dialect.Column) {
 
 // suggestTypeComment proposes the table's COMMENT for an undocumented result type whose
 // rows all come from one relation.
-func (c *checker) suggestTypeComment(rType types.Type, r *analyze.Result) {
+func (c *checker) suggestTypeComment(rType types.Type, r *dialect.Result) {
 	named, ok := rType.(*types.Named)
 	if !ok || named.Obj().Pkg() != c.pass.Pkg {
 		return

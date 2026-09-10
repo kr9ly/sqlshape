@@ -106,8 +106,10 @@ func (c *checker) declaredOf(t types.Type) (declaredType, bool) {
 	if i := strings.LastIndex(name, "."); i >= 0 {
 		sch, name = name[:i], name[i+1:]
 	}
-	if pt := c.s.Types.Lookup(sch, name); pt != nil {
-		dt.named = pgdialect.NamedOf(c.s, pt.OID)
+	if c.s != nil {
+		if pt := c.s.Types.Lookup(sch, name); pt != nil {
+			dt.named = pgdialect.NamedOf(c.s, pt.OID)
+		}
 	}
 	c.declared[named.Obj()] = dt
 	return dt, true

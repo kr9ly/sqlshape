@@ -152,17 +152,20 @@ type Violation struct {
 	Key        string // the name the expect line uses: the constraint's, or table.column for NOT NULL
 	Code       string // the database's error code (SQLSTATE 23505, MySQL 1062)
 	Table      string
-	Column     string
+	Columns    []string
 	Constraint string
-	Detail     string // how the checker describes it (UNIQUE (email) on users)
-	Position   int
+	Detail     string // how the checker describes it ("UNIQUE (email) on users, SQLSTATE 23505")
+	// Param is the parameter whose NULL would violate a NOT NULL (1-based), 0 otherwise:
+	// the checker drops the violation when the Go type cannot be NULL.
+	Param int
 }
 
 // RelationRef is one relation the statement references.
 type RelationRef struct {
 	Name     string // as the facts spell it
+	Schema   string // the namespace, for -schemas; "" when the dialect has none
 	Kind     facts.RelKind
-	Position int
+	Position int  // 0-based byte offset into the SQL; -1 when unknown
 	Target   bool // written by the statement
 }
 

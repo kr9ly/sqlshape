@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
@@ -59,13 +59,13 @@ func directiveItems(text string, re *regexp.Regexp) (map[string]int, int) {
 
 // possibleViolations filters an expansion's violations by what P can actually send:
 // a NOT NULL violation carried by a parameter is dropped when its Go type cannot be NULL.
-func (c *checker) possibleViolations(e *expand.Expansion, r *analyze.Result, pType types.Type) []analyze.Violation {
-	var out []analyze.Violation
+func (c *checker) possibleViolations(e *expand.Expansion, r *dialect.Result, pType types.Type) []dialect.Violation {
+	var out []dialect.Violation
 	for _, v := range r.Violations {
 		if v.Param > 0 {
 			nullable := true
 			for _, p := range e.Params {
-				if int32(p.N) == v.Param {
+				if p.N == v.Param {
 					if gt, err := c.resolvePath(pType, p.Path); err == nil {
 						_, nullable = unwrapNullable(gt)
 						switch gt.Underlying().(type) {
@@ -87,7 +87,7 @@ func (c *checker) possibleViolations(e *expand.Expansion, r *analyze.Result, pTy
 // checkExpectations reports the diff between the template's expect line and the
 // violations possible in any expansion (possible: key → violation, with the branch it
 // was first seen in).
-func (c *checker) checkExpectations(lit literal, possible map[string]analyze.Violation, branch map[string]string, report func(token.Pos, string, ...any)) {
+func (c *checker) checkExpectations(lit literal, possible map[string]dialect.Violation, branch map[string]string, report func(token.Pos, string, ...any)) {
 	expected, at := expectations(lit.text)
 	var keys []string
 	for k := range possible {
@@ -98,7 +98,7 @@ func (c *checker) checkExpectations(lit literal, possible map[string]analyze.Vio
 	sort.Strings(keys)
 	for _, k := range keys {
 		v := possible[k]
-		report(lit.pos(at), "may violate %s (%s); add `-- sqlshape: expect %s` to the template or make it impossible%s", k, describeViolation(v), k, branch[k])
+		report(lit.pos(at), "may violate %s (%s); add `-- sqlshape: expect %s` to the template or make it impossible%s", k, v.Detail, k, branch[k])
 	}
 	keys = keys[:0]
 	for k := range expected {
@@ -110,41 +110,6 @@ func (c *checker) checkExpectations(lit literal, possible map[string]analyze.Vio
 	for _, k := range keys {
 		report(lit.pos(expected[k]), "expects %s but no expansion can violate it", k)
 	}
-}
-
-func describeViolation(v analyze.Violation) string {
-	s := describeViolationAt(v)
-	if v.Function != "" {
-		s += ", through " + v.Function + "()"
-	}
-	return s
-}
-
-func describeViolationAt(v analyze.Violation) string {
-	cols := strings.Join(v.Columns, ", ")
-	switch v.Code {
-	case "23505":
-		return "UNIQUE (" + cols + ") on " + v.Table + ", SQLSTATE 23505"
-	case "23503":
-		return "FOREIGN KEY (" + cols + ") on " + v.Table + " REFERENCES " + v.RefTable + ", SQLSTATE 23503"
-	case "23514":
-		return "CHECK on " + v.Table + " (" + cols + "), SQLSTATE 23514"
-	case "23502":
-		return "NOT NULL on " + v.Table + "." + cols + ", SQLSTATE 23502"
-	case "23P01":
-		return "EXCLUDE (" + cols + ") on " + v.Table + ", SQLSTATE 23P01"
-	}
-	if v.Trigger != "" {
-		s := "raised by trigger " + v.Trigger + " on " + v.Table
-		if v.Name != "" {
-			s += " as " + v.Name
-		}
-		return s + ", SQLSTATE " + v.Code
-	}
-	if v.Name != "" {
-		return "raised as " + v.Name + ", SQLSTATE " + v.Code
-	}
-	return "SQLSTATE " + v.Code
 }
 
 var notNullLine = directive("not null")

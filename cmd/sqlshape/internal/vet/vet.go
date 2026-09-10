@@ -28,6 +28,7 @@ import (
 	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
@@ -155,7 +156,7 @@ func loadSchema(path string) (*loadedSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	ls := &loadedSchema{s: s, fnRefs: map[*schema.Function][]analyze.RelationRef{}, fnAdvice: map[*schema.Function][]analyze.Note{}}
+	ls := &loadedSchema{s: s, dialect: pgdialect.New(s), dialectName: dialect.Postgres, fnRefs: map[*schema.Function][]analyze.RelationRef{}, fnAdvice: map[*schema.Function][]analyze.Note{}}
 	for _, p := range s.Problems {
 		ls.problems = append(ls.problems, p.String())
 	}
@@ -319,7 +320,7 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
-	if ls.dialect != nil {
+	if s == nil {
 		c.runDialect(calls, matviews)
 		return index, nil
 	}
@@ -382,16 +383,12 @@ func (c *checker) site(call *ast.CallExpr, at token.Pos) consumers.Site {
 }
 
 // record adds one expansion's relation and column uses to the index.
-func (c *checker) record(call *ast.CallExpr, e *expand.Expansion, r *analyze.Result, lit literal) {
+func (c *checker) record(call *ast.CallExpr, e *expand.Expansion, r *dialect.Result, lit literal) {
 	for _, ref := range r.Relations {
-		name := ref.Name
-		if ref.Schema != "public" {
-			name = ref.Schema + "." + name
-		}
-		c.index.AddRelation(name, c.site(call, lit.pos(e.TemplatePos(int(ref.Position)-1))))
+		c.index.AddRelation(ref.Name, c.site(call, lit.pos(e.TemplatePos(max(ref.Position, 0)))))
 	}
 	for _, u := range r.Uses {
-		c.index.AddColumn(u.Table, u.Column, c.site(call, lit.pos(e.TemplatePos(int(u.Position)-1))))
+		c.index.AddColumn(u.Table, u.Column, c.site(call, lit.pos(e.TemplatePos(max(int(u.Position), 0)))))
 	}
 }
 
@@ -710,7 +707,7 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 	if res.Sparse && c.strict {
 		pass.Reportf(lit.pos(0), "sqlshape: %d branch combinations exceed %d: checked sparsely (all branches off, all on, each on alone); the runtime cannot compare renderings with the checked set", res.Combinations, expand.MaxExpansions)
 	}
-	possible := map[string]analyze.Violation{}
+	possible := map[string]dialect.Violation{}
 	branch := map[string]string{}
 	analyzedAll := true
 	analyzed := 0
@@ -745,15 +742,15 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		}
 		// a text scan of the rendered SQL: it does not need the statement to analyze
 		checkActionPlacement(e, lit, report, where)
-		r, err := analyze.Analyze(c.s, e.SQL)
+		r, err := c.ls.dialect.Analyze(e.SQL)
 		if err != nil {
 			analyzedAll = false
-			if ae, ok := err.(*analyze.Error); ok {
+			if de, ok := err.(*dialect.Error); ok {
 				tp := 0
-				if ae.Position > 0 {
-					tp = e.TemplatePos(int(ae.Position) - 1)
+				if de.Position >= 0 {
+					tp = e.TemplatePos(de.Position)
 				}
-				report(lit.pos(tp), "%s (SQLSTATE %s)%s", ae.Message, ae.Code, where)
+				report(lit.pos(tp), "%v%s", de, where)
 			} else {
 				report(lit.pos(0), "%v%s", err, where)
 			}
@@ -762,28 +759,37 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		c.checkReferences(e, r, lit, report, where)
 		c.record(call, e, r, lit)
 		for _, v := range c.possibleViolations(e, r, pType) {
-			if _, seen := possible[v.Key()]; !seen {
-				possible[v.Key()] = v
-				branch[v.Key()] = where
+			if _, seen := possible[v.Key]; !seen {
+				possible[v.Key] = v
+				branch[v.Key] = where
 			}
 		}
 		for _, n := range r.Notes {
-			if n.Advisory() && !c.strict {
+			if n.Advisory && !c.strict {
 				continue
 			}
 			tp := 0
-			if n.Position > 0 {
-				tp = e.TemplatePos(int(n.Position) - 1)
+			if n.Position >= 0 {
+				tp = e.TemplatePos(n.Position)
 			}
 			report(lit.pos(tp), "%s%s", n.Message, where)
 		}
-		if single && !r.AtMostOne {
-			report(lit.pos(0), "One: cannot prove at most one row: %s%s", r.ManyRowsWhy, where)
+		if single {
+			// the dialect's own verdict when it proves cardinality itself, else the proof on facts
+			ok, why := cardinality.AtMostOne(r.Facts)
+			if r.ManyRowsWhy != "" {
+				ok, why = false, r.ManyRowsWhy
+			}
+			if !ok {
+				report(lit.pos(0), "One: cannot prove at most one row: %s%s", why, where)
+			}
 		}
 		c.checkParams(e, r, pType, lit, reportP, where)
-		checkBareOrderBy(c.s.Version, e, lit, report, where)
-		d.addParams(c, e, r)
-		d.addResult(c, r)
+		if c.s != nil {
+			checkBareOrderBy(c.s.Version, e, lit, report, where)
+		}
+		d.addParams(e, r)
+		d.addResult(r)
 		for name, t := range c.checkResult(call.Pos(), r, rType, lit, reportR, where) {
 			missing[name]++
 			missingType[name] = t
@@ -861,7 +867,7 @@ func (d *deduper) finish(msg string) string {
 }
 
 // checkParams matches each $n's Go origin against the inferred PG parameter type.
-func (c *checker) checkParams(e *expand.Expansion, r *analyze.Result, pType types.Type, lit literal, report func(token.Pos, string, ...any), where string) {
+func (c *checker) checkParams(e *expand.Expansion, r *dialect.Result, pType types.Type, lit literal, report func(token.Pos, string, ...any), where string) {
 	for _, p := range e.Params {
 		gt, err := c.resolvePath(pType, p.Path)
 		if err != nil {
@@ -871,7 +877,7 @@ func (c *checker) checkParams(e *expand.Expansion, r *analyze.Result, pType type
 		if p.N-1 >= len(r.Params) {
 			continue
 		}
-		prm := pgdialect.ParamOf(c.s, r.Params[p.N-1], r.ParamSources[p.N-1])
+		prm := r.Params[p.N-1]
 		c.meet(gt, prm.Type, prm.Source, lit.pos(p.Pos), "parameter "+p.Path.String())
 		f := c.fitPG(prm.Type, gt, true)
 		switch {
@@ -919,13 +925,12 @@ func (c *checker) adviseParam(p expand.Param, gt types.Type, dt dialect.Type, sr
 // no result column in this expansion (name → type); checkCall decides whether that is
 // an error (missing everywhere) or an optional projection (missing in some branches,
 // allowed for nullable fields).
-func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) map[string]types.Type {
+func (c *checker) checkResult(callPos token.Pos, r *dialect.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) map[string]types.Type {
 	at := callPos
 	// `-- sqlshape: not null a, b` in the template overrides the analyzer's nullability
 	// a void column (SELECT some_procedure_like_function(...)) carries nothing: it binds to no field
 	var cols []dialect.Column
-	for _, ac := range r.Columns {
-		col := pgdialect.ColumnOf(c.s, ac)
+	for _, col := range r.Columns {
 		if col.Type.Kind != dialect.Void {
 			cols = append(cols, col)
 		}
@@ -1102,7 +1107,7 @@ func (c *checker) resolvePath(t types.Type, p expand.Path) (types.Type, error) {
 // checkReferences enforces the boundary rules on the relations an expansion touches:
 // -schemas (a package-level scope, judged here), and the obligations the schema declares
 // or the flags imply (judged by internal/obligation over the statement's facts).
-func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit literal, report func(token.Pos, string, ...any), where string) {
+func (c *checker) checkReferences(e *expand.Expansion, r *dialect.Result, lit literal, report func(token.Pos, string, ...any), where string) {
 	var allowed map[string]bool
 	if schemasFlag != "" {
 		allowed = map[string]bool{}
@@ -1113,14 +1118,13 @@ func (c *checker) checkReferences(e *expand.Expansion, r *analyze.Result, lit li
 		}
 	}
 	for _, ref := range r.Relations {
-		at := lit.pos(e.TemplatePos(int(ref.Position) - 1))
-		name := ref.Name
-		if ref.Schema != "public" {
-			name = ref.Schema + "." + name
-		}
+		at := lit.pos(e.TemplatePos(max(ref.Position, 0)))
 		if allowed != nil && !allowed[ref.Schema] {
-			report(at, "%s is outside the schemas this code may reference (%s)%s", name, schemasFlag, where)
+			report(at, "%s is outside the schemas this code may reference (%s)%s", ref.Name, schemasFlag, where)
 		}
+	}
+	if c.s == nil {
+		return // the obligations need the schema's contract, which this dialect does not give yet
 	}
 	seen := map[string]bool{}
 	for _, d := range obligation.Check(c.s.Contract(), c.decls, r.Facts, lowerer{c.s}) {
