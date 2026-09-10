@@ -8,6 +8,8 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-10
+
 ### Added
 
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
@@ -124,7 +126,8 @@ First release: `sqlshape.Query[R, P]` / `One[R, P]` templates checked by `go vet
 test oracle), the runtime on pgx, and `sqlshape diff` / `apply` / `verify-schema` for migrations
 from a declared schema.
 
-[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/kr9ly/sqlshape/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kr9ly/sqlshape/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kr9ly/sqlshape/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kr9ly/sqlshape/releases/tag/v1.0.0
