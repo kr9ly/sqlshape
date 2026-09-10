@@ -43,6 +43,7 @@ statement: the Go code around it, and the schema itself.
   - [The same rules for SQL outside Go (`sqlshape check`)](#the-same-rules-for-sql-outside-go-sqlshape-check)
 - [Part 3 — Outside the statement](#part-3--outside-the-statement)
   - [The schema names its PostgreSQL version (`postgres`)](#the-schema-names-its-postgresql-version-postgres)
+  - [The schema names its MySQL version (`mysql`)](#the-schema-names-its-mysql-version-mysql)
   - [Do not run SQL that bypasses sqlshape (`-raw-sql`)](#do-not-run-sql-that-bypasses-sqlshape--raw-sql)
   - [A package references only its schemas (`-schemas`)](#a-package-references-only-its-schemas--schemas)
   - [Problems in the schema itself](#problems-in-the-schema-itself)
@@ -1272,6 +1273,96 @@ A statement that only a newer version accepts (`RETURNING old.*`, `WITHOUT OVERL
 ENFORCED`, `VIRTUAL` generated columns are 18's) is a syntax error under an older declaration, as
 it is on that server. Moving to a new PostgreSQL is changing the number and reading what the
 checker reports.
+
+### The schema names its MySQL version (`mysql`)
+
+The same declaration can name MySQL instead. Then MySQL's own grammar parses the schema and every
+statement, MySQL's rules type the expressions, and the statements run through
+`github.com/kr9ly/sqlshape/mysql/v2` on `database/sql` ([runtime.md](runtime.md#mysql)).
+
+```sql
+-- sqlshape: mysql 8.4
+CREATE TABLE ...
+```
+
+Rejected
+
+- a version sqlshape does not embed (8.4 is the one embedded)
+- two declarations that disagree, or one that also names `postgres`
+
+Every rule in Part 1 and Part 2 applies to a MySQL schema the same way, judged by the MySQL
+analyzer instead of the PostgreSQL one: result columns and parameters against the Go types, the
+NULL handling, the meaning of types, the failure modes, the `One` proof, and every declaration of
+Part 2 (`visible where`, `pinned`, `via view`, `EXISTS`, `aggregate`, `transitions`, `never`,
+`paired`, `single`, `sensitive`, `context`). What does not exist on MySQL is not checked there:
+`Copy` and `MatView`, PL/pgSQL, domains, composite types and arrays, `-schemas` (a MySQL schema is
+one database), and the `// sqlshape: type` declaration (MySQL has no named types to bind it to).
+Diagnostics carry MySQL's error numbers and message texts (`Unknown column 'nope' in 'field list'
+(MySQL error 1054)`), checked against a running `mysqld`: 5,033 typed statements, 65 error
+statements and the 376 statements of the group check below agree with 8.4.
+
+Where MySQL differs from PostgreSQL, the checker follows MySQL:
+
+- Types. An integer arrives as `int64` (`uint64` for `BIGINT UNSIGNED`), a `DECIMAL` as its text,
+  temporal types as `time.Time` (the driver's `parseTime=true`) or a string, binary strings and
+  JSON as `[]byte`. A comparison or a logical operator is a `bigint(1)`, which `bool` may receive;
+  so may a `TINYINT(1)`. The table:
+
+  | MySQL | Go |
+  |---|---|
+  | `TINYINT` / `SMALLINT` / `MEDIUMINT` / `INT` / `YEAR` | `int64` / `int32` / `int` (`uint64` / `uint32` / `uint` too when `UNSIGNED`); `TINYINT(1)` also `bool` |
+  | `BIGINT` | `int64` / `int` (`uint64` / `int64` when `UNSIGNED`); a `bigint(1)` also `bool` |
+  | `DECIMAL` | `string` |
+  | `FLOAT` / `DOUBLE` | `float32` / `float64` / `float64` |
+  | `BIT` | `[]byte` |
+  | `CHAR` / `VARCHAR` / `TEXT` / `ENUM` / `SET` | `string` / `[]byte` |
+  | `BINARY` / `VARBINARY` / `BLOB` | `[]byte` |
+  | `JSON` | `[]byte` / `string` |
+  | `DATE` / `DATETIME` / `TIMESTAMP` | `time.Time` / `string` |
+  | `TIME` | `string` |
+  | `ENUM` columns, key identities | a Go named type ([above](#giving-types-a-meaning)); an `ENUM` is a value set like a `CHECK (col IN (...))` |
+
+- Constraint names. `PRIMARY` for the primary key, the key's name for a `UNIQUE` key, the
+  `CONSTRAINT` name for a foreign key or `<table>_ibfk_<n>` when it has none, the `CONSTRAINT`
+  name for a `CHECK` or `<table>_chk_<n>`, `<table>.<column>` for `NOT NULL`. The failure modes
+  are MySQL's: 1062 for a key (a key the server numbers itself, or one a NULL leaves alone,
+  cannot be violated), 1452 and 1451 for a foreign key (the parent side following `ON DELETE` /
+  `ON UPDATE CASCADE`), 1048 for `NOT NULL`, 3819 for `CHECK`; `INSERT IGNORE` violates nothing,
+  `ON DUPLICATE KEY UPDATE` absorbs the insert's key violations. `mysql.Violates(err, key)` tests
+  the run-time error by the same names.
+
+- `One`. Proved from `PRIMARY KEY` and `UNIQUE` keys over whole columns, `LIMIT 1`, and an
+  aggregate without `GROUP BY`; MySQL has no partial indexes.
+
+- Grouping. MySQL runs the checks of sql_mode `ONLY_FULL_GROUP_BY`, and so does the checker,
+  with the server's numbers: in a grouped or aggregated query every select-list, `HAVING`,
+  `ORDER BY` and window `PARTITION BY` / `ORDER BY` expression is a `GROUP BY` expression, an
+  aggregate, or made of columns functionally dependent on the group columns (1055; 1140 without
+  `GROUP BY`). The dependencies the server recognizes are the ones the checker recognizes: a
+  table's columns once its `PRIMARY` or `UNIQUE` key is known (a nullable key column only where
+  a conjunct rejects its NULL), `col = col` and `col = literal` in `WHERE` and inner joins, an
+  outer join's `ON` into its nullable side, and a derived table's or view's body through its
+  outputs; `ROLLUP` allows the group expressions only. A column named outside an aggregate in
+  `HAVING` must be a select-list column or alias or a `GROUP BY` column (1054); with `DISTINCT`
+  an `ORDER BY` expression not in the select list may read only select-list columns (3065); an
+  aggregate in the `ORDER BY` of a query that aggregates nowhere else (3029) or of a set
+  operation (3028) is rejected.
+
+  ```sql
+  SELECT email, count(*) FROM users GROUP BY name
+  -- Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column
+  -- 'users.email' which is not functionally dependent on columns in GROUP BY clause; this is
+  -- incompatible with sql_mode=only_full_group_by (MySQL error 1055)
+
+  SELECT name, count(*) FROM users GROUP BY id            -- OK: id is the primary key
+  ```
+
+- Name resolution. `ORDER BY`, `GROUP BY` and `HAVING` see the select list's aliases as the
+  server does (a table column of the same name wins in `GROUP BY`); a derived table needs an alias
+  (1248); `QUALIFY` is rejected as 8.4 rejects it without the hypergraph optimizer (6037).
+
+The MySQL side of the checker (`check/mysql`) carries MySQL's parser and is licensed under the GNU
+General Public License v2; see the README.
 
 ### Do not run SQL that bypasses sqlshape (`-raw-sql`)
 

@@ -30,6 +30,7 @@
   - [Goの外のSQLにも同じ規約を適用する（`sqlshape check`）](#goの外のsqlにも同じ規約を適用するsqlshape-check)
 - [第3部 — 文の外側](#第3部--文の外側)
   - [スキーマはPostgreSQLの版を名乗る（`postgres`）](#スキーマはpostgresqlの版を名乗るpostgres)
+  - [スキーマはMySQLの版を名乗る（`mysql`）](#スキーマはmysqlの版を名乗るmysql)
   - [sqlshapeを通さないSQLを書かない（`-raw-sql`）](#sqlshapeを通さないsqlを書かない-raw-sql)
   - [パッケージは自分のスキーマだけを参照する（`-schemas`）](#パッケージは自分のスキーマだけを参照する-schemas)
   - [スキーマ自体の問題](#スキーマ自体の問題)
@@ -1049,6 +1050,59 @@ OK
 - ファイルのどこに書いてもよい。同じ値なら繰り返しもよい
 
 新しい版だけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古い版を宣言していれば構文エラーになる。その版のサーバに流したときと同じ結果である。PostgreSQLの版を上げる作業は、この数字を変えて検査器の報告を読むことになる。
+
+### スキーマはMySQLの版を名乗る（`mysql`）
+
+同じ宣言でMySQLを名乗れる。そのときはMySQL自身の文法がスキーマと全部の文を読み、MySQLの規則が式に型を付け、文は`github.com/kr9ly/sqlshape/mysql/v2`が`database/sql`の上で実行する（[runtime.md](runtime.ja.md#mysql)）。
+
+```sql
+-- sqlshape: mysql 8.4
+CREATE TABLE ...
+```
+
+NG
+
+- sqlshapeが持っていない版（持っているのは8.4）
+- 値の違う宣言が2つある、または`postgres`も同時に名乗る
+
+第1部と第2部の規則はMySQLのスキーマにも同じにかかる。判定するのがPostgreSQLではなくMySQLのアナライザーになるだけである。結果列とパラメータとGo型の対応、NULLの扱い、型の意味、失敗モード、`One`の証明、第2部の宣言すべて（`visible where`、`pinned`、`via view`、`EXISTS`、`aggregate`、`transitions`、`never`、`paired`、`single`、`sensitive`、`context`）。MySQLに無いものは検査しない。`Copy`と`MatView`、PL/pgSQL、ドメイン、複合型と配列、`-schemas`（MySQLのスキーマは1つのデータベース）、そして`// sqlshape: type`宣言（束縛先となる名前付きの型がMySQLに無い）。診断はMySQLのエラー番号とメッセージ文を運ぶ（`Unknown column 'nope' in 'field list' (MySQL error 1054)`）。これは動いている`mysqld`と照合してある。型を付けた5,033文、エラーになる65文、下のグループ検査の376文が8.4と一致する。
+
+MySQLがPostgreSQLと違うところでは、検査器はMySQLに従う。
+
+- 型。整数は`int64`（`BIGINT UNSIGNED`は`uint64`）、`DECIMAL`はその文字列、時刻型は`time.Time`（ドライバの`parseTime=true`）か文字列、バイナリ文字列とJSONは`[]byte`で届く。比較と論理演算子は`bigint(1)`で、`bool`で受けられる。`TINYINT(1)`も同じ。表にすると
+
+  | MySQL | Go |
+  |---|---|
+  | `TINYINT` / `SMALLINT` / `MEDIUMINT` / `INT` / `YEAR` | `int64` / `int32` / `int`（`UNSIGNED`なら`uint64` / `uint32` / `uint`も）。`TINYINT(1)`は`bool`も |
+  | `BIGINT` | `int64` / `int`（`UNSIGNED`なら`uint64` / `int64`）。`bigint(1)`は`bool`も |
+  | `DECIMAL` | `string` |
+  | `FLOAT` / `DOUBLE` | `float32` / `float64` / `float64` |
+  | `BIT` | `[]byte` |
+  | `CHAR` / `VARCHAR` / `TEXT` / `ENUM` / `SET` | `string` / `[]byte` |
+  | `BINARY` / `VARBINARY` / `BLOB` | `[]byte` |
+  | `JSON` | `[]byte` / `string` |
+  | `DATE` / `DATETIME` / `TIMESTAMP` | `time.Time` / `string` |
+  | `TIME` | `string` |
+  | `ENUM`列、キーの同一性 | Goのnamed type（[上](#型に意味を持たせる)）。`ENUM`は`CHECK (col IN (...))`と同じ値集合 |
+
+- 制約の名前。主キーは`PRIMARY`、`UNIQUE`キーはそのキー名、外部キーは`CONSTRAINT`名か無ければ`<table>_ibfk_<n>`、`CHECK`は`CONSTRAINT`名か`<table>_chk_<n>`、`NOT NULL`は`<table>.<column>`。失敗モードはMySQLのもの。キーは1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反できない）、外部キーは1452と1451（親側は`ON DELETE` / `ON UPDATE CASCADE`に従う）、`NOT NULL`は1048、`CHECK`は3819。`INSERT IGNORE`は何も違反せず、`ON DUPLICATE KEY UPDATE`はINSERTのキー違反を吸収する。`mysql.Violates(err, key)`は同じ名前で実行時エラーを判定する。
+
+- `One`。列全体にかかる`PRIMARY KEY`と`UNIQUE`キー、`LIMIT 1`、`GROUP BY`無しの集約から証明する。MySQLに部分インデックスは無い。
+
+- グループ化。MySQLはsql_mode `ONLY_FULL_GROUP_BY`の検査を行うので、検査器も同じ番号で行う。グループ化または集約する問い合わせでは、select list、`HAVING`、`ORDER BY`、windowの`PARTITION BY` / `ORDER BY`の各式が、`GROUP BY`の式か、集約か、グループ列に関数従属する列だけから成ること（1055。`GROUP BY`が無ければ1140）。サーバが認める従属を検査器も認める。`PRIMARY`か`UNIQUE`キーが決まったテーブルの全列（nullableなキー列はNULLを弾く述語があるときだけ）、`WHERE`と内部結合の`col = col`と`col = リテラル`、外部結合の`ON`はnullable側へ、派生表とビューの本体はその出力列を通して。`ROLLUP`はグループ式そのものしか認めない。`HAVING`で集約の外に書く列はselect listの列か別名か`GROUP BY`の列でなければならない（1054）。`DISTINCT`があるとき、select listに無い`ORDER BY`の式はselect listの列しか読めない（3065）。どこでも集約しない問い合わせの`ORDER BY`の集約（3029）、集合演算の`ORDER BY`の集約（3028）は弾く。
+
+  ```sql
+  SELECT email, count(*) FROM users GROUP BY name
+  -- Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column
+  -- 'users.email' which is not functionally dependent on columns in GROUP BY clause; this is
+  -- incompatible with sql_mode=only_full_group_by (MySQL error 1055)
+
+  SELECT name, count(*) FROM users GROUP BY id            -- OK: idは主キー
+  ```
+
+- 名前解決。`ORDER BY`、`GROUP BY`、`HAVING`はサーバと同じにselect listの別名を見る（`GROUP BY`では同名のテーブル列が勝つ）。派生表には別名が要る（1248）。`QUALIFY`は8.4がhypergraph optimizer無しで弾くとおりに弾く（6037）。
+
+検査器のMySQL側（`check/mysql`）はMySQLのパーサを内包し、GNU General Public License v2で配布する。READMEを参照。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 
