@@ -67,7 +67,7 @@
 検査器は`go vet`のツールなので、`go vet`が走る場所ならどこでも走る。一度ビルドして`-vettool`に指定する:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
 $ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 

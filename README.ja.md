@@ -25,7 +25,7 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 検査器とマイグレーションコマンドは1つのバイナリになっている。Go 1.26以上で:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
 $ sqlshape version
 ```
 

@@ -1,23 +1,24 @@
-# Release: push a tag cmd/sqlshape/v* and this cross-compiles the sqlshape binary for every
+# Release: push the root tag vX.Y.Z and this cross-compiles the sqlshape binary for every
 # platform, packs it, and publishes a GitHub Release with checksums.
 #
-#   git tag cmd/sqlshape/v2.0.0 && git push origin cmd/sqlshape/v2.0.0
+#   scripts/release.sh v1.3.0 --push
 #
-# The binary is the nested module cmd/sqlshape (GPLv2); the runtime is the root module and
-# is tagged separately (v1.x.y), as is mysql/ (mysql/v0.x.y). cmd/sqlshape/go.mod names the
-# root version it builds against, so tag the root first and bump that require.
+# The repository's three modules (the root runtime, mysql/, cmd/sqlshape) release in
+# lockstep: scripts/release.sh sets the inter-module requires to the version, commits, and
+# tags vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z on that commit. Only the root tag
+# triggers this workflow (the others do not start with "v").
 #
 # The binary is a plain Go build (libpg_query runs as WebAssembly, no cgo), so one runner
 # builds every target; the smoke test runs the runner's own (linux/amd64) binary as a
 # vettool over the examples, the only one it can execute.
 #
-# `go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@<version>` needs nothing from this
-# workflow: it reads the tag straight from the module proxy.
+# `go install github.com/kr9ly/sqlshape/cmd/sqlshape@<version>` needs nothing from this
+# workflow: it reads the tag cmd/sqlshape/<version> straight from the module proxy.
 name: release
 
 on:
   push:
-    tags: ["cmd/sqlshape/v*"]
+    tags: ["v*"]
 
 permissions:
   contents: write
@@ -31,9 +32,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # the version is the tag without the module prefix: cmd/sqlshape/v2.0.0 -> v2.0.0
       - name: Version
-        run: echo "VERSION=${GITHUB_REF_NAME#cmd/sqlshape/}" >> "$GITHUB_ENV"
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
 
       - name: Build
         env:
@@ -69,9 +69,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=""
-          case "$VERSION" in *-*) pre="--prerelease" ;; esac  # v2.0.0-rc.1
-          # the release notes are the version's section of CHANGELOG.md (a candidate v2.0.0-rc.1
-          # reads the 2.0.0 section); generated notes when it has none
+          case "$VERSION" in *-*) pre="--prerelease" ;; esac  # v1.3.0-rc.1
+          # the release notes are the version's section of CHANGELOG.md (a candidate v1.3.0-rc.1
+          # reads the 1.3.0 section); generated notes when it has none
           v="${VERSION#v}"; v="${v%%-*}"
           awk -v v="$v" '/^## \[/ { on = index($0, "[" v "]") > 0; next } on' CHANGELOG.md > notes.md
           notes="--generate-notes"

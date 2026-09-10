@@ -1,16 +1,14 @@
-module github.com/kr9ly/sqlshape/cmd/sqlshape/v2
+module github.com/kr9ly/sqlshape/cmd/sqlshape
 
 go 1.26.1
 
-// The binary is its own module so that it can be GPLv2 (it will carry the MySQL parser)
-// while the runtime and pgtest stay Apache 2.0 at their import paths. It requires the root
-// module by version: bump this to the root tag that goes out with each release, and tag the
-// binary as cmd/sqlshape/vX.Y.Z (the /v2 in the module path is what makes a 2.x tag legal).
+// The binary is its own module so that it can be GPLv2 (it carries the MySQL parser) while
+// the runtime and pgtest stay Apache 2.0 at their import paths. The three modules of the
+// repository release in lockstep under one version: scripts/release.sh vX.Y.Z sets the
+// requires below to X.Y.Z and tags vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z on one
+// commit. Until the MySQL module's first tag it is resolved through go.work alone (a
+// require of a version that does not exist yet breaks module loading even in a workspace).
 require github.com/kr9ly/sqlshape v1.2.0
-
-// The MySQL dialect (GPLv2) is imported for its registration. It is resolved through
-// go.work until its first tag: add `require github.com/kr9ly/sqlshape/mysql vX.Y.Z` here
-// once mysql/vX.Y.Z exists, and bump it with each release.
 
 require golang.org/x/tools v0.49.0
 

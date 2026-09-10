@@ -34,7 +34,7 @@ u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
 The checker and the migration commands are one binary. With Go 1.26 or newer:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
 $ sqlshape version
 ```
 
