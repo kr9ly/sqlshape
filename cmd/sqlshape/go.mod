@@ -1,4 +1,4 @@
-module github.com/kr9ly/sqlshape/cmd/sqlshape
+module github.com/kr9ly/sqlshape/cmd/sqlshape/v2
 
 go 1.26.1
 
@@ -9,7 +9,6 @@ go 1.26.1
 // that has no tag yet is not listed here (a require of a version that does not exist
 // breaks module loading even in a workspace); go.work resolves it, and release.sh adds
 // the require with the first tag.
-require github.com/kr9ly/sqlshape v1.3.0-rc.2
 
 require golang.org/x/tools v0.49.0
 

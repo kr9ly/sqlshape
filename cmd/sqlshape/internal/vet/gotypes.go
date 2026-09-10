@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // fit is the verdict of matching a Go type against a PostgreSQL type.

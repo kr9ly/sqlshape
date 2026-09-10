@@ -1,6 +1,6 @@
 # sqlshape
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/kr9ly/sqlshape.svg)](https://pkg.go.dev/github.com/kr9ly/sqlshape)
+[![Go Reference](https://pkg.go.dev/badge/github.com/kr9ly/sqlshape/v2.svg)](https://pkg.go.dev/github.com/kr9ly/sqlshape/v2)
 [![release](https://img.shields.io/github/v/release/kr9ly/sqlshape)](https://github.com/kr9ly/sqlshape/releases)
 [![test](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml/badge.svg)](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml)
 ![coverage](.github/badges/coverage.svg)
@@ -25,7 +25,7 @@ u, err := postgres.Get(ctx, db, ByEmail, struct{ Email string }{Email: email})
 検査器とマイグレーションコマンドは1つのバイナリになっている。Go 1.26以上で:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
 $ sqlshape version
 ```
 
@@ -36,8 +36,8 @@ $ sqlshape version
 宣言（`sqlshape.Query`、`sqlshape.One`）は依存の無いGoモジュールで、DBごとのランタイムは別のモジュールになっている。アプリケーションが取り込むのは自分のドライバだけである:
 
 ```
-$ go get github.com/kr9ly/sqlshape            # Query / One: 検査器が読む宣言
-$ go get github.com/kr9ly/sqlshape/postgres   # pgxの上で実行する
+$ go get github.com/kr9ly/sqlshape/v2            # Query / One: 検査器が読む宣言
+$ go get github.com/kr9ly/sqlshape/postgres/v2   # pgxの上で実行する
 ```
 
 バージョンはsemantic versioningに従い、リポジトリの全モジュールに同じタグを打つ（`vX.Y.Z`、`postgres/vX.Y.Z`、…）。同じメジャーバージョンの中では、これらのモジュールと`pgtest`の公開API、テンプレート構文、ディレクティブ、検査器のフラグは互換を保つ。検査器が報告する内容はマイナーバージョンで増えることがある。

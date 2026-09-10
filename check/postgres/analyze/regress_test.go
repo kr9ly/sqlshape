@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // The regress probe replays PostgreSQL's own regression corpus (src/test/regress)

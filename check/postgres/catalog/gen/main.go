@@ -20,9 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 // Each query yields one TSV. Column order is the parsing contract in catalog.go.

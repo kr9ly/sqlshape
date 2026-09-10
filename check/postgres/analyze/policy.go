@@ -1,9 +1,9 @@
 package analyze
 
 import (
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // AnalyzePolicy type-checks a row-level security policy's USING and WITH CHECK predicates

@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // nestedDest returns the scan target for a struct / slice-of-struct field.

@@ -5,9 +5,9 @@ import (
 	"go/types"
 	"strconv"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // Nested rows. A record / composite column (or an array of them) is received by a Go

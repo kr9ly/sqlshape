@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 type OrderStatus string // want OrderStatus:`bound e order_status`

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 // Beginner starts transactions: pgx.Conn and pgxpool.Pool both do.

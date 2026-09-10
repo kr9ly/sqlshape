@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 )
 
 // Value is a node of the AST: *Node, List, Token, Const, Number, Flags, *Struct, or nil.

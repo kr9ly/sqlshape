@@ -1,4 +1,4 @@
-module github.com/kr9ly/sqlshape/examples
+module github.com/kr9ly/sqlshape/examples/v2
 
 go 1.26.1
 

@@ -26,8 +26,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlparse"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/placeholder"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/placeholder"
 )
 
 // ErrNoServer is returned by Start when no mysqld is on PATH; tests skip on it.

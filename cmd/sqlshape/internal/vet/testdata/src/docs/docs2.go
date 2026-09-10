@@ -1,6 +1,6 @@
 package docs
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // A second file: fieldDecl / typeSpec must skip the first file (whose range does not
 // contain this type's position) before finding the match here.

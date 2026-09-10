@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // gapsSchema loads testdata/schema.sql, optionally extended with more DDL, once per test.

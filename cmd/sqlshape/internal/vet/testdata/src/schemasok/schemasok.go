@@ -1,8 +1,8 @@
 package schemasok
 
 import (
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/v2"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 // -schemas=public: this package's statements and Copy calls read/write "public", which is

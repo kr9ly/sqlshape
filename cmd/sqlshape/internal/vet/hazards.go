@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
-	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
 // Template hazards: places where a template action does not do what it looks like.

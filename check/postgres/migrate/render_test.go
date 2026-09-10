@@ -3,7 +3,7 @@ package migrate
 import (
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // TestRelWord covers relWord's four branches: the default (plain table) is not directly

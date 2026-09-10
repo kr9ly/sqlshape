@@ -1,6 +1,6 @@
 package reads
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // -no-table-reads: reads go through views; tables are written, not read
 

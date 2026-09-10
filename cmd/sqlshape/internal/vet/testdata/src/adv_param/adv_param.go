@@ -1,6 +1,6 @@
 package adv_param
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // A scalar int64 parameter into a smallint column: the checker warns (control case,
 // proves paramFit's overflow note works at the top level).

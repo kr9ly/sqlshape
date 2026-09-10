@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 )
 
 func TestMatch(t *testing.T) {

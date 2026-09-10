@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/obligation"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
 )
 
 // TestVisibleWhere: `-- sqlshape: visible where deleted_at IS NULL` on memos, the first

@@ -11,10 +11,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/consumers"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
 )
 
 // The version subcommand prints "sqlshape <version>"; Version() itself reports the

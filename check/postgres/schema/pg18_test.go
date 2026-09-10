@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // PostgreSQL 18 DDL: named NOT NULL constraints, NOT ENFORCED, WITHOUT OVERLAPS / PERIOD,

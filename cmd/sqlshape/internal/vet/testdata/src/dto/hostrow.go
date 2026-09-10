@@ -1,6 +1,6 @@
 package dto
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // A fresh struct covering the reverse mapping's exotic branches: network / hardware
 // address types, an interval, hstore, a range and multirange, geometry, tsvector, and

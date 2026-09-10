@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
 )
 
 // COMMENT ON in schema.sql is the documentation of a column or table. With -sync-comments

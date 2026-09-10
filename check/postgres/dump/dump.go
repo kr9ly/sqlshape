@@ -27,10 +27,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // Binary is the pg_dump executable: $SQLSHAPE_PG_DUMP, else "pg_dump" on PATH. The

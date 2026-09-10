@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 func TestNormalize(t *testing.T) {

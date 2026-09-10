@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/dump"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 // warnServerVersion tells the user when the database at connString runs another PostgreSQL

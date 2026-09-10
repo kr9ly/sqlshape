@@ -3,7 +3,7 @@ package schema
 import (
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 )
 
 // TestTypesUnknownOID exercises the defensive t == nil guards in renameUser / moveUser /

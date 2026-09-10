@@ -77,14 +77,14 @@ trap 'rollback' ERR
 
 # 2. requires, commit, tags: every require of a sqlshape module moves to the version
 for m in "${modules[@]}"; do
-  sed -i -E "s#^(\s*(require )?github\.com/kr9ly/sqlshape(/[a-z/]+)? )v[0-9][^ ]*#\1$version#" "$m/go.mod"
+  sed -i -E "s#^(\s*(require )?github\.com/kr9ly/sqlshape(/[a-z0-9/]+)? )v[0-9][^ ]*#\1$version#" "$m/go.mod"
 done
 git add -- $(present)
 # always a commit of its own, even when no require moved (a first release): the tidy step amends it
 git commit -q --allow-empty -m "release: $version"
 for t in "${tags[@]}"; do git tag -a "$t" -m "sqlshape $version"; done
 
-# 3. go.sum from this clone: `go` fetches github.com/kr9ly/sqlshape through git, and git is
+# 3. go.sum from this clone: `go` fetches github.com/kr9ly/sqlshape/v2 through git, and git is
 # told to read it from here instead
 trap 'rollback; cleanup' ERR
 export GOWORK=off GOPRIVATE=github.com/kr9ly/sqlshape GOMODCACHE="$cache"
@@ -110,7 +110,7 @@ fi
 # 4. the binary as `go install` will build it, and the smoke test over the examples
 bindir=$(mktemp -d)
 bin=$bindir/sqlshape
-(cd cmd/sqlshape && CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/kr9ly/sqlshape/cmd/sqlshape/internal/cli.version=$version" -o "$bin" .)
+(cd cmd/sqlshape && CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/cli.version=$version" -o "$bin" .)
 # the smoke test runs `go vet` in the workspace, which reads the same not-yet-public versions
 GOWORK= .github/scripts/smoke.sh "$bin" "$version"
 rm -rf "$bindir"

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // PL/pgSQL bodies are checked statement by statement with the PL variables in scope.

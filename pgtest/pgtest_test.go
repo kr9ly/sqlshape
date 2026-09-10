@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/pgtest"
+	"github.com/kr9ly/sqlshape/pgtest/v2"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 type OrderRow struct {

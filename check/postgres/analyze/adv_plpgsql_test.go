@@ -13,7 +13,7 @@ package analyze
 import (
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // findFn is a tiny lookup helper so each case below can grab the function it just

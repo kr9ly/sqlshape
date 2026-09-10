@@ -9,10 +9,10 @@ import (
 	"golang.org/x/tools/go/analysis/checker"
 	"golang.org/x/tools/go/packages"
 
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/consumers"
-	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/vet"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/vet"
 )
 
 // indexConsumers runs the vet analyzer over the packages matching patterns and merges

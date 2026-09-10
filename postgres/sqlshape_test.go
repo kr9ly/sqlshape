@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/postgres/v2"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 type OrderStatus string

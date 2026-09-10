@@ -3,8 +3,8 @@ package dbapi
 import (
 	"time"
 
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/postgres/v2"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // Yen meets the yen domain and is bound to it: a Yen passed where a plain bigint or

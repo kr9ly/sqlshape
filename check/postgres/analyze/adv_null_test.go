@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 )
 
 // checkNullability runs sql against a real PG loaded with schemaSQL and inserts, then

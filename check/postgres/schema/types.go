@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 )
 
 // FirstUserOID is where synthetic OIDs for user-defined objects start

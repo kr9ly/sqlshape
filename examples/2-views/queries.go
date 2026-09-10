@@ -3,7 +3,7 @@ package views
 import (
 	"time"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // OrderStatus is bound to order_statuses.code by use (through the views' status column

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/dump"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 // one embedded server for every command of the test binary (each command would boot

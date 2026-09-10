@@ -23,10 +23,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/dump"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // Plan lists the statements that turn from into to: drops (dependents first), the

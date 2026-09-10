@@ -9,10 +9,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
-	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 type analyzer struct {

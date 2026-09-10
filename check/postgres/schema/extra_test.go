@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // --- Load / Apply error paths -------------------------------------------------------

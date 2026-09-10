@@ -50,6 +50,6 @@ emcc -O2 -std=gnu99 -fwrapv -fno-strict-aliasing \
 ls -la "$out"
 [ "${2:-}" = pb ] || exit 0
 protoc --proto_path="$src/protobuf" --go_out="$here/.." \
-	--go_opt=Mpg_query.proto=github.com/kr9ly/sqlshape/check/postgres/pgparse --go_opt=paths=source_relative \
+	--go_opt=Mpg_query.proto=github.com/kr9ly/sqlshape/check/postgres/v2/pgparse --go_opt=paths=source_relative \
 	"$src/protobuf/pg_query.proto"
 gofmt -w "$here/../pg_query.pb.go"

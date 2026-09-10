@@ -11,10 +11,10 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
-	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
 // Declaring R and P from the query. Every diagnostic about the result struct not fitting

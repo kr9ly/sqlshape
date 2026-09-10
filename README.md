@@ -1,6 +1,6 @@
 # sqlshape
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/kr9ly/sqlshape.svg)](https://pkg.go.dev/github.com/kr9ly/sqlshape)
+[![Go Reference](https://pkg.go.dev/badge/github.com/kr9ly/sqlshape/v2.svg)](https://pkg.go.dev/github.com/kr9ly/sqlshape/v2)
 [![release](https://img.shields.io/github/v/release/kr9ly/sqlshape)](https://github.com/kr9ly/sqlshape/releases)
 [![test](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml/badge.svg)](https://github.com/kr9ly/sqlshape/actions/workflows/test.yml)
 ![coverage](.github/badges/coverage.svg)
@@ -34,7 +34,7 @@ u, err := postgres.Get(ctx, db, ByEmail, struct{ Email string }{Email: email})
 The checker and the migration commands are one binary. With Go 1.26 or newer:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
 $ sqlshape version
 ```
 
@@ -54,8 +54,8 @@ the runtime for each database is a module of its own, so an application pulls in
 driver:
 
 ```
-$ go get github.com/kr9ly/sqlshape            # Query / One: the declarations the checker reads
-$ go get github.com/kr9ly/sqlshape/postgres   # running them on pgx
+$ go get github.com/kr9ly/sqlshape/v2            # Query / One: the declarations the checker reads
+$ go get github.com/kr9ly/sqlshape/postgres/v2   # running them on pgx
 ```
 
 Versions follow semantic versioning; every module of the repository is tagged together

@@ -3,8 +3,8 @@ package migrate
 import (
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // seeds brings the content of every seeded table of the target to its declared rows: the

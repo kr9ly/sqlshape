@@ -3,7 +3,7 @@ package analyze
 import (
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 )
 
 // Domains are opaque units.

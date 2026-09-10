@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 const returning18Schema = `-- sqlshape: postgres 18

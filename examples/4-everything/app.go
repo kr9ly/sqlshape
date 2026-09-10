@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 // Open connects a pool whose every connection knows the schema's user types (the enum,

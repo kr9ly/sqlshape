@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlast"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 )
 
 // Schema is the loaded schema.

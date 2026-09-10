@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/parsegen"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/parsegen"
 )
 
 func TestParseTree(t *testing.T) {

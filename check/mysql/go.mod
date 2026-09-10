@@ -1,10 +1,9 @@
-module github.com/kr9ly/sqlshape/check/mysql
+module github.com/kr9ly/sqlshape/check/mysql/v2
 
 go 1.26.1
 
 // The root module is required by version; scripts/release.sh keeps it at the release's
 // version (the three modules release in lockstep). internal/dialect is what is needed of it.
-require github.com/kr9ly/sqlshape v1.3.0-rc.2
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1

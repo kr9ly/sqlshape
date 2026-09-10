@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 
-	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/vet"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/vet"
 )
 
 // TestMySQLVet runs the checker end to end over a MySQL schema: the dialect line selects

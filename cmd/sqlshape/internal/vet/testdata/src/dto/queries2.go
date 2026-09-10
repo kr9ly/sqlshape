@@ -1,6 +1,6 @@
 package dto
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 var blank = sqlshape.Query[Blank, struct{}](`SELECT id, created_at FROM orders`) // want `result column "id" has no field` `result column "created_at" has no field`
 

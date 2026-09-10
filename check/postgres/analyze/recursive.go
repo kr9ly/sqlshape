@@ -8,7 +8,7 @@ package analyze
 import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 func (a *analyzer) checkRecursiveTerm(name string, term *pgparse.Node) *Error {

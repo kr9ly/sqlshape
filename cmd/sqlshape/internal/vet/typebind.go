@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 )
 
 // Declared type bindings. A Go type can name the PostgreSQL type it carries in its doc

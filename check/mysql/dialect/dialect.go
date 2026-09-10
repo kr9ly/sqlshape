@@ -6,9 +6,9 @@ package dialect
 import (
 	"strconv"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/analyze"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/schema"
-	"github.com/kr9ly/sqlshape/internal/dialect"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/analyze"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // Name is the dialect's name in the schema declaration.

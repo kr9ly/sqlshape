@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 
-	"github.com/kr9ly/sqlshape/internal/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // stubDialect answers for a fixed table things(id, name, price, at) without parsing

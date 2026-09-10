@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // normalizeArg turns a template value into something pgx encodes for any target OID: what

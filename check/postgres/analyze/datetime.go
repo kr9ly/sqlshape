@@ -13,7 +13,7 @@ import (
 	"time"
 	_ "time/tzdata" // named zones without relying on the host's zoneinfo
 
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 const (

@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/internal/dialect"
-	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
 // The dialect path: a schema that declares a dialect other than PostgreSQL is judged

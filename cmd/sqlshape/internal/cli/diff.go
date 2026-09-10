@@ -8,10 +8,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/dump"
-	"github.com/kr9ly/sqlshape/check/postgres/migrate"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/migrate"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // runDiff prints the DDL from the current state (-db, or the schema text at -from) to

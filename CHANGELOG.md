@@ -13,14 +13,14 @@ release it is a candidate for.
 ### Changed
 
 - The checker is the product; the runtime is a library per database. The root module
-  `github.com/kr9ly/sqlshape` now holds only the declarations (`Query`, `One`, `Stmt`, `Render`,
+  `github.com/kr9ly/sqlshape/v2` now holds only the declarations (`Query`, `One`, `Stmt`, `Render`,
   the row-binding rules) and has no dependencies. Running a statement on pgx is the module
-  `github.com/kr9ly/sqlshape/postgres`: `postgres.Run(ctx, db, stmt, p)`, `Collect`, `First`,
+  `github.com/kr9ly/sqlshape/postgres/v2`: `postgres.Run(ctx, db, stmt, p)`, `Collect`, `First`,
   `Exec`, `Get` / `Find` / `ExecOne` for `One`, and `MatView`, `Copy`, `Batch`, `LoadUserTypes`,
   `ConstraintError`, `Violates`, `ErrNoRows` moved there (the methods `stmt.Run(ctx, db, p)` are
   gone: a module cannot add methods to another's type). `Labelled` and `UnknownLabelError` stay in
   the root. `pgtest` is its own module. The PostgreSQL analyzer and migration tools are the module
-  `github.com/kr9ly/sqlshape/check/postgres`, the MySQL analyzer `check/mysql` (was `mysql`);
+  `github.com/kr9ly/sqlshape/check/postgres/v2`, the MySQL analyzer `check/mysql` (was `mysql`);
   both are tool-facing, imported by the binary and `pgtest`. An application's go.mod carries the
   root, its runtime and its own driver, nothing of the checker's.
 - The markers the checker recognizes are configurable: `-query=pkg.Func,pkg.Other:one` registers
@@ -55,12 +55,13 @@ release it is a candidate for.
 
 ### Changed
 
-- The binary is its own Go module, `github.com/kr9ly/sqlshape/cmd/sqlshape`, under the GNU
-  General Public License v2; install it with `go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest`
-  as before. The runtime (`github.com/kr9ly/sqlshape`), `pgtest` and everything a checked
-  program imports stay Apache 2.0 at their import paths. The MySQL support is the module
-  `github.com/kr9ly/sqlshape/check/mysql` (GPLv2). The three modules release together under one
-  version, tagged `vX.Y.Z`, `mysql/vX.Y.Z` and `cmd/sqlshape/vX.Y.Z` on the same commit.
+- The binary is its own Go module, `github.com/kr9ly/sqlshape/cmd/sqlshape/v2`, under the GNU
+  General Public License v2; install it with `go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest`.
+  Everything a checked program imports stays Apache 2.0. Every module's path carries the `/v2`
+  major-version suffix Go requires of a 2.x module, so an import of 1.x is
+  `github.com/kr9ly/sqlshape` and of 2.x `github.com/kr9ly/sqlshape/v2`. The modules of the
+  repository release together under one version, tagged `vX.Y.Z` and `<module>/vX.Y.Z` on the
+  same commit.
 
 ## [1.2.0] - 2026-09-09
 

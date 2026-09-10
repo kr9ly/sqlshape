@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 // PlaceOrder creates an order with its lines in one transaction and returns its id.

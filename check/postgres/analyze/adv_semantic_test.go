@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 )
 
 // TestAdvDeferrableUniqueBreaksOne: a DEFERRABLE UNIQUE (or PRIMARY KEY) constraint lets

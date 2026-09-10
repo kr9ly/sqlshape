@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 )
 
 // Hand-written alternatives on the DDL side: column types with a charset the server

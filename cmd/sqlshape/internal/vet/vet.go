@@ -24,20 +24,20 @@ import (
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/obligation"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
-	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/consumers"
-	"github.com/kr9ly/sqlshape/internal/dialect"
-	"github.com/kr9ly/sqlshape/internal/expand"
-	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
-const sqlshapePkg = "github.com/kr9ly/sqlshape"
+const sqlshapePkg = "github.com/kr9ly/sqlshape/v2"
 
 // postgresPkg is the PostgreSQL runtime: MatView and Copy are declared there.
-const postgresPkg = "github.com/kr9ly/sqlshape/postgres"
+const postgresPkg = "github.com/kr9ly/sqlshape/postgres/v2"
 
 // Analyzer is the sqlshape checker.
 var Analyzer = &analysis.Analyzer{

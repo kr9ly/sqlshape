@@ -3,7 +3,7 @@ package schema
 import (
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 // Row-level security. A table's policies are part of its definition: the loader keeps

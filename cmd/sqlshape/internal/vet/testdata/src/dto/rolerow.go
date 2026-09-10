@@ -1,6 +1,6 @@
 package dto
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // role is a CHECK-based value set no Go type in this package is bound to: it falls
 // through to the plain string mapping. tags is a plain array; score / ratio the two

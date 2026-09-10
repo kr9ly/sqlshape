@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/catalog"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/oracle"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/schema"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/catalog"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/oracle"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
 var probeUpdate = flag.Bool("probe-update", false, "rewrite testdata/probe.golden from the server's answers")

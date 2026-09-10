@@ -1,6 +1,6 @@
 package rls
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // Row-level security: the schema problems and the -strict advisories about it are
 // reported once, on the first query of the package.

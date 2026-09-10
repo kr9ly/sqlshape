@@ -3,7 +3,7 @@
 [日本語](runtime.ja.md)
 
 A statement is declared with the `sqlshape` package (`Query`, `One`: no dependencies) and run
-with a runtime module for its database. `github.com/kr9ly/sqlshape/postgres` runs it on pgx:
+with a runtime module for its database. `github.com/kr9ly/sqlshape/postgres/v2` runs it on pgx:
 `postgres.DB` is what a statement runs against, and `*pgx.Conn`, `*pgxpool.Pool` and `pgx.Tx`
 all satisfy it, so a statement runs on a transaction unchanged. The checker reads only the
 declarations, so a program may also run them through a runtime of its own; what such a runtime

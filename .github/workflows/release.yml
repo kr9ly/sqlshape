@@ -12,7 +12,7 @@
 # builds every target; the smoke test runs the runner's own (linux/amd64) binary as a
 # vettool over the examples, the only one it can execute.
 #
-# `go install github.com/kr9ly/sqlshape/cmd/sqlshape@<version>` needs nothing from this
+# `go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@<version>` needs nothing from this
 # workflow: it reads the tag cmd/sqlshape/<version> straight from the module proxy.
 name: release
 
@@ -44,7 +44,7 @@ jobs:
             goos=${target%/*}; goarch=${target#*/}
             bin=sqlshape; [ "$goos" = windows ] && bin=sqlshape.exe
             GOOS=$goos GOARCH=$goarch go build -trimpath \
-              -ldflags "-s -w -X github.com/kr9ly/sqlshape/cmd/sqlshape/internal/cli.version=${VERSION}" \
+              -ldflags "-s -w -X github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/cli.version=${VERSION}" \
               -o "build/$goos-$goarch/$bin" ./cmd/sqlshape
             name="sqlshape_${VERSION}_${goos}_${goarch}"
             mkdir "$name"

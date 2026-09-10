@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // BatchDB is what Batch.Send needs; pgx.Conn, pgxpool.Pool and pgx.Tx all provide it.

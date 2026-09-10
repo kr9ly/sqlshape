@@ -8,7 +8,7 @@ import (
 	"sync"
 	"text/template/parse"
 
-	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
 // Rendered is one concrete execution of a template: the SQL with $n placeholders

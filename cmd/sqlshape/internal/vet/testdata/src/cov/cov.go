@@ -1,6 +1,6 @@
 package cov
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 var dynamic string
 

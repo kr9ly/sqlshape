@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
-	"github.com/kr9ly/sqlshape/internal/facts"
-	"github.com/kr9ly/sqlshape/check/postgres/obligation"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/obligation"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 type advLowerer struct{ s *schema.Schema }

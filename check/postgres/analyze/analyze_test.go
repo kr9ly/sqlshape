@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 var update = flag.Bool("update", false, "regenerate testdata/queries/*.golden from the live oracle")

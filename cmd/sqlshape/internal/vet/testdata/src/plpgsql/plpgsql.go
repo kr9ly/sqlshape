@@ -1,6 +1,6 @@
 package plpgsql
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 type AccountID int64 // want AccountID:`bound k accounts.id`
 

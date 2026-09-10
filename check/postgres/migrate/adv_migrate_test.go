@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 )
 
 // TestAdvSeedRemovalLeavesExistingRowsInPlace pins down a deliberate design choice (not a

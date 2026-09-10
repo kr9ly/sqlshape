@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // TestViolations covers the failure-mode enumeration (violation.go) against testdata/schema.sql.

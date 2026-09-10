@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 )
 
 func TestVersionMismatch(t *testing.T) {

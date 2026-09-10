@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/schema"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
 const testSchema = `-- sqlshape: mysql 8.4

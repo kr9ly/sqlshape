@@ -1,6 +1,6 @@
 package rlspin
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // -require-columns=tenant_id with -strict: a row-level security policy that fixes the
 // column pins it; when row security is not forced the pin holds for non-owner roles only.

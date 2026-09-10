@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/oracle"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/schema"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/oracle"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
 // TestOracle checks the analyzer's answers against a real mysqld: every statement of

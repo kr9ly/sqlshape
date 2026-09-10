@@ -2,7 +2,7 @@ package dtouuid
 
 import (
 	"github.com/google/uuid"
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 	"github.com/shopspring/decimal"
 )
 

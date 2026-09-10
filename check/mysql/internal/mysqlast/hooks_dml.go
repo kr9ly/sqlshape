@@ -3,7 +3,7 @@ package mysqlast
 import (
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 )
 
 // Hand-written alternatives reachable from the statements sqlshape reads. Each mirrors

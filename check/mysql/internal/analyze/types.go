@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/catalog"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/schema"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/catalog"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
 // The type rules, as the server states them. A value has a data type (enum_field_types,

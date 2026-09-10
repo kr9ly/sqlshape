@@ -2,7 +2,7 @@
 
 [English](runtime.md)
 
-文は`sqlshape`パッケージで宣言し（`Query`、`One`。依存は無い）、DBごとのランタイムモジュールで実行する。`github.com/kr9ly/sqlshape/postgres`はpgxの上で実行するランタイムで、実行先の`postgres.DB`は`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`のどれでもよいので、同じ文をトランザクションの中でもそのまま実行できる。検査器が読むのは宣言だけなので、自前のランタイムで実行してもよい。その場合に得られないものは末尾に書く。
+文は`sqlshape`パッケージで宣言し（`Query`、`One`。依存は無い）、DBごとのランタイムモジュールで実行する。`github.com/kr9ly/sqlshape/postgres/v2`はpgxの上で実行するランタイムで、実行先の`postgres.DB`は`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`のどれでもよいので、同じ文をトランザクションの中でもそのまま実行できる。検査器が読むのは宣言だけなので、自前のランタイムで実行してもよい。その場合に得られないものは末尾に書く。
 
 ## 文の実行
 

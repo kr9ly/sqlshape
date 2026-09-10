@@ -1,6 +1,6 @@
 package adv_template
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // P1 exercises an if/else where the then-branch leaves an odd number of quotes in the
 // raw template text (closed only by text shared after {{end}}); checkActionPlacement scans

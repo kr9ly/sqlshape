@@ -4,7 +4,7 @@
 // sqlshape: context ops (temporary, remove after the migration)
 package adv_context
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // The trailing text after the context name is not a recognized context directive, so
 // no context is selected: the base obligation applies, and the unrecognized directive

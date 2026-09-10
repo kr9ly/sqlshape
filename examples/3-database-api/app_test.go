@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape/pgtest"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/pgtest/v2"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 func TestDatabaseAPI(t *testing.T) {

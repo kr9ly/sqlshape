@@ -3,7 +3,7 @@ package app
 import (
 	"time"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 type User struct {

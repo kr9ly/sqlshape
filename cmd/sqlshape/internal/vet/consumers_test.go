@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/consumers"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
 	"golang.org/x/tools/go/analysis/analysistest"
 )
 

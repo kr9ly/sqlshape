@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlast"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 )
 
 // Type is a MySQL column type as declared.

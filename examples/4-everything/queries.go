@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/postgres/v2"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // --- Go types for the schema's types -------------------------------------------------------

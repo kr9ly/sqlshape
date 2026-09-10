@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kr9ly/sqlshape/check/postgres/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // PL/pgSQL bodies. libpg_query's PL/pgSQL parser gives the body's structure (blocks,

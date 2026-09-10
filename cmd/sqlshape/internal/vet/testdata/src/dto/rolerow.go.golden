@@ -2,7 +2,7 @@ package dto
 
 import (
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // role is a CHECK-based value set no Go type in this package is bound to: it falls

@@ -1,6 +1,6 @@
 package owner
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // -require-columns=user_id: every statement on a table with user_id must pin it
 

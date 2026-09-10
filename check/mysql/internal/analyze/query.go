@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlast"
-	"github.com/kr9ly/sqlshape/check/mysql/internal/schema"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
 // queryExpression types a PT_query_expression (WITH, a body, ORDER BY, LIMIT) and returns

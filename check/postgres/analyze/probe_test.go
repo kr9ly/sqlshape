@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 )
 
 // TestProbe: PROBE_SCHEMA=file PROBE_SQL=file [PROBE_ORACLE=1] go test -run TestProbe

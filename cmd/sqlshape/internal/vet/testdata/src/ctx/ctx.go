@@ -3,7 +3,7 @@
 // sqlshape: context ops
 package ctx
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 var count = sqlshape.Query[int64, struct{}](`SELECT count(*) FROM orders`)
 

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/parsegen"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/parsegen"
 )
 
 func main() {

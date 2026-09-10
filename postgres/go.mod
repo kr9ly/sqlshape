@@ -1,4 +1,4 @@
-module github.com/kr9ly/sqlshape/postgres
+module github.com/kr9ly/sqlshape/postgres/v2
 
 go 1.26.1
 

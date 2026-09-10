@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
 // TestLiteralGaps* exercises less-traveled branches of the ported PostgreSQL input

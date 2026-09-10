@@ -3,7 +3,7 @@ package mysqlast
 import (
 	"fmt"
 
-	"github.com/kr9ly/sqlshape/check/mysql/internal/mysqlparse"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 )
 
 // Set operations and quantified comparisons: actions parsegen reads as calls it does not

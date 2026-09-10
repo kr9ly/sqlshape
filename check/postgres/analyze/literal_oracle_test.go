@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 )
 
 // TestLiteralOracle runs every 'literal'::type found in PG's regress corpus through the

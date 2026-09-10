@@ -1,6 +1,6 @@
 package dto
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // A fix that needs imports the file lacks adds them (a single import becomes a block).
 type Stamped struct{}

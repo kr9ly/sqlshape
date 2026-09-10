@@ -10,8 +10,8 @@ import (
 	"b"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/v2"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 type OrderStatus string // want OrderStatus:`bound e order_status`

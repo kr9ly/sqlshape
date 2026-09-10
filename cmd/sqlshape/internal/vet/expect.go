@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/analyze"
-	"github.com/kr9ly/sqlshape/internal/expand"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
 // The failure contract of a statement is written in its template:

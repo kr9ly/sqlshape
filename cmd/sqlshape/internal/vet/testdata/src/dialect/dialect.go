@@ -3,8 +3,8 @@ package dialect
 import (
 	"time"
 
-	"github.com/kr9ly/sqlshape"
-	"github.com/kr9ly/sqlshape/postgres"
+	"github.com/kr9ly/sqlshape/v2"
+	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
 // The stub dialect (vet/dialect_test.go) knows one table: things(id bigint not null,

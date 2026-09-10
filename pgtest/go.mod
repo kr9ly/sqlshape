@@ -1,4 +1,4 @@
-module github.com/kr9ly/sqlshape/pgtest
+module github.com/kr9ly/sqlshape/pgtest/v2
 
 go 1.26.1
 

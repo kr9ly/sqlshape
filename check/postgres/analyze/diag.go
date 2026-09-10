@@ -7,8 +7,8 @@ package analyze
 import (
 	"fmt"
 
-	"github.com/kr9ly/sqlshape/check/postgres/schema"
-	"github.com/kr9ly/sqlshape/internal/facts"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
 // Error is a PG-style semantic error with SQLSTATE and 1-based position (0 if none).

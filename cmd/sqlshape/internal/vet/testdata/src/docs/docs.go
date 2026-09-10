@@ -1,6 +1,6 @@
 package docs
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 // -sync-comments: COMMENT ON TABLE orders / COLUMN orders.status become doc comment suggestions
 

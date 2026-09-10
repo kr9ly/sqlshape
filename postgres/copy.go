@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // CopyDB is what Copier.From needs; pgx.Conn, pgxpool.Pool and pgx.Tx all provide it.

@@ -8,8 +8,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/diff"
-	"github.com/kr9ly/sqlshape/check/postgres/dump"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
 )
 
 // runVerify lists where the database differs from the target schema (drift). Column order
