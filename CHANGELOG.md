@@ -28,6 +28,13 @@ release it is a candidate for.
   statements through a runtime of its own; what only sqlshape's runtime promises (the rendered SQL
   is the checked SQL, violations come back under the expect line's names, `One` rejects a second
   row) is stated in docs/runtime.md.
+- The `One` proof is written once, over the statement's facts, for every dialect: the
+  PostgreSQL analyzer no longer proves cardinality on its own tree but records what the proof
+  needs (unique keys with a partial index's predicate, temporal keys, a view's or subquery's
+  body with its output columns, GROUP BY terms, LIMIT / VALUES / set-operation shape). Two
+  verdicts change: a `GROUP BY 1` (an ordinal, or an alias) names an output column and is no
+  longer read as a pinned constant, so such a statement is not proved single; a `LIMIT 1`
+  over a `UNION` and an aggregate over a `FULL JOIN` are one row and are proved.
 
 ### Added
 

@@ -224,7 +224,7 @@ WHEN MATCHED THEN UPDATE SET status = s.status`
 	if aerr != nil {
 		t.Fatal(aerr)
 	}
-	if !r.Facts.AtMostOne {
+	if !r.AtMostOne {
 		t.Fatalf("expected AtMostOne (ON pins orders.id by equality to a parameter, same as an equivalent UPDATE's WHERE), got false:\n%s", r.Facts.String())
 	}
 }

@@ -34,9 +34,15 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 		return nil, errAt(codeFeatureNotSupported, -1, "%s is not allowed with UNION/INTERSECT/EXCEPT", lockStrength(sel.LockingClause[0]))
 	}
 	if sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED {
+		// the level has no leaves of its own (the arms are levels under it); its facts say
+		// that a set operation may combine rows
+		a.scopeSel[sc] = sel
+		a.recordFixed(sc, nil)
 		return a.setOp(sel, sc)
 	}
 	if len(sel.ValuesLists) > 0 {
+		a.scopeSel[sc] = sel
+		a.recordFixed(sc, nil)
 		return a.values(sel.ValuesLists, sc)
 	}
 	sc.grouped = len(sel.GroupClause) > 0
@@ -115,6 +121,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 		}
 		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll})
 	}
+	a.scopeCols[sc] = cols
 	for _, g := range groupingLeaves(sel.GroupClause) {
 		if err := a.orderOrGroupItem(g, sc, cols, "GROUP BY"); err != nil {
 			return nil, err

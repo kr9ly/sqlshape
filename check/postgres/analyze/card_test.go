@@ -6,7 +6,8 @@ import (
 	"testing"
 )
 
-// TestCardinality covers the at-most-one-row proof (card.go). Schema: users (PK id,
+// TestCardinality covers the at-most-one-row proof (x/cardinality over the facts card.go
+// and facts.go produce). Schema: users (PK id,
 // UNIQUE email), orders (PK id, UNIQUE (user_id, note), partial UNIQUE (uid) WHERE
 // status <> 'cancelled', FK user_id → users), order_items (PK (order_id, line_no)),
 // view order_summary (orders JOIN users), matview order_stats (GROUP BY user_id).
@@ -40,6 +41,7 @@ func TestCardinality(t *testing.T) {
 		{sql: "SELECT id FROM orders o WHERE o.uid = $1 AND o.status <> 'cancelled'", one: true},
 		{sql: "SELECT id FROM orders WHERE uid = $1", why: "orders: no unique key"},
 		{sql: "SELECT id FROM orders WHERE uid = $1 AND status <> 'paid'", why: "orders: no unique key"},
+		{sql: "SELECT id FROM orders WHERE uid = $1 AND status <> 'cancelled' AND user_id = $2", one: true},
 		// not fixed
 		{sql: "SELECT id FROM users", why: "users: no unique key is fixed by equality (keys: (id), (email))"},
 		{sql: "SELECT id FROM users WHERE name = $1", why: "users: no unique key"},
@@ -52,10 +54,15 @@ func TestCardinality(t *testing.T) {
 		// other single shapes
 		{sql: "SELECT count(*) FROM orders", one: true},
 		{sql: "SELECT max(total) FROM orders WHERE user_id = $1", one: true},
-		{sql: "SELECT count(*) FROM orders GROUP BY user_id", why: "GROUP BY yields one row per group (SELECT user_id is not pinned)"},
+		{sql: "SELECT count(*) FROM orders GROUP BY user_id", why: "GROUP BY yields one row per group (user_id is not pinned)"},
 		{sql: "SELECT user_id, count(*) FROM orders WHERE user_id = $1 GROUP BY user_id", one: true},
 		{sql: "SELECT o.user_id, u.email, count(*) FROM orders o JOIN users u ON u.id = o.user_id WHERE u.id = $1 GROUP BY o.user_id, u.email", one: true},
 		{sql: "SELECT status, count(*) FROM orders WHERE user_id = $1 GROUP BY status", why: "GROUP BY"},
+		// an ordinal or an alias in GROUP BY names an output column, not a constant
+		{sql: "SELECT status AS s, count(*) FROM orders WHERE user_id = $1 GROUP BY 1", why: "GROUP BY yields one row per group (status is not pinned)"},
+		{sql: "SELECT user_id AS u, count(*) FROM orders WHERE user_id = $1 GROUP BY u", one: true},
+		{sql: "SELECT generate_series(1, 3) AS g, count(*) FROM orders GROUP BY g", why: "GROUP BY"},
+		{sql: "SELECT count(*) FROM orders GROUP BY GROUPING SETS ((user_id), ())", why: "GROUPING SETS"},
 		// stable functions of known values are known; volatile ones are not
 		{sql: "SELECT id FROM users WHERE email = lower($1)", one: true},
 		{sql: "SELECT id FROM users WHERE id = abs($1::bigint)", one: true},
@@ -68,6 +75,9 @@ func TestCardinality(t *testing.T) {
 		{sql: "SELECT $1::int", one: true},
 		{sql: "SELECT now()", one: true},
 		{sql: "SELECT id FROM users WHERE id = 1 UNION SELECT id FROM users WHERE id = 2", why: "UNION"},
+		{sql: "(SELECT id FROM users WHERE id = 1 UNION SELECT id FROM users WHERE id = 2) LIMIT 1", one: true},
+		{sql: "SELECT * FROM (VALUES (1)) v(a)", one: true},
+		{sql: "SELECT * FROM (VALUES (1), (2)) v(a)", why: "subquery v: VALUES has 2 rows"},
 		{sql: "SELECT * FROM generate_series(1, 3)", why: "function generate_series may return many rows"},
 		{sql: "SELECT * FROM now()", one: true},
 		// joins: dependencies flow through equalities
@@ -85,6 +95,7 @@ func TestCardinality(t *testing.T) {
 		{sql: "SELECT u.id FROM users u LEFT JOIN orders o ON u.id = $1", why: "users u"},
 		{sql: "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.id = $1", why: "orders o"},
 		{sql: "SELECT u.id FROM users u FULL JOIN orders o ON o.id = $2 WHERE u.id = $1", why: "FULL JOIN"},
+		{sql: "SELECT count(*) FROM users u FULL JOIN orders o ON o.user_id = u.id", one: true},
 		// views, subqueries, CTEs are proved through their definitions
 		{sql: "SELECT id FROM order_summary WHERE id = $1", one: true},
 		{sql: "SELECT id FROM order_summary WHERE email = $1", why: "view order_summary: orders o: no unique key"},

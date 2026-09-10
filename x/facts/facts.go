@@ -21,6 +21,9 @@ const (
 	// of the branch's own kind, so an obligation `on update` sees the UPDATE branch and
 	// an INSERT-only MERGE owes nothing on update.
 	Merge
+	// Call is a procedure call: no scope of its own (the body's reads and writes are the
+	// procedure's), and at most one row.
+	Call
 )
 
 // Facts is the record of one statement.
@@ -29,6 +32,10 @@ type Facts struct {
 	// Top is the outermost scope: the FROM of a SELECT, or the target plus FROM / USING of
 	// a write. Subqueries, CTEs and expanded view bodies hang under it as Children.
 	Top *Scope
+	// Source is the query an INSERT ... SELECT reads, when the statement has one (also one
+	// of Top's Children): its row count is the statement's. Nil otherwise; an INSERT of a
+	// VALUES list says its row count through Top's Single / Many.
+	Source *Scope
 	// Writes are the tables the statement stores into, with the columns it assigns.
 	Writes []Write
 	// AtMostOne: the statement provably touches at most one row (the One proof).
@@ -78,6 +85,20 @@ type Scope struct {
 	// At is the 0-based offset of this level's WHERE (or ON) clause, -1 without one:
 	// where a missing predicate is reported.
 	At int32
+	// The level's row count beyond what its leaves say, read by the cardinality proof
+	// before the key argument. Single: at most one row whatever the leaves hold (a
+	// constant LIMIT 0 / 1, a single VALUES row, an aggregate without GROUP BY). Many: why
+	// the level may yield many rows whatever its predicates fix (a set operation, a VALUES
+	// list of several rows, a FULL JOIN); empty when nothing structural says so. Single is
+	// read first: LIMIT 1 over a UNION is one row.
+	Single bool
+	Many   string
+	// Groups are the GROUP BY expressions when the level has a GROUP BY: it yields one row
+	// per group, so it is one row when every expression is pinned -- a Column term whose
+	// column is known, or a Param / Const / Known / Outer term; an Expr term never is.
+	// GroupingSets marks GROUPING SETS / ROLLUP / CUBE (one row per set).
+	Groups       []Term
+	GroupingSets bool
 }
 
 // Leaf is one relation occurrence in a scope.
@@ -93,15 +114,46 @@ type Leaf struct {
 	// Waived are the obligation names the statement (or, inside a view body, the view's
 	// own directives) opts out of for this table. Reported, never silently dropped.
 	Waived []string
-	// View is the expanded body of a view leaf, when the producer expanded it; the body's
-	// own leaves live in that scope, and its predicates are inherited into the outer
-	// scope's Preds with Origin == FromView.
-	View *Scope
-	// UniqueKeys are the enforced unique keys of a table leaf (the primary key and the
-	// UNIQUE constraints whose columns are whole columns), each a column list, as the
-	// producer knows them from the schema: what the cardinality proof fixes rows by. Nil
-	// for a leaf that has none the producer can vouch for.
-	UniqueKeys [][]string
+	// Body is the defining query of a view, subquery or CTE leaf, when the producer
+	// analyzed it (a subquery's or CTE's body is also one of the enclosing scope's
+	// Children; a view's is reached only from here). The body's own leaves live in that
+	// scope; a view's predicates are inherited into the outer scope's Preds with Origin ==
+	// FromView. Set for a table leaf too when the write goes through an automatically
+	// updatable view: the rows are the view's.
+	Body *Scope
+	// Outputs map the leaf's output columns, by name, to the Body column each projects
+	// plainly (`SELECT o.id ... ` makes the output id the body's o.id); an output that is
+	// an expression is absent. The cardinality proof seeds the body with the outputs the
+	// enclosing level fixes.
+	Outputs []Output
+	// Single: the leaf is at most one row on its own (a scalar function in FROM).
+	Single bool
+	// Keys are the enforced unique keys of a table leaf (the primary key, the UNIQUE
+	// constraints and unique indexes over whole columns), as the producer knows them from
+	// the schema: what the cardinality proof fixes rows by. A key not enforced at every
+	// statement (DEFERRABLE) is left out. Nil for a leaf that has none the producer can
+	// vouch for.
+	Keys []Key
+}
+
+// Key is one unique key of a table leaf.
+type Key struct {
+	Columns []string
+	// Where are the conjuncts of a partial unique index's predicate, in the same form as
+	// a scope's Preds and about this leaf (ColRef.Leaf is the leaf's own index in its
+	// scope): the key holds only where the statement repeats every one of them. Nil for
+	// a whole-table key.
+	Where []Pred
+	// Temporal: the last column is a range and the key is WITHOUT OVERLAPS -- no two rows
+	// with the other columns equal have overlapping ranges, so a row whose range Contains
+	// a known point is the only one for those values.
+	Temporal bool
+}
+
+// Output is one output column of a derived leaf that is a plain column of its body.
+type Output struct {
+	Name string
+	Col  ColRef // a column of Body's leaves
 }
 
 // RelKind is what the leaf is.
@@ -111,9 +163,13 @@ const (
 	Table RelKind = iota + 1
 	View
 	MatView
-	// Derived is a subquery, CTE, VALUES or function in FROM: it has no obligations of
-	// its own, but its scope may.
+	// Derived is a subquery or VALUES in FROM: it has no obligations of its own, but its
+	// scope may.
 	Derived
+	// CTE is a reference to a WITH item (the same kind of leaf as Derived, named).
+	CTE
+	// Function is a function call in FROM (a set-returning function, XMLTABLE, ...).
+	Function
 )
 
 // Role is how the statement touches the leaf.
@@ -196,6 +252,11 @@ const (
 	// In: Col holds one of Terms (a value list, or a disjunction of equalities on the
 	// column). Weaker than Eq; enough to know the column's value is among a set.
 	In
+	// Contains: Col, a range or multirange column, contains the point Term (`col @> $1`,
+	// `$1 <@ col`). The producer records it only when the point is visibly not a range
+	// itself (an empty range is contained by every range). With a Temporal key it fixes
+	// the row the way an equality does.
+	Contains
 	Opaque
 )
 
@@ -226,6 +287,9 @@ const (
 	// correlated subquery's predicate. Known to the inner row, and the link by which the
 	// inner scope witnesses something about the outer row.
 	Outer
+	// Expr: an expression over the row the producer does not decompose (Text is its
+	// rendering); never a known value. Only in Scope.Groups.
+	Expr
 )
 
 // Origin says where a Pred came from; the checker reports the discharge path with it.

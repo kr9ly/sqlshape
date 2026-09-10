@@ -742,11 +742,8 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 			report(lit.pos(tp), "%s%s", msg, where)
 		}
 		if single {
-			// the dialect's own verdict when it proves cardinality itself, else the proof on facts
+			// the One proof: on the facts, whatever the dialect
 			ok, why := cardinality.AtMostOne(r.Facts)
-			if r.ManyRowsWhy != "" {
-				ok, why = false, r.ManyRowsWhy
-			}
 			if !ok {
 				report(lit.pos(0), "One: cannot prove at most one row: %s%s", why, where)
 			}

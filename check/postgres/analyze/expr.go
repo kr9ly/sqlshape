@@ -1298,8 +1298,10 @@ func (a *analyzer) funcCall(f *pgparse.FuncCall, sc *scope) (*expr, *Error) {
 	switch {
 	case c.fn != nil:
 		a.funcVolatility[f] = c.fn.Volatile
+		a.funcRetSet[f] = c.fn.RetSet
 	case c.ufn != nil:
 		a.funcVolatility[f] = c.ufn.Volatile
+		a.funcRetSet[f] = c.ufn.RetSet
 	}
 	isAggFn := c.fn != nil && c.fn.Kind == 'a' || c.ufn != nil && c.ufn.IsAgg
 	if isAggFn && len(f.Args) == 0 && !f.AggStar && !f.AggWithinGroup {

@@ -9,23 +9,15 @@ import (
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
-// Cardinality: proving "at most one row".
+// The equality structure of a query level, for the facts (facts.go) and the advisories.
 //
-// An application that calls One asserts an interpretation ("this lookup hits at most one
-// row") that the database can back with its constraints. The proof is the classic
-// functional-dependency argument over the FROM leaves: a leaf is single once some unique
-// key of it (PK / UNIQUE / unique index, partial ones only when the query repeats the
-// predicate) is fixed by equalities to known values, and a single leaf makes all its
-// columns known, which can fix other leaves through join equalities. Known values are
-// literals, parameters, outer references, uncorrelated scalar subqueries and casts /
-// arithmetic over those. When every leaf is single the result is at most one row.
-//
-// Join direction matters: an ON condition of a LEFT JOIN restricts only the right side,
-// so its equalities may only make right-side columns known. FULL JOIN is never single
-// (two unmatched sides give two rows). Subqueries, views and CTEs are proved recursively
-// with the outer-fixed output columns as seeds. Besides the key argument, a constant
-// LIMIT 0/1, an aggregate without GROUP BY, no FROM at all and a one-row VALUES /
-// INSERT are single.
+// The One proof itself ("at most one row") is x/cardinality's, over the facts: this file
+// only decides what is known before the statement runs -- literals, parameters, outer
+// references, uncorrelated scalar subqueries, stable functions and casts / arithmetic
+// over those -- and which columns the predicates fix to such values. Join direction
+// matters: an ON condition of a LEFT JOIN restricts only the right side, so its
+// equalities may only make right-side columns known; a FULL JOIN keeps unmatched rows of
+// both sides, which the level's facts say (Many).
 
 // subquery is the defining query of a FROM leaf that is not a table.
 type subquery struct {
@@ -46,125 +38,22 @@ type conjunct struct {
 	allow map[*rte]bool // leaves this predicate restricts (nil: all)
 }
 
+// prover collects one query level's equality structure: its leaves, the conjuncts that
+// restrict them (with the leaves an outer join's ON may restrict), the columns fixed to
+// known values and the equalities between columns. It is the source of the level's facts
+// (facts.go), of the nullability refinement and of the plan advisories.
 type prover struct {
 	a         *analyzer
 	sc        *scope
 	leaves    []*rte
 	conjuncts []conjunct
 	known     map[colKey]bool
-	// pointIn: range / multirange columns that contain a known point (col @> $1::date,
-	// $1::date <@ col): with a WITHOUT OVERLAPS key, at most one row's range holds it
-	pointIn map[colKey]bool
-	// contains: `col @> point` where the point is another column; it counts once that
-	// column is known (fixpoint)
-	contains []edge
-	edges    []edge
-	single   map[*rte]bool
-	why      map[*rte]string // leaf → why it could not be proved single
-	fail     string          // structural reason (FULL JOIN)
+	edges     []edge
+	fail      string // structural reason the level may yield many rows (FULL JOIN)
 }
 
-// cardinality decides whether the analyzed statement returns at most one row.
-func (a *analyzer) cardinality(stmt *pgparse.Node, sc *scope) (bool, string) {
-	switch st := stmt.Node.(type) {
-	case *pgparse.Node_SelectStmt:
-		return a.selectSingle(st.SelectStmt, sc, nil)
-	case *pgparse.Node_InsertStmt:
-		ins := st.InsertStmt
-		if ins.SelectStmt == nil {
-			return true, ""
-		}
-		sel := ins.SelectStmt.GetSelectStmt()
-		if len(sel.ValuesLists) > 0 && sel.Op == pgparse.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
-			if len(sel.ValuesLists) == 1 {
-				return true, ""
-			}
-			return false, fmt.Sprintf("VALUES has %d rows", len(sel.ValuesLists))
-		}
-		return a.selectSingle(sel, a.insertSelScope, nil)
-	case *pgparse.Node_UpdateStmt:
-		return a.fromSingle(sc, st.UpdateStmt.WhereClause, nil, nil, nil)
-	case *pgparse.Node_DeleteStmt:
-		return a.fromSingle(sc, st.DeleteStmt.WhereClause, nil, nil, nil)
-	case *pgparse.Node_CallStmt:
-		return true, ""
-	case *pgparse.Node_MergeStmt:
-		if a.mergeScope != nil {
-			return a.fromSingle(a.mergeScope, st.MergeStmt.JoinCondition, nil, nil, nil)
-		}
-	}
-	return false, "unsupported statement"
-}
-
-// selectSingle proves one SELECT level; knownOut are output columns fixed from outside.
-func (a *analyzer) selectSingle(sel *pgparse.SelectStmt, sc *scope, knownOut []int) (bool, string) {
-	if sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED {
-		return false, setOpName(sel.Op) + " may combine rows"
-	}
-	if len(sel.ValuesLists) > 0 {
-		if len(sel.ValuesLists) == 1 {
-			return true, ""
-		}
-		return false, fmt.Sprintf("VALUES has %d rows", len(sel.ValuesLists))
-	}
-	if n, ok := constInt(sel.LimitCount); ok && n <= 1 {
-		return true, ""
-	}
-	if len(sel.FromClause) == 0 {
-		return true, ""
-	}
-	if len(sel.GroupClause) > 0 {
-		// one group when every grouping expression is pinned to a known value
-		return a.fromSingle(sc, sel.WhereClause, sel.TargetList, knownOut, sel.GroupClause)
-	}
-	if sc.agg {
-		return true, ""
-	}
-	return a.fromSingle(sc, sel.WhereClause, sel.TargetList, knownOut, nil)
-}
-
-// fromSingle runs the functional-dependency argument over sc.items. With groups (a GROUP
-// BY list) the question becomes whether every grouping expression is pinned, i.e. there
-// is at most one group.
-func (a *analyzer) fromSingle(sc *scope, where *pgparse.Node, targets []*pgparse.Node, knownOut []int, groups []*pgparse.Node) (bool, string) {
-	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
-	for _, it := range sc.items {
-		p.addItem(it)
-	}
-	if p.fail != "" {
-		return false, p.fail
-	}
-	p.addQuals(where, nil)
-	if len(knownOut) > 0 {
-		keys := p.outputKeys(targets)
-		for _, i := range knownOut {
-			if i < len(keys) && keys[i] != nil {
-				p.known[*keys[i]] = true
-			}
-		}
-	}
-	p.fixpoint()
-	if groups != nil {
-		for _, g := range groups {
-			if g.GetGroupingSet() != nil {
-				return false, "GROUPING SETS yield one row per set"
-			}
-			if k, ok := p.resolve(g); ok && p.known[k] {
-				continue
-			}
-			if p.isKnown(g) {
-				continue
-			}
-			return false, "GROUP BY yields one row per group (" + deparse(g) + " is not pinned)"
-		}
-		return true, ""
-	}
-	for _, l := range p.leaves {
-		if !p.single[l] {
-			return false, p.describe(l)
-		}
-	}
-	return true, ""
+func (a *analyzer) newProverFor(sc *scope) *prover {
+	return &prover{a: a, sc: sc, known: map[colKey]bool{}}
 }
 
 func leavesOf(r *rte) map[*rte]bool {
@@ -222,17 +111,15 @@ func (p *prover) addQuals(n *pgparse.Node, allow map[*rte]bool) {
 			p.fix(rk, allow)
 		}
 	}
-	for _, c := range conjuncts(n) {
-		p.addContainment(c, allow)
-	}
 }
 
-// addContainment notes `col @> point` / `point <@ col` where the point is a known value of
-// a non-range type (a range on the known side could be empty, which every range contains).
-func (p *prover) addContainment(c *pgparse.Node, allow map[*rte]bool) {
+// containment reads `col @> point` / `point <@ col` where col is a column of this level
+// and the point is of a non-range type (a range on the point side could be empty, which
+// every range contains).
+func (p *prover) containment(c *pgparse.Node) (colKey, *pgparse.Node, bool) {
 	x := c.GetAExpr()
 	if x == nil || x.Kind != pgparse.A_Expr_Kind_AEXPR_OP || x.Lexpr == nil || x.Rexpr == nil {
-		return
+		return colKey{}, nil, false
 	}
 	parts := strs(x.Name)
 	var col, point *pgparse.Node
@@ -242,26 +129,13 @@ func (p *prover) addContainment(c *pgparse.Node, allow map[*rte]bool) {
 	case "<@":
 		col, point = x.Rexpr, x.Lexpr
 	default:
-		return
+		return colKey{}, nil, false
 	}
 	k, ok := p.resolve(col)
-	if !ok || !p.scalarTyped(point) || (allow != nil && !allow[k.r]) {
-		return
+	if !ok || !p.scalarTyped(point) {
+		return colKey{}, nil, false
 	}
-	if pk, isCol := p.resolve(point); isCol {
-		p.contains = append(p.contains, edge{from: pk, to: k})
-		return
-	}
-	if p.isKnown(point) {
-		p.setPointIn(k)
-	}
-}
-
-func (p *prover) setPointIn(k colKey) {
-	if p.pointIn == nil {
-		p.pointIn = map[colKey]bool{}
-	}
-	p.pointIn[k] = true
+	return k, point, true
 }
 
 // scalarTyped reports whether n's type is visibly not a range or multirange: a cast to
@@ -482,8 +356,8 @@ func (p *prover) isKnown(n *pgparse.Node) bool {
 		// volatile ones (random(), nextval()) are evaluated per row
 		f := v.FuncCall
 		vol, ok := p.a.funcVolatility[f]
-		if !ok || vol == 'v' || f.AggStar || f.Over != nil || p.a.isAggregateName(strs(f.Funcname)) {
-			return false
+		if !ok || vol == 'v' || p.a.funcRetSet[f] || f.AggStar || f.Over != nil || p.a.isAggregateName(strs(f.Funcname)) {
+			return false // a set-returning function yields a row per element, not one value
 		}
 		for _, arg := range f.Args {
 			if !p.isKnown(arg) {
@@ -575,163 +449,6 @@ func (a *analyzer) fromColumns(sel *pgparse.SelectStmt) map[string]bool {
 	return out
 }
 
-func (p *prover) fixpoint() {
-	for changed := true; changed; {
-		changed = false
-		for _, e := range p.edges {
-			if p.known[e.from] && !p.known[e.to] {
-				p.known[e.to] = true
-				changed = true
-			}
-		}
-		for _, e := range p.contains {
-			if p.known[e.from] && !p.pointIn[e.to] {
-				p.setPointIn(e.to)
-				changed = true
-			}
-		}
-		for _, l := range p.leaves {
-			if p.single[l] {
-				continue
-			}
-			if p.leafSingle(l) {
-				p.single[l] = true
-				for i := range l.cols {
-					p.known[colKey{l, i}] = true
-				}
-				changed = true
-			}
-		}
-	}
-}
-
-// leafSingle decides whether the known columns fix at most one row of the leaf.
-func (p *prover) leafSingle(r *rte) bool {
-	switch {
-	case r.single:
-		return true
-	case r.rel != nil:
-		for _, con := range r.rel.Constraints {
-			if con.Kind != schema.PrimaryKey && con.Kind != schema.Unique {
-				continue
-			}
-			// a DEFERRABLE unique/PK constraint (typically INITIALLY DEFERRED) is not
-			// enforced until commit, so a transaction can hold duplicate rows through it;
-			// it cannot ground a single-row proof.
-			if con.Deferrable {
-				continue
-			}
-			if p.keyFixed(r, con) {
-				return true
-			}
-		}
-		return false
-	case r.sub != nil:
-		var knownOut []int
-		for i := range r.cols {
-			if p.known[colKey{r, i}] {
-				knownOut = append(knownOut, i)
-			}
-		}
-		ok, why := p.a.selectSingle(r.sub.sel, r.sub.sc, knownOut)
-		if !ok {
-			p.why[r] = why
-		}
-		return ok
-	}
-	return false
-}
-
-func (p *prover) keyFixed(r *rte, con *schema.Constraint) bool {
-	if len(con.Columns) == 0 {
-		return false
-	}
-	for _, name := range con.Columns {
-		idx := -1
-		for i, c := range r.cols {
-			if c.name == name {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			return false
-		}
-		k := colKey{r, idx}
-		// a temporal key's range column: a row whose range holds a known point is the only
-		// one for those key values, since no two rows' ranges overlap
-		if !p.known[k] && !(con.WithoutOverlaps && name == con.Columns[len(con.Columns)-1] && p.pointIn[k]) {
-			return false
-		}
-	}
-	if con.Predicate == nil {
-		return true
-	}
-	// a partial unique index applies only where the query repeats its predicate: every
-	// conjunct of the predicate must appear among the query's conjuncts
-	for _, part := range conjuncts(con.Predicate) {
-		found := false
-		for _, c := range p.conjuncts {
-			if (c.allow == nil || c.allow[r]) && sameExpr(part, c.n, r) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-// sameExpr compares an index predicate (unqualified column names) with a query
-// predicate whose columns may be qualified with the leaf's alias.
-func sameExpr(pred, q *pgparse.Node, r *rte) bool {
-	if pred == nil || q == nil {
-		return pred == nil && q == nil
-	}
-	switch pv := pred.Node.(type) {
-	case *pgparse.Node_ColumnRef:
-		qc := q.GetColumnRef()
-		if qc == nil {
-			return false
-		}
-		pn, qn := strs(pv.ColumnRef.Fields), strs(qc.Fields)
-		if len(qn) == 2 && qn[0] != r.alias {
-			return false
-		}
-		return len(pn) > 0 && len(qn) > 0 && pn[len(pn)-1] == qn[len(qn)-1]
-	case *pgparse.Node_AConst:
-		qc := q.GetAConst()
-		return qc != nil && constText(pv.AConst) == constText(qc)
-	case *pgparse.Node_AExpr:
-		qx := q.GetAExpr()
-		return qx != nil && qx.Kind == pv.AExpr.Kind && strings.Join(strs(qx.Name), ".") == strings.Join(strs(pv.AExpr.Name), ".") &&
-			sameExpr(pv.AExpr.Lexpr, qx.Lexpr, r) && sameExpr(pv.AExpr.Rexpr, qx.Rexpr, r)
-	case *pgparse.Node_BoolExpr:
-		qb := q.GetBoolExpr()
-		if qb == nil || qb.Boolop != pv.BoolExpr.Boolop || len(qb.Args) != len(pv.BoolExpr.Args) {
-			return false
-		}
-		for i := range qb.Args {
-			if !sameExpr(pv.BoolExpr.Args[i], qb.Args[i], r) {
-				return false
-			}
-		}
-		return true
-	case *pgparse.Node_NullTest:
-		qn := q.GetNullTest()
-		return qn != nil && qn.Nulltesttype == pv.NullTest.Nulltesttype && sameExpr(pv.NullTest.Arg, qn.Arg, r)
-	case *pgparse.Node_BooleanTest:
-		qb := q.GetBooleanTest()
-		return qb != nil && qb.Booltesttype == pv.BooleanTest.Booltesttype && sameExpr(pv.BooleanTest.Arg, qb.Arg, r)
-	case *pgparse.Node_TypeCast:
-		qt := q.GetTypeCast()
-		return qt != nil && strings.Join(strs(qt.TypeName.Names), ".") == strings.Join(strs(pv.TypeCast.TypeName.Names), ".") && sameExpr(pv.TypeCast.Arg, qt.Arg, r)
-	}
-	return false
-}
-
 func constText(c *pgparse.A_Const) string {
 	if c.Isnull {
 		return "NULL"
@@ -763,34 +480,6 @@ func constInt(n *pgparse.Node) (int32, bool) {
 	return 0, false
 }
 
-// describe says why a leaf could not be proved single.
-func (p *prover) describe(r *rte) string {
-	name := r.alias
-	switch {
-	case r.rel != nil:
-		if r.rel.Name != r.alias {
-			name = r.rel.Name + " " + r.alias
-		}
-		var keys []string
-		for _, con := range r.rel.Constraints {
-			if (con.Kind == schema.PrimaryKey || con.Kind == schema.Unique) && !con.Deferrable {
-				k := "(" + strings.Join(con.Columns, ", ") + ")"
-				if con.Predicate != nil {
-					k += " WHERE ..."
-				}
-				keys = append(keys, k)
-			}
-		}
-		if len(keys) == 0 {
-			return name + " has no unique key"
-		}
-		return name + ": no unique key is fixed by equality (keys: " + strings.Join(keys, ", ") + ")"
-	case r.sub != nil:
-		return r.sub.what + " " + name + ": " + p.why[r]
-	}
-	return "function " + name + " may return many rows"
-}
-
 // recordFixed notes which table columns of this level are pinned to a known value by
 // the predicate (WHERE plus join conditions), for Result.Fixed, checks the visibility
 // policies and the plan advisories, and refines nullability from the predicate. Inside a
@@ -799,9 +488,6 @@ func (p *prover) describe(r *rte) string {
 // sees the rows just written: the policies were checked on the statement's own WHERE, or
 // do not apply to an INSERT.
 func (a *analyzer) recordFixed(sc *scope, where *pgparse.Node) {
-	if len(sc.items) == 0 {
-		return
-	}
 	p := a.newProver(sc, where)
 	a.recordFacts(p, sc, loc(where))
 	if a.inView == 0 {
@@ -872,7 +558,7 @@ func (a *analyzer) nullRejected(p *prover) []colKey {
 // underCondition analyzes n as if cond held: the columns cond proves non-NULL are not
 // nullable while n is typed (CASE WHEN x IS NOT NULL THEN x ...).
 func (a *analyzer) underCondition(cond, n *pgparse.Node, sc *scope) (*expr, *Error) {
-	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+	p := a.newProverFor(sc)
 	for _, it := range sc.items {
 		p.addItem(it)
 	}

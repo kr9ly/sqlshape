@@ -54,8 +54,8 @@ func (s *Scope) write(b *strings.Builder, ind string) {
 			fmt.Fprintf(b, " waived %s", strings.Join(l.Waived, ","))
 		}
 		fmt.Fprintf(b, " @%d\n", l.Position)
-		if l.View != nil {
-			l.View.write(b, ind+"    ")
+		if l.Body != nil && (l.Kind == View || l.Kind == MatView) {
+			l.Body.write(b, ind+"    ") // a derived leaf's body is written among the Children
 		}
 	}
 	for _, p := range s.Preds {
@@ -112,6 +112,8 @@ func (p Pred) String() string {
 			parts[i] = t.String()
 		}
 		return p.Col.String() + " IN (" + strings.Join(parts, ", ") + ")"
+	case Contains:
+		return p.Col.String() + " @> " + p.Term.String()
 	}
 	return fmt.Sprintf("opaque %q cols %s", p.Text, refs(p.Cols))
 }
@@ -126,6 +128,8 @@ func (t Term) String() string {
 		return t.Col.String()
 	case Outer:
 		return "outer " + t.Col.String()
+	case Expr:
+		return fmt.Sprintf("expr %q", t.Text)
 	}
 	return fmt.Sprintf("known %q", t.Text)
 }
@@ -142,6 +146,8 @@ func (k StmtKind) String() string {
 		return "delete"
 	case Merge:
 		return "merge"
+	case Call:
+		return "call"
 	}
 	return "none"
 }
@@ -154,6 +160,10 @@ func (k RelKind) String() string {
 		return "view"
 	case MatView:
 		return "matview"
+	case CTE:
+		return "cte"
+	case Function:
+		return "function"
 	}
 	return "derived"
 }

@@ -554,7 +554,8 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 	a.viewBusy[rel] = true
 	defer delete(a.viewBusy, rel)
 	a.inView++
-	defer func() { a.inView-- }()
+	a.viewStack = append(a.viewStack, rel)
+	defer func() { a.inView--; a.viewStack = a.viewStack[:len(a.viewStack)-1] }()
 	sel := rel.Query.GetSelectStmt()
 	if sel == nil {
 		return nil, errAt(codeFeatureNotSupported, -1, "view %s: unsupported defining query", rel.Name)
@@ -617,7 +618,8 @@ func freshViewColumns(a *analyzer, rel *schema.Relation) ([]rteCol, *Error) {
 	a.viewBusy[rel] = true
 	defer delete(a.viewBusy, rel)
 	a.inView++
-	defer func() { a.inView-- }()
+	a.viewStack = append(a.viewStack, rel)
+	defer func() { a.inView--; a.viewStack = a.viewStack[:len(a.viewStack)-1] }()
 	sel := rel.Query.GetSelectStmt()
 	if sel == nil {
 		return nil, errAt(codeFeatureNotSupported, -1, "view %s: unsupported defining query", rel.Name)

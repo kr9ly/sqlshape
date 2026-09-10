@@ -4,8 +4,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
+
+// single: the statement provably touches at most one row (the One proof over its facts).
+func (c *checker) single() bool {
+	ok, _ := cardinality.AtMostOne(c.f)
+	return ok
+}
 
 // Check judges every obligation against every leaf of f, at every depth, and returns
 // all applicable judgments in leaf order. Leaves inside a view's body are the view's
@@ -93,7 +100,7 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 				switch {
 				case !main:
 					d.Message = fmt.Sprintf("%s requires a single-row %s, which cannot be proved for a write inside WITH", rel.Name(), strings.ToUpper(w.Kind.String()))
-				case c.f.AtMostOne:
+				case c.single():
 					d.Path = ByStatement
 				default:
 					d.Message = fmt.Sprintf("%s requires a single-row %s: fix a unique key by equality (the One proof)", rel.Name(), strings.ToUpper(w.Kind.String()))
@@ -843,6 +850,8 @@ func implies(p, q facts.Pred) bool {
 		return q.Term.Kind == facts.Column && p.Term.Kind == facts.Column && p.Col == q.Term.Col && p.Term.Col == q.Col
 	case facts.IsNull, facts.IsNotNull:
 		return p.Col == q.Col
+	case facts.Contains:
+		return p.Col == q.Col && sameTerm(p.Term, q.Term)
 	case facts.Opaque:
 		if p.Text != q.Text || len(p.Cols) != len(q.Cols) {
 			return false

@@ -94,9 +94,6 @@ type Result struct {
 	// One proof (x/cardinality) and the obligations are judged on it, whatever the
 	// dialect. Nil when the analyzer does not record the statement's shape.
 	Facts *facts.Facts
-	// ManyRowsWhy is the dialect's own reason a One proof failed, when its analyzer proves
-	// cardinality itself; "" leaves the verdict to x/cardinality.
-	ManyRowsWhy string
 }
 
 // Param is one placeholder: its type, and the column it stands for when the analyzer

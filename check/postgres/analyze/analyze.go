@@ -12,6 +12,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
@@ -105,8 +106,10 @@ type analyzer struct {
 	lastCatFunc *catalog.Func
 	// funcParams: when analyzing a SQL function body, its parameters (by name and position)
 	funcParams []funcParam
-	// funcVolatility remembers the volatility of each resolved function call (card.go)
+	// funcVolatility / funcRetSet remember the volatility and set-returningness of each
+	// resolved function call (card.go: a stable function of known values is known)
 	funcVolatility map[*pgparse.FuncCall]byte
+	funcRetSet     map[*pgparse.FuncCall]bool
 	// dmlCTEs are the data-modifying statements inside WITH (their failure modes count)
 	dmlCTEs []*pgparse.Node
 	// waived are the obligations the statement opts out of, by table (`-- sqlshape:
@@ -128,6 +131,17 @@ type analyzer struct {
 	factBySel    map[*pgparse.SelectStmt]*facts.Scope
 	factOutBySel map[*pgparse.SelectStmt][]*facts.ColRef
 	claimed      map[*facts.Scope]bool
+	// scopeCols are a query level's output columns once its target list is analyzed (the
+	// GROUP BY items that name an output alias or ordinal resolve through them);
+	// viewFactOuts are the leaf columns a view body's target list projects plainly
+	scopeCols    map[*scope][]rteCol
+	viewFactOuts map[*schema.Relation][]*facts.ColRef
+	// viewStack are the views whose definitions are being analyzed, innermost last (the
+	// waivers of a level inside a view body are that view's); viewLevels are the levels
+	// recorded inside view bodies, reached through the leaf that reads the view rather
+	// than the statement's tree
+	viewStack  []*schema.Relation
+	viewLevels []factScope
 }
 
 // Analyze analyzes exactly one SQL statement against s.
@@ -294,11 +308,14 @@ func newAnalyzer(s *schema.Schema, fp []funcParam, waived map[string][]string) *
 		viewBusy:       map[*schema.Relation]bool{},
 		viewFactScopes: map[*schema.Relation]*facts.Scope{},
 		scopeSel:       map[*scope]*pgparse.SelectStmt{},
+		scopeCols:      map[*scope][]rteCol{},
+		viewFactOuts:   map[*schema.Relation][]*facts.ColRef{},
 		factBySel:      map[*pgparse.SelectStmt]*facts.Scope{},
 		factOutBySel:   map[*pgparse.SelectStmt][]*facts.ColRef{},
 		claimed:        map[*facts.Scope]bool{},
 		funcParams:     fp,
 		funcVolatility: map[*pgparse.FuncCall]byte{},
+		funcRetSet:     map[*pgparse.FuncCall]bool{},
 		waived:         waived,
 	}
 	for i, p := range fp {
@@ -447,7 +464,9 @@ func analyzeStmtIn(s *schema.Schema, stmt *pgparse.Node, fp []funcParam, waived 
 		res.Columns = append(res.Columns, a.column(c))
 	}
 	a.bareOrderNotes(tree.Stmts[0].Stmt)
-	res.AtMostOne, res.ManyRowsWhy = a.cardinality(tree.Stmts[0].Stmt, sc)
+	sort.SliceStable(a.uses, func(i, j int) bool { return a.uses[i].Position < a.uses[j].Position })
+	res.Facts = a.buildFacts(tree.Stmts[0].Stmt, sc)
+	res.AtMostOne, res.ManyRowsWhy = cardinality.AtMostOne(res.Facts)
 	if sel := tree.Stmts[0].Stmt.GetSelectStmt(); sel != nil && sel.LimitCount != nil && len(sel.SortClause) == 0 && !res.AtMostOne {
 		a.note(noteUnorderedLimit, loc(sel.LimitCount), "LIMIT without ORDER BY: which rows are returned is unspecified")
 	}
@@ -461,7 +480,6 @@ func analyzeStmtIn(s *schema.Schema, stmt *pgparse.Node, fp []funcParam, waived 
 		res.Violations = dedupe(append(res.Violations, functionViolations(s, cf, visited)...))
 	}
 	res.Relations = a.refs
-	sort.SliceStable(a.uses, func(i, j int) bool { return a.uses[i].Position < a.uses[j].Position })
 	res.Uses = a.uses
 	for _, as := range a.assigned {
 		if as.rel != nil {
@@ -469,10 +487,6 @@ func analyzeStmtIn(s *schema.Schema, stmt *pgparse.Node, fp []funcParam, waived 
 		}
 	}
 	res.Fixed = a.fixed
-	res.Facts = a.buildFacts(tree.Stmts[0].Stmt, sc)
-	if res.Facts != nil {
-		res.Facts.AtMostOne = res.AtMostOne
-	}
 	res.Notes = a.notes
 	return res, nil
 }

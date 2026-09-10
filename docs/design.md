@@ -150,7 +150,7 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 | `check/postgres/catalog` | 埋め込みのpg_catalog（版ごとの型・関数・演算子・キャスト・集約、`data/<major>/`）と拡張のdump |
 | `check/postgres/analyze` | アナライザー本体。10章の型変換、スコープ、DML、`$n`推論、nullability、カーディナリティ、違反の列挙、PG互換のエラー。文の事実（`facts.Facts`）の生産と、義務の述語を事実の言語に落とす`Lower` |
 | `x/facts` | アナライザーと義務検査の間のデータ契約。文種・スコープの木・葉・正規化述語・等値の辺・固定列・代入集合。パーサのノードを含まず、方言を知らない |
-| `x/cardinality` | One の証明を facts の上で（方言非依存）: 全 leaf のユニークキーが等式で固定される、join の辺で知識を運ぶ、派生表は自分の scope で、producer の AtMostOne はそのまま |
+| `x/cardinality` | One の証明を facts の上で（方言非依存、PostgreSQL も MySQL もこれだけ）: 全 leaf のユニークキー（部分インデックスは述語を文が繰り返すとき、WITHOUT OVERLAPS は範囲が既知の点を含むとき）が等式で固定される、join の辺で知識を運ぶ、派生表・ビュー・CTE は外側で固定された出力列を種にして本体の scope で、GROUP BY は全項が固定されるとき、LIMIT 1 / 1 行 VALUES / 集約は Single、集合演算 / 複数行 VALUES / FULL JOIN は Many、producer の AtMostOne はそのまま |
 | `x/obligation` | 境界の規則（方言非依存）。`obligation.Schema` / `Relation` interface 越しにスキーマを見る（PG は `schema.Schema.Contract()` が適合）。schema.sqlの`require` / `visible where`とvetのフラグを義務に読み、事実に対して履行を判定する（[obligations.md](obligations.md)）。`analyze`にも`vet`にも依存しない |
 | `cmd/sqlshape/internal/vet` | `go/analysis`アナライザー。`x/dialect` の契約だけを読む（PG 固有型なし）。結果列 ↔ `R`、`$n` ↔ `P`、束縛、expect行、SuggestedFix。境界の規則は`obligation`に委ね、フラグを義務に展開して渡す |
 | `check/postgres/oracle` | 差分テストのオラクルとしての本物のPG（embedded-postgres）。検査時には使わない |

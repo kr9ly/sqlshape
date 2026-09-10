@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -12,8 +13,8 @@ import (
 )
 
 // Facts production: the prover's equalities, the leaves it ran over and the write set,
-// written down in the dialect-neutral form of internal/facts. Nothing here decides
-// anything; x/obligation does the judging. Every query level the statement has
+// written down in the dialect-neutral form of x/facts. Nothing here decides anything;
+// x/obligation does the judging and x/cardinality the One proof. Every query level the statement has
 // (recordFixed's callers, plus MERGE's ON) becomes one facts.Scope; view bodies are
 // converted on demand and hung off the leaf that reads them.
 
@@ -26,17 +27,20 @@ type writeRec struct {
 	inWith bool   // a data-modifying WITH item's
 }
 
-// factScope pairs an analyzer scope with the facts derived at it.
+// factScope pairs an analyzer scope with the facts derived at it and the prover they
+// came from (the level's shape -- GROUP BY terms -- is read off it once the target list
+// is known, at buildFacts).
 type factScope struct {
 	sc *scope
 	fs *facts.Scope
+	p  *prover
 }
 
 // newProver builds the equality closure for one level: the leaves of sc, the ON / USING
 // conjuncts of its joins and the conjuncts of where, with known values propagated along
 // the equalities (no single-row reasoning: that is fixpoint's, for the One proof).
 func (a *analyzer) newProver(sc *scope, where *pgparse.Node) *prover {
-	p := &prover{a: a, sc: sc, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+	p := a.newProverFor(sc)
 	for _, it := range sc.items {
 		p.addItem(it)
 	}
@@ -55,46 +59,118 @@ func (a *analyzer) newProver(sc *scope, where *pgparse.Node) *prover {
 
 // recordFacts converts a proved level into facts and remembers it, under the scope as
 // (the level's own scope, or the statement's for MERGE whose ON lives in a helper scope),
-// for the tree built at the end of the analysis. Levels inside a view body are not the statement's (they are
-// reached through the leaf that reads the view); a RETURNING list's rows are the ones
-// just written and carry no obligations.
+// for the tree built at the end of the analysis. Levels inside a view body are not the
+// statement's: they are kept apart (viewLevels), reached through the leaf that reads the
+// view, and their waivers are the view's own directives. A RETURNING list's rows are the
+// ones just written and carry no obligations.
 func (a *analyzer) recordFacts(p *prover, as *scope, at int32) {
-	if a.inView > 0 || a.inReturning {
+	if a.inReturning {
 		return
 	}
-	fs := a.scopeFacts(p, nil)
+	var waived map[string][]string // nil: the statement's
+	if a.inView > 0 {
+		waived = a.viewStack[len(a.viewStack)-1].Waived
+		if waived == nil {
+			waived = map[string][]string{}
+		}
+	}
+	fs := a.scopeFacts(p, waived)
 	fs.At = at
-	a.factScopes = append(a.factScopes, factScope{sc: as, fs: fs})
+	if a.inView > 0 {
+		a.viewLevels = append(a.viewLevels, factScope{sc: as, fs: fs, p: p})
+	} else {
+		a.factScopes = append(a.factScopes, factScope{sc: as, fs: fs, p: p})
+	}
 	if sel := a.scopeSel[as]; sel != nil {
 		a.factBySel[sel] = fs
-		idx := map[*rte]int{}
-		for i, l := range p.leaves {
-			idx[l] = i
-		}
-		var out []*facts.ColRef
-		for _, k := range p.outputKeys(sel.TargetList) {
-			if k == nil {
-				out = append(out, nil)
-				continue
-			}
-			if i, ok := idx[k.r]; ok && k.i < len(k.r.cols) {
-				out = append(out, &facts.ColRef{Leaf: i, Column: k.r.cols[k.i].name})
-			} else {
-				out = append(out, nil)
-			}
-		}
-		a.factOutBySel[sel] = out
+		a.factOutBySel[sel] = a.outputRefs(p, sel.TargetList)
 	}
+}
+
+// outputRefs maps each output column of a target list to the leaf column it projects
+// plainly (nil otherwise), in the facts' leaf numbering.
+func (a *analyzer) outputRefs(p *prover, targets []*pgparse.Node) []*facts.ColRef {
+	idx := map[*rte]int{}
+	for i, l := range p.leaves {
+		idx[l] = i
+	}
+	var out []*facts.ColRef
+	for _, k := range p.outputKeys(targets) {
+		if k == nil {
+			out = append(out, nil)
+			continue
+		}
+		if i, ok := idx[k.r]; ok && k.i < len(k.r.cols) {
+			out = append(out, &facts.ColRef{Leaf: i, Column: k.r.cols[k.i].name})
+		} else {
+			out = append(out, nil)
+		}
+	}
+	return out
+}
+
+// outputFacts names the leaf's output columns that are plain columns of its body.
+func outputFacts(l *rte, outs []*facts.ColRef) []facts.Output {
+	var res []facts.Output
+	for i, o := range outs {
+		if o == nil || i >= len(l.cols) {
+			continue
+		}
+		res = append(res, facts.Output{Name: l.cols[i].name, Col: *o})
+	}
+	return res
+}
+
+// shape writes down what a query level says about its own row count: a constant LIMIT 0
+// / 1, a set operation, a VALUES list, its GROUP BY expressions (each a leaf column, a
+// known value, or an expression), or an aggregate without GROUP BY. cols are the level's
+// output columns (a GROUP BY item may name one by alias or ordinal).
+func (a *analyzer) shape(fs *facts.Scope, sel *pgparse.SelectStmt, sc *scope, p *prover, cols []rteCol) {
+	if n, ok := constInt(sel.LimitCount); ok && n <= 1 {
+		fs.Single = true
+	}
+	switch {
+	case sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED:
+		fs.Many = setOpName(sel.Op) + " may combine rows"
+	case len(sel.ValuesLists) == 1:
+		fs.Single = true
+	case len(sel.ValuesLists) > 1:
+		fs.Many = fmt.Sprintf("VALUES has %d rows", len(sel.ValuesLists))
+	case len(sel.GroupClause) > 0:
+		fs.GroupingSets = hasGroupingSets(sel.GroupClause)
+		fs.Groups = []facts.Term{}
+		for _, g := range groupingLeaves(sel.GroupClause) {
+			fs.Groups = append(fs.Groups, a.groupTerm(p, a.groupExpr(g, sel, sc, cols)))
+		}
+	case sc.agg:
+		fs.Single = true
+	}
+}
+
+// groupTerm classifies one GROUP BY expression: a column of a leaf, a value known before
+// the statement runs, or an expression over the row.
+func (a *analyzer) groupTerm(p *prover, g *pgparse.Node) facts.Term {
+	if k, ok := p.resolve(g); ok {
+		for i, l := range p.leaves {
+			if l == k.r && k.i < len(l.cols) {
+				return facts.Term{Kind: facts.Column, Col: facts.ColRef{Leaf: i, Column: l.cols[k.i].name}}
+			}
+		}
+	}
+	if p.isKnown(g) {
+		return termFacts(g)
+	}
+	return facts.Term{Kind: facts.Expr, Text: strings.TrimPrefix(deparse(g), "SELECT ")}
 }
 
 // scopeFacts writes one level down. waived are the enclosing definition's opt-outs (a
 // view's own directives); nil means the statement's, which are on the analyzer.
 func (a *analyzer) scopeFacts(p *prover, waived map[string][]string) *facts.Scope {
-	fs := &facts.Scope{}
+	fs := &facts.Scope{Many: p.fail}
 	idx := map[*rte]int{}
 	for i, l := range p.leaves {
 		idx[l] = i
-		fs.Leaves = append(fs.Leaves, a.leafFacts(l, waived))
+		fs.Leaves = append(fs.Leaves, a.leafFacts(l, waived, i))
 	}
 	ref := func(k colKey) (facts.ColRef, bool) {
 		i, ok := idx[k.r]
@@ -150,7 +226,7 @@ func (a *analyzer) scopeFacts(p *prover, waived map[string][]string) *facts.Scop
 			if !pol.Permissive || (pol.Command != "all" && pol.Command != "select") || pol.Using == nil {
 				continue
 			}
-			pp := &prover{a: a, sc: &scope{items: []*rte{l}}, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+			pp := a.newProverFor(&scope{items: []*rte{l}})
 			pp.leaves = []*rte{l}
 			for _, c := range conjuncts(pol.Using) {
 				pr := a.predFacts(pp, c, func(k colKey) (facts.ColRef, bool) {
@@ -169,9 +245,11 @@ func (a *analyzer) scopeFacts(p *prover, waived map[string][]string) *facts.Scop
 	return fs
 }
 
-// leafFacts describes one FROM leaf.
-func (a *analyzer) leafFacts(l *rte, waived map[string][]string) facts.Leaf {
-	lf := facts.Leaf{Alias: l.alias, Kind: facts.Derived, Role: facts.Read, Position: l.pos}
+// leafFacts describes one FROM leaf, the i-th of its level: its kind, the keys the
+// cardinality proof may fix a table's row by, and for a view / subquery / CTE the body it
+// is proved through and the outputs that seed the body.
+func (a *analyzer) leafFacts(l *rte, waived map[string][]string, i int) facts.Leaf {
+	lf := facts.Leaf{Alias: l.alias, Kind: facts.Derived, Role: facts.Read, Position: l.pos, Single: l.single}
 	if l.target {
 		lf.Role = facts.Target
 	}
@@ -179,16 +257,29 @@ func (a *analyzer) leafFacts(l *rte, waived map[string][]string) facts.Leaf {
 	switch {
 	case l.rel != nil && l.rel.Kind == schema.Table:
 		rel, lf.Kind = l.rel, facts.Table
+		lf.Keys = a.keyFacts(l, i)
 	case l.target && l.viewRel != nil && a.viewTargets[l.viewRel] != nil && a.viewTargets[l.viewRel].Kind == schema.Table:
-		// a write through an automatically updatable view lands on the base table
+		// a write through an automatically updatable view lands on the base table; the
+		// rows written are the view's, proved through its body
 		rel, lf.Kind = a.viewTargets[l.viewRel], facts.Table
+		lf.Body = a.viewFacts(l.viewRel)
+		lf.Outputs = outputFacts(l, a.viewFactOuts[l.viewRel])
 	case l.viewRel != nil:
 		rel = l.viewRel
 		lf.Kind = facts.View
 		if rel.Kind == schema.MatView {
 			lf.Kind = facts.MatView
 		}
-		lf.View = a.viewFacts(rel)
+		lf.Body = a.viewFacts(rel)
+		lf.Outputs = outputFacts(l, a.viewFactOuts[rel])
+	case l.sub != nil:
+		if l.sub.what == "CTE" {
+			lf.Kind = facts.CTE
+		}
+		lf.Body = a.factBySel[l.sub.sel]
+		lf.Outputs = outputFacts(l, a.factOutBySel[l.sub.sel])
+	case l.rel == nil:
+		lf.Kind = facts.Function
 	}
 	if rel == nil {
 		return lf
@@ -204,8 +295,41 @@ func (a *analyzer) leafFacts(l *rte, waived map[string][]string) facts.Leaf {
 	return lf
 }
 
-// viewFacts converts a view's defining query once per analysis; nil when the body did not
-// analyze. The view's own directives are the waivers inside it.
+// keyFacts lists the unique keys of a table leaf the proof may fix a row by: the primary
+// key, UNIQUE constraints and unique indexes, each with a partial index's predicate
+// lowered into the facts language about this leaf. A DEFERRABLE key (typically INITIALLY
+// DEFERRED) is not enforced until commit, so a transaction can hold duplicate rows
+// through it; it is left out.
+func (a *analyzer) keyFacts(l *rte, i int) []facts.Key {
+	var keys []facts.Key
+	for _, con := range l.rel.Constraints {
+		if (con.Kind != schema.PrimaryKey && con.Kind != schema.Unique) || con.Deferrable || len(con.Columns) == 0 {
+			continue
+		}
+		k := facts.Key{Columns: append([]string(nil), con.Columns...), Temporal: con.WithoutOverlaps}
+		if con.Predicate != nil {
+			pp := a.newProverFor(&scope{items: []*rte{l}})
+			pp.leaves = []*rte{l}
+			ref := func(c colKey) (facts.ColRef, bool) {
+				if c.r != l || c.i >= len(l.cols) {
+					return facts.ColRef{}, false
+				}
+				return facts.ColRef{Leaf: i, Column: l.cols[c.i].name}, true
+			}
+			for _, c := range conjuncts(con.Predicate) {
+				pr := a.predFacts(pp, c, ref, false)
+				pr.Origin = facts.FromStatement
+				k.Where = append(k.Where, pr)
+			}
+		}
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// viewFacts is a view's defining query as facts, once per analysis; nil when the body did
+// not analyze. The level was recorded when the body was analyzed (viewLevels); a body
+// analyzed before this analyzer recorded levels is converted here.
 func (a *analyzer) viewFacts(rel *schema.Relation) *facts.Scope {
 	if fs, ok := a.viewFactScopes[rel]; ok {
 		return fs
@@ -215,21 +339,36 @@ func (a *analyzer) viewFacts(rel *schema.Relation) *facts.Scope {
 	if sub == nil || sub.sel == nil {
 		return nil
 	}
-	p := a.newProver(sub.sc, sub.sel.WhereClause)
-	waived := rel.Waived
-	if waived == nil {
-		waived = map[string][]string{} // not the reading statement's
+	fs := a.factBySel[sub.sel]
+	if fs == nil {
+		p := a.newProver(sub.sc, sub.sel.WhereClause)
+		waived := rel.Waived
+		if waived == nil {
+			waived = map[string][]string{} // not the reading statement's
+		}
+		fs = a.scopeFacts(p, waived)
+		a.shape(fs, sub.sel, sub.sc, p, a.viewCache[rel])
+		a.factBySel[sub.sel] = fs
+		a.factOutBySel[sub.sel] = a.outputRefs(p, sub.sel.TargetList)
 	}
-	fs := a.scopeFacts(p, waived)
-	fs.At = -1
+	a.viewFactOuts[rel] = a.factOutBySel[sub.sel]
 	clearPositions(fs) // offsets into the view's definition mean nothing to the statement
 	a.viewFactScopes[rel] = fs
 	return fs
 }
 
 func clearPositions(fs *facts.Scope) {
+	fs.At = -1
 	for i := range fs.Leaves {
 		fs.Leaves[i].Position = -1
+		if fs.Leaves[i].Body != nil && fs.Leaves[i].Kind != facts.View && fs.Leaves[i].Kind != facts.MatView {
+			clearPositions(fs.Leaves[i].Body)
+		}
+	}
+	for _, p := range fs.Preds {
+		if p.Op == facts.Exists && p.Sub != nil {
+			clearPositions(p.Sub)
+		}
 	}
 	for _, c := range fs.Children {
 		clearPositions(c)
@@ -271,6 +410,18 @@ func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts
 			return facts.Pred{Op: facts.Eq, Col: lr, Term: term(r)}
 		case rok && !lcol && known(l):
 			return facts.Pred{Op: facts.Eq, Col: rr, Term: term(l)}
+		}
+	}
+	// col @> point / point <@ col: the range column holds a known point (or another column)
+	if ck, point, ok := p.containment(n); ok {
+		if r, ok := ref(ck); ok {
+			if pk, isCol := p.resolve(point); isCol {
+				if pr, ok := ref(pk); ok {
+					return facts.Pred{Op: facts.Contains, Col: r, Term: facts.Term{Kind: facts.Column, Col: pr}}
+				}
+			} else if known(point) {
+				return facts.Pred{Op: facts.Contains, Col: r, Term: term(point)}
+			}
 		}
 	}
 	if sub := n.GetSubLink(); sub != nil && !policy {
@@ -422,7 +573,7 @@ func (p *prover) outerRef(n *pgparse.Node) (facts.ColRef, bool) {
 		return facts.ColRef{}, false
 	}
 	parent := p.sc.parent.queryScope()
-	pp := &prover{a: p.a, sc: parent, known: map[colKey]bool{}, single: map[*rte]bool{}, why: map[*rte]string{}}
+	pp := p.a.newProverFor(parent)
 	for _, it := range parent.items {
 		pp.addItem(it)
 	}
@@ -494,6 +645,8 @@ func (a *analyzer) buildFacts(stmt *pgparse.Node, top *scope) *facts.Facts {
 		f.Kind = facts.Merge
 	case *pgparse.Node_TruncateStmt:
 		f.Kind = facts.Delete
+	case *pgparse.Node_CallStmt:
+		return &facts.Facts{Kind: facts.Call, AtMostOne: true}
 	default:
 		return nil
 	}
@@ -501,19 +654,41 @@ func (a *analyzer) buildFacts(stmt *pgparse.Node, top *scope) *facts.Facts {
 	for _, r := range a.factScopes {
 		byScope[r.sc] = r.fs
 	}
+	for _, r := range append(a.factScopes, a.viewLevels...) {
+		if sel := a.scopeSel[r.sc]; sel != nil {
+			a.shape(r.fs, sel, r.sc, r.p, a.scopeCols[r.sc])
+		}
+	}
 	f.Top = byScope[top]
 	if f.Top == nil {
 		// INSERT (and a MERGE whose ON did not record): the target alone at the top;
 		// TRUNCATE: every table named
 		f.Top = &facts.Scope{At: -1}
 		if _, trunc := stmt.Node.(*pgparse.Node_TruncateStmt); trunc {
-			for _, w := range a.writeRecs {
-				f.Top.Leaves = append(f.Top.Leaves, a.leafFacts(w.r, nil))
+			for i, w := range a.writeRecs {
+				f.Top.Leaves = append(f.Top.Leaves, a.leafFacts(w.r, nil, i))
 			}
 		} else if a.writeLeaf != nil {
-			f.Top.Leaves = []facts.Leaf{a.leafFacts(a.writeLeaf, nil)}
+			f.Top.Leaves = []facts.Leaf{a.leafFacts(a.writeLeaf, nil, 0)}
 		}
 		byScope[top] = f.Top
+	}
+	if ins := stmt.GetInsertStmt(); ins != nil {
+		// the rows an INSERT stores: DEFAULT VALUES is one, a VALUES list counts its rows,
+		// a query's are the query's
+		sel := ins.SelectStmt.GetSelectStmt()
+		switch {
+		case sel == nil:
+			f.Top.Single = true
+		case len(sel.ValuesLists) > 0 && sel.Op == pgparse.SetOperation_SETOP_NONE && len(sel.FromClause) == 0:
+			if len(sel.ValuesLists) == 1 {
+				f.Top.Single = true
+			} else {
+				f.Top.Many = fmt.Sprintf("VALUES has %d rows", len(sel.ValuesLists))
+			}
+		default:
+			f.Source = byScope[a.insertSelScope]
+		}
 	}
 	for _, r := range a.factScopes {
 		if r.fs == f.Top || a.claimed[r.fs] {

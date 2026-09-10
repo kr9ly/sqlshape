@@ -79,14 +79,14 @@ func (a *analyzer) leafFacts(r relation) facts.Leaf {
 				cols = append(cols, p.Column)
 			}
 			if cols != nil {
-				lf.UniqueKeys = append(lf.UniqueKeys, cols)
+				lf.Keys = append(lf.Keys, facts.Key{Columns: cols})
 			}
 		}
 	} else if r.view != "" {
 		lf.Table, lf.Kind = r.view, facts.View
 	}
 	if r.table == nil && r.body != nil {
-		lf.View = r.body
+		lf.Body = r.body
 	}
 	return lf
 }

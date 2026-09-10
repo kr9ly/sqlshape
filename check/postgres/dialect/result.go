@@ -56,13 +56,7 @@ func ErrorOf(err error) error {
 
 // ResultOf spells an analysis in the contract. Positions become 0-based (-1 unknown).
 func ResultOf(s *schema.Schema, r *analyze.Result) *dialect.Result {
-	out := &dialect.Result{Facts: r.Facts, ManyRowsWhy: r.ManyRowsWhy}
-	if r.Facts != nil && !r.AtMostOne {
-		out.ManyRowsWhy = r.ManyRowsWhy
-		if out.ManyRowsWhy == "" {
-			out.ManyRowsWhy = "the analyzer could not prove it"
-		}
-	}
+	out := &dialect.Result{Facts: r.Facts}
 	for i, t := range r.Params {
 		var src *analyze.Source
 		if i < len(r.ParamSources) {
