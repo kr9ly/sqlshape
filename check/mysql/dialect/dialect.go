@@ -51,7 +51,7 @@ func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
 	}
 	out := &dialect.Result{Facts: r.Facts, Uses: r.Uses}
 	for _, p := range r.Params {
-		out.Params = append(out.Params, dialect.Param{Type: typeOf(p.Type, p.Known)})
+		out.Params = append(out.Params, dialect.Param{Type: typeOf(p.Type, p.Known), Source: m.paramSource(p.Source)})
 	}
 	for _, c := range r.Columns {
 		out.Columns = append(out.Columns, dialect.Column{Name: c.Name, Type: typeOf(c.Type, c.Known), Nullable: c.Nullable})
@@ -64,6 +64,20 @@ func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
 		out.Relations = relationRefs(r.Facts)
 	}
 	return out, nil
+}
+
+// paramSource is the column a placeholder met, as the schema describes it, with whether
+// the statement stores into it or compares with it.
+func (m *mysql) paramSource(ps *analyze.ParamSource) *dialect.Source {
+	if ps == nil {
+		return nil
+	}
+	src := m.Source(ps.Table, ps.Column)
+	if src == nil {
+		return nil
+	}
+	src.Assigned = ps.Assigned
+	return src
 }
 
 // errorOf spells an analyzer error in the contract; other errors pass through.

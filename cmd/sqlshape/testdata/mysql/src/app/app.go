@@ -126,7 +126,7 @@ var staleExpect = sqlshape.Query[struct{}, struct {
 	Name string
 }]("-- sqlshape: expect fk_orders_user\nUPDATE users SET name = {{.Name}} WHERE id = {{.ID}}") // want `expects fk_orders_user but no expansion can violate it`
 
-var deleteUser = sqlshape.Query[struct{}, struct{ ID uint64 }](`DELETE FROM users WHERE id = {{.ID}}`) // want `may violate fk_orders_user \(FOREIGN KEY fk_orders_user \(user_id\) on orders REFERENCES users: a row of orders still refers to the one changed, MySQL error 1451\)`
+var deleteUser = sqlshape.Query[struct{}, struct{ ID uint64 }](`DELETE FROM users WHERE id = {{.ID}}`) // want `may violate fk_orders_user \(FOREIGN KEY fk_orders_user \(user_id\) on orders REFERENCES users: a row of orders still refers to the one changed, MySQL error 1451\)` `may violate fk_tickets_user \(FOREIGN KEY fk_tickets_user \(user_id\) on tickets REFERENCES users: a row of tickets still refers to the one changed, MySQL error 1451\)`
 
 // Obligations: `require pinned(tenant_id)` on tenant_notes, judged through the contract
 var noteByID = sqlshape.Query[string, struct{ ID uint64 }](`SELECT body FROM tenant_notes WHERE id = {{.ID}}`) // want `tenant_notes.tenant_id is not pinned: every statement on tenant_notes must fix tenant_id by equality \(or assign it\)`
@@ -152,3 +152,22 @@ var moveNote = sqlshape.Query[struct{}, struct {
 	ID       uint64
 	TenantID uint64
 }]("-- sqlshape: expect PRIMARY\nUPDATE tenant_notes SET id = {{.ID}} WHERE tenant_id = {{.TenantID}}")
+
+// Key identities through the parameter's source column: UserID is bound to users.id by
+// the first query, then meets tickets.id
+type UserID uint64 // want UserID:`bound k users.id`
+
+var ticketsByUser = sqlshape.Query[uint64, struct{ U UserID }](`SELECT id FROM tickets WHERE user_id = {{.U}}`)
+
+var wrongKey = sqlshape.Query[uint64, struct{ U UserID }](`SELECT user_id FROM tickets WHERE id = {{.U}}`) // want `parameter .U is app.UserID, which stands for key users.id elsewhere, but here meets key tickets.id`
+
+// an ENUM column is a value set: constants are diffed both ways
+type TicketStatus string // want TicketStatus:`consts closed,open,reopened` TicketStatus:`bound v tickets.status`
+
+const (
+	TicketOpen     TicketStatus = "open"
+	TicketClosed   TicketStatus = "closed"
+	TicketReopened TicketStatus = "reopened"
+)
+
+var ticketsByStatus = sqlshape.Query[uint64, struct{ S TicketStatus }](`SELECT id FROM tickets WHERE status = {{.S}}`) // want `TicketStatus has constant "reopened" which is not a label of value set of tickets.status \(CHECK\)`

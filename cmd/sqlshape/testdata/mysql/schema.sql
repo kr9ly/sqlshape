@@ -25,3 +25,10 @@ CREATE TABLE tenant_notes (
 
 -- sqlshape: waive tenant_notes pinned(tenant_id)
 CREATE VIEW all_notes AS SELECT id, tenant_id, body FROM tenant_notes;
+
+CREATE TABLE tickets (
+  id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  status ENUM('open', 'closed') NOT NULL,
+  CONSTRAINT fk_tickets_user FOREIGN KEY (user_id) REFERENCES users (id)
+);

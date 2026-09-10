@@ -298,3 +298,46 @@ func TestUnsupported(t *testing.T) {
 		}
 	}
 }
+
+// TestParamSources covers the table column a placeholder stands for: the column it is
+// compared with (=, IN, BETWEEN, a subquery's output) or stored into (assigned).
+func TestParamSources(t *testing.T) {
+	s := load(t)
+	cases := []struct {
+		sql  string
+		want string // one entry per placeholder: table.column, "=" when assigned, "-" for none
+	}{
+		{"SELECT id FROM users WHERE id = $1", "users.id"},
+		{"SELECT id FROM users WHERE $1 = id AND name IN ($2, $3)", "users.id users.name users.name"},
+		{"SELECT id FROM users WHERE created_at BETWEEN $1 AND $2", "users.created_at users.created_at"},
+		{"SELECT id FROM users WHERE id = $1 + 1", "-"},
+		{"SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id WHERE $1 IN (SELECT user_id FROM orders)", "orders.user_id"},
+		{"SELECT id FROM users WHERE name = $1 AND email = $1", "users.name"},
+		{"INSERT INTO users (name, email) VALUES ($1, $2)", "users.name= users.email="},
+		{"UPDATE users SET name = $1 WHERE id = $2", "users.name= users.id"},
+		{"INSERT INTO orders (id, user_id, total) SELECT $1, id, 0 FROM users WHERE id = $2", "orders.id= users.id"},
+		{"SELECT id FROM users LIMIT $1", "-"},
+	}
+	for _, c := range cases {
+		r, err := Analyze(s, c.sql)
+		if err != nil {
+			t.Errorf("%s: %v", c.sql, err)
+			continue
+		}
+		var parts []string
+		for _, p := range r.Params {
+			if p.Source == nil {
+				parts = append(parts, "-")
+				continue
+			}
+			e := p.Source.Table + "." + p.Source.Column
+			if p.Source.Assigned {
+				e += "="
+			}
+			parts = append(parts, e)
+		}
+		if got := strings.Join(parts, " "); got != c.want {
+			t.Errorf("%s:\n got  %s\n want %s", c.sql, got, c.want)
+		}
+	}
+}

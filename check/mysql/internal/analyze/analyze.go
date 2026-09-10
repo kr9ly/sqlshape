@@ -41,6 +41,17 @@ type Result struct {
 type Param struct {
 	Type  schema.Type
 	Known bool
+	// Source is the table column the placeholder met: compared with (`col = $1`, `col IN
+	// ($1, ...)`, `$1 IN (SELECT col ...)`) or stored into (INSERT / UPDATE). Nil otherwise.
+	Source *ParamSource
+}
+
+// ParamSource is the table column a placeholder stands for.
+type ParamSource struct {
+	Table    string
+	Column   string
+	NotNull  bool
+	Assigned bool // stored into the column, not compared with it
 }
 
 // Column is one result column.
@@ -84,6 +95,9 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count()), waived: obligation.StatementWaivers(sql)}
 	if err := a.statement(root); err != nil {
 		return nil, err
+	}
+	for i := range a.params {
+		a.params[i].Source = a.paramSrc[i+1]
 	}
 	sort.SliceStable(a.uses, func(i, j int) bool { return a.uses[i].Position < a.uses[j].Position })
 	if a.facts != nil {
@@ -135,6 +149,8 @@ type analyzer struct {
 	// predicates; claimed are the bodies such a predicate carries (not Children then)
 	subFacts map[*mysqlast.Node]*facts.Scope
 	claimed  map[*facts.Scope]bool
+	// paramSrc is the column each placeholder ($n, 1-based) met first
+	paramSrc map[int]*ParamSource
 }
 
 // write is what a statement stores, for the failure modes (violations.go).
@@ -367,6 +383,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 				for i, item := range items {
 					if it, ok := item.(*mysqlast.Node); ok && it.Class == "PTI_expr_with_alias" && isParam(it.Arg("expr")) && i < len(targets) {
 						a.setParam(it.Arg("expr"), targets[i].Type)
+						a.noteParamSource(it.Arg("expr"), rel.table, targets[i], true)
 					}
 				}
 			}
@@ -390,7 +407,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
 		}
 		for i, v := range vals {
-			as := a.assign(scope{rels: []relation{*rel}}, targets[i], v)
+			as := a.assign(scope{rels: []relation{*rel}}, rel.table, targets[i], v)
 			w.values = append(w.values, as)
 			if ri == 0 {
 				values = append(values, a.storedTerm(scope{rels: []relation{*rel}}, v))
@@ -411,7 +428,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return err
 		}
 		if i < len(dupVals) {
-			w.onDuplicate = append(w.onDuplicate, a.assign(scope{rels: []relation{*rel}}, col, dupVals[i]))
+			w.onDuplicate = append(w.onDuplicate, a.assign(scope{rels: []relation{*rel}}, rel.table, col, dupVals[i]))
 		}
 	}
 	return nil
@@ -450,7 +467,7 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		}
 		assigned = append(assigned, col.col)
 		if i < len(vals) {
-			w.values = append(w.values, a.assign(sc, col.col, vals[i]))
+			w.values = append(w.values, a.assign(sc, col.rel.table, col.col, vals[i]))
 			values = append(values, a.storedTerm(sc, vals[i]))
 		}
 	}
@@ -1062,9 +1079,10 @@ func (a *analyzer) limit(v mysqlast.Value) error {
 // assign types v, stored into col: a placeholder takes the column's type. The assignment
 // says whether the value may be NULL (a placeholder always may; the checker drops the NOT
 // NULL violation when the Go type cannot be nil).
-func (a *analyzer) assign(sc scope, col *schema.Column, v mysqlast.Value) assignment {
+func (a *analyzer) assign(sc scope, table *schema.Table, col *schema.Column, v mysqlast.Value) assignment {
 	if isParam(v) {
 		a.setParam(v, col.Type)
+		a.noteParamSource(v, table, col, true)
 		return assignment{col: col, nullable: true, param: a.ph.Number(nodeStart(v))}
 	}
 	if n, ok := v.(*mysqlast.Node); ok && n.Class == "Item_default_value" {

@@ -30,6 +30,46 @@ func (a *analyzer) setParam(v mysqlast.Value, t schema.Type) {
 	}
 }
 
+// noteParamSource records the table column a placeholder met (the first one wins).
+func (a *analyzer) noteParamSource(v mysqlast.Value, table *schema.Table, col *schema.Column, assigned bool) {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "Item_param" || table == nil || col == nil {
+		return
+	}
+	num := a.ph.Number(n.Start)
+	if a.paramSrc == nil {
+		a.paramSrc = map[int]*ParamSource{}
+	}
+	if _, done := a.paramSrc[num]; !done {
+		a.paramSrc[num] = &ParamSource{Table: table.Name, Column: col.Name, NotNull: col.NotNull, Assigned: assigned}
+	}
+}
+
+// paramSources records, for the placeholders among the operands of a comparison (=, IN,
+// BETWEEN, LIKE ...), the one table column among the other operands: a parameter compared
+// with a column stands for that column.
+func (a *analyzer) paramSources(sc scope, args []mysqlast.Value) {
+	var table *schema.Table
+	var col *schema.Column
+	for _, v := range args {
+		if isParam(v) {
+			continue
+		}
+		if ref, ok := a.plainColumn(sc, v); ok && ref.c.base != nil && ref.c.baseTable != nil {
+			if col != nil && (col != ref.c.base || table != ref.c.baseTable) {
+				return // two columns: the parameter stands for neither
+			}
+			table, col = ref.c.baseTable, ref.c.base
+		}
+	}
+	if col == nil {
+		return
+	}
+	for _, v := range args {
+		a.noteParamSource(v, table, col, false)
+	}
+}
+
 // setParamField types a placeholder by an enum_field_types name.
 func (a *analyzer) setParamField(v mysqlast.Value, ft string) {
 	if t, ok := fromFieldType(ft, false); ok {
@@ -133,6 +173,7 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, err
 		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("left"), n.Arg("right")}, ts, "")
+		a.paramSources(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")})
 		return boolean(ts[0].nullable || ts[1].nullable), nil
 	case "Item_func_in":
 		list, _ := n.Arg("list").(mysqlast.List)
@@ -141,6 +182,7 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, err
 		}
 		a.paramsFromOthers(list, ts, "")
+		a.paramSources(sc, list)
 		return boolean(anyNullable(ts)), nil
 	case "Item_func_between", "Item_func_like", "Item_func_strcmp":
 		args := exprArgs(n)
@@ -149,6 +191,7 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, err
 		}
 		a.paramsFromOthers(args, ts, "")
+		a.paramSources(sc, args)
 		return boolean(anyNullable(ts)), nil
 	case "Item_cond_and", "Item_cond_or", "Item_func_xor":
 		ts, err := a.exprs(sc, exprArgs(n), where)
@@ -205,6 +248,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		_ = lt
 		if isParam(left) && len(cols) == 1 && cols[0].Known {
 			a.setParam(left, cols[0].Type)
+			if cols[0].base != nil && cols[0].baseTable != nil {
+				a.noteParamSource(left, cols[0].baseTable, cols[0].base, false)
+			}
 		}
 		return boolean(true), nil // the server marks every IN / ANY / ALL over a subquery nullable
 	case "PTI_singlerow_subselect":
