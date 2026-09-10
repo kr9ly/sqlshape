@@ -1,14 +1,4 @@
-# server 8.4.11: 5267 statements; agree 4994, untyped 29, disagree 10, server rejects 234, analyzer rejects 0
-! SELECT QUOTE(b) FROM t	binary null	string null
-! SELECT REGEXP_REPLACE(i, s, s) FROM t	string	string null
-! SELECT REGEXP_REPLACE(i, s, s, s) FROM t	string	string null
-! SELECT REGEXP_REPLACE(i, s, s, s, s) FROM t	string	string null
-! SELECT REGEXP_REPLACE(s, i, i) FROM t	string	string null
-! SELECT REGEXP_REPLACE(s, i, i, i) FROM t	string	string null
-! SELECT REGEXP_REPLACE(s, i, i, i, i) FROM t	string	string null
-! SELECT REGEXP_REPLACE(s, s, s) FROM t	string	string null
-! SELECT REGEXP_REPLACE(s, s, s, s) FROM t	string	string null
-! SELECT REGEXP_REPLACE(s, s, s, s, s) FROM t	string	string null
+# server 8.4.11: 5267 statements; agree 5033, untyped 0, disagree 0, server rejects 234, analyzer rejects 0
 = SELECT ABS(b) FROM t	double
 = SELECT ABS(d) FROM t	decimal
 = SELECT ABS(da) FROM t	double
@@ -2066,6 +2056,7 @@
 = SELECT PS_THREAD_ID(s) FROM t	bigint unsigned null
 = SELECT PS_THREAD_ID(tm) FROM t	bigint unsigned null
 = SELECT PS_THREAD_ID(u) FROM t	bigint unsigned null
+= SELECT QUOTE(b) FROM t	string null
 = SELECT QUOTE(d) FROM t	string null
 = SELECT QUOTE(da) FROM t	string null
 = SELECT QUOTE(dt) FROM t	string null
@@ -2154,6 +2145,35 @@
 = SELECT REGEXP_INSTR(u, u) FROM t	bigint
 = SELECT REGEXP_INSTR(u, u, u) FROM t	bigint
 = SELECT REGEXP_INSTR(u, u, u, u) FROM t	bigint
+= SELECT REGEXP_LIKE(b, b) FROM t	bigint
+= SELECT REGEXP_LIKE(b, b, b) FROM t	bigint
+= SELECT REGEXP_LIKE(d, d) FROM t	bigint
+= SELECT REGEXP_LIKE(d, d, d) FROM t	bigint
+= SELECT REGEXP_LIKE(da, da) FROM t	bigint
+= SELECT REGEXP_LIKE(da, da, da) FROM t	bigint
+= SELECT REGEXP_LIKE(dt, dt) FROM t	bigint
+= SELECT REGEXP_LIKE(dt, dt, dt) FROM t	bigint
+= SELECT REGEXP_LIKE(dt, i) FROM t	bigint
+= SELECT REGEXP_LIKE(dt, i, i) FROM t	bigint
+= SELECT REGEXP_LIKE(f, f) FROM t	bigint
+= SELECT REGEXP_LIKE(f, f, f) FROM t	bigint
+= SELECT REGEXP_LIKE(i, i) FROM t	bigint
+= SELECT REGEXP_LIKE(i, i, i) FROM t	bigint
+= SELECT REGEXP_LIKE(i, s) FROM t	bigint
+= SELECT REGEXP_LIKE(i, s, s) FROM t	bigint
+= SELECT REGEXP_LIKE(j, j) FROM t	bigint null
+= SELECT REGEXP_LIKE(j, j, j) FROM t	bigint null
+= SELECT REGEXP_LIKE(n, n) FROM t	bigint null
+= SELECT REGEXP_LIKE(n, n, n) FROM t	bigint null
+= SELECT REGEXP_LIKE(s, i) FROM t	bigint
+= SELECT REGEXP_LIKE(s, i, i) FROM t	bigint
+= SELECT REGEXP_LIKE(s, s) FROM t	bigint
+= SELECT REGEXP_LIKE(s, s, NULL) FROM t	bigint null
+= SELECT REGEXP_LIKE(s, s, s) FROM t	bigint
+= SELECT REGEXP_LIKE(tm, tm) FROM t	bigint
+= SELECT REGEXP_LIKE(tm, tm, tm) FROM t	bigint
+= SELECT REGEXP_LIKE(u, u) FROM t	bigint
+= SELECT REGEXP_LIKE(u, u, u) FROM t	bigint
 = SELECT REGEXP_REPLACE(b, b, b) FROM t	binary
 = SELECT REGEXP_REPLACE(b, b, b, b) FROM t	binary
 = SELECT REGEXP_REPLACE(b, b, b, b, b) FROM t	binary
@@ -2175,15 +2195,24 @@
 = SELECT REGEXP_REPLACE(i, i, i) FROM t	string
 = SELECT REGEXP_REPLACE(i, i, i, i) FROM t	string
 = SELECT REGEXP_REPLACE(i, i, i, i, i) FROM t	string
+= SELECT REGEXP_REPLACE(i, s, s) FROM t	string null
+= SELECT REGEXP_REPLACE(i, s, s, s) FROM t	string null
+= SELECT REGEXP_REPLACE(i, s, s, s, s) FROM t	string null
 = SELECT REGEXP_REPLACE(j, j, j) FROM t	string null
 = SELECT REGEXP_REPLACE(j, j, j, j) FROM t	string null
 = SELECT REGEXP_REPLACE(j, j, j, j, j) FROM t	string null
 = SELECT REGEXP_REPLACE(n, n, n) FROM t	string null
 = SELECT REGEXP_REPLACE(n, n, n, n) FROM t	string null
 = SELECT REGEXP_REPLACE(n, n, n, n, n) FROM t	string null
+= SELECT REGEXP_REPLACE(s, i, i) FROM t	string null
+= SELECT REGEXP_REPLACE(s, i, i, i) FROM t	string null
+= SELECT REGEXP_REPLACE(s, i, i, i, i) FROM t	string null
 = SELECT REGEXP_REPLACE(s, s, NULL) FROM t	string null
 = SELECT REGEXP_REPLACE(s, s, NULL, NULL) FROM t	string null
 = SELECT REGEXP_REPLACE(s, s, NULL, NULL, NULL) FROM t	string null
+= SELECT REGEXP_REPLACE(s, s, s) FROM t	string null
+= SELECT REGEXP_REPLACE(s, s, s, s) FROM t	string null
+= SELECT REGEXP_REPLACE(s, s, s, s, s) FROM t	string null
 = SELECT REGEXP_REPLACE(tm, tm, tm) FROM t	string
 = SELECT REGEXP_REPLACE(tm, tm, tm, tm) FROM t	string
 = SELECT REGEXP_REPLACE(tm, tm, tm, tm, tm) FROM t	string
@@ -5003,35 +5032,6 @@
 = SELECT YEARWEEK(tm, tm) FROM t	bigint null
 = SELECT YEARWEEK(u) FROM t	bigint null
 = SELECT YEARWEEK(u, u) FROM t	bigint null
-? SELECT REGEXP_LIKE(b, b) FROM t	?	bigint
-? SELECT REGEXP_LIKE(b, b, b) FROM t	?	bigint
-? SELECT REGEXP_LIKE(d, d) FROM t	?	bigint
-? SELECT REGEXP_LIKE(d, d, d) FROM t	?	bigint
-? SELECT REGEXP_LIKE(da, da) FROM t	?	bigint
-? SELECT REGEXP_LIKE(da, da, da) FROM t	?	bigint
-? SELECT REGEXP_LIKE(dt, dt) FROM t	?	bigint
-? SELECT REGEXP_LIKE(dt, dt, dt) FROM t	?	bigint
-? SELECT REGEXP_LIKE(dt, i) FROM t	?	bigint
-? SELECT REGEXP_LIKE(dt, i, i) FROM t	?	bigint
-? SELECT REGEXP_LIKE(f, f) FROM t	?	bigint
-? SELECT REGEXP_LIKE(f, f, f) FROM t	?	bigint
-? SELECT REGEXP_LIKE(i, i) FROM t	?	bigint
-? SELECT REGEXP_LIKE(i, i, i) FROM t	?	bigint
-? SELECT REGEXP_LIKE(i, s) FROM t	?	bigint
-? SELECT REGEXP_LIKE(i, s, s) FROM t	?	bigint
-? SELECT REGEXP_LIKE(j, j) FROM t	?	bigint null
-? SELECT REGEXP_LIKE(j, j, j) FROM t	?	bigint null
-? SELECT REGEXP_LIKE(n, n) FROM t	?	bigint null
-? SELECT REGEXP_LIKE(n, n, n) FROM t	?	bigint null
-? SELECT REGEXP_LIKE(s, i) FROM t	?	bigint
-? SELECT REGEXP_LIKE(s, i, i) FROM t	?	bigint
-? SELECT REGEXP_LIKE(s, s) FROM t	?	bigint
-? SELECT REGEXP_LIKE(s, s, NULL) FROM t	?	bigint null
-? SELECT REGEXP_LIKE(s, s, s) FROM t	?	bigint
-? SELECT REGEXP_LIKE(tm, tm) FROM t	?	bigint
-? SELECT REGEXP_LIKE(tm, tm, tm) FROM t	?	bigint
-? SELECT REGEXP_LIKE(u, u) FROM t	?	bigint
-? SELECT REGEXP_LIKE(u, u, u) FROM t	?	bigint
 x SELECT EXTRACTVALUE(b, b) FROM t	binary null	1105 Only constant XPATH queries are supported
 x SELECT EXTRACTVALUE(d, d) FROM t	string null	1105 Only constant XPATH queries are supported
 x SELECT EXTRACTVALUE(da, da) FROM t	string null	1105 Only constant XPATH queries are supported

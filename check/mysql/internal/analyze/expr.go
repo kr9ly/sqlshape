@@ -601,8 +601,8 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		t = known("bigint", false)
 	case class == "Item_cume_dist" || class == "Item_percent_rank":
 		t = known("double", false)
-	case fam == "Item_bool_func":
-		t = boolean(nullable)
+	case fam == "Item_bool_func", class == "Item_func_regexp_like":
+		t = boolean(nullable) // set_data_type_bool: a bigint(1)
 	default:
 		name := factType(fs)
 		if name == "" {
@@ -632,6 +632,8 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 			binary := factBinary(fs)
 			switch {
 			case binary:
+			case class == "Item_func_quote":
+				binary = false // a binary argument's quotes take the connection's collation
 			case strings.Contains(strings.Join(fs, ";"), "args[0]->collation"):
 				binary = len(ts) > 0 && ts[0].known && isBinary(ts[0].typ)
 			case aggregatesCharset(fs):
@@ -660,6 +662,17 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		t.nullable = false
 	case isA(class, "Item_sum"):
 		t.nullable = true // an aggregate over no rows is NULL
+	case class == "Item_func_regexp_replace":
+		// set_data_type_string(MAX_BLOB_WIDTH) in the arguments' character set: over a
+		// character string the 16M characters exceed max_allowed_packet (64M bytes at
+		// utf8mb4), which Item_str_func::fix_fields turns into nullable; binary and
+		// numeric arguments stay within it
+		t.nullable = nullable
+		for _, x := range ts {
+			if x.known && kindOf(x.typ) == "STRING_RESULT" && !isBinary(x.typ) && !isTemporal(x.typ) && x.typ.Name != "json" {
+				t.nullable = true
+			}
+		}
 	default:
 		t.nullable = nullable
 	}

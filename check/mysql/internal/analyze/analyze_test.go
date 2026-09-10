@@ -209,6 +209,7 @@ var errorCases = []errorCase{
 	{"SELECT id AS x, name AS x FROM users ORDER BY x", 1052, "Column 'x' in order clause is ambiguous", 46},
 	{"SELECT id FROM users UNION SELECT user_id FROM orders ORDER BY name", 1054, "Unknown column 'name' in 'order clause'", 63},
 	{"UPDATE users SET name = 'x' ORDER BY nope LIMIT 1", 1054, "Unknown column 'nope' in 'order clause'", 37},
+	{"SELECT id FROM users WHERE id <=> ALL (SELECT user_id FROM orders)", 1064, "syntax error at byte 27: <=> ALL / ANY is a syntax error", 27},
 }
 
 // oneCases are the statements the One proof judges: proven means every expansion touches

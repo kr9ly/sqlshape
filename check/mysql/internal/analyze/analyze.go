@@ -90,6 +90,10 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	}
 	root, err := mysqlast.Build(text, cst)
 	if err != nil {
+		if u, ok := err.(*mysqlast.Unsupported); ok && strings.Contains(u.Text, "syntax error") {
+			// a construct the grammar accepts and the server's action rejects
+			return nil, &Error{Message: fmt.Sprintf("syntax error at byte %d: %s", ph.Back(u.Start), u.Text), Code: 1064, Position: ph.Back(u.Start)}
+		}
 		return nil, err
 	}
 	a := &analyzer{s: s, text: text, ph: ph, params: make([]Param, ph.Count()), waived: obligation.StatementWaivers(sql)}

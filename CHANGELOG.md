@@ -86,6 +86,17 @@ release it is a candidate for.
   the `ORDER BY` of a query that aggregates nowhere else (3029) or of a set operation (3028) is
   rejected. 376 statements agree with a running `mysqld`. The derived leaves of the facts now
   carry `Outputs` on MySQL too, so `One` looks into a derived table's or view's body.
+- MySQL: a parenthesized join as a side of a join, a set operation's `ORDER BY` expression
+  (typed against the result columns), `x NOT IN (subquery)`, `QUALIFY` rejected as 8.4 does
+  without the hypergraph optimizer (6037), `<=> ALL / ANY` as the syntax error it is (1064).
+  The facts record an `EXISTS` or single-column `IN` subquery conjunct as an Exists predicate
+  carrying the body (a correlated reference to the enclosing block is an Outer term), so the
+  obligations judge the body under its predicate; the conjuncts the server folds away (`WHERE 1
+  = 1`) are dropped; a view body's positions are cleared. A MySQL placeholder carries the table
+  column it stands for (compared with, or stored into), so vet binds Go named types to key
+  identities and diffs `ENUM` labels against typed constants on MySQL too. `REGEXP_LIKE` is a
+  bigint(1), `REGEXP_REPLACE` nullable, `QUOTE` of a binary a character string: the probe
+  golden has no disagreement left.
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result
