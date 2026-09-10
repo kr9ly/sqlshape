@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 // TestAdvNeverOnConflictUpdate: an INSERT ... ON CONFLICT DO UPDATE against a table

@@ -65,40 +65,175 @@ type Analyzer interface {
 	// Problems are what the loader could not apply of the schema text, each with its
 	// position, reported once per package by the checker.
 	Problems() []string
+	// Traits are the dialect's conventions for Go types.
+	Traits() Traits
 }
 
 // Loader builds an Analyzer over a schema text (its dialect line included).
 type Loader func(schemaSQL string) (Analyzer, error)
 
-// Result is the dialect-neutral analysis of one statement: what it returns and what it
-// takes.
+// Result is the dialect-neutral analysis of one statement: what it returns, what it
+// takes, what it touches, what it may fail on, and its facts for the contracts.
 type Result struct {
-	// Params are the placeholder types, indexed by n - 1. A parameter the analyzer could
-	// not type has a Type with no Go mapping.
-	Params  []Type
+	// Params are the placeholders, indexed by n - 1. A parameter the analyzer could not
+	// type has an Unknown Type.
+	Params  []Param
 	Columns []Column
+	// Notes are the analyzer's findings that are not errors: reported as they are, or only
+	// under -strict when Advisory.
+	Notes []Note
+	// Violations are the constraints the statement may violate, for the expect line.
+	Violations []Violation
+	// Relations are the schema objects the statement references, for the boundary checks
+	// (-schemas, -no-tables) and the consumers index.
+	Relations []RelationRef
+	// Uses are the relation columns the statement reads or assigns.
+	Uses []facts.Use
 	// Facts is the statement's record for the contracts written on facts (x/facts): the
 	// One proof (x/cardinality) and the obligations are judged on it, whatever the
 	// dialect. Nil when the analyzer does not record the statement's shape.
 	Facts *facts.Facts
+	// ManyRowsWhy is the dialect's own reason a One proof failed, when its analyzer proves
+	// cardinality itself; "" leaves the verdict to x/cardinality.
+	ManyRowsWhy string
 }
 
-// Column is one result column.
+// Param is one placeholder: its type, and the column it stands for when the analyzer
+// knows it (compared with or assigned to).
+type Param struct {
+	Type   Type
+	Source *Source
+}
+
+// Column is one result column, or a field of a composite type.
 type Column struct {
 	Name     string
 	Type     Type
 	Nullable bool
+	// Source is the table column this column reads unchanged, if any.
+	Source *Source
 }
 
-// Type is a value type as the dialect names it, with the Go types that carry it.
+// Source is a table column a result column or parameter stands for.
+type Source struct {
+	Table   string // as the facts spell it: schema-qualified unless in the default schema
+	Column  string
+	NotNull bool
+	// Assigned: the parameter is stored into the column (INSERT / UPDATE), not compared.
+	Assigned bool
+	// Identity is the key the column carries when it is a key or references one, after
+	// following foreign keys to their root ("public.users.id"); "" for other columns. Two
+	// columns with the same Identity hold the same kind of value; the checker binds a Go
+	// type to it.
+	Identity string
+	// Values are the values the column may hold when the schema fixes them: a CHECK
+	// (col IN (...)) list, or the key values of a seeded lookup table. Nil otherwise.
+	Values []string
+}
+
+// Note is a finding about the statement that is not an error.
+type Note struct {
+	Message  string
+	Position int // 0-based byte offset into the SQL; -1 when unknown
+	Advisory bool
+}
+
+// Violation is a constraint the statement may violate: what the runtime reports and the
+// template's expect line names.
+type Violation struct {
+	Key        string // the name the expect line uses: the constraint's, or table.column for NOT NULL
+	Code       string // the database's error code (SQLSTATE 23505, MySQL 1062)
+	Table      string
+	Column     string
+	Constraint string
+	Detail     string // how the checker describes it (UNIQUE (email) on users)
+	Position   int
+}
+
+// RelationRef is one relation the statement references.
+type RelationRef struct {
+	Name     string // as the facts spell it
+	Kind     facts.RelKind
+	Position int
+	Target   bool // written by the statement
+}
+
+// Type is a value type as the dialect names it, with the Go types that carry it. It is a
+// tree: an array has its Elem, a range its Elem (the subtype), a domain its Base, a
+// composite or record its Fields.
 type Type struct {
 	// Name is the dialect's spelling, for messages: "bigint unsigned", "varchar(20)".
 	Name string
-	// Go lists the Go types a value of this type scans into (result) or encodes from
-	// (parameter), as types.TypeString spells them with the package path: "int64",
-	// "string", "time.Time", "[]byte". Nil means the dialect has no mapping: the checker
-	// accepts the field and says so.
-	Go []string
+	// Named is the canonical name of a type the schema defines (an enum, a domain, a
+	// composite, a range), what a `// sqlshape: type X` declaration names; "" for a
+	// built-in type.
+	Named string
+	Kind  TypeKind
+	// Elem is an array's element type or a range's subtype; Base a domain's base type.
+	Elem *Type
+	Base *Type
+	// Fields are a composite type's columns.
+	Fields []Column
+	// Labels are an enum's labels, in order.
+	Labels []string
+	// Result and Param list the Go types a value scans into (a result column) and encodes
+	// from (a parameter), best first: the first is what a struct written from the SQL
+	// uses. Spelled as GoSpelling describes. Both nil: the dialect has no mapping (the
+	// checker accepts the field with a note).
+	Result []GoFit
+	Param  []GoFit
+}
+
+// TypeKind is the shape of a Type.
+type TypeKind byte
+
+const (
+	Scalar TypeKind = iota
+	Array
+	Composite  // a named row type
+	Record     // an anonymous row
+	Range      // Elem is the subtype
+	Multirange // Elem is the range
+	Enum
+	Domain // Base is the underlying type
+)
+
+// Unknown reports a type the dialect has no Go mapping for.
+func (t Type) Unknown() bool { return len(t.Result) == 0 && len(t.Param) == 0 }
+
+// GoFit is one Go type that carries a value, and what is lost when it does.
+type GoFit struct {
+	// Go is a spelling of the Go type (GoSpelling).
+	Go string
+	// Lossy is why the mapping loses information ("numeric into float64 loses precision"),
+	// "" when it is faithful; the checker reports a lossy fit under -strict.
+	Lossy string
+}
+
+// GoSpelling is the grammar of GoFit.Go, what the checker matches a Go type against:
+//
+//	bool, int, int8 .. int64, uint .. uint64, float32, float64, string   a basic type
+//	[]byte, [16]byte                                                    byte slices and arrays
+//	time.Time, net/netip.Addr, github.com/google/uuid.UUID              a named type, by package path and name
+//	struct                                                              any struct (a row: Fields decide the rest)
+//	map[string]string, map[string]*string                               maps
+//	json                                                                anything but a number or a bool
+//	[]$elem, [N]$elem                                                   a slice / array whose element fits Elem
+//	github.com/jackc/pgx/v5/pgtype.Range[$elem]                         a generic named type whose argument fits Elem
+//
+// A Go type whose underlying type spells the same fits too (a named string carries a
+// varchar). The checker also accepts, for every type, a Go type that decodes or encodes
+// itself (sql.Scanner for a result, driver.Valuer for a parameter), and the
+// NullWrappers of the dialect.
+const GoSpelling = "see the documentation of GoSpelling"
+
+// Traits are the dialect's conventions the checker applies to every type.
+type Traits struct {
+	// TextParams: a Go string encodes as a parameter of any type (the driver sends text).
+	TextParams bool
+	// NullWrappers are package paths whose types all carry a Valid flag (pgx's pgtype): a
+	// field of such a type receives NULL, and its value is not checked further.
+	NullWrappers []string
 }
 
 // Error is a statement the database itself would reject.

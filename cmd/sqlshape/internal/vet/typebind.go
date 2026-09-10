@@ -7,7 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // Declared type bindings. A Go type can name the PostgreSQL type it carries in its doc
@@ -35,8 +36,8 @@ func init() {
 }
 
 type declaredType struct {
-	pg  string
-	oid catalog.OID // 0 when the PG type does not exist (reported at the declaration)
+	pg    string
+	named string // the type's canonical name (dialect.Type.Named); "" when it does not exist (reported at the declaration)
 }
 
 var typeDirective = regexp.MustCompile(`(?m)^\s*sqlshape:\s*type\s+(\S+)\s*$`)
@@ -75,7 +76,7 @@ func (c *checker) collectDeclaredTypes() {
 				}
 				if c.s != nil {
 					if t := c.s.Types.Lookup(sch, name); t != nil {
-						dt.oid = t.OID
+						dt.named = pgdialect.NamedOf(c.s, t.OID)
 					} else {
 						c.pass.Reportf(ts.Name.Pos(), "sqlshape: type %s: PostgreSQL type %q does not exist in the schema", obj.Name(), m[1])
 					}
@@ -106,21 +107,30 @@ func (c *checker) declaredOf(t types.Type) (declaredType, bool) {
 		sch, name = name[:i], name[i+1:]
 	}
 	if pt := c.s.Types.Lookup(sch, name); pt != nil {
-		dt.oid = pt.OID
+		dt.named = pgdialect.NamedOf(c.s, pt.OID)
 	}
 	c.declared[named.Obj()] = dt
 	return dt, true
 }
 
-// matchDeclared decides a declared type against a PG type: the same type (domains over it
-// included), and, unless the PG type is a composite fed by the struct's fields, the Go
-// type must do its own decoding / encoding.
-func (c *checker) matchDeclared(dt declaredType, t types.Type, pg, base catalog.OID, param bool) fit {
-	if dt.oid == 0 || (pg != dt.oid && base != dt.oid) {
+// matchDeclared decides a declared type against a dialect type: the same named type (a
+// domain over it included), and, unless the type is a composite fed by the struct's
+// fields, the Go type must do its own decoding / encoding.
+func (c *checker) matchDeclared(dt declaredType, t types.Type, dtype dialect.Type, param bool) fit {
+	if dt.named == "" {
 		return fit{}
 	}
-	pt := c.s.Types.ByOID(dt.oid)
-	if _, isStruct := t.Underlying().(*types.Struct); isStruct && (pt == nil || pt.Kind != 'c') {
+	var matched *dialect.Type
+	for cur := &dtype; cur != nil; cur = cur.Base {
+		if cur.Named == dt.named {
+			matched = cur
+			break
+		}
+	}
+	if matched == nil {
+		return fit{}
+	}
+	if _, isStruct := t.Underlying().(*types.Struct); isStruct && matched.Kind != dialect.Composite {
 		if !param && !implementsScanner(t) {
 			return fit{ok: true, lossy: t.String() + " carries " + dt.pg + " but does not implement sql.Scanner: pgx cannot decode into it"}
 		}

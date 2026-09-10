@@ -26,12 +26,12 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
-	"github.com/kr9ly/sqlshape/v2/x/obligation"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
 )
 
 const sqlshapePkg = "github.com/kr9ly/sqlshape/v2"

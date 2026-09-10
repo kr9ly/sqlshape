@@ -138,13 +138,15 @@ func (c *checker) checkParamsDialect(e *expand.Expansion, r *dialect.Result, pTy
 		if p.N-1 >= len(r.Params) {
 			continue
 		}
-		dt := r.Params[p.N-1]
-		f := fitDialect(dt, gt, true)
+		dt := r.Params[p.N-1].Type
+		f := fitType(dt, gt, true, c.ls.dialect.Traits())
 		switch {
 		case !f.ok:
 			report(lit.pos(p.Pos), "parameter %s is %s but SQL expects %s%s", p.Path, gt, dt.Name, where)
 		case f.unknown:
 			report(lit.pos(p.Pos), "parameter %s: no known Go mapping for %s, not checked%s", p.Path, dt.Name, where)
+		case f.lossy != "" && c.strict:
+			report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, f.lossy, where)
 		}
 	}
 }
@@ -172,7 +174,7 @@ func (c *checker) checkResultDialect(at token.Pos, r *dialect.Result, rType type
 			return nil
 		}
 		col := r.Columns[0]
-		reportFitDialect(report, at, "column "+col.Name, col, rType, fitDialect(col.Type, rType, false), where)
+		reportFitDialect(report, at, "column "+col.Name, col, rType, fitType(col.Type, rType, false, c.ls.dialect.Traits()), where)
 		return nil
 	}
 	byName := map[string]int{}
@@ -227,7 +229,7 @@ func (c *checker) checkResultDialect(at token.Pos, r *dialect.Result, rType type
 		if notnull[col.Name] {
 			col.Nullable = false
 		}
-		reportFitDialect(report, at, "field "+fieldName[col.Name], col, fv.Type(), fitDialect(col.Type, fv.Type(), false), where)
+		reportFitDialect(report, at, "field "+fieldName[col.Name], col, fv.Type(), fitType(col.Type, fv.Type(), false, c.ls.dialect.Traits()), where)
 	}
 	missing := map[string]types.Type{}
 	for _, name := range order {
@@ -248,37 +250,4 @@ func reportFitDialect(report func(token.Pos, string, ...any), at token.Pos, what
 	if f.ok && !f.unknown && col.Nullable && !f.nullable {
 		report(at, "%s is %s but column %q may be NULL (use a pointer, or tag it `col:\",notnull\"` if you know better)%s", what, gt, col.Name, where)
 	}
-}
-
-// fitDialect decides whether Go type t carries a value of dialect type dt: t, its
-// nullability wrapper removed, must spell as one of dt.Go, itself or through its
-// underlying type (a named string carries a varchar). A Scanner receives any column, a
-// Valuer encodes any parameter.
-func fitDialect(dt dialect.Type, t types.Type, param bool) fit {
-	inner, nullable := unwrapNullable(t)
-	if inner == nil {
-		return fit{ok: true, nullable: true}
-	}
-	switch inner.Underlying().(type) {
-	case *types.Slice, *types.Map:
-		nullable = true
-	}
-	if len(dt.Go) == 0 {
-		return fit{ok: true, unknown: true, nullable: nullable}
-	}
-	if (!param && implementsScanner(inner)) || (param && implementsValuer(inner)) {
-		return fit{ok: true, nullable: true}
-	}
-	for _, want := range dt.Go {
-		if goTypeString(inner) == want || goTypeString(inner.Underlying()) == want {
-			return fit{ok: true, nullable: nullable}
-		}
-	}
-	return fit{nullable: nullable}
-}
-
-// goTypeString spells t the way dialect.Type.Go does: package path, no package name
-// aliasing ("time.Time", "[]byte", "int64").
-func goTypeString(t types.Type) string {
-	return types.TypeString(t, func(p *types.Package) string { return p.Path() })
 }

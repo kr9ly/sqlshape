@@ -46,7 +46,7 @@ func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
 	}
 	out := &dialect.Result{Facts: r.Facts}
 	for _, p := range r.Params {
-		out.Params = append(out.Params, typeOf(p.Type, p.Known))
+		out.Params = append(out.Params, dialect.Param{Type: typeOf(p.Type, p.Known)})
 	}
 	for _, c := range r.Columns {
 		out.Columns = append(out.Columns, dialect.Column{Name: c.Name, Type: typeOf(c.Type, c.Known), Nullable: c.Nullable})
@@ -58,8 +58,18 @@ func typeOf(t schema.Type, known bool) dialect.Type {
 	if !known {
 		return dialect.Type{Name: "an expression the analyzer does not type yet"}
 	}
-	return dialect.Type{Name: t.String(), Go: GoTypes(t)}
+	dt := dialect.Type{Name: t.String()}
+	for _, g := range GoTypes(t) {
+		dt.Result = append(dt.Result, dialect.GoFit{Go: g})
+		dt.Param = append(dt.Param, dialect.GoFit{Go: g})
+	}
+	return dt
 }
+
+// Traits: go-sql-driver/mysql through database/sql. A Go string does not stand in for a
+// number or a date (the server would coerce it, but the checker holds the type), and there
+// is no family of Valid-carrying value types beyond sql.Null*.
+func (m *mysql) Traits() dialect.Traits { return dialect.Traits{} }
 
 // GoTypes is the Go side of a MySQL type: what go-sql-driver/mysql scans a column of the
 // type into and encodes a parameter from, through database/sql. Integers arrive as int64

@@ -15,13 +15,14 @@ import (
 type stubDialect struct{}
 
 var stubColumns = map[string]dialect.Column{
-	"id":    {Name: "id", Type: dialect.Type{Name: "bigint", Go: []string{"int64"}}},
-	"name":  {Name: "name", Type: dialect.Type{Name: "varchar(20)", Go: []string{"string"}}},
-	"price": {Name: "price", Type: dialect.Type{Name: "decimal(10,2)", Go: []string{"string"}}, Nullable: true},
-	"at":    {Name: "at", Type: dialect.Type{Name: "datetime", Go: []string{"time.Time"}}},
+	"id":    {Name: "id", Type: dialect.Type{Name: "bigint", Result: []dialect.GoFit{{Go: "int64"}}, Param: []dialect.GoFit{{Go: "int64"}}}},
+	"name":  {Name: "name", Type: dialect.Type{Name: "varchar(20)", Result: []dialect.GoFit{{Go: "string"}}, Param: []dialect.GoFit{{Go: "string"}}}},
+	"price": {Name: "price", Type: dialect.Type{Name: "decimal(10,2)", Result: []dialect.GoFit{{Go: "string"}}, Param: []dialect.GoFit{{Go: "string"}}}, Nullable: true},
+	"at":    {Name: "at", Type: dialect.Type{Name: "datetime", Result: []dialect.GoFit{{Go: "time.Time"}}, Param: []dialect.GoFit{{Go: "time.Time"}}}},
 }
 
-func (stubDialect) Problems() []string { return []string{"3: a problem with the schema"} }
+func (stubDialect) Problems() []string     { return []string{"3: a problem with the schema"} }
+func (stubDialect) Traits() dialect.Traits { return dialect.Traits{} }
 
 func (stubDialect) Analyze(sql string) (*dialect.Result, error) {
 	if strings.HasPrefix(sql, "SELECT boom") {
@@ -34,7 +35,7 @@ func (stubDialect) Analyze(sql string) (*dialect.Result, error) {
 		r.Columns = append(r.Columns, stubColumns[strings.TrimSpace(name)])
 	}
 	if i := strings.Index(sql, "WHERE id = $1"); i >= 0 {
-		r.Params = []dialect.Type{stubColumns["id"].Type}
+		r.Params = []dialect.Param{{Type: stubColumns["id"].Type}}
 	}
 	return r, nil
 }

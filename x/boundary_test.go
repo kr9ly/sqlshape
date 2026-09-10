@@ -24,6 +24,7 @@ var debt = map[string][]string{
 	module + "cmd/sqlshape/v2/internal/vet": {
 		module + "check/postgres/v2/analyze",
 		module + "check/postgres/v2/catalog",
+		module + "check/postgres/v2/dialect", // the adapter, until PostgreSQL registers through x/dialect like MySQL
 		module + "check/postgres/v2/pgparse",
 		module + "check/postgres/v2/schema",
 	},
