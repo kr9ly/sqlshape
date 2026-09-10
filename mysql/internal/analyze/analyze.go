@@ -38,6 +38,8 @@ type Column struct {
 	Type     schema.Type
 	Known    bool // the type was inferred; false leaves Type empty
 	Nullable bool
+
+	base *schema.Column // the base table column this is a plain reference to, if any
 }
 
 // Error is what MySQL would raise for the statement.
@@ -76,17 +78,78 @@ type analyzer struct {
 	ph      placeholder.Map
 	params  []Param
 	columns []Column
+	views   map[string]bool // the views being expanded, against a cycle
 }
 
-// relation is a table in scope, under its alias.
+// relation is a table in scope, under its alias: a base table, or a derived one (a
+// derived table, a view, a common table expression) whose columns are its query's.
 type relation struct {
-	alias    string
-	table    *schema.Table
-	nullable bool // on the nullable side of an outer join
+	alias     string
+	table     *schema.Table // nil for a derived relation
+	cols      []Column      // the derived relation's columns
+	updatable bool          // a derived relation whose plain column references write through (a mergeable view)
+	nullable  bool          // on the nullable side of an outer join
 }
 
+// columns lists the relation's columns as a SELECT * expands them (a base table's
+// invisible columns are left out).
+func (r *relation) columns() []Column {
+	if r.table == nil {
+		out := make([]Column, len(r.cols))
+		for i, c := range r.cols {
+			c.Nullable = c.Nullable || r.nullable
+			out[i] = c
+		}
+		return out
+	}
+	var out []Column
+	for _, col := range r.table.Columns {
+		if col.Invisible {
+			continue
+		}
+		out = append(out, Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col})
+	}
+	return out
+}
+
+// column resolves a column name in the relation.
+func (r *relation) column(name string) (colRef, bool) {
+	if r.table == nil {
+		for _, c := range r.cols {
+			if strings.EqualFold(c.Name, name) {
+				c.Nullable = c.Nullable || r.nullable
+				ref := colRef{rel: r, c: c}
+				if r.updatable {
+					ref.col = c.base
+				}
+				return ref, true
+			}
+		}
+		return colRef{}, false
+	}
+	col := r.table.Column(name)
+	if col == nil {
+		return colRef{}, false
+	}
+	return colRef{rel: r, col: col, c: Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col}}, true
+}
+
+// scope is the relations a name resolves against: the query's own, then, for a
+// correlated subquery, the enclosing queries'. ctes are the common table expressions in
+// force, by name, for the FROM clauses of this query and its subqueries.
 type scope struct {
-	rels []relation
+	rels  []relation
+	outer *scope
+	ctes  []relation
+}
+
+// derived makes a scope for a nested query: its relations start empty, the enclosing
+// scope is outer, and the enclosing CTEs stay visible.
+func (sc *scope) derived() scope {
+	if sc == nil {
+		return scope{}
+	}
+	return scope{outer: sc, ctes: sc.ctes}
 }
 
 func (a *analyzer) statement(v mysqlast.Value) error {
@@ -108,40 +171,21 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 }
 
 func (a *analyzer) selectStmt(n *mysqlast.Node) error {
-	qe, ok := n.Arg("qe").(*mysqlast.Node)
-	if !ok || qe.Class != "PT_query_expression" {
-		return fmt.Errorf("analyze: query expression not understood: %s", mysqlast.Sprint(n.Arg("qe")))
-	}
-	body, ok := qe.Arg("body").(*mysqlast.Node)
-	if !ok || body.Class != "PT_query_specification" {
-		return fmt.Errorf("analyze: only a single SELECT is supported yet (no UNION / INTERSECT / EXCEPT)")
-	}
-	sc, err := a.from(body.Arg("from_clause"))
+	cols, err := a.queryExpression(n.Arg("qe"), nil)
 	if err != nil {
 		return err
 	}
-	if err := a.condition(sc, body.Arg("opt_where_clause"), "where clause"); err != nil {
-		return err
-	}
-	if err := a.condition(sc, body.Arg("opt_having_clause"), "having clause"); err != nil {
-		return err
-	}
-	if err := a.items(sc, body.Arg("item_list")); err != nil {
-		return err
-	}
-	if err := a.limit(qe.Arg("limit")); err != nil {
-		return err
-	}
+	a.columns = cols
 	return nil
 }
 
 func (a *analyzer) insert(n *mysqlast.Node) error {
-	rel, err := a.target(arg(n, "table_ident", 3), nil)
+	rel, err := a.target(arg(n, "table_ident", 3), nil, nil)
 	if err != nil {
 		return err
 	}
-	if q := arg(n, "insert_query_expression", 7); q != nil {
-		return fmt.Errorf("analyze: INSERT ... SELECT is not supported yet")
+	if rel.table == nil {
+		return fmt.Errorf("analyze: INSERT into a view is not supported yet")
 	}
 	// the column list names the targets; without one the row lists every column in order
 	var targets []*schema.Column
@@ -156,6 +200,27 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 	} else {
 		targets = rel.table.Columns
 	}
+	if q := arg(n, "insert_query_expression", 7); q != nil {
+		// INSERT ... SELECT: the query's columns feed the targets in order; a bare
+		// placeholder in its select list takes the target's type
+		cols, err := a.queryExpression(q, nil)
+		if err != nil {
+			return err
+		}
+		if len(cols) != len(targets) {
+			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
+		}
+		if qe, ok := q.(*mysqlast.Node); ok {
+			if body, ok := qe.Arg("body").(*mysqlast.Node); ok && body.Class == "PT_query_specification" {
+				items, _ := body.Arg("item_list").(mysqlast.List)
+				for i, item := range items {
+					if it, ok := item.(*mysqlast.Node); ok && it.Class == "PTI_expr_with_alias" && isParam(it.Arg("expr")) && i < len(targets) {
+						a.setParam(it.Arg("expr"), targets[i].Type)
+					}
+				}
+			}
+		}
+	}
 	rows, _ := arg(n, "row_value_list", 6).(mysqlast.List)
 	for _, row := range rows {
 		vals, _ := row.(mysqlast.List)
@@ -163,7 +228,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
 		}
 		for i, v := range vals {
-			a.assign(scope{[]relation{*rel}}, targets[i], v)
+			a.assign(scope{rels: []relation{*rel}}, targets[i], v)
 		}
 	}
 	dupCols, _ := arg(n, "opt_on_duplicate_column_list", 10).(mysqlast.List)
@@ -174,14 +239,18 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return err
 		}
 		if i < len(dupVals) {
-			a.assign(scope{[]relation{*rel}}, col, dupVals[i])
+			a.assign(scope{rels: []relation{*rel}}, col, dupVals[i])
 		}
 	}
 	return nil
 }
 
 func (a *analyzer) update(n *mysqlast.Node) error {
-	sc, err := a.from(n.Arg("join_table_list"))
+	ctes, err := a.with(n.Arg("with_clause"), nil)
+	if err != nil {
+		return err
+	}
+	sc, err := a.from(n.Arg("join_table_list"), scope{ctes: ctes})
 	if err != nil {
 		return err
 	}
@@ -191,6 +260,9 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		col, err := a.column(sc, c, "field list")
 		if err != nil {
 			return err
+		}
+		if col.col == nil {
+			return &Error{Message: fmt.Sprintf("The target table %s of the UPDATE is not updatable", col.rel.alias), Code: 1288, Position: a.ph.Back(nodeStart(c))}
 		}
 		if i < len(vals) {
 			a.assign(sc, col.col, vals[i])
@@ -203,11 +275,18 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 }
 
 func (a *analyzer) delete(n *mysqlast.Node) error {
-	rel, err := a.target(n.Arg("table_ident"), n.Arg("opt_table_alias"))
+	ctes, err := a.with(n.Arg("with_clause"), nil)
 	if err != nil {
 		return err
 	}
-	sc := scope{[]relation{*rel}}
+	rel, err := a.target(n.Arg("table_ident"), n.Arg("opt_table_alias"), &scope{ctes: ctes})
+	if err != nil {
+		return err
+	}
+	if rel.table == nil {
+		return fmt.Errorf("analyze: DELETE from a view or a common table expression is not supported yet")
+	}
+	sc := scope{rels: []relation{*rel}, ctes: ctes}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
 		return err
 	}
@@ -227,9 +306,9 @@ func arg(n *mysqlast.Node, name string, i int) mysqlast.Value {
 	return nil
 }
 
-// from builds the scope of a FROM / UPDATE table list.
-func (a *analyzer) from(v mysqlast.Value) (scope, error) {
-	var sc scope
+// from builds the scope of a FROM / UPDATE table list, starting from sc (the enclosing
+// scope and the CTEs in force).
+func (a *analyzer) from(v mysqlast.Value, sc scope) (scope, error) {
 	list, _ := v.(mysqlast.List)
 	for _, t := range list {
 		if err := a.tableRef(&sc, t, false); err != nil {
@@ -246,18 +325,35 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 	}
 	switch n.Class {
 	case "PT_table_factor_table_ident":
-		rel, err := a.target(n.Arg("table_ident"), n.Arg("opt_table_alias"))
+		rel, err := a.target(n.Arg("table_ident"), n.Arg("opt_table_alias"), sc)
 		if err != nil {
 			return err
 		}
 		rel.nullable = nullable
-		for _, r := range sc.rels {
-			if strings.EqualFold(r.alias, rel.alias) {
-				return &Error{Message: fmt.Sprintf("Not unique table/alias: '%s'", rel.alias), Code: 1066, Position: a.ph.Back(n.Start)}
-			}
+		return a.addRelation(sc, rel, n.Start)
+	case "PT_derived_table":
+		// (SELECT ...) AS alias [(col, ...)]: the columns are the query's, renamed by the
+		// list when given; LATERAL sees the relations to its left
+		alias := str(n.Arg("table_alias"))
+		if alias == "" {
+			return &Error{Message: "Every derived table must have its own alias", Code: 1248, Position: a.ph.Back(n.Start)}
 		}
-		sc.rels = append(sc.rels, *rel)
-		return nil
+		outer := sc.outer
+		if isTrue(n.Arg("lateral")) {
+			outer = sc
+		}
+		cols, err := a.subquery(n.Arg("subquery"), outer)
+		if err != nil {
+			return err
+		}
+		if !mergeable(subqueryExpression(n.Arg("subquery"))) {
+			cols = materialized(cols, subqueryExpression(n.Arg("subquery")))
+		}
+		names, _ := n.Arg("column_names").(mysqlast.List)
+		if cols, err = renamed(cols, names, alias, a.ph.Back(n.Start)); err != nil {
+			return err
+		}
+		return a.addRelation(sc, &relation{alias: alias, cols: cols, nullable: nullable}, n.Start)
 	case "PT_joined_table_on", "PT_joined_table_using", "PT_cross_join":
 		jt := str(n.Arg("type"))
 		left, right := nullable, nullable
@@ -284,8 +380,6 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 			}
 		}
 		return nil
-	case "PT_derived_table":
-		return fmt.Errorf("analyze: derived tables are not supported yet")
 	case "PT_table_reference_list_parens":
 		list, _ := n.Arg("table_list").(mysqlast.List)
 		for _, t := range list {
@@ -298,8 +392,21 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 	return fmt.Errorf("analyze: %s is not supported yet", n.Class)
 }
 
-// target resolves a Table_ident to a schema table, under alias when given.
-func (a *analyzer) target(ident, alias mysqlast.Value) (*relation, error) {
+// addRelation puts rel into sc, rejecting a second relation under the same alias.
+func (a *analyzer) addRelation(sc *scope, rel *relation, at int) error {
+	for _, r := range sc.rels {
+		if strings.EqualFold(r.alias, rel.alias) {
+			return &Error{Message: fmt.Sprintf("Not unique table/alias: '%s'", rel.alias), Code: 1066, Position: a.ph.Back(at)}
+		}
+	}
+	sc.rels = append(sc.rels, *rel)
+	return nil
+}
+
+// target resolves a Table_ident, under alias when given: a common table expression in
+// force (the innermost wins, as in the server), else a base table, else a view (analyzed
+// on the spot, its columns are its query's).
+func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, error) {
 	n, ok := ident.(*mysqlast.Node)
 	if !ok || n.Class != "Table_ident" {
 		return nil, fmt.Errorf("analyze: table name not understood: %s", mysqlast.Sprint(ident))
@@ -308,33 +415,99 @@ func (a *analyzer) target(ident, alias mysqlast.Value) (*relation, error) {
 	if name == "" && len(n.Args) > 0 {
 		name = str(n.Args[len(n.Args)-1])
 	}
-	t := a.s.Table(name)
-	if t == nil {
-		if a.s.View(name) != nil {
-			return nil, fmt.Errorf("analyze: views are not supported yet (%s)", name)
+	var rel *relation
+	if sc != nil && str(n.Arg("db")) == "" {
+		for i := len(sc.ctes) - 1; i >= 0; i-- {
+			if strings.EqualFold(sc.ctes[i].alias, name) {
+				r := sc.ctes[i]
+				rel = &r
+				break
+			}
 		}
-		return nil, &Error{Message: fmt.Sprintf("Table '%s' doesn't exist", name), Code: 1146, Position: a.ph.Back(n.Start)}
 	}
-	rel := &relation{alias: t.Name, table: t}
+	if rel == nil {
+		if t := a.s.Table(name); t != nil {
+			rel = &relation{alias: t.Name, table: t}
+		} else if v := a.s.View(name); v != nil {
+			cols, err := a.view(v)
+			if err != nil {
+				return nil, err
+			}
+			// a view is merged into the query unless it says TEMPTABLE or its query cannot be
+			// merged; a merged view's plain column references are updatable
+			rel = &relation{alias: v.Name, cols: cols, updatable: true}
+			if v.Algorithm == "TEMPTABLE" || !mergeable(v.Query) {
+				rel.cols, rel.updatable = materialized(cols, v.Query), false
+			}
+		} else {
+			return nil, &Error{Message: fmt.Sprintf("Table '%s' doesn't exist", name), Code: 1146, Position: a.ph.Back(n.Start)}
+		}
+	}
 	if s := str(alias); s != "" {
 		rel.alias = s
 	}
 	return rel, nil
 }
 
+// view types a view's query, in a scope of its own (a view sees no CTE and no outer query).
+func (a *analyzer) view(v *schema.View) ([]Column, error) {
+	if a.views[v.Name] {
+		return nil, fmt.Errorf("analyze: view %s refers to itself", v.Name)
+	}
+	if a.views == nil {
+		a.views = map[string]bool{}
+	}
+	a.views[v.Name] = true
+	defer delete(a.views, v.Name)
+	// the view's placeholders, if any, are not ours: keep the statement's parameter table
+	saved := a.params
+	a.params = nil
+	defer func() { a.params = saved }()
+	cols, err := a.queryExpression(v.Query, nil)
+	if err != nil {
+		if e, ok := err.(*Error); ok {
+			return nil, fmt.Errorf("analyze: view %s: %s (MySQL error %d)", v.Name, e.Message, e.Code)
+		}
+		return nil, fmt.Errorf("analyze: view %s: %w", v.Name, err)
+	}
+	var names mysqlast.List
+	for _, c := range v.Columns {
+		names = append(names, c)
+	}
+	return renamed(cols, names, v.Name, -1)
+}
+
+// renamed applies a derived relation's column list: the same count, the new names.
+func renamed(cols []Column, names mysqlast.List, alias string, at int) ([]Column, error) {
+	if len(names) == 0 {
+		return cols, nil
+	}
+	if len(names) != len(cols) {
+		return nil, &Error{Message: fmt.Sprintf("View's SELECT and view's field list have different column counts"), Code: 1353, Position: at}
+	}
+	out := make([]Column, len(cols))
+	for i, c := range cols {
+		c.Name = str(names[i])
+		out[i] = c
+	}
+	return out, nil
+}
+
 // targetColumn resolves a column name against one relation (INSERT's column list).
 func (a *analyzer) targetColumn(rel *relation, v mysqlast.Value, where string) (*schema.Column, error) {
-	ref, err := a.column(scope{[]relation{*rel}}, v, where)
+	ref, err := a.column(scope{rels: []relation{*rel}}, v, where)
 	if err != nil {
 		return nil, err
 	}
 	return ref.col, nil
 }
 
-// colRef is a resolved column reference.
+// colRef is a resolved column reference: the relation, the schema column when the
+// relation is a base table, and the column as the query sees it.
 type colRef struct {
 	rel *relation
 	col *schema.Column
+	c   Column
 }
 
 // column resolves a PTI_simple_ident_* node in sc. where names the clause the way MySQL's
@@ -358,87 +531,98 @@ func (a *analyzer) column(sc scope, v mysqlast.Value, where string) (colRef, err
 	return colRef{}, fmt.Errorf("analyze: column reference not understood: %s", mysqlast.Sprint(v))
 }
 
+// lookup resolves table.field (table may be "") in sc: the innermost query whose
+// relations know the name wins, an outer query is tried only when none of the inner one's
+// do (a correlated reference); two matches at one level are ambiguous.
 func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef, error) {
-	var found []colRef
-	for i := range sc.rels {
-		rel := &sc.rels[i]
-		if table != "" && !strings.EqualFold(rel.alias, table) {
+	for s := &sc; s != nil; s = s.outer {
+		var found []colRef
+		for i := range s.rels {
+			rel := &s.rels[i]
+			if table != "" && !strings.EqualFold(rel.alias, table) {
+				continue
+			}
+			if ref, ok := rel.column(field); ok {
+				found = append(found, ref)
+			}
+		}
+		switch len(found) {
+		case 1:
+			return found[0], nil
+		case 0:
 			continue
 		}
-		if col := rel.table.Column(field); col != nil {
-			found = append(found, colRef{rel, col})
-		}
+		return colRef{}, &Error{Message: fmt.Sprintf("Column '%s' in %s is ambiguous", field, where), Code: 1052, Position: a.ph.Back(at)}
 	}
 	qualified := field
 	if table != "" {
 		qualified = table + "." + field
 	}
-	switch len(found) {
-	case 1:
-		return found[0], nil
-	case 0:
-		if table != "" {
-			known := false
-			for _, rel := range sc.rels {
-				if strings.EqualFold(rel.alias, table) {
-					known = true
-				}
-			}
-			if !known {
-				return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
-			}
-		}
-		return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
-	}
-	return colRef{}, &Error{Message: fmt.Sprintf("Column '%s' in %s is ambiguous", field, where), Code: 1052, Position: a.ph.Back(at)}
+	return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
 }
 
 // items types the select list.
-func (a *analyzer) items(sc scope, v mysqlast.Value) error {
+func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
+	var out []Column
 	list, _ := v.(mysqlast.List)
 	for _, item := range list {
 		n, ok := item.(*mysqlast.Node)
 		if !ok {
-			return fmt.Errorf("analyze: select item not understood: %s", mysqlast.Sprint(item))
+			return nil, fmt.Errorf("analyze: select item not understood: %s", mysqlast.Sprint(item))
 		}
 		switch n.Class {
 		case "Item_asterisk":
 			table := str(arg(n, "opt_table_name", 1))
 			matched := false
-			for _, rel := range sc.rels {
+			for i := range sc.rels {
+				rel := &sc.rels[i]
 				if table != "" && !strings.EqualFold(rel.alias, table) {
 					continue
 				}
 				matched = true
-				for _, col := range rel.table.Columns {
-					if col.Invisible {
-						continue
-					}
-					a.columns = append(a.columns, Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || rel.nullable})
-				}
+				out = append(out, rel.columns()...)
 			}
 			if !matched {
 				if table != "" {
-					return &Error{Message: fmt.Sprintf("Unknown table '%s'", table), Code: 1051, Position: a.ph.Back(n.Start)}
+					return nil, &Error{Message: fmt.Sprintf("Unknown table '%s'", table), Code: 1051, Position: a.ph.Back(n.Start)}
 				}
-				return &Error{Message: "No tables used", Code: 1096, Position: a.ph.Back(n.Start)}
+				return nil, &Error{Message: "No tables used", Code: 1096, Position: a.ph.Back(n.Start)}
 			}
 		case "PTI_expr_with_alias":
 			expr := n.Arg("expr")
 			t, err := a.expr(sc, expr, "field list")
 			if err != nil {
-				return err
+				return nil, err
 			}
 			name := str(n.Arg("alias"))
 			if name == "" {
 				name = a.itemName(expr)
 			}
-			a.columns = append(a.columns, Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable})
+			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable}
+			if ref, ok := a.plainColumn(sc, expr); ok {
+				c.base = ref.c.base
+			}
+			out = append(out, c)
 		default:
-			return fmt.Errorf("analyze: select item not understood: %s", n.Class)
+			return nil, fmt.Errorf("analyze: select item not understood: %s", n.Class)
 		}
 	}
-	return nil
+	return out, nil
+}
+
+// plainColumn resolves expr when it is a bare column reference (already typed without
+// error by the caller).
+func (a *analyzer) plainColumn(sc scope, expr mysqlast.Value) (colRef, bool) {
+	n, ok := expr.(*mysqlast.Node)
+	if !ok {
+		return colRef{}, false
+	}
+	switch n.Class {
+	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident", "PTI_simple_ident_q_2d", "PTI_simple_ident_q_3d":
+		ref, err := a.column(sc, n, "field list")
+		return ref, err == nil
+	}
+	return colRef{}, false
 }
 
 // itemName is the name MySQL gives an unaliased select item: the column's name for a
@@ -500,6 +684,17 @@ func (a *analyzer) assign(sc scope, col *schema.Column, v mysqlast.Value) {
 		return
 	}
 	a.expr(sc, v, "field list") //nolint:errcheck // an INSERT's expressions: errors surface as unknown types
+}
+
+// nodeStart is v's start offset in the text, -1 when it has none.
+func nodeStart(v mysqlast.Value) int {
+	switch x := v.(type) {
+	case *mysqlast.Node:
+		return x.Start
+	case mysqlast.Token:
+		return x.Start
+	}
+	return -1
 }
 
 // str reads a Token's value or a Const's text; "" for anything else.

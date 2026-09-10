@@ -24,8 +24,13 @@ release it is a candidate for.
   nullable decimal, a comparison a `bigint(1)` a Go `bool` can carry, `LENGTH(?)` types its
   placeholder as a string. The rules are checked against a real mysqld (a local test, not a CI
   dependency): every registry function over representative argument types, 5,267 statements,
-  agrees with the server on type and nullability but for 10. What has no rule yet (subqueries, user variables, the temporal hybrids such as
-  `ADDTIME`) is accepted with a note; views, derived tables, set operations, `One`,
+  agrees with the server on type and nullability but for 10. Subqueries (scalar, `IN`, `EXISTS`,
+  `ANY` / `ALL`, correlated), derived tables (`LATERAL` too), views, common table expressions
+  (recursive too), `UNION` / `EXCEPT` / `INTERSECT` and `INSERT ... SELECT` are analyzed with the
+  server's rules for what they produce: a scalar subquery is NULL unless its query is guaranteed a
+  row, a recursive CTE's columns are always nullable, a derived table the server materializes
+  retypes a small integer expression to an int, a merged view is updatable. What has no rule yet
+  (user variables, the temporal hybrids such as `ADDTIME`) is accepted with a note; `One`,
   `MatView`, `Copy` and the obligations are not supported yet. Parameters stay `{{.X}}` in the
   template; the analyzer speaks `?` to MySQL.
 

@@ -85,7 +85,7 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if err != nil {
 			return unknown, err
 		}
-		return typed{typ: ref.col.Type, known: true, nullable: !ref.col.NotNull || ref.rel.nullable}, nil
+		return typeOfColumn(ref.c), nil
 	case "Item_param", "PTI_user_variable":
 		return unknown, nil
 
@@ -170,15 +170,45 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return boolean(t.nullable), nil
 		}
 		return boolean(false), nil
+	// subqueries: entered with this scope as the enclosing one, for correlated references
 	case "PTI_exists_subselect":
-		return boolean(false), nil // the subquery is not entered: its scope is its own
-	case "Item_in_subselect":
-		if _, err := a.expr(sc, n.Arg("left_expr"), where); err != nil {
+		if _, err := a.subquery(n.Arg("subselect"), &sc); err != nil {
 			return unknown, err
 		}
-		return boolean(true), nil // NULL when the subquery's column can be, which is not known without entering it
+		return boolean(false), nil
+	case "Item_in_subselect", "PTI_comp_op_all":
+		// x IN (SELECT c ...), x = ANY (SELECT c ...): a placeholder x takes c's type
+		left := n.Arg("left_expr")
+		if n.Class == "PTI_comp_op_all" {
+			left = n.Arg("left")
+		}
+		sub := n.Arg("pt_subquery")
+		if n.Class == "PTI_comp_op_all" {
+			sub = n.Arg("subselect")
+		}
+		lt, err := a.expr(sc, left, where)
+		if err != nil {
+			return unknown, err
+		}
+		cols, err := a.subquery(sub, &sc)
+		if err != nil {
+			return unknown, err
+		}
+		row, isRow := left.(*mysqlast.Node)
+		if isRow && row.Class == "Item_row" {
+			if len(cols) != 1+len(exprArgsTail(row)) {
+				return unknown, &Error{Message: fmt.Sprintf("Operand should contain %d column(s)", 1+len(exprArgsTail(row))), Code: 1241, Position: a.ph.Back(n.Start)}
+			}
+		} else if len(cols) != 1 {
+			return unknown, &Error{Message: "Operand should contain 1 column(s)", Code: 1241, Position: a.ph.Back(n.Start)}
+		}
+		_ = lt
+		if isParam(left) && len(cols) == 1 && cols[0].Known {
+			a.setParam(left, cols[0].Type)
+		}
+		return boolean(true), nil // the server marks every IN / ANY / ALL over a subquery nullable
 	case "PTI_singlerow_subselect":
-		return unknown, nil
+		return a.scalarSubquery(n.Arg("subselect"), sc, n.Start)
 
 	// arithmetic
 	case "Item_func_plus", "Item_func_minus", "Item_func_mul", "Item_func_mod":
@@ -698,6 +728,12 @@ func (a *analyzer) paramsFromOthers(args []mysqlast.Value, ts []typed, ft string
 // exprArgs are the expression arguments of a grammar-built Item node: its Node / List
 // arguments, through the PTI_in_sum_expr / PTI_udf_expr wrappers, skipping the
 // constants (operator kinds, interval units, flags).
+// exprArgsTail is an Item_row's tail (its elements after the head).
+func exprArgsTail(row *mysqlast.Node) mysqlast.List {
+	l, _ := row.Arg("tail").(mysqlast.List)
+	return l
+}
+
 func exprArgs(n *mysqlast.Node) []mysqlast.Value {
 	var out []mysqlast.Value
 	var add func(v mysqlast.Value)

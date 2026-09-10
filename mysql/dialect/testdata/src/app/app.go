@@ -81,4 +81,6 @@ var stats = sqlshape.Query[Stats, struct{}](`SELECT count(*) AS n, SUM(o.total) 
 
 var unknownFn = sqlshape.Query[int64, struct{}](`SELECT NOPE(id) FROM users`) // want `FUNCTION NOPE does not exist \(MySQL error 1305\)`
 
-var union = sqlshape.Query[int64, struct{}](`SELECT 1 UNION SELECT 2`) // want `only a single SELECT is supported yet`
+var union = sqlshape.Query[int64, struct{}](`SELECT 1 UNION SELECT 2`)
+
+var show = sqlshape.Query[int64, struct{}](`SHOW TABLES`) // want `is not supported yet`

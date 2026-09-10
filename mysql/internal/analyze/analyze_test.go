@@ -23,6 +23,7 @@ CREATE TABLE orders (
   FOREIGN KEY (user_id) REFERENCES users (id)
 );
 CREATE VIEW v_users AS SELECT id, name FROM users;
+CREATE VIEW v_stats AS SELECT user_id, COUNT(*) AS n FROM orders GROUP BY user_id;
 `
 
 func load(t *testing.T) *schema.Schema {
@@ -93,8 +94,40 @@ var analyzeCases = []analyzeCase{
 	// placeholders typed through function facts and branch aggregation
 	{"SELECT id FROM users WHERE name = CONCAT($1, 'x') AND id > IF($2, 1, 2) AND created_at > DATE_ADD($3, INTERVAL 1 DAY) AND email = COALESCE($4, name) AND id IN ($5, id + $6) AND LENGTH($7) > 1 AND name LIKE CONCAT('%', $8, '%') LIMIT $9", []string{"id bigint unsigned"}, []string{"varchar", "bigint", "?", "varchar(100)", "bigint unsigned", "bigint unsigned", "varchar", "varchar", "bigint unsigned"}},
 	{"SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = $1 + 1 AND total = ROUND($2, 2) AND u.id DIV $3 = 1 AND $4 = CASE WHEN u.id = 1 THEN 'a' ELSE 'b' END", []string{"id bigint unsigned"}, []string{"bigint", "decimal", "bigint", "varchar"}}, // $1 takes the other operand's type, the literal's
-	// subqueries are not entered: their scope is their own
-	{"SELECT id, EXISTS (SELECT 1 FROM orders WHERE total > 1), id IN (SELECT user_id FROM orders), (SELECT 1) FROM users", []string{"id bigint unsigned", "EXISTS (SELECT 1 FROM orders WHERE total > 1) bigint(1)", "id IN (SELECT user_id FROM orders) bigint(1) null", "(SELECT 1) ? null"}, nil},
+	// subqueries: entered, with the enclosing query's names in reach
+	{"SELECT id, EXISTS (SELECT 1 FROM orders WHERE total > 1), id IN (SELECT user_id FROM orders), (SELECT 1) FROM users", []string{"id bigint unsigned", "EXISTS (SELECT 1 FROM orders WHERE total > 1) bigint(1)", "id IN (SELECT user_id FROM orders) bigint(1) null", "(SELECT 1) bigint(1)"}, nil},
+	{"SELECT (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS c, (SELECT MAX(total) FROM orders o WHERE o.user_id = u.id) AS m FROM users u", []string{"c bigint null", "m decimal(10,2) null"}, nil},
+	{"SELECT u.id FROM users u WHERE u.id IN (SELECT user_id FROM orders WHERE total > $1) AND EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.note = $2)", []string{"id bigint unsigned"}, []string{"decimal(10,2)", "text"}},
+	{"SELECT id FROM users WHERE $1 IN (SELECT user_id FROM orders) AND id = ANY (SELECT user_id FROM orders) AND id > ALL (SELECT user_id FROM orders WHERE note IS NULL)", []string{"id bigint unsigned"}, []string{"bigint unsigned"}},
+	{"SELECT id, email IN (SELECT note FROM orders), (1, 2) IN (SELECT id, user_id FROM orders) FROM users", []string{"id bigint unsigned", "email IN (SELECT note FROM orders) bigint(1) null", "(1, 2) IN (SELECT id, user_id FROM orders) bigint(1) null"}, nil},
+	// derived tables, views, common table expressions
+	{"SELECT d.id, d.n, d.c FROM (SELECT id, name AS n, COUNT(*) c FROM users GROUP BY id, name) AS d WHERE d.id = $1", []string{"id bigint unsigned", "n varchar(100)", "c bigint"}, []string{"bigint unsigned"}},
+	{"SELECT d.* FROM (SELECT u.id, o.total FROM users u LEFT JOIN orders o ON o.user_id = u.id) d", []string{"id bigint unsigned", "total decimal(10,2) null"}, nil},
+	{"SELECT x, y FROM (SELECT 1, 'a') AS d(x, y)", []string{"x int(1)", "y varchar(1)"}, nil}, // materialized: a small integer literal becomes an int
+	{"SELECT d.b, d.c, d.i FROM (SELECT id = 1 AS b, COUNT(*) AS c, id AS i FROM users GROUP BY id) d", []string{"b int(1)", "c bigint", "i bigint unsigned"}, nil},
+	{"SELECT d.b FROM (SELECT id = 1 AS b FROM users) d", []string{"b bigint(1)"}, nil}, // merged: the item's own type
+	{"SELECT u.id, l.total FROM users u JOIN LATERAL (SELECT o.total FROM orders o WHERE o.user_id = u.id LIMIT 1) l ON TRUE", []string{"id bigint unsigned", "total decimal(10,2)"}, nil},
+	{"SELECT id, name FROM v_users WHERE id = $1", []string{"id bigint unsigned", "name varchar(100)"}, []string{"bigint unsigned"}},
+	{"SELECT v.*, o.total FROM v_users v LEFT JOIN orders o ON o.user_id = v.id", []string{"id bigint unsigned", "name varchar(100)", "total decimal(10,2) null"}, nil},
+	{"WITH t AS (SELECT id, total FROM orders WHERE total > $1) SELECT t.id, t.total FROM t", []string{"id bigint unsigned", "total decimal(10,2)"}, []string{"decimal(10,2)"}},
+	{"WITH a AS (SELECT id FROM users), b AS (SELECT a.id, o.total FROM a JOIN orders o ON o.user_id = a.id) SELECT * FROM b", []string{"id bigint unsigned", "total decimal(10,2)"}, nil},
+	{"WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 5) SELECT n FROM t", []string{"n bigint(1) null"}, nil}, // a UNION's types merge through Item_type_holder, and a recursive CTE is nullable throughout
+	{"SELECT (SELECT 1), (SELECT id FROM users LIMIT 1), (SELECT 1 UNION SELECT id FROM users), (SELECT 1 WHERE (SELECT COUNT(*) FROM orders) > 0) FROM users", []string{"(SELECT 1) bigint(1)", "(SELECT id FROM users LIMIT 1) bigint unsigned null", "(SELECT 1 UNION SELECT id FROM users) decimal", "(SELECT 1 WHERE (SELECT COUNT(*) FROM orders) > 0) bigint(1) null"}, nil},
+	{"UPDATE v_users SET name = $1 WHERE id = $2", nil, []string{"varchar(100)", "bigint unsigned"}},
+	{"WITH t AS (SELECT id FROM users) SELECT id FROM users WHERE id IN (SELECT id FROM t)", []string{"id bigint unsigned"}, nil},
+	// set operations: the first operand names the columns, the types merge
+	{"SELECT id, name FROM users UNION ALL SELECT id, note FROM orders", []string{"id bigint unsigned", "name text null"}, nil},
+	{"SELECT id FROM users UNION SELECT total FROM orders", []string{"id decimal"}, nil},
+	{"(SELECT id FROM users) UNION (SELECT user_id FROM orders) ORDER BY id LIMIT $1", []string{"id bigint unsigned"}, []string{"bigint unsigned"}},
+	{"SELECT id FROM users EXCEPT SELECT user_id FROM orders", []string{"id bigint unsigned"}, nil},
+	{"SELECT id FROM users INTERSECT SELECT user_id FROM orders WHERE total > $1", []string{"id bigint unsigned"}, []string{"decimal(10,2)"}},
+	{"SELECT 1 AS a UNION SELECT 'x' UNION SELECT NULL", []string{"a varchar null"}, nil},
+	// INSERT ... SELECT: the query feeds the targets in order
+	{"INSERT INTO orders (id, user_id, total) SELECT id, id, $1 FROM users WHERE name = $2", nil, []string{"decimal(10,2)", "varchar(100)"}},
+	{"INSERT INTO users (name, email) SELECT name, email FROM users WHERE id = $1 ON DUPLICATE KEY UPDATE email = $2", nil, []string{"bigint unsigned", "varchar(255)"}},
+	{"UPDATE users SET email = (SELECT note FROM orders o WHERE o.user_id = users.id LIMIT 1) WHERE id = $1", nil, []string{"bigint unsigned"}},
+	{"DELETE FROM users WHERE id IN (SELECT user_id FROM orders WHERE total > $1)", nil, []string{"decimal(10,2)"}},
+	{"WITH big AS (SELECT user_id FROM orders WHERE total > $1) DELETE FROM users WHERE id IN (SELECT user_id FROM big)", nil, []string{"decimal(10,2)"}},
 	{"SELECT id FROM users WHERE created_at > NOW() - INTERVAL $1 DAY", []string{"id bigint unsigned"}, []string{"?"}},
 	{"INSERT INTO users (name, email) VALUES ($1, $2)", nil, []string{"varchar(100)", "varchar(255)"}},
 	{"INSERT INTO orders VALUES ($1, $2, $3, $4)", nil, []string{"bigint unsigned", "bigint unsigned", "decimal(10,2)", "text"}},
@@ -153,6 +186,15 @@ var errorCases = []errorCase{
 	{"SELECT id FROM users WHERE name = $1 AND $2 = $3 AND nope = 1", 1054, "Unknown column 'nope' in 'where clause'", 53},
 	{"SELECT NOPE(id) FROM users", 1305, "FUNCTION NOPE does not exist", 7},
 	{"SELECT LENGTH(id, name) FROM users", 1582, "Incorrect parameter count in the call to native function 'LENGTH'", 7},
+	{"SELECT (SELECT id, name FROM users) FROM users", 1241, "Operand should contain 1 column(s)", 7},
+	{"SELECT id FROM users WHERE id IN (SELECT id, user_id FROM orders)", 1241, "Operand should contain 1 column(s)", 27},
+	{"SELECT id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.idd)", 1054, "Unknown column 'u.idd' in 'where clause'", 78},
+	{"SELECT d.id FROM (SELECT name FROM users) d", 1054, "Unknown column 'd.id' in 'field list'", 7},
+	{"SELECT id FROM (SELECT id FROM users)", 1248, "Every derived table must have its own alias", 15},
+	{"SELECT id FROM users UNION SELECT id, user_id FROM orders", 1222, "The used SELECT statements have a different number of columns", 0},
+	{"WITH t AS (SELECT id FROM users) SELECT name FROM t", 1054, "Unknown column 'name' in 'field list'", 40},
+	{"SELECT x FROM (SELECT 1, 2) AS d(x)", 1353, "View's SELECT and view's field list have different column counts", 14},
+	{"UPDATE v_stats SET n = 1", 1288, "The target table v_stats of the UPDATE is not updatable", 19},
 }
 
 func TestErrors(t *testing.T) {
@@ -173,11 +215,8 @@ func TestErrors(t *testing.T) {
 func TestUnsupported(t *testing.T) {
 	s := load(t)
 	for _, sql := range []string{
-		"SELECT id FROM v_users",
-		"SELECT 1 UNION SELECT 2",
-		"SELECT a FROM (SELECT 1 a) d",
-		"INSERT INTO users (name) SELECT name FROM users",
 		"SHOW TABLES",
+		"INSERT INTO v_users (name) VALUES ('x')",
 	} {
 		_, err := Analyze(s, sql)
 		if err == nil {
