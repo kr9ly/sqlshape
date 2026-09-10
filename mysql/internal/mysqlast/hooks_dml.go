@@ -36,6 +36,12 @@ func init() {
 }
 
 func init() {
+	// when_list: when_list WHEN_SYM expr THEN_SYM expr -> the list with the pair appended
+	// ($1->push_back($3); $1->push_back($5); $$ = $1)
+	register("when_list", "when_list WHEN_SYM expr THEN_SYM expr", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		l, _ := kids[0].(List)
+		return append(append(List{}, l...), kids[2], kids[4]), nil
+	})
 	// predicate: bit_expr IN_SYM '(' expr ',' expr_list ')' -> Item_func_in([bit_expr, expr, expr_list...], negated)
 	register("predicate", "bit_expr IN_SYM '(' expr ',' expr_list ')'", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		l, _ := kids[5].(List)

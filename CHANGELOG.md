@@ -14,10 +14,16 @@ release it is a candidate for.
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result
   columns against `R` by name, type and nullability, parameters against `P` where their context
-  types them (compared with or assigned to a column, `LIMIT`). Single-block SELECT, INSERT, UPDATE
-  and DELETE over base tables; expressions the analyzer does not type yet are accepted with a note,
-  and views, derived tables, set operations, `One`, `MatView`, `Copy` and the obligations are not
-  supported yet. Parameters stay `{{.X}}` in the template; the analyzer speaks `?` to MySQL.
+  types them (compared with or assigned to a column, `LIMIT`, the argument positions a function
+  declares). Single-block SELECT, INSERT, UPDATE and DELETE over base tables. Expressions are typed
+  by the server's own rules, read out of its source: arithmetic promotion (`Item_num_op`), `CASE` /
+  `IF` / `COALESCE` / `GREATEST` through `field_type_merge`, casts, aggregates, and every function of
+  the native registry through its Item class family and `resolve_type` facts, so a `SUM` is a
+  nullable decimal, a comparison a `bigint(1)` a Go `bool` can carry, `LENGTH(?)` types its
+  placeholder as a string. What has no rule yet (subqueries, user variables, the temporal hybrids
+  such as `ADDTIME`) is accepted with a note; views, derived tables, set operations, `One`,
+  `MatView`, `Copy` and the obligations are not supported yet. Parameters stay `{{.X}}` in the
+  template; the analyzer speaks `?` to MySQL.
 
 ### Changed
 

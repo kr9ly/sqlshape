@@ -64,3 +64,34 @@ func FamilyOf(class string) string {
 	}
 	return ""
 }
+
+// Merge is the type two values aggregate to, by MySQL's field_types_merge_rules: the
+// type of a CASE / IF / COALESCE / GREATEST over values of types a and b (enum_field_types
+// names without the MYSQL_TYPE_ prefix: "LONGLONG", "NEWDECIMAL", "VARCHAR"). "" when
+// either is not a known type.
+func Merge(a, b string) string {
+	i, j := fieldIndex(a), fieldIndex(b)
+	if i < 0 || j < 0 {
+		return ""
+	}
+	return MergeRules[i][j]
+}
+
+// ResultKind is the Item_result of a type: "INT_RESULT", "DECIMAL_RESULT", "REAL_RESULT"
+// or "STRING_RESULT"; "" when unknown.
+func ResultKind(fieldType string) string {
+	i := fieldIndex(fieldType)
+	if i < 0 {
+		return ""
+	}
+	return ResultKinds[i]
+}
+
+func fieldIndex(t string) int {
+	for i, ft := range FieldTypes {
+		if ft == t {
+			return i
+		}
+	}
+	return -1
+}

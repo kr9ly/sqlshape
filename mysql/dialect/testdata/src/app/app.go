@@ -66,6 +66,19 @@ type Count struct{ N int64 }
 
 var count = sqlshape.Query[Count, struct{}](`SELECT count(*) AS n FROM users`)
 
-var expr = sqlshape.Query[string, struct{}](`SELECT COALESCE(email, name) FROM users`) // want `column COALESCE\(email, name\): no known Go mapping for an expression the analyzer does not type yet, not checked`
+var expr = sqlshape.Query[string, struct{}](`SELECT COALESCE(email, name) FROM users`)
+
+var exprNull = sqlshape.Query[string, struct{}](`SELECT COALESCE(email, NULL) FROM users`) // want `column COALESCE\(email, NULL\) is string but column "COALESCE\(email, NULL\)" may be NULL`
+
+type Stats struct {
+	N      int64
+	Total  string
+	Active bool
+	Oldest *time.Time
+}
+
+var stats = sqlshape.Query[Stats, struct{}](`SELECT count(*) AS n, SUM(o.total) AS total, u.active = 1 AS active, MIN(u.created_at) AS oldest FROM users u JOIN orders o ON o.user_id = u.id`) // want `field Total is string but column "total" may be NULL`
+
+var unknownFn = sqlshape.Query[int64, struct{}](`SELECT NOPE(id) FROM users`) // want `FUNCTION NOPE does not exist \(MySQL error 1305\)`
 
 var union = sqlshape.Query[int64, struct{}](`SELECT 1 UNION SELECT 2`) // want `only a single SELECT is supported yet`

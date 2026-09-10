@@ -81,6 +81,9 @@ func GoTypes(t schema.Type) []string {
 		if t.Unsigned {
 			return []string{"uint64", "int64"}
 		}
+		if t.Length == 1 { // a comparison or a logical operator: MySQL's bigint(1)
+			return []string{"int64", "int", "bool"}
+		}
 		return []string{"int64", "int"}
 	case "decimal":
 		return []string{"string"}
@@ -100,8 +103,6 @@ func GoTypes(t schema.Type) []string {
 		return []string{"time.Time", "string"}
 	case "time":
 		return []string{"string"}
-	case "null":
-		return []string{"any"}
 	}
 	return nil
 }

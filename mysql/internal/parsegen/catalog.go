@@ -51,6 +51,14 @@ type ItemClass struct {
 type Catalog struct {
 	Funcs   []Func
 	Classes map[string]*ItemClass
+	// FieldTypes is the index order of sql/field.cc's type tables (field_type2index): the
+	// enum_field_types below the tear, then those above it, without the MYSQL_TYPE_ prefix.
+	FieldTypes []string
+	// MergeRules[i][j] is field_types_merge_rules[i][j], the type two values of types
+	// FieldTypes[i] and FieldTypes[j] aggregate to (CASE, IF, COALESCE, GREATEST, UNION).
+	MergeRules [][]string
+	// ResultKinds[i] is field_types_result_type[i]: INT_RESULT, DECIMAL_RESULT, REAL_RESULT, STRING_RESULT.
+	ResultKinds []string
 }
 
 var (
@@ -63,6 +71,7 @@ var (
 	reResolveType   = regexp.MustCompile(`(?m)^bool\s+(Item_[A-Za-z_0-9]+)::resolve_type(?:_inner)?\(THD\s*\*\s*\w*\)\s*\{`)
 	reFact          = regexp.MustCompile(`\b(set_data_type_[a-z_0-9]+|set_data_type|set_nullable|param_type_is_default|param_type_uses_non_param|aggregate_type|aggregate_num_type|aggregate_string_properties|agg_arg_charsets_for_string_result|agg_arg_charsets_for_comparison|fix_char_length|count_datetime_length|set_data_type_from_item|reject_geometry_args|null_on_null)\s*\(`)
 	reBaseResolve   = regexp.MustCompile(`if\s*\(\s*(Item_[A-Za-z_0-9]+)::resolve_type\(`)
+	reInlineResolve = regexp.MustCompile(`\bbool\s+resolve_type\(THD\s*\*\s*\w*\)\s*(?:const\s*)?override\s*\{`)
 	reAssignFact    = regexp.MustCompile(`\b(max_length|decimals|unsigned_flag|collation\.set|set_nullable)\s*(=|\()\s*([^;]+);`)
 )
 
@@ -205,11 +214,29 @@ func ReadCatalog(src string) (*Catalog, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range reClassDecl.FindAllStringSubmatch(stripComments(string(b)), -1) {
-			if _, dup := cat.Classes[m[1]]; dup {
+		text := stripComments(string(b))
+		for _, m := range reClassDecl.FindAllStringSubmatchIndex(text, -1) {
+			name, base := text[m[2]:m[3]], text[m[4]:m[5]]
+			if _, dup := cat.Classes[name]; dup {
 				continue
 			}
-			cat.Classes[m[1]] = &ItemClass{Name: m[1], Base: m[2], Header: filepath.Base(h)}
+			c := &ItemClass{Name: name, Base: base, Header: filepath.Base(h)}
+			cat.Classes[name] = c
+			// a resolve_type defined inline in the class body (109 of them in 8.4) reads the
+			// same way as one in a .cc file
+			open := strings.IndexByte(text[m[1]:], '{')
+			if open < 0 {
+				continue
+			}
+			class, err := balanced(text, m[1]+open, '{', '}')
+			if err != nil {
+				continue
+			}
+			if im := reInlineResolve.FindStringIndex(class); im != nil {
+				if body, err := balanced(class, im[1]-1, '{', '}'); err == nil {
+					c.readFacts(body)
+				}
+			}
 		}
 	}
 	for _, c := range cat.Classes {
@@ -236,23 +263,11 @@ func ReadCatalog(src string) (*Catalog, error) {
 				c = &ItemClass{Name: name}
 				cat.Classes[name] = c
 			}
-			if bm := reBaseResolve.FindStringSubmatch(body); bm != nil {
-				c.InheritsResolve = bm[1]
-			}
-			for _, fm := range reFact.FindAllStringSubmatchIndex(body, -1) {
-				call, err := balanced(body, fm[1]-1, '(', ')')
-				if err != nil {
-					continue
-				}
-				c.Facts = append(c.Facts, body[fm[2]:fm[3]]+"("+reSpace.ReplaceAllString(call, "")+")")
-			}
-			for _, am := range reAssignFact.FindAllStringSubmatch(body, -1) {
-				if am[1] == "set_nullable" {
-					continue // already a call fact
-				}
-				c.Facts = append(c.Facts, am[1]+"="+reSpace.ReplaceAllString(am[3], ""))
-			}
+			c.readFacts(body)
 		}
+	}
+	if err := readTypeTables(src, cat); err != nil {
+		return nil, err
 	}
 	return cat, nil
 }
@@ -401,6 +416,151 @@ func CatalogGo(pkg, version string, cat *Catalog, grammarClasses []string) strin
 		}
 		b.WriteString("},\n")
 	}
+	b.WriteString("}\n\n")
+	b.WriteString("// FieldTypes is the index order of MergeRules and ResultKinds (sql/field.cc field_type2index):\n// the enum_field_types names without their MYSQL_TYPE_ prefix.\nvar FieldTypes = [...]string{")
+	for i, t := range cat.FieldTypes {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(strconv.Quote(t))
+	}
+	b.WriteString("}\n\n")
+	fmt.Fprintf(&b, "// MergeRules is field_types_merge_rules: the type two values of types FieldTypes[i] and\n// FieldTypes[j] aggregate to, as CASE, IF, COALESCE, GREATEST and UNION do.\nvar MergeRules = [...][%d]string{\n", len(cat.FieldTypes))
+	for i, row := range cat.MergeRules {
+		fmt.Fprintf(&b, "\t/* %s */ {", cat.FieldTypes[i])
+		for j, t := range row {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(strconv.Quote(t))
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}\n\n")
+	b.WriteString("// ResultKinds is field_types_result_type: the Item_result of each of FieldTypes.\nvar ResultKinds = [...]string{")
+	for i, k := range cat.ResultKinds {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(strconv.Quote(k))
+	}
 	b.WriteString("}\n")
 	return b.String()
+}
+
+var (
+	reEnumMember = regexp.MustCompile(`(?m)^\s*MYSQL_TYPE_([A-Z_0-9]+)(?:\s*=\s*(\d+))?\s*,?`)
+	reTypeToken  = regexp.MustCompile(`MYSQL_TYPE_([A-Z_0-9]+)|\b((?:INT|DECIMAL|REAL|STRING|ROW|INVALID)_RESULT)\b`)
+)
+
+// readTypeTables reads include/field_types.h for the enum order and sql/field.cc for the
+// two tables indexed by field_type2index: field_types_merge_rules (what two types
+// aggregate to) and field_types_result_type (the result kind of a type). The tear in the
+// enum (17..242 unused) is what field_type2index folds; FIELDTYPE_NUM follows from it.
+func readTypeTables(src string, cat *Catalog) error {
+	hdr, err := os.ReadFile(filepath.Join(src, "include", "field_types.h"))
+	if err != nil {
+		return err
+	}
+	body := stripComments(string(hdr))
+	start := strings.Index(body, "enum enum_field_types {")
+	end := strings.Index(body[start:], "};")
+	if start < 0 || end < 0 {
+		return fmt.Errorf("catalog: enum_field_types not found in field_types.h")
+	}
+	type member struct {
+		name string
+		val  int
+	}
+	var members []member
+	next := 0
+	for _, m := range reEnumMember.FindAllStringSubmatch(body[start:start+end], -1) {
+		if m[2] != "" {
+			next, _ = strconv.Atoi(m[2])
+		}
+		members = append(members, member{m[1], next})
+		next++
+	}
+	fieldCC, err := os.ReadFile(filepath.Join(src, "sql", "field.cc"))
+	if err != nil {
+		return err
+	}
+	fsrc := stripComments(string(fieldCC))
+	tearFrom, tearTo := -1, -1
+	if m := regexp.MustCompile(`#define FIELDTYPE_TEAR_FROM \(MYSQL_TYPE_([A-Z_0-9]+) \+ 1\)`).FindStringSubmatch(fsrc); m != nil {
+		for _, mem := range members {
+			if mem.name == m[1] {
+				tearFrom = mem.val + 1
+			}
+		}
+	}
+	if m := regexp.MustCompile(`#define FIELDTYPE_TEAR_TO \((\d+) - 1\)`).FindStringSubmatch(fsrc); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		tearTo = n - 1
+	}
+	if tearFrom < 0 || tearTo < 0 {
+		return fmt.Errorf("catalog: FIELDTYPE_TEAR_FROM / TEAR_TO not found in field.cc")
+	}
+	for _, mem := range members {
+		if mem.val < tearFrom || mem.val > tearTo {
+			cat.FieldTypes = append(cat.FieldTypes, mem.name)
+		}
+	}
+	n := len(cat.FieldTypes)
+	table := func(decl string) ([]string, error) {
+		i := strings.Index(fsrc, decl)
+		if i < 0 {
+			return nil, fmt.Errorf("catalog: %s not found in field.cc", decl)
+		}
+		j := strings.Index(fsrc[i:], "};")
+		var out []string
+		for _, m := range reTypeToken.FindAllStringSubmatch(fsrc[i+len(decl):i+j], -1) {
+			if m[1] != "" {
+				out = append(out, m[1])
+			} else {
+				out = append(out, m[2])
+			}
+		}
+		return out, nil
+	}
+	merge, err := table("field_types_merge_rules[FIELDTYPE_NUM][FIELDTYPE_NUM] =")
+	if err != nil {
+		return err
+	}
+	if len(merge) != n*n {
+		return fmt.Errorf("catalog: field_types_merge_rules has %d entries, want %d×%d", len(merge), n, n)
+	}
+	for i := 0; i < n; i++ {
+		cat.MergeRules = append(cat.MergeRules, merge[i*n:(i+1)*n])
+	}
+	kinds, err := table("field_types_result_type[FIELDTYPE_NUM] =")
+	if err != nil {
+		return err
+	}
+	if len(kinds) != n {
+		return fmt.Errorf("catalog: field_types_result_type has %d entries, want %d", len(kinds), n)
+	}
+	cat.ResultKinds = kinds
+	return nil
+}
+
+// readFacts reads the declarative statements of a resolve_type body into the class's
+// facts, and the base class whose resolve_type it calls first.
+func (c *ItemClass) readFacts(body string) {
+	if bm := reBaseResolve.FindStringSubmatch(body); bm != nil {
+		c.InheritsResolve = bm[1]
+	}
+	for _, fm := range reFact.FindAllStringSubmatchIndex(body, -1) {
+		call, err := balanced(body, fm[1]-1, '(', ')')
+		if err != nil {
+			continue
+		}
+		c.Facts = append(c.Facts, body[fm[2]:fm[3]]+"("+reSpace.ReplaceAllString(call, "")+")")
+	}
+	for _, am := range reAssignFact.FindAllStringSubmatch(body, -1) {
+		if am[1] == "set_nullable" {
+			continue // already a call fact
+		}
+		c.Facts = append(c.Facts, am[1]+"="+reSpace.ReplaceAllString(am[3], ""))
+	}
 }
