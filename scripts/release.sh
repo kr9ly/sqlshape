@@ -91,7 +91,9 @@ for _ in 1 2 3 4; do
   git add mysql/go.sum cmd/sqlshape/go.sum mysql/go.mod cmd/sqlshape/go.mod
   git commit -q --amend --no-edit
   for t in "${tags[@]}"; do git tag -f -a "$t" -m "sqlshape $version" >/dev/null; done
-  GOMODCACHE="$cache" go clean -modcache   # the tags moved; what was fetched from them is stale
+  # the tags moved: what was fetched from them is stale, and so are the sums recorded for them
+  GOMODCACHE="$cache" go clean -modcache
+  sed -i '/^github.com\/kr9ly\/sqlshape/d' mysql/go.sum cmd/sqlshape/go.sum
 done
 if [ -n "$(git status --porcelain)" ]; then
   echo "release: go.mod / go.sum did not settle" >&2; false
