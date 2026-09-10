@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 // Yen meets the yen domain and is bound to it: a Yen passed where a plain bigint or
@@ -119,7 +120,7 @@ type DailySales struct {
 var SalesSince = sqlshape.Query[DailySales, struct{ Since time.Time }](`
 SELECT day, orders, revenue FROM sales_by_day WHERE day >= {{.Since}} ORDER BY day`)
 
-var Sales = sqlshape.MatView("sales_by_day")
+var Sales = postgres.MatView("sales_by_day")
 
 // --- writes: functions -------------------------------------------------------------
 

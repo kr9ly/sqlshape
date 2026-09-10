@@ -25,6 +25,7 @@ table in `schema.sql` (`require via view`, `require via view on all`, `require p
 declaration form also gives `on` kinds, `immutable(col)` and arbitrary predicates; a context's
 `waive` lifts the flag's obligation as it lifts a declared one
 ([checks.md](checks.md#how-a-declaration-works)).
+| `-query=pkg.Func,pkg.Other:one` | none | marker functions of your own, read like `sqlshape.Query` (`:one` like `One`): a generic `F[R, P any](string) T` whose argument is the template. The checker reads declarations, not the runtime that executes them |
 | `-raw-sql=constant` | `constant` | driver calls outside sqlshape (pgx / `database/sql` `Query`, `Exec`, ...): `constant` requires their SQL to be a constant string, `forbid` rejects them, `allow` ignores them |
 | `-raw-sql-allow=pkg/...` | none | packages (or prefixes ending in `/...`) where `-raw-sql=forbid` does not apply |
 | `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |

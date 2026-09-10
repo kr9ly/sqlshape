@@ -2,7 +2,7 @@
 
 [English](checks.md)
 
-検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
+検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`postgres.Copy[R](...)`、`postgres.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
 
 検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージを対象に実行され、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を実行する（[第2部](#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
 
@@ -590,8 +590,8 @@ INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
 ```
 
 ```go
-_, err := CreateCustomer.First(ctx, db, p)
-if sqlshape.Violates(err, "customers_email_key") { ... }
+_, err := postgres.First(ctx, db, CreateCustomer, p)
+if postgres.Violates(err, "customers_email_key") { ... }
 ```
 
 補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、EXCLUDE制約、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。 `NOT ENFORCED`と宣言したCHECKと外部キー（PostgreSQL 18）は決して失敗しないので、列挙されない。
@@ -712,7 +712,7 @@ SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
 
 ### COPYで一括ロードする
 
-`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がその列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であること。
+`postgres.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がその列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であること。
 
 NG
 
@@ -721,7 +721,7 @@ type Item struct {
 	OrderID int64
 	Sku     string
 }
-var Load = sqlshape.Copy[Item]("order_items", "order_id", "sku")
+var Load = postgres.Copy[Item]("order_items", "order_id", "sku")
 // Copy into order_items: column "line_no" is NOT NULL without a default and is not copied
 ```
 
@@ -733,7 +733,7 @@ type Item struct {
 	LineNo  int16
 	Sku     string
 }
-var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
+var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 ```
 
 ## 第2部 — スキーマが宣言する規約

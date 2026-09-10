@@ -12,10 +12,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape/internal/analyze"
-	"github.com/kr9ly/sqlshape/internal/oracle"
-	"github.com/kr9ly/sqlshape/internal/schema"
-	"github.com/kr9ly/sqlshape/internal/verify"
+	"github.com/kr9ly/sqlshape/check/postgres/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/verify"
 )
 
 // DB is a running PostgreSQL with the schema applied.
@@ -82,7 +82,7 @@ func firstLine(s string) string {
 	return strings.SplitN(strings.TrimSpace(s), "\n", 2)[0]
 }
 
-// Conn is a connection to the database; it satisfies sqlshape.DB.
+// Conn is a connection to the database; it satisfies postgres.DB.
 func (d *DB) Conn() *pgx.Conn { return d.o.Conn() }
 
 // ConnString connects other clients (a pgxpool.Pool, psql) to the same server.

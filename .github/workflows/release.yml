@@ -3,10 +3,10 @@
 #
 #   scripts/release.sh v1.3.0 --push
 #
-# The repository's three modules (the root runtime, mysql/, cmd/sqlshape) release in
-# lockstep: scripts/release.sh sets the inter-module requires to the version, commits, and
-# tags vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z on that commit. Only the root tag
-# triggers this workflow (the others do not start with "v").
+# The repository's modules (the root, postgres, pgtest, check/postgres, check/mysql,
+# cmd/sqlshape) release in lockstep: scripts/release.sh sets the inter-module requires to
+# the version, commits, and tags vX.Y.Z and <module>/vX.Y.Z on that commit. Only the root
+# tag triggers this workflow (the others do not start with "v").
 #
 # The binary is a plain Go build (libpg_query runs as WebAssembly, no cgo), so one runner
 # builds every target; the smoke test runs the runner's own (linux/amd64) binary as a
@@ -44,11 +44,11 @@ jobs:
             goos=${target%/*}; goarch=${target#*/}
             bin=sqlshape; [ "$goos" = windows ] && bin=sqlshape.exe
             GOOS=$goos GOARCH=$goarch go build -trimpath \
-              -ldflags "-s -w -X github.com/kr9ly/sqlshape/internal/cli.version=${VERSION}" \
+              -ldflags "-s -w -X github.com/kr9ly/sqlshape/cmd/sqlshape/internal/cli.version=${VERSION}" \
               -o "build/$goos-$goarch/$bin" ./cmd/sqlshape
             name="sqlshape_${VERSION}_${goos}_${goarch}"
             mkdir "$name"
-            cp "build/$goos-$goarch/$bin" cmd/sqlshape/LICENSE NOTICE README.md "$name"/
+            cp "build/$goos-$goarch/$bin" cmd/sqlshape/LICENSE check/postgres/NOTICE README.md "$name"/
             if [ "$goos" = windows ]; then
               zip -qr "dist/$name.zip" "$name"
             else

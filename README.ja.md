@@ -13,7 +13,7 @@ sqlshapeは、Goのコードにそのまま書いたSQLを`go vet`で検査す�
 var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email, name, deleted_at FROM users WHERE email = {{.Email}}`)
 
-u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
+u, err := postgres.Get(ctx, db, ByEmail, struct{ Email string }{Email: email})
 ```
 
 - 生成ではなく検査。列と構造体のフィールドの対応、パラメータの型、NULLの扱い、`One`と宣言した文が本当に1行しか返さないこと、INSERTやUPDATEが違反しうる制約を宣言していることを、`schema.sql`と照らして確かめる。`{{if}}`や`{{range}}`で分岐するSQLは、分岐の全組み合わせが検査される。違反は`go vet`の診断として、コードを実行する前に出る。
@@ -33,13 +33,14 @@ $ sqlshape version
 
 検査に他の準備は要らない。PostgreSQLのパーサ（libpg_query、対応するメジャー版ごとに1つ）はWebAssemblyとして埋め込まれwazeroで動くので、Cコンパイラもリンクするライブラリも無い。初回だけモジュールのコンパイルに1秒ほどかかり、結果はユーザーのキャッシュディレクトリ（Linuxでは`~/.cache/sqlshape`）に置かれる。`pgtest`とマイグレーション系コマンドは本物のPostgreSQLでスキーマを動かすので、初回に宣言した版のサーババイナリを同じキャッシュにダウンロードする（[migrations.ja.md](docs/migrations.ja.md)の要件を参照）。
 
-ランタイムは通常のGoモジュール:
+宣言（`sqlshape.Query`、`sqlshape.One`）は依存の無いGoモジュールで、DBごとのランタイムは別のモジュールになっている。アプリケーションが取り込むのは自分のドライバだけである:
 
 ```
-$ go get github.com/kr9ly/sqlshape
+$ go get github.com/kr9ly/sqlshape            # Query / One: 検査器が読む宣言
+$ go get github.com/kr9ly/sqlshape/postgres   # pgxの上で実行する
 ```
 
-バージョンはsemantic versioningに従い、`vX.Y.Z`のタグを打つ。同じメジャーバージョンの中では、`sqlshape`と`pgtest`の公開API、テンプレート構文、ディレクティブ、検査器のフラグは互換を保つ。検査器が報告する内容はマイナーバージョンで増えることがある。
+バージョンはsemantic versioningに従い、リポジトリの全モジュールに同じタグを打つ（`vX.Y.Z`、`postgres/vX.Y.Z`、…）。同じメジャーバージョンの中では、これらのモジュールと`pgtest`の公開API、テンプレート構文、ディレクティブ、検査器のフラグは互換を保つ。検査器が報告する内容はマイナーバージョンで増えることがある。
 
 ## Quickstart
 
@@ -82,9 +83,9 @@ users.go:25:46: sqlshape: may violate users_email_key (UNIQUE (email) on users, 
 1つ目は`deleted_at`がNULLになりうるのに`time.Time`で受けている、2つ目はこのINSERTはemailの一意制約に違反しうるのにそれを宣言していない、という指摘である。`DeletedAt`を`*time.Time`にして、INSERTの1行目に`-- sqlshape: expect users_email_key`を書けば通る。実行時はこう使う:
 
 ```go
-users, err := Users.Collect(ctx, pool, struct{ Name *string }{})          // []User
-id, err := Create.First(ctx, pool, struct{ Email, Name string }{e, n})     // int64
-if sqlshape.Violates(err, "users_email_key") { /* expect行で宣言した失敗 */ }
+users, err := postgres.Collect(ctx, pool, Users, struct{ Name *string }{})          // []User
+id, err := postgres.First(ctx, pool, Create, struct{ Email, Name string }{e, n})     // int64
+if postgres.Violates(err, "users_email_key") { /* expect行で宣言した失敗 */ }
 ```
 
 `db`にはpgxの`*pgxpool.Pool`、`*pgx.Conn`、`pgx.Tx`のどれでも渡せる。
@@ -150,7 +151,7 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 - [docs/checks.ja.md](docs/checks.ja.md) — 検査器が確かめること全部: 形、意味、失敗モード（PostgreSQLの制約命名規則の表つき）、カーディナリティ、境界
 - [docs/templates.ja.md](docs/templates.ja.md) — テンプレートで使える構文、ディレクティブ、共有フラグメント、危険な書き方、疎検査
-- [docs/runtime.ja.md](docs/runtime.ja.md) — `Run` / `Collect` / `First` / `Exec`、`One`、`Batch`、`Copy`、`MatView`、Go型の表、型の登録、エラー、本物のPostgreSQLでのテスト
+- [docs/runtime.ja.md](docs/runtime.ja.md) — `postgres.Run` / `Collect` / `First` / `Exec`、`One`、`Batch`、`Copy`、`MatView`、Go型の表、型の登録、エラー、本物のPostgreSQLでのテスト
 - [docs/migrations.ja.md](docs/migrations.ja.md) — `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境
 - [docs/flags.ja.md](docs/flags.ja.md) — 全フラグ、`-strict`の助言一覧、エディタ設定
 - [docs/design.md](docs/design.md) — 設計上の裁定。何を決めたか、なぜか、何を棄てたか
@@ -159,13 +160,15 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 PostgreSQL 17と18に対応し、どちらかは`schema.sql`が宣言する。構文はPostgreSQL自身のものである。パーサはその版のlibpg_queryなので、サーバが読める文は検査器も同じように読む。SELECTとDML、MERGE、CTE、ウィンドウ関数、GROUPING SETS、SQL/JSON、範囲型、18の`RETURNING old` / `new`と時制キー、citextやhstoreなどの拡張、ビュー・関数（SQLとPL/pgSQLの本体まで）・トリガー・ポリシーを含むDDL。アナライザーはその版のカタログから組み上げたpure Goの実装で、検査時にPostgreSQLへ接続することはない。
 
-判定の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の文を、アナライザーと同じ版の本物のPostgreSQLに並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは17で22,103文のうち19件、18で23,384文のうち31件。全件を`internal/analyze/testdata/regress_baseline_<version>.txt`に列挙してあり、どれも静的解析では判定できないもの（行レベルセキュリティの再帰、権限、サーバー内部のエラー）か、検査器が正しくサーバのDescribeには見えないもの（INSERTの`RETURNING old`がNULLであること）である。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
+判定の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の文を、アナライザーと同じ版の本物のPostgreSQLに並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは17で22,103文のうち19件、18で23,384文のうち31件。全件を`check/postgres/analyze/testdata/regress_baseline_<version>.txt`に列挙してあり、どれも静的解析では判定できないもの（行レベルセキュリティの再帰、権限、サーバー内部のエラー）か、検査器が正しくサーバのDescribeには見えないもの（INSERTの`RETURNING old`がNULLであること）である。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
 
 ## License
 
-The `sqlshape` runtime, `pgtest` and everything a checked program links (the root module) are
-Apache License 2.0, see [LICENSE](LICENSE). The embedded `pg_catalog` data and the validation
-rules ported from PostgreSQL are used under the PostgreSQL License, see [NOTICE](NOTICE). The
-`sqlshape` binary (`cmd/sqlshape`) and the MySQL dialect (`mysql`) are separate modules under
-the GNU General Public License v2, see [cmd/sqlshape/LICENSE](cmd/sqlshape/LICENSE); the binary
-is a development tool, and nothing under it is linked into your program.
+Everything a checked program links is Apache License 2.0, see [LICENSE](LICENSE): the
+declarations (the root module), the runtimes (`postgres`, `mysql`) and `pgtest`. The PostgreSQL
+side of the checker (`check/postgres`) embeds `pg_catalog` data and validation rules ported from
+PostgreSQL under the PostgreSQL License, see [check/postgres/NOTICE](check/postgres/NOTICE). The
+`sqlshape` binary (`cmd/sqlshape`) and the MySQL side of the checker (`check/mysql`, which carries
+MySQL's own parser) are modules under the GNU General Public License v2, see
+[cmd/sqlshape/LICENSE](cmd/sqlshape/LICENSE); the binary is a development tool, and nothing under
+it is linked into your program.

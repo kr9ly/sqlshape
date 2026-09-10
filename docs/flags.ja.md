@@ -17,6 +17,7 @@
 | `-require-columns=tenant_id` | なし | すべての文が、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTは値を入れなければならない。その列を固定する行レベルセキュリティのポリシーがあれば満たしたことになる |
 
 `-no-table-reads`・`-no-tables`・`-require-columns`は、`schema.sql`で表ごとに宣言する義務（`require via view`、`require via view on all`、`require pinned(列)`）の略記。宣言形なら`on`による文種の指定、`immutable(列)`、任意の述語も書ける。文脈の`waive`はフラグ由来の義務も宣言と同じように解除する（[checks.ja.md](checks.ja.md#宣言の仕組み)）。
+| `-query=pkg.Func,pkg.Other:one` | なし | 自前のマーカー関数を`sqlshape.Query`と同じように読む（`:one`は`One`と同じ扱い）。テンプレートを引数に取る generic な`F[R, P any](string) T`であればよい。検査器が読むのは宣言であって、実行するランタイムではない |
 | `-raw-sql=constant` | `constant` | sqlshapeを通さないドライバ呼び出し（pgx / `database/sql`の`Query`、`Exec`など）の扱い。`constant`はSQL引数が定数であることを要求し、`forbid`は拒否し、`allow`は無視する |
 | `-raw-sql-allow=pkg/...` | なし | `-raw-sql=forbid`を適用しないパッケージ（`/...`で終わる接頭辞も可） |
 | `-coverage` | off | パッケージごとに、検査した`Query` / `One`の数と、検査できなかった数（テンプレートが定数でないもの）を報告する |

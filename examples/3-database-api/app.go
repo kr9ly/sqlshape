@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 // Beginner starts transactions: pgx.Conn and pgxpool.Pool both do.
@@ -16,7 +16,7 @@ type Beginner interface {
 
 // Checkout places an order with its lines through the database's functions, in one
 // transaction: a rejected line leaves no half-built order behind. pgx.Tx satisfies
-// sqlshape.DB, so the statements run on the transaction unchanged. The limit on open
+// postgres.DB, so the statements run on the transaction unchanged. The limit on open
 // orders is enforced by a trigger; the application only has to name the outcome.
 func Checkout(ctx context.Context, db Beginner, customerID int64, shipping Yen, lines []NewLine) (int64, error) {
 	tx, err := db.Begin(ctx)
@@ -25,19 +25,19 @@ func Checkout(ctx context.Context, db Beginner, customerID int64, shipping Yen, 
 	}
 	defer tx.Rollback(ctx) // a no-op after Commit
 
-	id, err := PlaceOrder.Get(ctx, tx, NewOrder{CustomerID: customerID, Shipping: shipping})
+	id, err := postgres.Get(ctx, tx, PlaceOrder, NewOrder{CustomerID: customerID, Shipping: shipping})
 	switch {
-	case sqlshape.Violates(err, "OS001"):
+	case postgres.Violates(err, "OS001"):
 		return 0, fmt.Errorf("customer %d has too many open orders", customerID)
-	case sqlshape.Violates(err, "orders_customer_id_fkey"):
+	case postgres.Violates(err, "orders_customer_id_fkey"):
 		return 0, fmt.Errorf("customer %d does not exist", customerID)
 	case err != nil:
 		return 0, err
 	}
 	for _, l := range lines {
 		l.OrderID = *id
-		if _, err := AddLine.Get(ctx, tx, l); err != nil {
-			if sqlshape.Violates(err, "order_items_qty_check") {
+		if _, err := postgres.Get(ctx, tx, AddLine, l); err != nil {
+			if postgres.Violates(err, "order_items_qty_check") {
 				return 0, fmt.Errorf("%s: quantity must be positive", l.Sku)
 			}
 			return 0, err

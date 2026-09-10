@@ -8,7 +8,26 @@ release it is a candidate for.
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-09-10
+## [2.0.0] - 2026-09-10
+
+### Changed
+
+- The checker is the product; the runtime is a library per database. The root module
+  `github.com/kr9ly/sqlshape` now holds only the declarations (`Query`, `One`, `Stmt`, `Render`,
+  the row-binding rules) and has no dependencies. Running a statement on pgx is the module
+  `github.com/kr9ly/sqlshape/postgres`: `postgres.Run(ctx, db, stmt, p)`, `Collect`, `First`,
+  `Exec`, `Get` / `Find` / `ExecOne` for `One`, and `MatView`, `Copy`, `Batch`, `LoadUserTypes`,
+  `ConstraintError`, `Violates`, `ErrNoRows` moved there (the methods `stmt.Run(ctx, db, p)` are
+  gone: a module cannot add methods to another's type). `Labelled` and `UnknownLabelError` stay in
+  the root. `pgtest` is its own module. The PostgreSQL analyzer and migration tools are the module
+  `github.com/kr9ly/sqlshape/check/postgres`, the MySQL analyzer `check/mysql` (was `mysql`);
+  both are tool-facing, imported by the binary and `pgtest`. An application's go.mod carries the
+  root, its runtime and its own driver, nothing of the checker's.
+- The markers the checker recognizes are configurable: `-query=pkg.Func,pkg.Other:one` registers
+  a program's own generic marker functions, read like `Query` / `One`. A program may run its
+  statements through a runtime of its own; what only sqlshape's runtime promises (the rendered SQL
+  is the checked SQL, violations come back under the expect line's names, `One` rejects a second
+  row) is stated in docs/runtime.md.
 
 ### Added
 
@@ -40,7 +59,7 @@ release it is a candidate for.
   General Public License v2; install it with `go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest`
   as before. The runtime (`github.com/kr9ly/sqlshape`), `pgtest` and everything a checked
   program imports stay Apache 2.0 at their import paths. The MySQL support is the module
-  `github.com/kr9ly/sqlshape/mysql` (GPLv2). The three modules release together under one
+  `github.com/kr9ly/sqlshape/check/mysql` (GPLv2). The three modules release together under one
   version, tagged `vX.Y.Z`, `mysql/vX.Y.Z` and `cmd/sqlshape/vX.Y.Z` on the same commit.
 
 ## [1.2.0] - 2026-09-09
@@ -131,8 +150,8 @@ First release: `sqlshape.Query[R, P]` / `One[R, P]` templates checked by `go vet
 test oracle), the runtime on pgx, and `sqlshape diff` / `apply` / `verify-schema` for migrations
 from a declared schema.
 
-[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v1.3.0...HEAD
-[1.3.0]: https://github.com/kr9ly/sqlshape/compare/v1.2.0...v1.3.0
+[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/kr9ly/sqlshape/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/kr9ly/sqlshape/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kr9ly/sqlshape/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kr9ly/sqlshape/releases/tag/v1.0.0

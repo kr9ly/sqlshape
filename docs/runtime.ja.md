@@ -2,17 +2,17 @@
 
 [English](runtime.md)
 
-`sqlshape`パッケージは、検査済みの文をpgxの上で実行する。実行先の`DB`は`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`のどれでもよいので、同じ文をトランザクションの中でもそのまま実行できる。
+文は`sqlshape`パッケージで宣言し（`Query`、`One`。依存は無い）、DBごとのランタイムモジュールで実行する。`github.com/kr9ly/sqlshape/postgres`はpgxの上で実行するランタイムで、実行先の`postgres.DB`は`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`のどれでもよいので、同じ文をトランザクションの中でもそのまま実行できる。検査器が読むのは宣言だけなので、自前のランタイムで実行してもよい。その場合に得られないものは末尾に書く。
 
 ## 文の実行
 
 ```go
 var ListOrders = sqlshape.Query[Order, ListParams](`...`)
 
-for o, err := range ListOrders.Run(ctx, db, p) { ... }   // iter.Seq2[Order, error]、逐次読み出し
-orders, err := ListOrders.Collect(ctx, db, p)            // []Order
-first, err  := ListOrders.First(ctx, db, p)              // 最初の行。無ければ ErrNoRows
-tag, err    := ListOrders.Exec(ctx, db, p)               // pgconn.CommandTag。行は捨てる
+for o, err := range postgres.Run(ctx, db, ListOrders, p) { ... }   // iter.Seq2[Order, error]、逐次読み出し
+orders, err := postgres.Collect(ctx, db, ListOrders, p)            // []Order
+first, err  := postgres.First(ctx, db, ListOrders, p)              // 最初の行。無ければ ErrNoRows
+tag, err    := postgres.Exec(ctx, db, ListOrders, p)               // pgconn.CommandTag。行は捨てる
 ```
 
 `One[R, P]`は`Single`を返す。`Render`と`Unprepared`は`Stmt`と同じで、実行方法は3つある:
@@ -20,9 +20,9 @@ tag, err    := ListOrders.Exec(ctx, db, p)               // pgconn.CommandTag。
 ```go
 var UserByEmail = sqlshape.One[User, struct{ Email string }](`...`)
 
-u, err     := UserByEmail.Get(ctx, db, p)    // 無ければ ErrNoRows
-u, ok, err := UserByEmail.Find(ctx, db, p)   // ok が有無を表す
-tag, err   := MarkPaid.Exec(ctx, db, p)      // 1行も対象にならなければ ErrNoRows
+u, err     := postgres.Get(ctx, db, UserByEmail, p)    // 無ければ ErrNoRows
+u, ok, err := postgres.Find(ctx, db, UserByEmail, p)   // ok が有無を表す
+tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)      // 1行も対象にならなければ ErrNoRows
 ```
 
 3つとも、2行目が返ってきたら`ErrManyRows`を返す。検査器は1行以下しか返らないことをスキーマから証明しているので、これが起きるのは、証明の根拠になった一意制約が実際のデータベースでは外れているときである。
@@ -43,7 +43,7 @@ pgxはユーザー定義型（enum、複合型、ドメイン、範囲型、多�
 
 ```go
 cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-	return sqlshape.LoadUserTypes(ctx, conn)
+	return postgres.LoadUserTypes(ctx, conn)
 }
 ```
 
@@ -56,8 +56,8 @@ pgx自身の型ローダーが読まない拡張のスカラー型（`citext`、
 制約違反（SQLSTATEクラス23）は`*ConstraintError`として返る。PostgreSQLが報告した`Code`、`Constraint`、`Table`、`Column`、`Detail`を持ち、元の`*pgconn.PgError`を包んでいる。`Key()`はexpect行に書くのと同じ表記の名前を返す。制約名、またはNOT NULLなら`table.column`である。expect行で名指したSQLSTATE（トリガーの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
 
 ```go
-_, err := CreateCustomer.First(ctx, db, p)
-if sqlshape.Violates(err, "customers_email_key") {
+_, err := postgres.First(ctx, db, CreateCustomer, p)
+if postgres.Violates(err, "customers_email_key") {
 	return ErrEmailTaken
 }
 ```
@@ -69,9 +69,9 @@ if sqlshape.Violates(err, "customers_email_key") {
 `Batch`は複数の文を1往復で送る（`pgx.Batch`）:
 
 ```go
-b := sqlshape.NewBatch()
-orders := sqlshape.Queue(b, ListOrders, ListParams{Status: &paid})
-paid   := sqlshape.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
+b := postgres.NewBatch()
+orders := postgres.Queue(b, ListOrders, ListParams{Status: &paid})
+paid   := postgres.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
 if err := b.Send(ctx, db); err != nil { ... }
 rows, err := orders.Rows()    // []Order。First() なら最初の行
 tag, err  := paid.Tag()
@@ -84,7 +84,7 @@ tag, err  := paid.Tag()
 ## 一括ロード
 
 ```go
-var loadItems = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku", "qty")
+var loadItems = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku", "qty")
 
 n, err := loadItems.From(ctx, db, items)           // []Item
 n, err := loadItems.FromSeq(ctx, db, seq)          // iter.Seq[Item]
@@ -95,7 +95,7 @@ n, err := loadItems.FromSeq(ctx, db, seq)          // iter.Seq[Item]
 ## マテリアライズドビュー
 
 ```go
-var OrderStats = sqlshape.MatView("order_stats")
+var OrderStats = postgres.MatView("order_stats")
 
 err := OrderStats.Refresh(ctx, db)              // 完了まで読み手はブロックされる
 err := OrderStats.RefreshConcurrently(ctx, db)  // ビューに一意インデックスが必要
@@ -114,6 +114,10 @@ sqlshape: rendered SQL differs from the checked expansion [if@64:then]: the runt
 これが出るのはsqlshapeの不具合なので、報告してほしい。通常の使い方で出ることはない。
 
 確認できない場合が2つある。`{{range}}`が3要素以上のとき（検査は2要素までで行う）と、分岐の組み合わせが256を超えて代表だけが検査されたとき（[templates.ja.md](templates.ja.md#分岐が多いとき)）。この2つでは、分岐の形が検査したものと同じであることだけを確認して実行する。
+
+## 自前のランタイムでは得られないもの
+
+検査器が認識するのは宣言であってランタイムではない（`-query`で自前のマーカー関数を登録できる。[flags.ja.md](flags.ja.md)）。次の3つの約束はランタイムのもので、`sqlshape/postgres`で実行したときだけ成立する: 送る SQL が検査器の確かめた展開とバイト単位で一致すること（上の節）、違反が expect 行の綴りの名前で`ConstraintError`として返ること、`One`の文が2行目を返したらエラーになること。
 
 ## 本物のPostgreSQLでのテスト
 

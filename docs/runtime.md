@@ -2,19 +2,22 @@
 
 [日本語](runtime.ja.md)
 
-The `sqlshape` package runs checked statements on pgx. `DB` is what a statement runs against;
-`*pgx.Conn`, `*pgxpool.Pool` and `pgx.Tx` all satisfy it, so a statement runs on a transaction
-unchanged.
+A statement is declared with the `sqlshape` package (`Query`, `One`: no dependencies) and run
+with a runtime module for its database. `github.com/kr9ly/sqlshape/postgres` runs it on pgx:
+`postgres.DB` is what a statement runs against, and `*pgx.Conn`, `*pgxpool.Pool` and `pgx.Tx`
+all satisfy it, so a statement runs on a transaction unchanged. The checker reads only the
+declarations, so a program may also run them through a runtime of its own; what such a runtime
+does not get is listed at the end.
 
 ## Statements
 
 ```go
 var ListOrders = sqlshape.Query[Order, ListParams](`...`)
 
-for o, err := range ListOrders.Run(ctx, db, p) { ... }   // iter.Seq2[Order, error], streamed
-orders, err := ListOrders.Collect(ctx, db, p)            // []Order
-first, err  := ListOrders.First(ctx, db, p)              // the first row, ErrNoRows when none
-tag, err    := ListOrders.Exec(ctx, db, p)               // pgconn.CommandTag, rows discarded
+for o, err := range postgres.Run(ctx, db, ListOrders, p) { ... }   // iter.Seq2[Order, error], streamed
+orders, err := postgres.Collect(ctx, db, ListOrders, p)            // []Order
+first, err  := postgres.First(ctx, db, ListOrders, p)              // the first row, ErrNoRows when none
+tag, err    := postgres.Exec(ctx, db, ListOrders, p)               // pgconn.CommandTag, rows discarded
 ```
 
 `One[R, P]` gives a `Single` with the same `Render` and `Unprepared` and three ways to run:
@@ -22,9 +25,9 @@ tag, err    := ListOrders.Exec(ctx, db, p)               // pgconn.CommandTag, r
 ```go
 var UserByEmail = sqlshape.One[User, struct{ Email string }](`...`)
 
-u, err     := UserByEmail.Get(ctx, db, p)    // ErrNoRows when absent
-u, ok, err := UserByEmail.Find(ctx, db, p)   // ok reports presence
-tag, err   := MarkPaid.Exec(ctx, db, p)      // ErrNoRows when no row was touched
+u, err     := postgres.Get(ctx, db, UserByEmail, p)    // ErrNoRows when absent
+u, ok, err := postgres.Find(ctx, db, UserByEmail, p)   // ok reports presence
+tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)      // ErrNoRows when no row was touched
 ```
 
 All three return `ErrManyRows` if a second row arrives. The checker proved from the schema that
@@ -44,9 +47,10 @@ name in snake_case. Embedded structs flatten. A nullable field (pointer, slice, 
 expansion's result stays zero (a column only some branches select). A scalar `R` receives the
 single column. `numeric` into `string` keeps every digit.
 
-A Go enum type may implement `Known() bool` (the `Labelled` interface); the mapper then rejects a
-label this build does not know with `*UnknownLabelError` instead of handing the application a
-value it cannot switch on.
+A Go enum type may implement `Known() bool` (the `sqlshape.Labelled` interface); the mapper then
+rejects a label this build does not know with `*sqlshape.UnknownLabelError` instead of handing
+the application a value it cannot switch on. The binding rules (`sqlshape.Fields`) are the root
+module's, shared by the checker and every runtime.
 
 ## Nested rows and user types
 
@@ -63,7 +67,7 @@ scanning, so for those, and for pools, register everything once:
 
 ```go
 cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-	return sqlshape.LoadUserTypes(ctx, conn)
+	return postgres.LoadUserTypes(ctx, conn)
 }
 ```
 
@@ -89,24 +93,24 @@ constraint's name, or `table.column` for NOT NULL. A SQLSTATE the expect line na
 trigger's `P0401`, or the name given to it with `-- sqlshape: error`) is wrapped the same way.
 
 ```go
-_, err := CreateCustomer.First(ctx, db, p)
-if sqlshape.Violates(err, "customers_email_key") {
+_, err := postgres.First(ctx, db, CreateCustomer, p)
+if postgres.Violates(err, "customers_email_key") {
 	return ErrEmailTaken
 }
 ```
 
 The names are the ones the checker listed, so a violation the code does not handle is one the
 expect line announced ([checks.md](checks.md#preparing-for-a-write-to-fail)).
-`ErrNoRows` is `pgx.ErrNoRows`; `IsNoRows(err)` tests for it.
+`postgres.ErrNoRows` is `pgx.ErrNoRows`; `postgres.IsNoRows(err)` tests for it.
 
 ## Batches
 
 `Batch` sends several statements in one round trip (`pgx.Batch`):
 
 ```go
-b := sqlshape.NewBatch()
-orders := sqlshape.Queue(b, ListOrders, ListParams{Status: &paid})
-paid   := sqlshape.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
+b := postgres.NewBatch()
+orders := postgres.Queue(b, ListOrders, ListParams{Status: &paid})
+paid   := postgres.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
 if err := b.Send(ctx, db); err != nil { ... }
 rows, err := orders.Rows()    // []Order; First() for the first row
 tag, err  := paid.Tag()
@@ -126,7 +130,7 @@ statements after the failing one were not executed, and their `Rows` / `Tag` ret
 ## Bulk loads
 
 ```go
-var loadItems = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku", "qty")
+var loadItems = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku", "qty")
 
 n, err := loadItems.From(ctx, db, items)           // []Item
 n, err := loadItems.FromSeq(ctx, db, seq)          // iter.Seq[Item]
@@ -140,7 +144,7 @@ columns, each column's type against its field, and that every column left out ha
 ## Materialized views
 
 ```go
-var OrderStats = sqlshape.MatView("order_stats")
+var OrderStats = postgres.MatView("order_stats")
 
 err := OrderStats.Refresh(ctx, db)              // readers block until done
 err := OrderStats.RefreshConcurrently(ctx, db)  // needs a unique index on the view
@@ -165,6 +169,14 @@ Two cases cannot be compared: a `{{range}}` with three or more elements (checkin
 and a template whose branch combinations exceeded 256 so that only a representative set was checked
 ([templates.md](templates.md#many-branches)). In those, only the shape of the branches is confirmed
 before running.
+
+## What a runtime of your own does not get
+
+The checker recognizes the declarations, not the runtime (`-query` registers a marker function
+of your own, see [flags.md](flags.md)). Three promises are the runtime's, and hold only when the
+statement runs through `sqlshape/postgres`: that the SQL sent is byte for byte the SQL the checker
+verified (the section above), that a violation comes back as a `ConstraintError` under the name
+the expect line spells, and that a `One` statement returning a second row is an error.
 
 ## Tests on a real PostgreSQL
 

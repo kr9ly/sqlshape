@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 // PlaceOrder creates an order with its lines in one transaction and returns its id.
@@ -18,35 +18,35 @@ func PlaceOrder(ctx context.Context, conn *pgx.Conn, customerID int64, note *str
 	}
 	defer tx.Rollback(ctx)
 
-	id, err := CreateOrder.First(ctx, tx, NewOrder{CustomerID: customerID, Note: note})
+	id, err := postgres.First(ctx, tx, CreateOrder, NewOrder{CustomerID: customerID, Note: note})
 	if err != nil {
-		if sqlshape.Violates(err, "orders_customer_id_fkey") {
+		if postgres.Violates(err, "orders_customer_id_fkey") {
 			return 0, fmt.Errorf("customer %d does not exist", customerID)
 		}
 		return 0, err
 	}
 	for i, it := range items {
 		it.OrderID, it.LineNo = id, int16(i+1)
-		if _, err := AddItem.Exec(ctx, tx, it); err != nil {
-			if sqlshape.Violates(err, "order_items_qty_check") {
+		if _, err := postgres.Exec(ctx, tx, AddItem, it); err != nil {
+			if postgres.Violates(err, "order_items_qty_check") {
 				return 0, fmt.Errorf("line %d: quantity must be positive", i+1)
 			}
 			return 0, err
 		}
 	}
-	if _, err := RecomputeTotal.Exec(ctx, tx, struct{ OrderID int64 }{id}); err != nil {
+	if _, err := postgres.ExecOne(ctx, tx, RecomputeTotal, struct{ OrderID int64 }{id}); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit(ctx)
 }
 
 // Pay moves an order to paid. A missing (or archived) order is a distinct error.
-func Pay(ctx context.Context, db sqlshape.DB, orderID int64) error {
-	_, err := SetStatus.Exec(ctx, db, struct {
+func Pay(ctx context.Context, db postgres.DB, orderID int64) error {
+	_, err := postgres.ExecOne(ctx, db, SetStatus, struct {
 		ID     int64
 		Status OrderStatus
 	}{orderID, Paid})
-	if errors.Is(err, sqlshape.ErrNoRows) {
+	if errors.Is(err, postgres.ErrNoRows) {
 		return fmt.Errorf("order %d does not exist", orderID)
 	}
 	return err

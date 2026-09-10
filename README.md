@@ -13,7 +13,7 @@ Write SQL as SQL, and let a `go vet` checker prove the Go code around it fits.
 var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email, name, deleted_at FROM users WHERE email = {{.Email}}`)
 
-u, err := ByEmail.Get(ctx, db, struct{ Email string }{Email: email})
+u, err := postgres.Get(ctx, db, ByEmail, struct{ Email string }{Email: email})
 ```
 
 - Checked, not generated. Every statement is analyzed against `schema.sql` by a pure-Go
@@ -49,15 +49,19 @@ user cache directory (`~/.cache/sqlshape` on Linux). `pgtest` and the migration 
 your schema on a real PostgreSQL, download the declared version's server binaries into the same
 cache on first use (see [migrations.md](docs/migrations.md#requirements)).
 
-The runtime is an ordinary Go module:
+The declarations (`sqlshape.Query`, `sqlshape.One`) are a Go module with no dependencies, and
+the runtime for each database is a module of its own, so an application pulls in only its own
+driver:
 
 ```
-$ go get github.com/kr9ly/sqlshape
+$ go get github.com/kr9ly/sqlshape            # Query / One: the declarations the checker reads
+$ go get github.com/kr9ly/sqlshape/postgres   # running them on pgx
 ```
 
-Versions follow semantic versioning and are tagged `vX.Y.Z`. Within a major version, the exported
-API of `sqlshape` and `pgtest`, the template syntax, the directives and the checker's flags stay
-compatible; what the checker reports may grow with minor versions.
+Versions follow semantic versioning; every module of the repository is tagged together
+(`vX.Y.Z`, `postgres/vX.Y.Z`, ...). Within a major version, the exported API of these modules and
+of `pgtest`, the template syntax, the directives and the checker's flags stay compatible; what
+the checker reports may grow with minor versions.
 
 ## Quickstart
 
@@ -102,12 +106,14 @@ Make `DeletedAt` a `*time.Time`, put `-- sqlshape: expect users_email_key` on th
 line, and the package is clean. At run time:
 
 ```go
-users, err := Users.Collect(ctx, pool, struct{ Name *string }{})          // []User
-id, err := Create.First(ctx, pool, struct{ Email, Name string }{e, n})     // int64
-if sqlshape.Violates(err, "users_email_key") { /* the declared failure mode */ }
+users, err := postgres.Collect(ctx, pool, Users, struct{ Name *string }{})          // []User
+id, err := postgres.First(ctx, pool, Create, struct{ Email, Name string }{e, n})     // int64
+if postgres.Violates(err, "users_email_key") { /* the declared failure mode */ }
 ```
 
-`db` is anything pgx gives you: a `*pgxpool.Pool`, `*pgx.Conn` or `pgx.Tx`.
+`pool` is anything pgx gives you: a `*pgxpool.Pool`, `*pgx.Conn` or `pgx.Tx`. The checker does
+not care how a statement is run: the declaration is what it reads, and a program may run its
+statements through a runtime of its own.
 
 You do not have to write the structs. Declare `type Row struct{}` and `type Params struct{}`
 empty, write the SQL, and every column and parameter without a field is reported with a quick fix
@@ -198,7 +204,7 @@ rename or the removal of an enum label, are declared in `schema.sql` with `-- @m
 
 - [docs/checks.md](docs/checks.md) — everything the checker verifies: shapes, meaning, failure modes (with PostgreSQL's constraint naming rules), cardinality, the rules a schema declares (`require`, aggregates, `sqlshape check`)
 - [docs/templates.md](docs/templates.md) — the template subset, directives, shared fragments, hazards, sparse checking
-- [docs/runtime.md](docs/runtime.md) — `Run` / `Collect` / `First` / `Exec`, `One`, `Batch`, `Copy`, `MatView`, the Go type table, type registration, errors, tests on a real PostgreSQL
+- [docs/runtime.md](docs/runtime.md) — `postgres.Run` / `Collect` / `First` / `Exec`, `One`, `Batch`, `Copy`, `MatView`, the Go type table, type registration, errors, tests on a real PostgreSQL
 - [docs/migrations.md](docs/migrations.md) — `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements
 - [docs/flags.md](docs/flags.md) — every flag, the `-strict` advisories, editor setup
 - [docs/design.md](docs/design.md) — design decisions: what was decided, why, and what was rejected (Japanese)
@@ -215,7 +221,7 @@ built from that version's catalog; checking never connects to a PostgreSQL.
 The judgment is backed by PostgreSQL's own regression suite: the statements of `src/test/regress`
 are run through the analyzer and a real PostgreSQL of the same version side by side, and parameter
 types, result columns and errors must agree. On 17 they disagree on 19 of 22,103 statements, on 18
-on 31 of 23,384; every one is listed (`internal/analyze/testdata/regress_baseline_<version>.txt`),
+on 31 of 23,384; every one is listed (`check/postgres/analyze/testdata/regress_baseline_<version>.txt`),
 and each is either something static analysis cannot decide (row-level security recursion,
 permissions, server internals) or a case where the checker is right and the server's Describe
 cannot say (the NULLs of `RETURNING old` after an INSERT). The comparison is part of
@@ -223,9 +229,11 @@ cannot say (the NULLs of `RETURNING old` after an INSERT). The comparison is par
 
 ## License
 
-The `sqlshape` runtime, `pgtest` and everything a checked program links (the root module) are
-Apache License 2.0, see [LICENSE](LICENSE). The embedded `pg_catalog` data and the validation
-rules ported from PostgreSQL are used under the PostgreSQL License, see [NOTICE](NOTICE). The
-`sqlshape` binary (`cmd/sqlshape`) and the MySQL dialect (`mysql`) are separate modules under
-the GNU General Public License v2, see [cmd/sqlshape/LICENSE](cmd/sqlshape/LICENSE); the binary
-is a development tool, and nothing under it is linked into your program.
+Everything a checked program links is Apache License 2.0, see [LICENSE](LICENSE): the
+declarations (the root module), the runtimes (`postgres`, `mysql`) and `pgtest`. The PostgreSQL
+side of the checker (`check/postgres`) embeds `pg_catalog` data and validation rules ported from
+PostgreSQL under the PostgreSQL License, see [check/postgres/NOTICE](check/postgres/NOTICE). The
+`sqlshape` binary (`cmd/sqlshape`) and the MySQL side of the checker (`check/mysql`, which carries
+MySQL's own parser) are modules under the GNU General Public License v2, see
+[cmd/sqlshape/LICENSE](cmd/sqlshape/LICENSE); the binary is a development tool, and nothing under
+it is linked into your program.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/pgtest"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 func TestOrderBook(t *testing.T) {
@@ -34,11 +35,11 @@ func TestOrderBook(t *testing.T) {
 	}
 	conn := db.Conn()
 
-	alice, err := CreateCustomer.First(ctx, conn, NewCustomer{Email: "alice@example.com", Name: "Alice"})
+	alice, err := postgres.First(ctx, conn, CreateCustomer, NewCustomer{Email: "alice@example.com", Name: "Alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateCustomer.First(ctx, conn, NewCustomer{Email: "alice@example.com", Name: "Alice again"}); !sqlshape.Violates(err, "customers_email_key") {
+	if _, err := postgres.First(ctx, conn, CreateCustomer, NewCustomer{Email: "alice@example.com", Name: "Alice again"}); !postgres.Violates(err, "customers_email_key") {
 		t.Fatalf("duplicate email: %v", err)
 	}
 
@@ -55,7 +56,7 @@ func TestOrderBook(t *testing.T) {
 	}
 	// a negative price is rejected by the database too, but it is not the quantity
 	// check PlaceOrder names specially: the generic path returns the raw error
-	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 1, Price: "-1.00"}}); !sqlshape.Violates(err, "order_items_price_check") {
+	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 1, Price: "-1.00"}}); !postgres.Violates(err, "order_items_price_check") {
 		t.Fatalf("price check: %v", err)
 	}
 	// a context already done fails at Begin, before any statement runs; use a
@@ -71,7 +72,7 @@ func TestOrderBook(t *testing.T) {
 	}
 	deadConn.Close(ctx)
 
-	o, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id})
+	o, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{id})
 	if err != nil || o.Total != "28.00" || o.Status != Pending || o.Note == nil || *o.Note != "gift wrap" {
 		t.Fatalf("order: %v %+v", err, o)
 	}
@@ -82,23 +83,23 @@ func TestOrderBook(t *testing.T) {
 		t.Fatal("paying a missing order should fail")
 	}
 	// cancelling a paid order changes nothing: One.Exec says so with ErrNoRows
-	if _, err := Cancel.Exec(ctx, conn, struct{ ID int64 }{id}); !errors.Is(err, sqlshape.ErrNoRows) {
+	if _, err := postgres.ExecOne(ctx, conn, Cancel, struct{ ID int64 }{id}); !errors.Is(err, postgres.ErrNoRows) {
 		t.Fatalf("cancel paid: %v", err)
 	}
 
 	paid := []OrderStatus{Paid, Shipped}
-	rows, err := ListOrders.Collect(ctx, conn, ListOrdersParams{CustomerID: &alice, Statuses: paid, Sort: "total", Limit: 10})
+	rows, err := postgres.Collect(ctx, conn, ListOrders, ListOrdersParams{CustomerID: &alice, Statuses: paid, Sort: "total", Limit: 10})
 	if err != nil || len(rows) != 1 || rows[0].ID != id {
 		t.Fatalf("list: %v %+v", err, rows)
 	}
 	if got := Describe(rows[0]); got != "order #1: 28.00 (paid, preparing shipment)" {
 		t.Errorf("describe: %q", got)
 	}
-	items, err := ItemsOf.Collect(ctx, conn, struct{ OrderID int64 }{id})
+	items, err := postgres.Collect(ctx, conn, ItemsOf, struct{ OrderID int64 }{id})
 	if err != nil || len(items) != 2 || items[1].Sku != "PEN" {
 		t.Fatalf("items: %v %+v", err, items)
 	}
-	totals, err := TotalsByCustomer.Collect(ctx, conn, struct{ MinOrders int64 }{0})
+	totals, err := postgres.Collect(ctx, conn, TotalsByCustomer, struct{ MinOrders int64 }{0})
 	if err != nil || len(totals) != 1 || totals[0].Spent != "28.00" || totals[0].LastOrder == nil {
 		t.Fatalf("totals: %v %+v", err, totals)
 	}
@@ -111,7 +112,7 @@ func TestOrderBook(t *testing.T) {
 		t.Fatal(err)
 	}
 	var unknown *sqlshape.UnknownLabelError
-	if _, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id}); !errors.As(err, &unknown) || unknown.Value != "refunded" {
+	if _, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{id}); !errors.As(err, &unknown) || unknown.Value != "refunded" {
 		t.Fatalf("unknown label: %v", err)
 	}
 
@@ -120,7 +121,7 @@ func TestOrderBook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	po, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{pending})
+	po, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{pending})
 	if err != nil || po.Status != Pending {
 		t.Fatalf("pending order: %v %+v", err, po)
 	}
@@ -128,13 +129,13 @@ func TestOrderBook(t *testing.T) {
 		t.Errorf("describe pending: got %q want %q", got, want)
 	}
 
-	if _, err := SetStatus.Exec(ctx, conn, struct {
+	if _, err := postgres.ExecOne(ctx, conn, SetStatus, struct {
 		ID     int64
 		Status OrderStatus
 	}{pending, Shipped}); err != nil {
 		t.Fatal(err)
 	}
-	so, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{pending})
+	so, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{pending})
 	if err != nil || so.Status != Shipped {
 		t.Fatalf("shipped order: %v %+v", err, so)
 	}
@@ -146,10 +147,10 @@ func TestOrderBook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Cancel.Exec(ctx, conn, struct{ ID int64 }{cancelled}); err != nil {
+	if _, err := postgres.ExecOne(ctx, conn, Cancel, struct{ ID int64 }{cancelled}); err != nil {
 		t.Fatal(err)
 	}
-	co, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{cancelled})
+	co, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{cancelled})
 	if err != nil || co.Status != Cancelled {
 		t.Fatalf("cancelled order: %v %+v", err, co)
 	}
@@ -157,7 +158,7 @@ func TestOrderBook(t *testing.T) {
 		t.Errorf("describe cancelled: got %q want %q", got, want)
 	}
 
-	if _, err := DeleteCustomer.Exec(ctx, conn, struct{ ID int64 }{alice}); !sqlshape.Violates(err, "orders_customer_id_fkey") {
+	if _, err := postgres.ExecOne(ctx, conn, DeleteCustomer, struct{ ID int64 }{alice}); !postgres.Violates(err, "orders_customer_id_fkey") {
 		t.Fatalf("delete customer with orders: %v", err)
 	}
 }

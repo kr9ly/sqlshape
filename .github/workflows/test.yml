@@ -32,17 +32,17 @@ jobs:
           /usr/lib/postgresql/17/bin/pg_dump --version
 
       # the embedded PostgreSQL archive, its extracted binaries + initialized template data
-      # directory (internal/oracle), and PostgreSQL's regression corpus (TestRegress)
+      # directory (check/postgres/oracle), and PostgreSQL's regression corpus (TestRegress)
       - name: Cache PostgreSQL binaries and regress corpus
         uses: actions/cache@v4
         with:
           path: |
             ~/.embedded-postgres-go
             ~/.cache/sqlshape
-          key: sqlshape-pg-${{ hashFiles('internal/oracle/oracle.go', 'internal/analyze/testdata/tools/fetch-regress.sh') }}
+          key: sqlshape-pg-${{ hashFiles('check/postgres/oracle/oracle.go', 'check/postgres/analyze/testdata/tools/fetch-regress.sh') }}
 
       - name: Fetch regress corpus
-        run: internal/analyze/testdata/tools/fetch-regress.sh
+        run: check/postgres/analyze/testdata/tools/fetch-regress.sh
 
       # the binary as users run it: as a vettool over the examples
       - name: Smoke test
@@ -50,15 +50,15 @@ jobs:
 
       # coverage counts every package except the catalog generator (a manual tool run
       # against a PostgreSQL) and the 5-statement main; the generated protobuf node types
-      # (internal/pgparse/pg_query.pb.go, 40k lines of accessors) are dropped from the profile.
+      # (check/postgres/pgparse/pg_query.pb.go, 40k lines of accessors) are dropped from the profile.
       # -count=1: a cached test result replays the profile it recorded, with block positions
       # from the sources of that run; after an edit to a package the cached package does not
       # depend on, the stale blocks no longer line up and the merged total drops by ten points
       - name: Test
         run: |
-          # ./... is the root module; cmd/sqlshape and mysql are nested modules in the workspace
-          pkgs=$(go list ./... ./mysql/... | grep -v -e /internal/catalog/gen -e /parsegen/cmd | paste -sd,)
-          go test ./... ./cmd/sqlshape/... ./mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
+          # ./... is the root module; the other modules of the workspace are named one by one
+          pkgs=$(go list ./... ./postgres/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /check/postgres/catalog/gen -e /parsegen/cmd | paste -sd,)
+          go test ./... ./postgres/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
           grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the
@@ -92,14 +92,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/sqlshape
-          key: sqlshape-pg18-${{ hashFiles('internal/oracle/oracle.go', 'internal/analyze/testdata/tools/fetch-regress.sh') }}
+          key: sqlshape-pg18-${{ hashFiles('check/postgres/oracle/oracle.go', 'check/postgres/analyze/testdata/tools/fetch-regress.sh') }}
 
       - name: Fetch regress corpus
-        run: internal/analyze/testdata/tools/fetch-regress.sh REL_18_3
+        run: check/postgres/analyze/testdata/tools/fetch-regress.sh REL_18_3
 
       - name: Test
         env:
           SQLSHAPE_PG: "18"
         run: |
-          go test ./internal/catalog ./internal/oracle -count=1
-          go test ./internal/analyze -run 'TestRegress$' -count=1 -v -timeout 25m 2>&1 | grep -E 'statements:|hits|PASS|FAIL|ok '
+          go test ./check/postgres/catalog ./check/postgres/oracle -count=1
+          go test ./check/postgres/analyze -run 'TestRegress$' -count=1 -v -timeout 25m 2>&1 | grep -E 'statements:|hits|PASS|FAIL|ok '

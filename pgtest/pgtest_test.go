@@ -33,7 +33,7 @@ var badColumn = sqlshape.Query[OrderRow, struct{}](`SELECT id, total, nope FROM 
 func TestVerify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	schema, err := os.ReadFile("../internal/analyze/testdata/schema.sql")
+	schema, err := os.ReadFile("../check/postgres/analyze/testdata/schema.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

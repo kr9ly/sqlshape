@@ -1,0 +1,2563 @@
+package analyze
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/kr9ly/sqlshape/check/postgres/catalog"
+	"github.com/kr9ly/sqlshape/check/postgres/pgparse"
+	"github.com/kr9ly/sqlshape/check/postgres/schema"
+)
+
+// selectStmt analyzes a SELECT (incl. set operations and VALUES) and returns its output columns.
+func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Error) {
+	keepUnknown := a.keepUnknown
+	a.keepUnknown = false
+	// a subquery is its own level for aggregate nesting and SRF placement
+	savedAggArgs, savedFuncArgs, savedCase, savedFromFunc, savedBan := a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc, a.srfBan
+	a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc = 0, 0, 0, false
+	a.srfBan, a.srfBanNext = a.srfBanNext, ""
+	if len(sel.ValuesLists) > 0 && a.srfBan == "" && !a.inInsertValues {
+		a.srfBan = "VALUES" // a standalone VALUES list; an INSERT's source may hold SRFs
+	}
+	defer func() {
+		a.inAggArgs, a.inFuncArgs, a.inCase, a.inFromFunc, a.srfBan = savedAggArgs, savedFuncArgs, savedCase, savedFromFunc, savedBan
+	}()
+	if sel.WithClause != nil {
+		if err := a.withClause(sel.WithClause, sc); err != nil {
+			return nil, err
+		}
+	}
+	a.selectDepth++
+	defer func() { a.selectDepth-- }()
+	if len(sel.LockingClause) > 0 && sel.Op != pgparse.SetOperation_SETOP_NONE {
+		return nil, errAt(codeFeatureNotSupported, -1, "%s is not allowed with UNION/INTERSECT/EXCEPT", lockStrength(sel.LockingClause[0]))
+	}
+	if sel.Op != pgparse.SetOperation_SETOP_NONE && sel.Op != pgparse.SetOperation_SET_OPERATION_UNDEFINED {
+		return a.setOp(sel, sc)
+	}
+	if len(sel.ValuesLists) > 0 {
+		return a.values(sel.ValuesLists, sc)
+	}
+	sc.grouped = len(sel.GroupClause) > 0
+	// FROM
+	for _, item := range sel.FromClause {
+		r, err := a.fromItem(item, sc)
+		if err != nil {
+			return nil, err
+		}
+		if err := nameConflict(sc.items, r); err != nil {
+			return nil, err
+		}
+		sc.items = append(sc.items, r)
+	}
+	// WINDOW clause
+	for _, wn := range sel.WindowClause {
+		wd := wn.GetWindowDef()
+		if wd == nil {
+			continue
+		}
+		if sc.windows == nil {
+			sc.windows = map[string]*pgparse.WindowDef{}
+		}
+		if _, dup := sc.windows[wd.Name]; dup {
+			return nil, errAt(codeWindowingError, wd.Location, "window %q is already defined", wd.Name)
+		}
+		if wd.Refname != "" {
+			if _, ok := sc.windows[wd.Refname]; !ok {
+				return nil, errAt(codeUndefinedObject, wd.Location, "window %q does not exist", wd.Refname)
+			}
+		}
+		sc.windows[wd.Name] = wd
+	}
+
+	// WHERE / GROUP BY / HAVING
+	if err := a.boolClause(sel.WhereClause, sc, "WHERE"); err != nil {
+		return nil, err
+	}
+	a.scopeSel[sc] = sel
+	a.recordFixed(sc, sel.WhereClause)
+	// target list
+	var cols []rteCol
+	for _, tn := range sel.TargetList {
+		t := tn.GetResTarget()
+		if cr := t.Val.GetColumnRef(); cr != nil && isStar(cr) {
+			expanded, err := a.expandStar(cr, sc)
+			if err != nil {
+				return nil, err
+			}
+			cols = append(cols, expanded...)
+			continue
+		}
+		if ind := t.Val.GetAIndirection(); ind != nil && len(ind.Indirection) > 0 && ind.Indirection[len(ind.Indirection)-1].GetAStar() != nil {
+			// (composite expression).* expands to the row type's columns
+			expanded, err := a.expandCompositeStar(ind, sc)
+			if err != nil {
+				return nil, err
+			}
+			cols = append(cols, expanded...)
+			continue
+		}
+		e, err := a.analyzeExpr(t.Val, sc)
+		if err != nil {
+			return nil, err
+		}
+		// unresolved unknown in an output column becomes text (INSERT ... SELECT keeps it
+		// for the target column to type)
+		if e.oid() == catalog.Unknown && !keepUnknown {
+			if err := a.bind(e, catalog.Text, t.Location); err != nil {
+				return nil, err
+			}
+		}
+		name := t.Name
+		if name == "" {
+			name = a.figureColname(t.Val)
+		}
+		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll})
+	}
+	for _, g := range groupingLeaves(sel.GroupClause) {
+		if err := a.orderOrGroupItem(g, sc, cols, "GROUP BY"); err != nil {
+			return nil, err
+		}
+	}
+	if hasGroupingSets(sel.GroupClause) {
+		// GROUPING SETS / ROLLUP / CUBE: a grouped column is NULL in the sets it is not part
+		// of, so every output column is nullable except count(...), which is never NULL
+		for i, tn := range sel.TargetList {
+			if i >= len(cols) {
+				break
+			}
+			if fc := tn.GetResTarget().GetVal().GetFuncCall(); fc != nil && strings.HasPrefix(strs(fc.Funcname)[len(fc.Funcname)-1], "count") {
+				continue
+			}
+			cols[i].nullable = true
+		}
+	}
+	if err := a.boolClause(sel.HavingClause, sc, "HAVING"); err != nil {
+		return nil, err
+	}
+	for _, s := range sel.SortClause {
+		if err := a.orderOrGroupItem(s.GetSortBy().GetNode(), sc, cols, "ORDER BY"); err != nil {
+			return nil, err
+		}
+		a.noteEnumSort(s.GetSortBy().GetNode(), sc, cols)
+	}
+	for _, d := range sel.DistinctClause {
+		if d.Node == nil {
+			// plain DISTINCT compares every output column
+			for _, c := range cols {
+				if err := collConflictError(c.coll, loc(d)); err != nil {
+					return nil, err
+				}
+				if err := a.checkComparable(c.typ, "DISTINCT", loc(d)); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		if err := a.orderOrGroupItem(d, sc, cols, "DISTINCT ON"); err != nil {
+			return nil, err
+		}
+	}
+	if len(sel.DistinctClause) > 0 && sel.DistinctClause[0].Node != nil && len(sel.SortClause) > 0 {
+		// transformDistinctOnClause: the ORDER BY must start with the DISTINCT ON
+		// expressions (in any order), or the rows to keep would be undefined
+		n := min(len(sel.DistinctClause), len(sel.SortClause))
+		for _, sb := range sel.SortClause[:n] {
+			node := sb.GetSortBy().GetNode()
+			matched := false
+			for _, d := range sel.DistinctClause {
+				if equalIgnoringLocation(d, node) || positionalMatch(d, node, cols) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, errAt(codeInvalidColumnRef, loc(node), "SELECT DISTINCT ON expressions must match initial ORDER BY expressions")
+			}
+		}
+	}
+	if err := a.checkGrouping(sel, sc, cols); err != nil {
+		return nil, err
+	}
+	for _, lim := range []*pgparse.Node{sel.LimitCount, sel.LimitOffset} {
+		if lim == nil {
+			continue
+		}
+		a.srfBan = "LIMIT"
+		e, err := a.analyzeExpr(lim, sc)
+		a.srfBan = ""
+		if err != nil {
+			return nil, err
+		}
+		if err := a.bind(e, catalog.Int8, loc(lim)); err != nil {
+			return nil, err
+		}
+		if !a.canCoerce(e.oid(), catalog.Int8, implicitCoercion) {
+			return nil, errAt(codeDatatypeMismatch, loc(lim), "argument of LIMIT must be type bigint, not type %s", a.s.Types.Format(e.typ))
+		}
+	}
+	if err := a.checkLocking(sel, sc, cols); err != nil {
+		return nil, err
+	}
+	return cols, nil
+}
+
+// orderOrGroupItem types an ORDER BY / GROUP BY item; a bare integer constant is an
+// output-column ordinal. Sorting or grouping compares values, so an indeterminate
+// collation is noted here (what names the clause).
+func (a *analyzer) orderOrGroupItem(n *pgparse.Node, sc *scope, cols []rteCol, what string) *Error {
+	if c := n.GetAConst(); c != nil {
+		if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
+			i := int(iv.Ival.Ival)
+			if i < 1 || i > len(cols) {
+				return errAt(codeInvalidColumnRef, loc(n), "%s position %d is not in select list", what, i)
+			}
+			if err := collConflictError(cols[i-1].coll, loc(n)); err != nil {
+				return err
+			}
+			return a.checkComparable(cols[i-1].typ, what, loc(n))
+		}
+	}
+	// an unqualified name may refer to an output column alias first
+	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
+		name := cr.Fields[0].GetString_().GetSval()
+		for _, c := range cols {
+			if c.name == name {
+				if err := collConflictError(c.coll, loc(n)); err != nil {
+					return err
+				}
+				return a.checkComparable(c.typ, what, loc(n))
+			}
+		}
+	}
+	e, err := a.analyzeExpr(n, sc)
+	if err != nil {
+		return err
+	}
+	if err := collConflictError(e.coll, loc(n)); err != nil {
+		return err
+	}
+	return a.checkComparable(e.typ, what, loc(n))
+}
+
+func (a *analyzer) boolClause(n *pgparse.Node, sc *scope, what string) *Error {
+	if n == nil {
+		return nil
+	}
+	if what == "WHERE" || what == "ON" || what == "JOIN/ON" {
+		where := "WHERE"
+		if what != "WHERE" {
+			where = "JOIN conditions"
+		}
+		if agg := a.aggregateIn(n); agg != nil && !a.outerLevelAggregate(agg, sc) {
+			return errAt(codeGroupingError, agg.Location, "aggregate functions are not allowed in %s", where)
+		}
+		if w := windowIn(n); w != nil {
+			return errAt(codeWindowingError, w.Location, "window functions are not allowed in %s", where)
+		}
+	}
+	e, err := a.analyzeExpr(n, sc)
+	if err != nil {
+		return err
+	}
+	if err := a.bind(e, catalog.Bool, loc(n)); err != nil {
+		return err
+	}
+	if !a.canCoerce(e.oid(), catalog.Bool, implicitCoercion) {
+		return errAt(codeDatatypeMismatch, loc(n), "argument of %s must be type boolean, not type %s", what, a.s.Types.Format(e.typ))
+	}
+	return nil
+}
+
+func isStar(cr *pgparse.ColumnRef) bool {
+	return len(cr.Fields) > 0 && cr.Fields[len(cr.Fields)-1].GetAStar() != nil
+}
+
+func (a *analyzer) expandStar(cr *pgparse.ColumnRef, sc *scope) ([]rteCol, *Error) {
+	if len(cr.Fields) == 1 {
+		var out []rteCol
+		for _, it := range sc.items {
+			out = append(out, it.expand()...)
+		}
+		if len(out) == 0 && len(sc.items) == 0 {
+			return nil, errAt(codeSyntaxError, cr.Location, "SELECT * with no tables specified is not valid")
+		}
+		a.useAll(out, cr.Location)
+		return out, nil
+	}
+	alias := cr.Fields[len(cr.Fields)-2].GetString_().GetSval()
+	r, err := sc.wholeRow(alias, cr.Location)
+	if err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, errAt(codeUndefinedTable, cr.Location, "missing FROM-clause entry for table %q", alias)
+	}
+	cols := r.expand() // j.* of an aliased join: its columns, USING ones merged
+	a.useAll(cols, cr.Location)
+	return cols, nil
+}
+
+func (a *analyzer) withClause(w *pgparse.WithClause, sc *scope) *Error {
+	if w.Recursive && len(w.Ctes) > 1 {
+		// every item sees every other: a reference cycle through two or more items is
+		// mutual recursion (makeDependencyGraph / TopologicalSort)
+		n := len(w.Ctes)
+		deps := make([][]int, n)
+		for i, cn := range w.Ctes {
+			for j, dn := range w.Ctes {
+				if i != j && (&recursionWalker{a: a, name: dn.GetCommonTableExpr().Ctename}).mentions(cn.GetCommonTableExpr().Ctequery) {
+					deps[i] = append(deps[i], j)
+				}
+			}
+		}
+		state := make([]int, n) // 0 unseen, 1 on the path, 2 done
+		var visit func(i int) bool
+		visit = func(i int) bool {
+			state[i] = 1
+			for _, j := range deps[i] {
+				if state[j] == 1 || state[j] == 0 && visit(j) {
+					return true
+				}
+			}
+			state[i] = 2
+			return false
+		}
+		for i := range w.Ctes {
+			if state[i] == 0 && visit(i) {
+				return errAt(codeFeatureNotSupported, w.Ctes[i].GetCommonTableExpr().Location, "mutual recursion between WITH items is not implemented")
+			}
+		}
+	}
+	pending := w.Ctes
+	for len(pending) > 0 {
+		var deferred []*pgparse.Node
+		var firstErr *Error
+		progress := false
+		for _, cn := range pending {
+			c := cn.GetCommonTableExpr()
+			err := a.defineCTE(c, w, sc)
+			if err == nil {
+				progress = true
+				continue
+			}
+			// WITH RECURSIVE lets a query name a CTE defined further down: try it after the rest
+			if w.Recursive && err.Code == codeUndefinedTable && a.namesLaterCTE(err, w) {
+				deferred = append(deferred, cn)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			return err
+		}
+		if !progress {
+			return firstErr
+		}
+		pending = deferred
+	}
+	return nil
+}
+
+// namesLaterCTE reports whether a "relation does not exist" error names one of w's CTEs.
+func (a *analyzer) namesLaterCTE(err *Error, w *pgparse.WithClause) bool {
+	for _, cn := range w.Ctes {
+		if strings.Contains(err.Message, "\""+cn.GetCommonTableExpr().Ctename+"\"") {
+			return true
+		}
+	}
+	return false
+}
+
+// defineCTE analyzes one WITH item and exposes it in sc.
+func (a *analyzer) defineCTE(c *pgparse.CommonTableExpr, w *pgparse.WithClause, sc *scope) *Error {
+	sel := c.Ctequery.GetSelectStmt()
+	if sel == nil {
+		// data-modifying CTE: its RETURNING rows are the CTE's columns
+		if a.selectDepth > 0 {
+			return errAt(codeFeatureNotSupported, c.Location, "WITH clause containing a data-modifying statement must be at the top level")
+		}
+		csc := newScope(sc)
+		var cols []rteCol
+		var err *Error
+		a.inDMLCTE = true
+		defer func() { a.inDMLCTE = false }()
+		switch st := c.Ctequery.Node.(type) {
+		case *pgparse.Node_InsertStmt:
+			cols, err = a.insertStmt(st.InsertStmt, csc)
+		case *pgparse.Node_UpdateStmt:
+			cols, err = a.updateStmt(st.UpdateStmt, csc)
+		case *pgparse.Node_DeleteStmt:
+			cols, err = a.deleteStmt(st.DeleteStmt, csc)
+		case *pgparse.Node_MergeStmt:
+			cols, err = a.mergeStmt(st.MergeStmt, csc)
+		default:
+			return errAt(codeFeatureNotSupported, c.Location, "unsupported CTE query %T", c.Ctequery.Node)
+		}
+		if w.Recursive && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+			return errAt(codeInvalidRecursion, c.Location, "recursive query %q must not contain data-modifying statements", c.Ctename)
+		}
+		if err != nil {
+			return err
+		}
+		a.dmlCTEs = append(a.dmlCTEs, c.Ctequery)
+		if err := a.checkCTEColumnList(c, cols); err != nil {
+			return err
+		}
+		sc.ctes[c.Ctename] = &cte{name: c.Ctename, cols: a.aliasCols(cols, c.Aliascolnames), noReturning: !hasReturning(c.Ctequery)}
+		return nil
+	}
+	def := &cte{name: c.Ctename, recursive: w.Recursive}
+	if w.Recursive && sel.Op == pgparse.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+		// the recursive union itself takes no ORDER BY / LIMIT / OFFSET / FOR UPDATE
+		switch {
+		case len(sel.SortClause) > 0:
+			return errAt(codeFeatureNotSupported, c.Location, "ORDER BY in a recursive query is not implemented")
+		case sel.LimitCount != nil:
+			return errAt(codeFeatureNotSupported, c.Location, "LIMIT in a recursive query is not implemented")
+		case sel.LimitOffset != nil:
+			return errAt(codeFeatureNotSupported, c.Location, "OFFSET in a recursive query is not implemented")
+		case len(sel.LockingClause) > 0 || sel.Rarg != nil && len(sel.Rarg.LockingClause) > 0 || sel.Larg != nil && len(sel.Larg.LockingClause) > 0:
+			return errAt(codeFeatureNotSupported, c.Location, "FOR UPDATE/SHARE in a recursive query is not implemented")
+		}
+		if (c.SearchClause != nil || c.CycleClause != nil) && sel.Larg != nil && sel.Larg.Op != pgparse.SetOperation_SETOP_NONE {
+			return errAt(codeFeatureNotSupported, c.Location, "with a SEARCH or CYCLE clause, the left side of the UNION must be a SELECT")
+		}
+	}
+	if w.Recursive && sel.Op != pgparse.SetOperation_SETOP_UNION && (&recursionWalker{a: a, name: c.Ctename}).mentions(c.Ctequery) {
+		return errAt(codeInvalidRecursion, c.Location, "recursive query %q does not have the form non-recursive-term UNION [ALL] recursive-term", c.Ctename)
+	}
+	if w.Recursive && sel.Op == pgparse.SetOperation_SETOP_UNION {
+		// the CTE may not be referenced from its non-recursive term, nor from a WITH nested
+		// in its body; expose it (forbidden) before either is analyzed
+		def.forbidden = true
+		sc.ctes[c.Ctename] = def
+		// a WITH on the whole recursive union is visible to both arms
+		armSc := sc
+		if sel.WithClause != nil {
+			armSc = newScope(sc)
+			if err := a.withClause(sel.WithClause, armSc); err != nil {
+				return err
+			}
+		}
+		left, err := a.selectStmt(sel.Larg, newScope(armSc))
+		if err != nil {
+			return err
+		}
+		def.forbidden = false
+		if err := a.checkCTEColumnList(c, left); err != nil {
+			return err
+		}
+		def.cols = a.aliasCols(left, c.Aliascolnames)
+		if err := a.checkRecursiveTerm(c.Ctename, selNode(sel.Rarg)); err != nil {
+			return err
+		}
+		if c.SearchClause != nil || c.CycleClause != nil {
+			if sel.Rarg != nil && sel.Rarg.Op != pgparse.SetOperation_SETOP_NONE {
+				return errAt(codeSyntaxError, c.Location, "with a SEARCH or CYCLE clause, the right side of the UNION must be a SELECT")
+			}
+			if rw := (&recursionWalker{a: a, name: c.Ctename}); rw.mentions(selNode(sel.Rarg)) && !rw.topLevelRef(sel.Rarg) {
+				return errAt(codeFeatureNotSupported, c.Location, "with a SEARCH or CYCLE clause, the recursive reference to WITH query %q must be at the top level of its right-hand SELECT", c.Ctename)
+			}
+			names := map[string]bool{}
+			for _, col := range def.cols {
+				names[col.name] = true
+			}
+			if sc2 := c.SearchClause; sc2 != nil {
+				seen := map[string]bool{}
+				for _, sn := range sc2.SearchColList {
+					n := sn.GetString_().GetSval()
+					if !names[n] {
+						return errAt(codeSyntaxError, sc2.Location, "search column %q not in WITH query column list", n)
+					}
+					if seen[n] {
+						return errAt(codeDuplicateColumn, sc2.Location, "search column %q specified more than once", n)
+					}
+					seen[n] = true
+				}
+			}
+			if cy := c.CycleClause; cy != nil {
+				seen := map[string]bool{}
+				for _, cn := range cy.CycleColList {
+					n := cn.GetString_().GetSval()
+					if !names[n] {
+						return errAt(codeSyntaxError, cy.Location, "cycle column %q not in WITH query column list", n)
+					}
+					if seen[n] {
+						return errAt(codeDuplicateColumn, cy.Location, "cycle column %q specified more than once", n)
+					}
+					seen[n] = true
+				}
+			}
+			if sc2 := c.SearchClause; sc2 != nil {
+				if names[sc2.SearchSeqColumn] {
+					return errAt(codeSyntaxError, sc2.Location, "search sequence column name %q already used in WITH query column list", sc2.SearchSeqColumn)
+				}
+				if cy := c.CycleClause; cy != nil {
+					if sc2.SearchSeqColumn == cy.CycleMarkColumn {
+						return errAt(codeSyntaxError, sc2.Location, "search sequence column name and cycle mark column name are the same")
+					}
+					if sc2.SearchSeqColumn == cy.CyclePathColumn {
+						return errAt(codeSyntaxError, sc2.Location, "search sequence column name and cycle path column name are the same")
+					}
+				}
+			}
+			if cy := c.CycleClause; cy != nil {
+				if names[cy.CycleMarkColumn] {
+					return errAt(codeSyntaxError, cy.Location, "cycle mark column name %q already used in WITH query column list", cy.CycleMarkColumn)
+				}
+				if names[cy.CyclePathColumn] {
+					return errAt(codeSyntaxError, cy.Location, "cycle path column name %q already used in WITH query column list", cy.CyclePathColumn)
+				}
+				if cy.CycleMarkColumn == cy.CyclePathColumn {
+					return errAt(codeSyntaxError, cy.Location, "cycle mark column name and cycle path column name are the same")
+				}
+			}
+		}
+		// SEARCH / CYCLE columns are visible to the recursive term (WHERE NOT is_cycle)
+		before := len(def.cols)
+		a.addSearchCycleCols(def, c, sc)
+		def.defining, def.hiddenCols = true, len(def.cols)-before
+		right, err := a.selectStmt(sel.Rarg, newScope(armSc))
+		def.defining = false
+		if err != nil {
+			return err
+		}
+		if len(right) != len(left) {
+			return errAt(codeSyntaxError, c.Location, "each UNION query must have the same number of columns")
+		}
+		for i := range left {
+			def.cols[i].nullable = def.cols[i].nullable || right[i].nullable
+			def.cols[i].src = nil
+			if lc, rc := left[i].coll, right[i].coll; lc.strength != collNone && lc.strength != collConflict && rc.strength != collNone && rc.strength != collConflict && lc.name != rc.name && lc.name != "" && rc.name != "" {
+				return errAt(codeCollationMismatch, c.Location, "recursive query %q column %d has collation %s in non-recursive term but collation %s overall",
+					c.Ctename, i+1, quoteColl(lc.name), quoteColl(rc.name))
+			}
+			// the CTE's column types are the non-recursive term's; the recursive term must
+			// not pull the union to a wider type (transformSetOperationTree's check)
+			lt, rt := left[i].typ.OID, right[i].typ.OID
+			if lt != catalog.Unknown && rt != catalog.Unknown && lt != rt {
+				if common, ok := a.commonType([]catalog.OID{lt, rt}); ok && common != lt {
+					return errAt(codeDatatypeMismatch, c.Location, "recursive query %q column %d has type %s in non-recursive term but type %s overall",
+						c.Ctename, i+1, a.s.Types.Format(left[i].typ), a.s.Types.Format(ref(common)))
+				}
+			} else if lt == rt && lt != catalog.Unknown && left[i].typ.Typmod != right[i].typ.Typmod && left[i].typ.Typmod >= 0 {
+				// same type, different typmod: the recursive term drops the typmod, so the
+				// non-recursive term's typmod cannot hold either (checkWellFormedRecursion)
+				return errAt(codeDatatypeMismatch, c.Location, "recursive query %q column %d has type %s in non-recursive term but type %s overall",
+					c.Ctename, i+1, a.s.Types.Format(left[i].typ), a.s.Types.Format(ref(lt)))
+			}
+		}
+		if cy := c.CycleClause; cy != nil {
+			if err := a.checkCycleTypes(cy, sc); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	csc := newScope(sc)
+	cols, err := a.selectStmt(sel, csc)
+	if err != nil {
+		return err
+	}
+	if err := a.checkCTEColumnList(c, cols); err != nil {
+		return err
+	}
+	def.cols = a.aliasCols(cols, c.Aliascolnames)
+	def.sub = &subquery{what: "CTE", sel: sel, sc: csc}
+	sc.ctes[c.Ctename] = def
+	return nil
+}
+
+// addSearchCycleCols appends the columns a SEARCH / CYCLE clause adds to a recursive CTE.
+func (a *analyzer) addSearchCycleCols(def *cte, c *pgparse.CommonTableExpr, sc *scope) {
+	{
+		if sc2 := c.SearchClause; sc2 != nil {
+			// SEARCH DEPTH FIRST ... SET seq is a record[] path, BREADTH FIRST a record
+			seq := ref(a.s.Types.ArrayOf(catalog.Record))
+			if sc2.SearchBreadthFirst {
+				seq = ref(catalog.Record)
+			}
+			def.cols = append(def.cols, rteCol{name: sc2.SearchSeqColumn, typ: seq})
+		}
+		if cy := c.CycleClause; cy != nil {
+			mark := ref(catalog.Bool)
+			if cy.CycleMarkValue != nil {
+				// select_common_type of the mark value and default: both unknown is text
+				mark = ref(catalog.Text)
+				if me, err := a.analyzeExpr(cy.CycleMarkValue, newScope(sc)); err == nil && me.oid() != catalog.Unknown {
+					mark = me.typ
+				} else if de, err := a.analyzeExpr(cy.CycleMarkDefault, newScope(sc)); err == nil && de != nil && de.oid() != catalog.Unknown {
+					mark = de.typ
+				}
+			}
+			def.cols = append(def.cols, rteCol{name: cy.CycleMarkColumn, typ: mark}, rteCol{name: cy.CyclePathColumn, typ: ref(a.s.Types.ArrayOf(catalog.Record))})
+		}
+	}
+}
+
+func (a *analyzer) aliasCols(cols []rteCol, aliases []*pgparse.Node) []rteCol {
+	out := make([]rteCol, len(cols))
+	copy(out, cols)
+	for i, n := range aliases {
+		if i < len(out) {
+			out[i].name = n.GetString_().GetSval()
+		}
+	}
+	return out
+}
+
+func (a *analyzer) setOp(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Error) {
+	// each arm keeps its unknown literals (select null, 42 union all select x, y): the
+	// common type of the pair types them, text only when every arm is unknown
+	a.keepUnknown = true
+	left, err := a.selectStmt(sel.Larg, newScope(sc))
+	if err != nil {
+		return nil, err
+	}
+	a.keepUnknown = true
+	right, err := a.selectStmt(sel.Rarg, newScope(sc))
+	if err != nil {
+		return nil, err
+	}
+	if len(left) != len(right) {
+		return nil, errAt(codeSyntaxError, -1, "each %s query must have the same number of columns", setOpName(sel.Op))
+	}
+	out := make([]rteCol, len(left))
+	for i := range left {
+		l, r := left[i], right[i]
+		t, ok := a.commonType([]catalog.OID{l.typ.OID, r.typ.OID})
+		if !ok {
+			return nil, errAt(codeDatatypeMismatch, -1, "%s types %s and %s cannot be matched", setOpName(sel.Op), a.s.Types.Format(l.typ), a.s.Types.Format(r.typ))
+		}
+		typmod := int32(-1)
+		if l.typ.OID == r.typ.OID && l.typ.Typmod == r.typ.Typmod {
+			typmod = l.typ.Typmod
+		}
+		// an arm's untyped literal is read by the common type's input function
+		for j, arm := range []*pgparse.SelectStmt{sel.Larg, sel.Rarg} {
+			if [2]catalog.OID{l.typ.OID, r.typ.OID}[j] != catalog.Unknown || t == catalog.Unknown {
+				continue
+			}
+			if c := armLiteral(arm, i); c != nil {
+				if err := a.validateLiteral(c.GetSval().GetSval(), t, c.Location); err != nil {
+					return nil, err
+				}
+			}
+		}
+		t = a.domainUnify([]*expr{{typ: l.typ, lit: l.lit}, {typ: r.typ, lit: r.lit}}, t, -1, setOpName(sel.Op))
+		coll, err := a.setOpColl(l.coll, r.coll, sel.Op, sel.All)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit, coll: a.resultColl(coll, t)}
+	}
+	// ORDER BY on the whole set operation names output columns (or their numbers) only
+	for _, sn := range sel.SortClause {
+		n := sn.GetSortBy().GetNode()
+		if c := n.GetAConst(); c != nil {
+			if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
+				if i := int(iv.Ival.Ival); i < 1 || i > len(out) {
+					return nil, errAt(codeInvalidColumnRef, c.Location, "ORDER BY position %d is not in select list", i)
+				}
+				continue
+			}
+		}
+		if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 && cr.Fields[0].GetString_() != nil {
+			name := cr.Fields[0].GetString_().GetSval()
+			found := false
+			for _, c := range out {
+				found = found || c.name == name
+			}
+			if !found {
+				return nil, errAt(codeUndefinedColumn, cr.Location, "column %q does not exist", name)
+			}
+			continue
+		}
+		return nil, errAt(codeFeatureNotSupported, loc(n), "invalid %s ORDER BY clause", "UNION/INTERSECT/EXCEPT")
+	}
+	// LIMIT on the whole set operation
+	for _, lim := range []*pgparse.Node{sel.LimitCount, sel.LimitOffset} {
+		if lim == nil {
+			continue
+		}
+		a.srfBan = "LIMIT"
+		e, err := a.analyzeExpr(lim, sc)
+		a.srfBan = ""
+		if err != nil {
+			return nil, err
+		}
+		if err := a.bind(e, catalog.Int8, loc(lim)); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// armLiteral is the string constant at position i of a plain SELECT arm's target list
+// (nil when the arm is anything else, or a * makes the position uncertain).
+func armLiteral(sel *pgparse.SelectStmt, i int) *pgparse.A_Const {
+	if sel == nil || sel.Op != pgparse.SetOperation_SETOP_NONE || len(sel.ValuesLists) > 0 || i >= len(sel.TargetList) {
+		return nil
+	}
+	for _, tn := range sel.TargetList {
+		if cr := tn.GetResTarget().GetVal().GetColumnRef(); cr != nil && isStar(cr) {
+			return nil
+		}
+	}
+	if c := sel.TargetList[i].GetResTarget().GetVal().GetAConst(); c != nil && c.GetSval() != nil {
+		return c
+	}
+	return nil
+}
+
+func setOpName(op pgparse.SetOperation) string {
+	switch op {
+	case pgparse.SetOperation_SETOP_INTERSECT:
+		return "INTERSECT"
+	case pgparse.SetOperation_SETOP_EXCEPT:
+		return "EXCEPT"
+	}
+	return "UNION"
+}
+
+func (a *analyzer) values(lists []*pgparse.Node, sc *scope) ([]rteCol, *Error) {
+	var rows [][]*expr
+	for _, ln := range lists {
+		// transformExpressionList: t.* in a VALUES row expands to t's columns (none for a
+		// zero-column table)
+		var row []*expr
+		for _, it := range ln.GetList().GetItems() {
+			if cr := it.GetColumnRef(); cr != nil && isStar(cr) && len(cr.Fields) > 1 {
+				cols, err := a.expandStar(cr, sc)
+				if err != nil {
+					return nil, err
+				}
+				for _, c := range cols {
+					row = append(row, &expr{typ: c.typ, nullable: c.nullable, src: c.src, fields: c.fields, coll: c.coll.asVar(), node: it})
+				}
+				continue
+			}
+			e, err := a.analyzeExpr(it, sc)
+			if err != nil {
+				return nil, err
+			}
+			row = append(row, e)
+		}
+		if len(rows) > 0 && len(row) != len(rows[0]) {
+			return nil, errAt(codeSyntaxError, -1, "VALUES lists must all be the same length")
+		}
+		rows = append(rows, row)
+	}
+	n := len(rows[0])
+	out := make([]rteCol, n)
+	for i := 0; i < n; i++ {
+		col := make([]*expr, len(rows))
+		for j := range rows {
+			col[j] = rows[j][i]
+		}
+		t, coll, err := a.unify(col, loc(col[0].node), "VALUES")
+		if err != nil {
+			return nil, err
+		}
+		nullable := false
+		for _, e := range col {
+			nullable = nullable || e.nullable
+		}
+		out[i] = rteCol{name: "column" + strconv.Itoa(i+1), typ: t, nullable: nullable, coll: coll}
+	}
+	return out, nil
+}
+
+// fromItem builds the rte for one FROM entry.
+func (a *analyzer) fromItem(n *pgparse.Node, sc *scope) (*rte, *Error) {
+	switch v := n.Node.(type) {
+	case *pgparse.Node_RangeVar:
+		rv := v.RangeVar
+		if rv.Schemaname == "" {
+			if c, def := sc.findCTEScope(rv.Relname); c != nil {
+				a.noteCTERef(def, rv.Location)
+				if c.forbidden {
+					return nil, errAt(codeInvalidRecursion, rv.Location, "recursive reference to query %q must not appear within its non-recursive term", rv.Relname)
+				}
+				if c.noReturning {
+					return nil, errAt(codeFeatureNotSupported, rv.Location, "WITH query %q does not have a RETURNING clause", rv.Relname)
+				}
+				r := &rte{alias: rv.Relname, cols: append([]rteCol{}, c.cols...), sub: c.sub}
+				if c.defining {
+					r.noStar = c.hiddenCols
+				}
+				if rv.Alias != nil {
+					if rv.Alias.Aliasname != "" {
+						r.alias = rv.Alias.Aliasname
+					}
+					if len(rv.Alias.Colnames) > len(r.cols) {
+						return nil, errAt(codeInvalidColumnRef, rv.Location, "WITH query %q has %d columns available but %d columns specified", rv.Relname, len(r.cols), len(rv.Alias.Colnames))
+					}
+					for i, cn := range rv.Alias.Colnames {
+						if i < len(r.cols) {
+							r.cols[i].name = cn.GetString_().GetSval()
+						}
+					}
+				}
+				return r, nil
+			}
+		}
+		rel := a.s.Relation(rv.Schemaname, rv.Relname)
+		if rel == nil {
+			return nil, errAt(codeUndefinedTable, rv.Location, "relation %q does not exist", qualName(rv))
+		}
+		if rel.Kind == schema.View && a.s.ViewsRestricted() {
+			return nil, errAt(codeObjectNotInPrerequisiteState, -1, "access to non-system view %q is restricted", rel.Name)
+		}
+		return a.relationRTE(rel, rv.Alias, rv.Location)
+	case *pgparse.Node_RangeSubselect:
+		sub := v.RangeSubselect
+		if ss := sub.Subquery.GetSelectStmt(); ss != nil && ss.IntoClause != nil {
+			return nil, errAt(codeSyntaxError, ss.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
+		}
+		child := newScope(sc)
+		if !sub.Lateral {
+			// non-lateral subqueries cannot see sibling FROM items; they can see outer levels
+			child = newScope(sc.parent)
+			child.ctes = sc.ctes
+			for s := sc; s != nil; s = s.parent {
+				for k, c := range s.ctes {
+					if _, ok := child.ctes[k]; !ok {
+						child.ctes[k] = c
+					}
+				}
+			}
+		}
+		child.fromOf = sc.queryScope()
+		cols, err := a.selectStmt(sub.Subquery.GetSelectStmt(), child)
+		if err != nil {
+			return nil, err
+		}
+		if sub.Alias == nil {
+			sub.Alias = &pgparse.Alias{Aliasname: "unnamed_subquery"} // optional since PG 16
+		}
+		r := &rte{alias: sub.Alias.Aliasname, sub: &subquery{what: "subquery", sel: sub.Subquery.GetSelectStmt(), sc: child}}
+		if len(sub.Alias.Colnames) > len(cols) {
+			return nil, errAt(codeInvalidColumnRef, -1, "table %q has %d columns available but %d columns specified", sub.Alias.Aliasname, len(cols), len(sub.Alias.Colnames))
+		}
+		for i, c := range cols {
+			// PG traces column origins through subqueries and CTEs (but not views)
+			if i < len(sub.Alias.Colnames) {
+				c.name = sub.Alias.Colnames[i].GetString_().GetSval()
+			}
+			r.cols = append(r.cols, c)
+		}
+		return r, nil
+	case *pgparse.Node_RangeFunction:
+		return a.rangeFunction(v.RangeFunction, sc)
+	case *pgparse.Node_RangeTableFunc:
+		return a.xmlTable(v.RangeTableFunc, sc)
+	case *pgparse.Node_JoinExpr:
+		r, err := a.joinExpr(v.JoinExpr, sc)
+		if err != nil {
+			return nil, err
+		}
+		if ua := v.JoinExpr.JoinUsingAlias; ua != nil {
+			r.join.usingAlias = &rte{alias: ua.Aliasname, cols: r.join.usingCols}
+			if err := nameConflict([]*rte{r.join.left, r.join.right}, r.join.usingAlias); err != nil {
+				return nil, err
+			}
+		}
+		if al := v.JoinExpr.Alias; al != nil {
+			r.alias = al.Aliasname
+			if n := len(r.expand()); len(al.Colnames) > n {
+				return nil, errAt(codeInvalidColumnRef, -1, "join expression %q has %d columns available but %d columns specified", al.Aliasname, n, len(al.Colnames))
+			}
+			r.join.colAliases = strs(al.Colnames)
+		}
+		return r, nil
+	case *pgparse.Node_JsonTable:
+		return a.jsonTable(v.JsonTable, sc)
+	case *pgparse.Node_RangeTableSample:
+		ts := v.RangeTableSample
+		r, err := a.fromItem(ts.Relation, sc)
+		if err != nil {
+			return nil, err
+		}
+		if r.rel == nil || (r.rel.Kind != schema.Table && r.rel.Kind != schema.MatView) {
+			return nil, errAt(codeFeatureNotSupported, loc(ts.Relation), "TABLESAMPLE clause can only be applied to tables and materialized views")
+		}
+		// the built-in methods take a real (percentage / limit); REPEATABLE takes a double
+		for i, arg := range append(append([]*pgparse.Node{}, ts.Args...), ts.Repeatable) {
+			if arg == nil {
+				continue
+			}
+			want := catalog.Float4
+			if i == len(ts.Args) {
+				want = catalog.Float8
+			}
+			e, err := a.analyzeExpr(arg, sc)
+			if err != nil {
+				return nil, err
+			}
+			if err := a.bind(e, want, loc(arg)); err != nil {
+				return nil, err
+			}
+			if !a.canCoerce(e.oid(), want, assignmentCoercion) {
+				return nil, errAt(codeDatatypeMismatch, loc(arg), "TABLESAMPLE argument must be of type %s, not type %s", a.s.Types.Format(ref(want)), a.s.Types.Format(e.typ))
+			}
+		}
+		r.single = false
+		return r, nil
+	}
+	return nil, errAt(codeFeatureNotSupported, -1, "unsupported FROM item %T", n.Node)
+}
+
+func qualName(rv *pgparse.RangeVar) string {
+	if rv.Schemaname != "" {
+		return rv.Schemaname + "." + rv.Relname
+	}
+	return rv.Relname
+}
+
+func (a *analyzer) rangeFunction(rf *pgparse.RangeFunction, sc *scope) (*rte, *Error) {
+	if len(rf.Functions) > 1 {
+		// ROWS FROM (f1(), f2() AS (...)): the functions run in lockstep, columns side by side
+		r := &rte{alias: "rows_from"}
+		for _, fn := range rf.Functions {
+			items := fn.GetList().GetItems()
+			one := &pgparse.RangeFunction{Functions: []*pgparse.Node{fn}, Ordinality: false}
+			if len(items) > 1 {
+				one.Coldeflist = items[1].GetList().GetItems() // per-function column definition list
+			}
+			sub, err := a.rangeFunction(one, sc)
+			if err != nil {
+				return nil, err
+			}
+			r.cols = append(r.cols, sub.cols...)
+			r.single = r.single && sub.single
+		}
+		if rf.Alias != nil {
+			if rf.Alias.Aliasname != "" {
+				r.alias = rf.Alias.Aliasname
+			}
+			for i, cn := range rf.Alias.Colnames {
+				if i < len(r.cols) {
+					r.cols[i].name = cn.GetString_().GetSval()
+				}
+			}
+		}
+		if rf.Ordinality {
+			r.cols = append(r.cols, rteCol{name: "ordinality", typ: ref(catalog.Int8)})
+			applyColnames(r.cols, rf.Alias)
+		}
+		return r, nil
+	}
+	items := rf.Functions[0].GetList().GetItems()
+	fnode := items[0]
+	fc := fnode.GetFuncCall()
+	if fc != nil && len(fc.Args) > 1 && len(rf.Coldeflist) == 0 && (len(items) == 1 || len(items[1].GetList().GetItems()) == 0) {
+		if names := strs(fc.Funcname); names[len(names)-1] == "unnest" && (len(names) == 1 || names[0] == "pg_catalog") {
+			// unnest(a, b, ...) in FROM is shorthand for ROWS FROM (unnest(a), unnest(b), ...)
+			multi := &pgparse.RangeFunction{Alias: rf.Alias, Ordinality: rf.Ordinality, Lateral: rf.Lateral}
+			for _, arg := range fc.Args {
+				one := &pgparse.FuncCall{Funcname: fc.Funcname, Args: []*pgparse.Node{arg}, Location: fc.Location}
+				multi.Functions = append(multi.Functions, &pgparse.Node{Node: &pgparse.Node_List{List: &pgparse.List{Items: []*pgparse.Node{{Node: &pgparse.Node_FuncCall{FuncCall: one}}}}}})
+			}
+			return a.rangeFunction(multi, sc)
+		}
+	}
+	r := &rte{}
+	var cols []rteCol
+	scalar, outName := false, "" // a scalar result: its one column is named by the OUT parameter, the alias, or the function
+	coldefs := rf.Coldeflist
+	if len(items) > 1 && len(coldefs) == 0 {
+		coldefs = items[1].GetList().GetItems()
+	}
+	if fc == nil {
+		// e.g. a bare column reference or sublink used as a function-in-FROM (unnest of array column etc.)
+		e, err := a.analyzeExpr(fnode, sc)
+		if err != nil {
+			return nil, err
+		}
+		if len(coldefs) == 0 {
+			cols = []rteCol{{name: "?column?", typ: e.typ, nullable: true}}
+		}
+	} else {
+		a.inFromFunc = true
+		e, err := a.funcCall(fc, sc)
+		a.inFromFunc = false
+		if err != nil {
+			return nil, err
+		}
+		r.single = !a.lastFuncRetSet
+		names := strs(fc.Funcname)
+		fname := names[len(names)-1]
+		r.alias = fname
+		t := a.typ(e.typ.OID)
+		if t != nil && t.IsPolymorphic() {
+			return nil, errAt(codeDatatypeMismatch, fc.Location, "function %q in FROM has unsupported return type %s", fname, a.s.Types.Format(e.typ))
+		}
+		if t != nil && t.Kind == 'd' {
+			t = a.typ(a.baseType(t.OID)) // a domain over a composite expands like the composite
+		}
+		composite := t != nil && t.Kind == 'c' && a.relByRowType(t.OID) != nil
+		scalar = !composite && e.typ.OID != catalog.Record
+		outName = a.singleOutName()
+		switch {
+		case composite:
+			if len(coldefs) > 0 {
+				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is redundant for a function returning a named composite type")
+			}
+			rel := a.relByRowType(t.OID)
+			r.rowType = t.OID
+			for _, c := range rel.Columns {
+				// the rows are the table's rows: a column read here is a read of the
+				// table's column (a labelled column keeps its label through the function)
+				cols = append(cols, rteCol{name: c.Name, typ: c.Type, nullable: !c.NotNull, rowOf: &Source{Table: rel.FullName(), Column: c.Name}})
+			}
+		case e.typ.OID == catalog.Record && len(a.outParamCols()) > 0 && len(coldefs) > 0:
+			return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is redundant for a function with OUT parameters")
+		case e.typ.OID == catalog.Record:
+			// RETURNS TABLE / OUT params of a user function, or of a catalog function
+			// (jsonb_each, json_each_text, ...)
+			cols = a.outParamCols()
+			if len(cols) == 0 && len(coldefs) == 0 {
+				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is required for functions returning \"record\"")
+			}
+		default:
+			if len(coldefs) > 0 {
+				return nil, errAt(codeSyntaxError, fc.Location, "a column definition list is only allowed for functions returning \"record\"")
+			}
+			cols = []rteCol{{name: fname, typ: e.typ, nullable: true}}
+			if outName != "" {
+				cols[0].name = outName
+			}
+			r.scalarFn = true
+		}
+	}
+	for _, cd := range coldefs {
+		def := cd.GetColumnDef()
+		tr, err := a.s.ResolveType(def.TypeName)
+		if err != nil {
+			return nil, errAt(codeUndefinedObject, def.Location, "%v", err)
+		}
+		cols = append(cols, rteCol{name: def.Colname, typ: tr, nullable: true})
+	}
+	if rf.Alias != nil {
+		if rf.Alias.Aliasname != "" {
+			r.alias = rf.Alias.Aliasname
+		}
+		if n := len(cols); len(rf.Alias.Colnames) > n && !rf.Ordinality {
+			return nil, errAt(codeInvalidColumnRef, -1, "table %q has %d columns available but %d columns specified", r.alias, n, len(rf.Alias.Colnames))
+		}
+		for i, cn := range rf.Alias.Colnames {
+			if i < len(cols) {
+				cols[i].name = cn.GetString_().GetSval()
+			}
+		}
+		if len(rf.Alias.Colnames) == 0 && len(coldefs) == 0 && len(cols) == 1 && scalar && outName == "" {
+			// a scalar-returning function's alias names its single column too
+			// (chooseScalarFunctionAlias: a named OUT parameter wins over the alias)
+			cols[0].name = rf.Alias.Aliasname
+		}
+	}
+	if rf.Ordinality {
+		cols = append(cols, rteCol{name: "ordinality", typ: ref(catalog.Int8)})
+		applyColnames(cols, rf.Alias)
+	}
+	r.cols = cols
+	return r, nil
+}
+
+// applyColnames renames columns after an alias column list (AS t(a, b, c)).
+func applyColnames(cols []rteCol, alias *pgparse.Alias) {
+	if alias == nil {
+		return
+	}
+	for i, cn := range alias.Colnames {
+		if i < len(cols) {
+			cols[i].name = cn.GetString_().GetSval()
+		}
+	}
+}
+
+func (a *analyzer) joinExpr(j *pgparse.JoinExpr, sc *scope) (*rte, *Error) {
+	left, err := a.fromItem(j.Larg, sc)
+	if err != nil {
+		return nil, err
+	}
+	// the right side may be LATERAL and see the left side; per SQL:2008 the left side
+	// of a RIGHT / FULL join is in scope there but illegal to reference (42P10)
+	inner := newScope(sc)
+	inner.passthrough = true
+	inner.items = []*rte{left}
+	lateralOK := j.Jointype == pgparse.JoinType_JOIN_INNER || j.Jointype == pgparse.JoinType_JOIN_LEFT
+	setNoLateral(left, !lateralOK)
+	right, err := a.fromItem(j.Rarg, inner)
+	setNoLateral(left, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := nameConflict([]*rte{left}, right); err != nil {
+		return nil, err
+	}
+	// outer-join nullability
+	switch j.Jointype {
+	case pgparse.JoinType_JOIN_LEFT:
+		markNullable(right)
+	case pgparse.JoinType_JOIN_RIGHT:
+		markNullable(left)
+	case pgparse.JoinType_JOIN_FULL:
+		markNullable(left)
+		markNullable(right)
+	}
+	r := &rte{join: &joinInfo{left: left, right: right, jointype: j.Jointype, quals: j.Quals}}
+	// qualification / USING / NATURAL are checked in a scope holding both sides
+	both := newScope(sc)
+	both.passthrough = true
+	both.items = []*rte{left, right}
+	var using []string
+	if j.IsNatural {
+		lnames := map[string]bool{}
+		for _, c := range left.expand() {
+			lnames[c.name] = true
+		}
+		for _, c := range right.expand() {
+			if lnames[c.name] {
+				using = append(using, c.name)
+			}
+		}
+	} else {
+		using = strs(j.UsingClause)
+	}
+	for _, u := range using {
+		lc := left.find(u)
+		rc := right.find(u)
+		if len(lc) != 1 {
+			return nil, errAt(codeUndefinedColumn, -1, "column %q specified in USING clause does not exist in left table", u)
+		}
+		if len(rc) != 1 {
+			return nil, errAt(codeUndefinedColumn, -1, "column %q specified in USING clause does not exist in right table", u)
+		}
+		l, rr := &expr{typ: lc[0].typ, nullable: lc[0].nullable}, &expr{typ: rc[0].typ, nullable: rc[0].nullable}
+		if _, err := a.applyOperator("=", l, rr, -1, nil); err != nil {
+			return nil, err
+		}
+		merged := lc[0]
+		merged.nullable = lc[0].nullable && rc[0].nullable
+		if j.Jointype == pgparse.JoinType_JOIN_FULL {
+			merged.src = nil
+		}
+		if j.Jointype == pgparse.JoinType_JOIN_RIGHT {
+			merged = rc[0]
+		}
+		if a.baseType(lc[0].typ.OID) != a.baseType(rc[0].typ.OID) {
+			// sides of different types: the merged column is their common type, coerced
+			ct, _, err := a.unify([]*expr{l, rr}, -1, "JOIN/USING")
+			if err != nil {
+				return nil, err
+			}
+			merged.typ = ct
+			merged.src = nil
+		}
+		r.join.usingCols = append(r.join.usingCols, merged)
+	}
+	r.join.using = using
+	if j.Quals != nil {
+		if err := a.boolClause(j.Quals, both, "JOIN/ON"); err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+// ruleRestrictions are the rewriter's refusals for a write on a relation with rules: a
+// RETURNING clause when the unconditional DO INSTEAD rule taking the write has none, and
+// any rule other than one unconditional DO INSTEAD INSERT / UPDATE / DELETE when the write
+// is a data-modifying WITH item.
+func (a *analyzer) ruleRestrictions(orig *schema.Relation, event string, returning bool) *Error {
+	if returning && orig.RuleNoReturning[event] {
+		return errAt(codeFeatureNotSupported, -1, "cannot perform %s RETURNING on relation %q", strings.ToUpper(event), orig.Name)
+	}
+	if a.inDMLCTE && orig.RuleCTEUnsupported[event] {
+		return errAt(codeFeatureNotSupported, -1, "rules are not supported for data-modifying statements in WITH")
+	}
+	return nil
+}
+
+func markNullable(r *rte) {
+	if r.join != nil {
+		markNullable(r.join.left)
+		markNullable(r.join.right)
+		for i := range r.join.usingCols {
+			r.join.usingCols[i].nullable = true
+		}
+		return
+	}
+	r.outerNullable = true
+	for i := range r.cols {
+		r.cols[i].nullable = true
+	}
+}
+
+// --- DML -------------------------------------------------------------------
+
+func (a *analyzer) targetRTE(rv *pgparse.RangeVar, sc *scope) (*schema.Relation, *rte, *Error) {
+	rel := a.s.Relation(rv.Schemaname, rv.Relname)
+	if rel == nil {
+		return nil, nil, errAt(codeUndefinedTable, rv.Location, "relation %q does not exist", qualName(rv))
+	}
+	if rel.Kind == schema.View && a.s.ViewsRestricted() {
+		return nil, nil, errAt(codeObjectNotInPrerequisiteState, -1, "access to non-system view %q is restricted", rel.Name)
+	}
+	r, err := a.relationRTE(rel, rv.Alias, rv.Location)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range a.refs {
+		if a.refs[i].Schema == rel.Schema && a.refs[i].Name == rel.Name {
+			a.refs[i].Target = true
+		}
+	}
+	r.target = true
+	a.writeLeaf = r
+	return rel, r, nil
+}
+
+// assign coerces a value expression to a target column in assignment context.
+func (a *analyzer) assign(e *expr, col *schema.Column, relName string, at int32) *Error {
+	if err := a.checkViewColumnWritable(col, at); err != nil {
+		return err
+	}
+	if col.Generated != nil && (e.node == nil || e.node.GetSetToDefault() == nil) {
+		if len(a.writeRecs) > 0 && a.writeRecs[len(a.writeRecs)-1].cmd == "update" {
+			return errAt(codeGeneratedAlways, at, "column %q can only be updated to DEFAULT", col.Name)
+		}
+		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
+	}
+	if a.viewDefault[col] && (col.Generated != nil || col.Identity == 'a') && e.node != nil && e.node.GetSetToDefault() != nil {
+		// rewriteTargetListIU: DEFAULT through a view becomes the view column's own
+		// default, which is a non-DEFAULT value for the base column
+		return errAt(codeGeneratedAlways, at, "cannot insert a non-DEFAULT value into column %q", col.Name)
+	}
+	a.assigned = append(a.assigned, assignment{rel: a.relByFullName(relName), col: col, e: e, w: len(a.writeRecs) - 1})
+	if e.param > 0 {
+		if _, done := a.paramSrc[e.param]; !done {
+			a.paramSrc[e.param] = &Source{Table: relName, Column: col.Name, NotNull: col.NotNull, Assigned: true}
+		}
+	}
+	if e.oid() == catalog.Unknown {
+		if err := a.bind(e, col.Type.OID, at); err != nil {
+			return err
+		}
+		if c := e.node.GetAConst(); c != nil {
+			if sv, ok := c.Val.(*pgparse.A_Const_Sval); ok {
+				// PG applies the length coercion at execution, not at parse time, so this
+				// never fails Prepare; it fails every execution, which is a note.
+				if err := a.validateAssignLength(sv.Sval.GetSval(), col.Type, c.Location); err != nil {
+					a.note(noteAlwaysFails, c.Location, err.Message+": every execution fails")
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	if !a.canCoerce(e.oid(), col.Type.OID, assignmentCoercion) {
+		if ct := a.typ(a.baseType(col.Type.OID)); e.oid() == catalog.Record && ct != nil && ct.Kind == 'c' {
+			// row(...) into a composite column: coerce_record_to_complex, field by field
+			if rel := relByRowType(a.s, ct.OID); rel != nil && (len(e.fields) == 0 || len(rel.Columns) == len(e.fields)) {
+				return nil
+			}
+		}
+		return errAt(codeDatatypeMismatch, at, "column %q is of type %s but expression is of type %s", col.Name, a.s.Types.Format(col.Type), a.s.Types.Format(e.typ))
+	}
+	a.domainAssign(e, col.Type.OID, relName, col.Name, at)
+	return nil
+}
+
+// returning analyzes a RETURNING clause over sc, the scope of the rows the statement wrote.
+// From PostgreSQL 18 the clause may refer to the row before and after the write as old and
+// new (or as the aliases of RETURNING WITH (OLD AS o, NEW AS n)); oldAbsent / newAbsent say
+// which of the two does not exist for some of the rows (old in an INSERT, new in a DELETE),
+// making its columns and its whole row nullable.
+func (a *analyzer) returning(rc *pgparse.ReturningClause, sc *scope, target *rte, oldAbsent, newAbsent bool) ([]rteCol, *Error) {
+	list := rc.GetExprs()
+	if len(list) == 0 {
+		return nil, nil
+	}
+	if target != nil && a.s.Version.Or() >= pgparse.PG18 {
+		oldName, newName := "old", "new"
+		var oldLoc, newLoc int32
+		explicitOld, explicitNew := false, false
+		for _, on := range rc.GetOptions() {
+			o := on.GetReturningOption()
+			switch o.GetOption() {
+			case pgparse.ReturningOptionKind_RETURNING_OPTION_OLD:
+				if explicitOld {
+					return nil, errAt(codeSyntaxError, o.Location, "OLD cannot be specified multiple times")
+				}
+				oldName, oldLoc, explicitOld = o.Value, o.Location, true
+			case pgparse.ReturningOptionKind_RETURNING_OPTION_NEW:
+				if explicitNew {
+					return nil, errAt(codeSyntaxError, o.Location, "NEW cannot be specified multiple times")
+				}
+				newName, newLoc, explicitNew = o.Value, o.Location, true
+			}
+		}
+		if explicitOld && explicitNew && oldName == newName {
+			return nil, errAt(codeDuplicateAlias, newLoc, "table name %q specified more than once", newName)
+		}
+		for _, v := range []struct {
+			name     string
+			loc      int32
+			explicit bool
+			absent   bool
+		}{{oldName, oldLoc, explicitOld, oldAbsent}, {newName, newLoc, explicitNew, newAbsent}} {
+			// a FROM item of the same name: the default alias steps aside for it, an alias
+			// the clause chose conflicts with it
+			if r, _ := sc.wholeRow(v.name, v.loc); r != nil {
+				if v.explicit {
+					return nil, errAt(codeDuplicateAlias, v.loc, "table name %q specified more than once", v.name)
+				}
+				continue
+			}
+			row := &rte{alias: v.name, cols: append([]rteCol{}, target.cols...), rowType: target.rowType, rel: target.rel, rowNullable: v.absent}
+			if v.absent {
+				for i := range row.cols {
+					row.cols[i].nullable = true
+					if src := row.cols[i].src; src != nil {
+						nullSrc := *src
+						nullSrc.NotNull = false
+						row.cols[i].src = &nullSrc
+					}
+				}
+			}
+			sc.retVars = append(sc.retVars, row)
+		}
+	}
+	for _, n := range list {
+		if w := windowIn(n.GetResTarget().GetVal()); w != nil {
+			return nil, errAt(codeWindowingError, w.Location, "window functions are not allowed in RETURNING")
+		}
+	}
+	sel := &pgparse.SelectStmt{TargetList: list}
+	a.srfBanNext = "RETURNING"
+	a.inReturning = true
+	defer func() { a.inReturning = false }()
+	cols, err := a.selectStmt(sel, sc)
+	if err == nil && len(cols) == 0 {
+		// every item was a * over a zero-column table
+		return nil, errAt(codeSyntaxError, list[0].GetResTarget().GetLocation(), "RETURNING must have at least one column")
+	}
+	return cols, err
+}
+
+func (a *analyzer) insertStmt(ins *pgparse.InsertStmt, sc *scope) ([]rteCol, *Error) {
+	if ins.WithClause != nil {
+		if err := a.withClause(ins.WithClause, sc); err != nil {
+			return nil, err
+		}
+	}
+	rel, target, err := a.writeTarget(ins.Relation, sc, "insert into")
+	if err != nil {
+		return nil, err
+	}
+	if orig := a.s.Relation(ins.Relation.Schemaname, ins.Relation.Relname); orig != nil {
+		if ins.OnConflictClause != nil && (orig.RuleEvents["insert"] || orig.RuleEvents["update"]) {
+			return nil, errAt(codeFeatureNotSupported, -1, "INSERT with ON CONFLICT clause cannot be used with table that has INSERT or UPDATE rules")
+		}
+		if err := a.ruleRestrictions(orig, "insert", len(ins.GetReturningClause().GetExprs()) > 0); err != nil {
+			return nil, err
+		}
+		if len(a.dmlCTEs) > 0 && orig.RuleInsertSelect["insert"] {
+			return nil, errAt(codeFeatureNotSupported, -1, "INSERT ... SELECT rule actions are not supported for queries having data-modifying statements in WITH")
+		}
+	}
+	var cols []*schema.Column
+	var indirect []bool // the target has subscripts / a field: DEFAULT is not allowed there
+	if len(ins.Cols) == 0 {
+		cols = rel.Columns
+		indirect = make([]bool, len(cols))
+		for _, c := range cols {
+			a.useColumn(rel, c, ins.Relation.Location)
+		}
+	} else {
+		for _, cn := range ins.Cols {
+			rt := cn.GetResTarget()
+			c := rel.Column(rt.Name)
+			if c == nil {
+				return nil, errAt(codeUndefinedColumn, rt.Location, "column %q of relation %q does not exist", rt.Name, rel.Name)
+			}
+			a.useColumn(rel, c, rt.Location)
+			if len(rt.Indirection) > 0 {
+				var err *Error
+				if c, err = a.indirectTarget(c, rt.Indirection, rt.Location); err != nil {
+					return nil, err
+				}
+			}
+			cols = append(cols, c)
+			indirect = append(indirect, len(rt.Indirection) > 0)
+		}
+	}
+	if err := a.checkDuplicateBase(cols); err != nil {
+		return nil, err
+	}
+	// a view column with its own default that the INSERT leaves out is assigned the
+	// default (rewriteTargetListIU), so it must be writable
+	listed := map[*schema.Column]bool{}
+	for _, c := range cols {
+		listed[c] = true
+	}
+	for _, c := range rel.Columns {
+		if !listed[c] && a.viewDefault[c] {
+			if err := a.checkViewColumnWritable(c, -1); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if ins.SelectStmt == nil {
+		// DEFAULT VALUES through a view: see assign
+		for _, c := range rel.Columns {
+			if a.viewDefault[c] && (c.Generated != nil || c.Identity == 'a') {
+				return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", c.Name)
+			}
+		}
+	}
+	if ins.SelectStmt != nil {
+		sel := ins.SelectStmt.GetSelectStmt()
+		a.inInsertValues = true
+		defer func() { a.inInsertValues = false }()
+		if sel.IntoClause != nil {
+			return nil, errAt(codeSyntaxError, sel.IntoClause.Rel.GetLocation(), "SELECT ... INTO is not allowed here")
+		}
+		if len(sel.ValuesLists) > 0 && sel.Op == pgparse.SetOperation_SETOP_NONE && len(sel.FromClause) == 0 {
+			// VALUES: coerce each expression directly to its column (assignment context)
+			for _, ln := range sel.ValuesLists {
+				items := ln.GetList().GetItems()
+				if len(items) > len(cols) {
+					return nil, errAt(codeSyntaxError, loc(items[len(cols)]), "INSERT has more expressions than target columns")
+				}
+				if len(items) < len(cols) && len(ins.Cols) > 0 {
+					return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
+				}
+				for i, it := range items {
+					if cols[i].Identity == 'a' && it.GetSetToDefault() == nil && ins.Override == pgparse.OverridingKind_OVERRIDING_NOT_SET {
+						return nil, errAt(codeGeneratedAlways, loc(it), "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+					}
+					if indirect[i] && it.GetSetToDefault() != nil {
+						return nil, errAt(codeFeatureNotSupported, loc(it), "cannot set an array element to DEFAULT")
+					}
+					e, err := a.analyzeExpr(it, sc)
+					if err != nil {
+						return nil, err
+					}
+					if err := a.assign(e, cols[i], rel.FullName(), loc(it)); err != nil {
+						return nil, err
+					}
+				}
+			}
+		} else {
+			a.insertSelScope = newScope(sc)
+			a.keepUnknown = true
+			src, err := a.selectStmt(sel, a.insertSelScope)
+			a.keepUnknown = false
+			if err != nil {
+				return nil, err
+			}
+			if len(src) > len(cols) {
+				return nil, errAt(codeSyntaxError, -1, "INSERT has more expressions than target columns")
+			}
+			for i := range src {
+				if cols[i].Identity == 'a' && ins.Override == pgparse.OverridingKind_OVERRIDING_NOT_SET {
+					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+				}
+			}
+			for i, c := range src {
+				e := &expr{typ: c.typ, nullable: c.nullable}
+				if err := a.assign(e, cols[i], rel.FullName(), -1); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	// ON CONFLICT
+	inner := newScope(sc)
+	inner.items = []*rte{target}
+	if oc := ins.OnConflictClause; oc != nil {
+		if oc.Infer != nil {
+			for _, ie := range oc.Infer.IndexElems {
+				if ex := ie.GetIndexElem().GetExpr(); ex != nil {
+					if _, err := a.analyzeExpr(ex, inner); err != nil {
+						return nil, err
+					}
+				} else if n := ie.GetIndexElem().GetName(); n != "" {
+					hits := target.find(n)
+					if len(hits) == 0 {
+						return nil, errAt(codeUndefinedColumn, oc.Infer.Location, "column %q does not exist", n)
+					}
+					a.use(hits[0].src, oc.Infer.Location)
+				}
+			}
+			if err := a.boolClause(oc.Infer.WhereClause, inner, "WHERE"); err != nil {
+				return nil, err
+			}
+		}
+		if oc.Action == pgparse.OnConflictAction_ONCONFLICT_UPDATE {
+			if oc.Infer == nil {
+				return nil, errAt(codeSyntaxError, oc.Location, "ON CONFLICT DO UPDATE requires inference specification or constraint name")
+			}
+			excluded := &rte{alias: "excluded", cols: append([]rteCol{}, target.cols...)}
+			for i := range excluded.cols {
+				excluded.cols[i].src = nil
+				excluded.cols[i].nullable = true
+			}
+			upd := newScope(sc)
+			upd.items = []*rte{target, excluded}
+			// the DO UPDATE is an update of the existing row: its own write, so an
+			// obligation `on update` sees it
+			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: target, cmd: "update", inWith: a.inDMLCTE})
+			if err := a.setClause(oc.TargetList, rel, upd); err != nil {
+				return nil, err
+			}
+			if err := a.boolClause(oc.WhereClause, upd, "WHERE"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// old is the row an ON CONFLICT DO UPDATE replaced, and NULL for a row that was inserted
+	return a.returning(ins.ReturningClause, inner, target, true, false)
+}
+
+func (a *analyzer) setClause(targets []*pgparse.Node, rel *schema.Relation, sc *scope) *Error {
+	// SET (a, b) = (x, y) / (SELECT ...): one source, analyzed once, one value per column
+	sources := map[*pgparse.Node][]*expr{}
+	assignedCols := map[string]bool{}
+	var plain []*schema.Column
+	for _, tn := range targets {
+		t := tn.GetResTarget()
+		col := rel.Column(t.Name)
+		if col == nil {
+			return errAt(codeUndefinedColumn, t.Location, "column %q of relation %q does not exist", t.Name, rel.Name)
+		}
+		a.useColumn(rel, col, t.Location)
+		if len(t.Indirection) == 0 {
+			if assignedCols[t.Name] {
+				return errAt(codeSyntaxError, t.Location, "multiple assignments to same column %q", t.Name)
+			}
+			assignedCols[t.Name] = true
+			plain = append(plain, col)
+			if err := a.checkDuplicateBase(plain); err != nil {
+				return err
+			}
+		}
+		if col.Identity == 'a' && t.Val.GetSetToDefault() == nil {
+			return errAt(codeGeneratedAlways, t.Location, "column %q can only be updated to DEFAULT", col.Name)
+		}
+		if len(t.Indirection) > 0 {
+			var err *Error
+			if t.Val.GetSetToDefault() != nil {
+				if t.Indirection[0].GetString_() != nil {
+					return errAt(codeFeatureNotSupported, t.Location, "cannot set a subfield to DEFAULT")
+				}
+				return errAt(codeFeatureNotSupported, t.Location, "cannot set an array element to DEFAULT")
+			}
+			if col, err = a.indirectTarget(col, t.Indirection, t.Location); err != nil {
+				return err
+			}
+		}
+		var e *expr
+		if ma := t.Val.GetMultiAssignRef(); ma != nil {
+			vals, ok := sources[ma.Source]
+			if !ok {
+				var err *Error
+				if vals, err = a.multiAssignSource(ma.Source, int(ma.Ncolumns), sc); err != nil {
+					return err
+				}
+				sources[ma.Source] = vals
+			}
+			e = vals[ma.Colno-1]
+		} else {
+			var err *Error
+			if e, err = a.analyzeExpr(t.Val, sc); err != nil {
+				return err
+			}
+		}
+		if err := a.assign(e, col, rel.FullName(), loc(t.Val)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// multiAssignSource types the right-hand side of SET (a, b, ...) = source: a row of
+// expressions, or a subquery whose columns are taken as the values.
+func (a *analyzer) multiAssignSource(src *pgparse.Node, n int, sc *scope) ([]*expr, *Error) {
+	if row := src.GetRowExpr(); row != nil {
+		if len(row.Args) == 1 && row.Args[0].GetColumnRef() != nil && len(row.Args[0].GetColumnRef().Fields) > 0 &&
+			row.Args[0].GetColumnRef().Fields[len(row.Args[0].GetColumnRef().Fields)-1].GetAStar() != nil {
+			// ROW(t.*): the row's fields are the values
+			e, err := a.analyzeExpr(row.Args[0], sc)
+			if err != nil {
+				return nil, err
+			}
+			if len(e.fields) != n {
+				return nil, errAt(codeSyntaxError, loc(src), "number of columns does not match number of values")
+			}
+			var out []*expr
+			for _, f := range e.fields {
+				out = append(out, &expr{typ: f.typ, nullable: f.nullable, src: f.src})
+			}
+			return out, nil
+		}
+		if len(row.Args) != n {
+			return nil, errAt(codeSyntaxError, loc(src), "number of columns does not match number of values")
+		}
+		return a.analyzeList(row.Args, sc)
+	}
+	if sl := src.GetSubLink(); sl != nil {
+		sel := sl.Subselect.GetSelectStmt()
+		if sel == nil {
+			return nil, errAt(codeFeatureNotSupported, sl.Location, "unsupported subquery")
+		}
+		cols, err := a.selectStmt(sel, newScope(sc))
+		if err != nil {
+			return nil, err
+		}
+		if len(cols) != n {
+			return nil, errAt(codeSyntaxError, sl.Location, "number of columns does not match number of values")
+		}
+		out := make([]*expr, len(cols))
+		for i, c := range cols {
+			out[i] = &expr{typ: c.typ, nullable: true, coll: c.coll.asVar(), lit: c.lit}
+		}
+		return out, nil
+	}
+	return nil, errAt(codeFeatureNotSupported, loc(src), "unsupported multi-column assignment source %T", src.Node)
+}
+
+func (a *analyzer) updateStmt(upd *pgparse.UpdateStmt, sc *scope) ([]rteCol, *Error) {
+	if upd.WithClause != nil {
+		if err := a.withClause(upd.WithClause, sc); err != nil {
+			return nil, err
+		}
+	}
+	rel, target, err := a.writeTarget(upd.Relation, sc, "update")
+	if err != nil {
+		return nil, err
+	}
+	if orig := a.s.Relation(upd.Relation.Schemaname, upd.Relation.Relname); orig != nil {
+		if err := a.ruleRestrictions(orig, "update", len(upd.GetReturningClause().GetExprs()) > 0); err != nil {
+			return nil, err
+		}
+	}
+	// the FROM items may not reference the target (a LATERAL item would; a plain
+	// subquery cannot see it anyway)
+	sc.items = append(sc.items, target)
+	setNoLateral(target, true)
+	for _, item := range upd.FromClause {
+		r, err := a.fromItem(item, sc)
+		if err != nil {
+			setNoLateral(target, false)
+			return nil, err
+		}
+		if err := nameConflict(sc.items, r); err != nil {
+			return nil, err
+		}
+		sc.items = append(sc.items, r)
+	}
+	setNoLateral(target, false)
+	a.srfBan = "UPDATE"
+	err = a.setClause(upd.TargetList, rel, sc)
+	a.srfBan = ""
+	if err != nil {
+		return nil, err
+	}
+	if err := a.boolClause(upd.WhereClause, sc, "WHERE"); err != nil {
+		return nil, err
+	}
+	a.recordFixed(sc, upd.WhereClause)
+	return a.returning(upd.ReturningClause, sc, target, false, false)
+}
+
+func (a *analyzer) deleteStmt(del *pgparse.DeleteStmt, sc *scope) ([]rteCol, *Error) {
+	if del.WithClause != nil {
+		if err := a.withClause(del.WithClause, sc); err != nil {
+			return nil, err
+		}
+	}
+	_, target, err := a.writeTarget(del.Relation, sc, "delete from")
+	if err != nil {
+		return nil, err
+	}
+	if orig := a.s.Relation(del.Relation.Schemaname, del.Relation.Relname); orig != nil {
+		if err := a.ruleRestrictions(orig, "delete", len(del.GetReturningClause().GetExprs()) > 0); err != nil {
+			return nil, err
+		}
+	}
+	sc.items = append(sc.items, target)
+	setNoLateral(target, true)
+	for _, item := range del.UsingClause {
+		r, err := a.fromItem(item, sc)
+		if err != nil {
+			setNoLateral(target, false)
+			return nil, err
+		}
+		if err := nameConflict(sc.items, r); err != nil {
+			setNoLateral(target, false)
+			return nil, err
+		}
+		sc.items = append(sc.items, r)
+	}
+	setNoLateral(target, false)
+	if err := a.boolClause(del.WhereClause, sc, "WHERE"); err != nil {
+		return nil, err
+	}
+	a.recordFixed(sc, del.WhereClause)
+	return a.returning(del.ReturningClause, sc, target, false, true)
+}
+
+// figureColname implements PG's FigureColname for unaliased target entries.
+func (a *analyzer) figureColname(n *pgparse.Node) string {
+	if name := a.figureColnameInternal(n); name != "" {
+		return name
+	}
+	return "?column?"
+}
+
+func (a *analyzer) figureColnameInternal(n *pgparse.Node) string {
+	name, _ := a.figureColnameStrength(n)
+	return name
+}
+
+// figureColnameStrength is FigureColnameInternal: the name and how strongly the node
+// claims it (2 a real name, 1 a fallback such as a cast's type name, 0 none). A cast
+// only names the column when what it casts has no strong name of its own.
+func (a *analyzer) figureColnameStrength(n *pgparse.Node) (string, int) {
+	switch v := n.Node.(type) {
+	case *pgparse.Node_ColumnRef:
+		f := v.ColumnRef.Fields
+		for i := len(f) - 1; i >= 0; i-- {
+			if s := f[i].GetString_(); s != nil {
+				return s.Sval, 2
+			}
+		}
+	case *pgparse.Node_AIndirection:
+		ind := v.AIndirection.Indirection
+		for i := len(ind) - 1; i >= 0; i-- {
+			if s := ind[i].GetString_(); s != nil {
+				return s.Sval, 2
+			}
+			if ind[i].GetAIndices() != nil {
+				continue
+			}
+		}
+		return a.figureColnameStrength(v.AIndirection.Arg)
+	case *pgparse.Node_FuncCall:
+		names := strs(v.FuncCall.Funcname)
+		return names[len(names)-1], 2
+	case *pgparse.Node_TypeCast:
+		inner, strength := a.figureColnameStrength(v.TypeCast.Arg)
+		if strength > 1 {
+			return inner, strength
+		}
+		if v.TypeCast.TypeName != nil {
+			names := strs(v.TypeCast.TypeName.Names)
+			return names[len(names)-1], 1
+		}
+		return inner, strength
+	case *pgparse.Node_CollateClause:
+		return a.figureColnameStrength(v.CollateClause.Arg)
+	case *pgparse.Node_CaseExpr:
+		if v.CaseExpr.Defresult != nil {
+			if inner, strength := a.figureColnameStrength(v.CaseExpr.Defresult); strength > 0 {
+				return inner, strength
+			}
+		}
+		return "case", 1
+	case *pgparse.Node_AArrayExpr:
+		return "array", 2
+	case *pgparse.Node_RowExpr:
+		return "row", 2
+	case *pgparse.Node_AExpr:
+		if v.AExpr.Kind == pgparse.A_Expr_Kind_AEXPR_NULLIF {
+			return "nullif", 2
+		}
+	case *pgparse.Node_SubLink:
+		switch v.SubLink.SubLinkType {
+		case pgparse.SubLinkType_EXISTS_SUBLINK:
+			return "exists", 2
+		case pgparse.SubLinkType_ARRAY_SUBLINK:
+			return "array", 2
+		case pgparse.SubLinkType_EXPR_SUBLINK:
+			sel := v.SubLink.Subselect.GetSelectStmt()
+			for sel != nil && sel.Op != pgparse.SetOperation_SETOP_NONE {
+				sel = sel.Larg // a set operation is named by its left arm
+			}
+			if sel != nil && len(sel.ValuesLists) > 0 {
+				return "column1", 2
+			}
+			if sel != nil && len(sel.TargetList) == 1 {
+				t := sel.TargetList[0].GetResTarget()
+				if t.Name != "" {
+					return t.Name, 2
+				}
+				return a.figureColnameStrength(t.Val)
+			}
+		}
+	case *pgparse.Node_SqlvalueFunction:
+		s := strings.ToLower(strings.TrimPrefix(v.SqlvalueFunction.Op.String(), "SVFOP_"))
+		return strings.TrimSuffix(s, "_n"), 2
+	case *pgparse.Node_GroupingFunc:
+		return "grouping", 2
+	case *pgparse.Node_NamedArgExpr:
+		return a.figureColnameStrength(v.NamedArgExpr.Arg)
+	case *pgparse.Node_CoalesceExpr:
+		return "coalesce", 2
+	case *pgparse.Node_MinMaxExpr:
+		if v.MinMaxExpr.Op == pgparse.MinMaxOp_IS_LEAST {
+			return "least", 2
+		}
+		return "greatest", 2
+	case *pgparse.Node_MergeSupportFunc:
+		return "merge_action", 2
+	case *pgparse.Node_XmlExpr:
+		switch v.XmlExpr.Op {
+		case pgparse.XmlExprOp_IS_XMLCONCAT:
+			return "xmlconcat", 2
+		case pgparse.XmlExprOp_IS_XMLELEMENT:
+			return "xmlelement", 2
+		case pgparse.XmlExprOp_IS_XMLFOREST:
+			return "xmlforest", 2
+		case pgparse.XmlExprOp_IS_XMLPARSE:
+			return "xmlparse", 2
+		case pgparse.XmlExprOp_IS_XMLPI:
+			return "xmlpi", 2
+		case pgparse.XmlExprOp_IS_XMLROOT:
+			return "xmlroot", 2
+		case pgparse.XmlExprOp_IS_XMLSERIALIZE:
+			return "xmlserialize", 2
+		case pgparse.XmlExprOp_IS_DOCUMENT:
+			return "", 0 // ?column?
+		}
+	case *pgparse.Node_XmlSerialize:
+		return "xmlserialize", 2
+	case *pgparse.Node_JsonParseExpr:
+		return "json", 2
+	case *pgparse.Node_JsonScalarExpr:
+		return "json_scalar", 2
+	case *pgparse.Node_JsonSerializeExpr:
+		return "json_serialize", 2
+	case *pgparse.Node_JsonObjectConstructor:
+		return "json_object", 2
+	case *pgparse.Node_JsonArrayConstructor, *pgparse.Node_JsonArrayQueryConstructor:
+		return "json_array", 2
+	case *pgparse.Node_JsonObjectAgg:
+		return "json_objectagg", 2
+	case *pgparse.Node_JsonArrayAgg:
+		return "json_arrayagg", 2
+	case *pgparse.Node_JsonFuncExpr:
+		switch v.JsonFuncExpr.Op {
+		case pgparse.JsonExprOp_JSON_EXISTS_OP:
+			return "json_exists", 2
+		case pgparse.JsonExprOp_JSON_QUERY_OP:
+			return "json_query", 2
+		case pgparse.JsonExprOp_JSON_VALUE_OP:
+			return "json_value", 2
+		}
+	}
+	return "", 0
+}
+
+// noteEnumSort flags ORDER BY on an enum: it sorts by declaration order, which surprises
+// readers expecting the labels' alphabetical order (advisory).
+func (a *analyzer) noteEnumSort(n *pgparse.Node, sc *scope, cols []rteCol) {
+	var typ schema.TypeRef
+	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
+		name := cr.Fields[0].GetString_().GetSval()
+		for _, c := range cols {
+			if c.name == name {
+				typ = c.typ
+			}
+		}
+	}
+	if typ.OID == 0 {
+		if cr := n.GetColumnRef(); cr != nil {
+			saved := len(a.notes)
+			e, err := a.columnRef(cr, sc)
+			a.notes = a.notes[:saved]
+			if err != nil {
+				return
+			}
+			typ = e.typ
+		}
+	}
+	if t := a.typ(a.baseType(typ.OID)); t != nil && t.Kind == 'e' {
+		a.note(noteEnumOrder, loc(n), "ORDER BY enum "+t.Name+" sorts in declaration order, not alphabetically")
+	}
+}
+
+// callStmt analyzes CALL procedure(args): the arguments bind like a function call and
+// the OUT / INOUT parameters come back as one result row.
+func (a *analyzer) callStmt(call *pgparse.CallStmt, sc *scope) ([]rteCol, *Error) {
+	a.inCall = true
+	e, err := a.funcCall(call.Funccall, sc)
+	a.inCall = false
+	if err != nil {
+		return nil, err
+	}
+	_ = e
+	fn := a.lastUserFunc
+	if fn == nil || !fn.IsProc {
+		names := strs(call.Funccall.Funcname)
+		return nil, errAt(codeWrongObjectType, call.Funccall.Location, "%s is not a procedure", names[len(names)-1])
+	}
+	var cols []rteCol
+	for _, arg := range fn.Args {
+		if arg.Mode == 'o' || arg.Mode == 'b' {
+			cols = append(cols, rteCol{name: arg.Name, typ: arg.Type, nullable: true})
+		}
+	}
+	return cols, nil
+}
+
+// mergeStmt analyzes MERGE INTO target USING source ON cond WHEN ... (PG 15; RETURNING and
+// WHEN NOT MATCHED BY SOURCE are PG 17). A WHEN MATCHED / NOT MATCHED BY SOURCE action
+// sees both relations, a WHEN NOT MATCHED [BY TARGET] action sees the source only.
+func (a *analyzer) mergeStmt(m *pgparse.MergeStmt, sc *scope) ([]rteCol, *Error) {
+	if m.WithClause != nil {
+		if m.WithClause.Recursive {
+			return nil, errAt(codeSyntaxError, -1, "WITH RECURSIVE is not supported for MERGE statement")
+		}
+		if err := a.withClause(m.WithClause, sc); err != nil {
+			return nil, err
+		}
+	}
+	writes := false
+	for _, wn := range m.MergeWhenClauses {
+		if wn.GetMergeWhenClause().CommandType != pgparse.CmdType_CMD_NOTHING {
+			writes = true
+		}
+	}
+	var rel *schema.Relation
+	var target *rte
+	var err *Error
+	if writes {
+		if orig := a.s.Relation(m.Relation.Schemaname, m.Relation.Relname); orig != nil {
+			var actions []string
+			seen := map[string]bool{}
+			for _, wn := range m.MergeWhenClauses {
+				cmd := map[pgparse.CmdType]string{pgparse.CmdType_CMD_INSERT: "insert into", pgparse.CmdType_CMD_UPDATE: "update", pgparse.CmdType_CMD_DELETE: "delete from"}[wn.GetMergeWhenClause().CommandType]
+				if cmd != "" && !seen[cmd] {
+					seen[cmd] = true
+					actions = append(actions, cmd)
+				}
+			}
+			if err := a.mergeTargetCheck(orig, actions, m.Relation.Location); err != nil {
+				return nil, err
+			}
+		}
+		rel, target, err = a.writeTarget(m.Relation, sc, "merge into")
+	} else {
+		rel, target, err = a.targetRTE(m.Relation, sc)
+	}
+	if err != nil {
+		return nil, err
+	}
+	source, err := a.fromItem(m.SourceRelation, sc)
+	if err != nil {
+		return nil, err
+	}
+	if err := nameConflict([]*rte{target}, source); err != nil {
+		return nil, errAt(codeDuplicateAlias, -1, "name %q specified more than once", target.alias)
+	}
+	both := newScope(sc)
+	both.items = []*rte{target, source}
+	a.mergeScope = both
+	a.recordFacts(a.newProver(both, m.JoinCondition), sc, loc(m.JoinCondition))
+	srcOnly := newScope(sc)
+	srcOnly.items = []*rte{source}
+	tgtOnly := newScope(sc)
+	tgtOnly.items = []*rte{target}
+	if err := a.boolClause(m.JoinCondition, both, "ON"); err != nil {
+		return nil, err
+	}
+	a.inMerge = true
+	defer func() { a.inMerge = false }()
+	unconditional := map[pgparse.MergeMatchKind]bool{}
+	for _, wn := range m.MergeWhenClauses {
+		w := wn.GetMergeWhenClause()
+		if unconditional[w.MatchKind] {
+			return nil, errAt(codeSyntaxError, -1, "unreachable WHEN clause specified after unconditional WHEN clause")
+		}
+		if w.Condition == nil {
+			unconditional[w.MatchKind] = true
+		}
+		wsc := both
+		switch w.MatchKind {
+		case pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET:
+			wsc = srcOnly
+		case pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_SOURCE:
+			wsc = tgtOnly
+		}
+		a.mergeWhen = true
+		err := a.boolClause(w.Condition, wsc, "WHEN")
+		a.mergeWhen = false
+		if err != nil {
+			return nil, err
+		}
+		if cmd := map[pgparse.CmdType]string{pgparse.CmdType_CMD_INSERT: "insert into", pgparse.CmdType_CMD_UPDATE: "update", pgparse.CmdType_CMD_DELETE: "delete from"}[w.CommandType]; cmd != "" {
+			// each branch is a write of its own kind (facts: an obligation `on update` sees
+			// the UPDATE branch and not an INSERT-only MERGE)
+			a.writeRecs = append(a.writeRecs, writeRec{rel: rel, r: target, cmd: cmd, inWith: a.inDMLCTE})
+		}
+		switch w.CommandType {
+		case pgparse.CmdType_CMD_UPDATE:
+			if w.MatchKind == pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+				return nil, errAt(codeSyntaxError, -1, "UPDATE is not allowed in WHEN NOT MATCHED clause")
+			}
+			if err := a.setClause(w.TargetList, rel, wsc); err != nil {
+				return nil, err
+			}
+			a.mergeActions |= mergeUpdate
+		case pgparse.CmdType_CMD_DELETE:
+			if w.MatchKind == pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+				return nil, errAt(codeSyntaxError, -1, "DELETE is not allowed in WHEN NOT MATCHED clause")
+			}
+			a.mergeActions |= mergeDelete
+		case pgparse.CmdType_CMD_INSERT:
+			if w.MatchKind != pgparse.MergeMatchKind_MERGE_WHEN_NOT_MATCHED_BY_TARGET {
+				return nil, errAt(codeSyntaxError, -1, "INSERT is not allowed in WHEN MATCHED clause")
+			}
+			var cols []*schema.Column
+			if len(w.TargetList) == 0 {
+				cols = rel.Columns
+				for _, c := range cols {
+					a.useColumn(rel, c, m.Relation.Location)
+				}
+			}
+			for _, tn := range w.TargetList {
+				rt := tn.GetResTarget()
+				c := rel.Column(rt.Name)
+				if c == nil {
+					return nil, errAt(codeUndefinedColumn, rt.Location, "column %q of relation %q does not exist", rt.Name, rel.Name)
+				}
+				a.useColumn(rel, c, rt.Location)
+				cols = append(cols, c)
+				a.mergeInserted = append(a.mergeInserted, c.Name)
+			}
+			if len(w.TargetList) == 0 && len(w.Values) > 0 {
+				for _, c := range rel.Columns {
+					a.mergeInserted = append(a.mergeInserted, c.Name)
+				}
+			}
+			if len(w.Values) > len(cols) {
+				return nil, errAt(codeSyntaxError, loc(w.Values[len(cols)]), "INSERT has more expressions than target columns")
+			}
+			if len(w.Values) > 0 && len(w.Values) < len(cols) && len(w.TargetList) > 0 {
+				return nil, errAt(codeSyntaxError, -1, "INSERT has more target columns than expressions")
+			}
+			for i, vn := range w.Values {
+				if cols[i].Identity == 'a' && vn.GetSetToDefault() == nil && w.Override == pgparse.OverridingKind_OVERRIDING_NOT_SET {
+					return nil, errAt(codeGeneratedAlways, -1, "cannot insert a non-DEFAULT value into column %q", cols[i].Name)
+				}
+				e, err := a.analyzeExpr(vn, srcOnly)
+				if err != nil {
+					return nil, err
+				}
+				if err := a.assign(e, cols[i], rel.FullName(), loc(vn)); err != nil {
+					return nil, err
+				}
+			}
+			a.mergeActions |= mergeInsert
+		case pgparse.CmdType_CMD_NOTHING:
+		}
+	}
+	ret := newScope(sc)
+	ret.items = []*rte{source, target} // RETURNING * expands the source first (transformMergeStmt's rtable order)
+	return a.returning(m.ReturningClause, ret, target, a.mergeActions&mergeInsert != 0, a.mergeActions&mergeDelete != 0)
+}
+
+const (
+	mergeInsert = 1 << iota
+	mergeUpdate
+	mergeDelete
+)
+
+// expandCompositeStar expands (expr).* in a target list to the columns of expr's row type.
+func (a *analyzer) expandCompositeStar(ind *pgparse.A_Indirection, sc *scope) ([]rteCol, *Error) {
+	inner := &pgparse.A_Indirection{Arg: ind.Arg, Indirection: ind.Indirection[:len(ind.Indirection)-1]}
+	var e *expr
+	var err *Error
+	if len(inner.Indirection) == 0 {
+		e, err = a.analyzeExpr(inner.Arg, sc)
+	} else {
+		e, err = a.indirection(inner, sc)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(e.fields) > 0 {
+		out := make([]rteCol, len(e.fields))
+		copy(out, e.fields)
+		return out, nil
+	}
+	if e.oid() == catalog.Record && inner.Arg.GetFuncCall() != nil {
+		// (f(...)).* of a function returning record through OUT parameters
+		if cols := a.outParamCols(); len(cols) > 0 {
+			return cols, nil
+		}
+	}
+	t := a.typ(a.baseType(e.oid())) // a domain over a composite expands like the composite
+	if t == nil || t.Kind != 'c' {
+		return nil, errAt(codeWrongObjectType, loc(ind.Arg), "type %s is not composite", a.s.Types.Format(e.typ))
+	}
+	rel := a.relByRowType(t.OID)
+	if rel == nil {
+		return nil, errAt(codeWrongObjectType, loc(ind.Arg), "type %s is not composite", a.s.Types.Format(e.typ))
+	}
+	var out []rteCol
+	for _, c := range rel.Columns {
+		out = append(out, rteCol{name: c.Name, typ: c.Type, nullable: true})
+	}
+	return out, nil
+}
+
+// singleOutName is the name of the one OUT parameter of the function the last funcCall
+// resolved, "" when it has none or more than one (get_func_result_name).
+func (a *analyzer) singleOutName() string {
+	var names []string
+	if uf := a.lastUserFunc; uf != nil {
+		for _, arg := range uf.Args {
+			if arg.Mode == 'o' || arg.Mode == 'b' || arg.Mode == 't' {
+				names = append(names, arg.Name)
+			}
+		}
+	} else if cf := a.lastCatFunc; cf != nil {
+		for i, m := range cf.ArgModes {
+			if m == 'o' || m == 'b' || m == 't' {
+				name := ""
+				if i < len(cf.ArgNames) {
+					name = cf.ArgNames[i]
+				}
+				names = append(names, name)
+			}
+		}
+	}
+	if len(names) == 1 && names[0] != "" {
+		return names[0]
+	}
+	return ""
+}
+
+// aggregateIn returns an aggregate call directly in the expression (not inside a
+// subquery), or nil.
+func (a *analyzer) aggregateIn(n *pgparse.Node) *pgparse.FuncCall {
+	if n == nil || n.GetSubLink() != nil {
+		return nil
+	}
+	if f := n.GetFuncCall(); f != nil && f.Over == nil && a.isAggregateName(strs(f.Funcname)) {
+		return f
+	}
+	for _, c := range children(n) {
+		if f := a.aggregateIn(c); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// xmlTable is XMLTABLE(... PASSING doc COLUMNS ...) in FROM: the declared columns (FOR
+// ORDINALITY is integer), or one xml column when none are declared.
+func (a *analyzer) xmlTable(x *pgparse.RangeTableFunc, sc *scope) (*rte, *Error) {
+	inner := sc
+	if x.Lateral {
+		inner = newScope(sc)
+		inner.items = sc.items
+	}
+	for _, n := range append([]*pgparse.Node{x.Docexpr, x.Rowexpr}, x.Namespaces...) {
+		if n == nil {
+			continue
+		}
+		if rn := n.GetResTarget(); rn != nil {
+			n = rn.Val
+		}
+		e, err := a.analyzeExpr(n, inner)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.bind(e, catalog.Text, loc(n)); err != nil {
+			return nil, err
+		}
+	}
+	r := &rte{alias: "xmltable"}
+	for _, cn := range x.Columns {
+		c := cn.GetRangeTableFuncCol()
+		if c.ForOrdinality {
+			r.cols = append(r.cols, rteCol{name: c.Colname, typ: ref(catalog.Int4)})
+			continue
+		}
+		tr, err := a.s.ResolveType(c.TypeName)
+		if err != nil {
+			return nil, errAt(codeUndefinedObject, c.Location, "%v", err)
+		}
+		for _, n := range []*pgparse.Node{c.Colexpr, c.Coldefexpr} {
+			if n == nil {
+				continue
+			}
+			e, err := a.analyzeExpr(n, inner)
+			if err != nil {
+				return nil, err
+			}
+			if err := a.bind(e, catalog.Text, loc(n)); err != nil {
+				return nil, err
+			}
+		}
+		r.cols = append(r.cols, rteCol{name: c.Colname, typ: tr, nullable: !c.IsNotNull})
+	}
+	if len(x.Columns) == 0 {
+		r.cols = []rteCol{{name: "xmltable", typ: ref(catalog.XML), nullable: true}}
+	}
+	if x.Alias != nil {
+		if len(x.Alias.Colnames) > len(r.cols) {
+			return nil, errAt(codeInvalidColumnRef, -1, "XMLTABLE function has %d columns available but %d columns specified", len(r.cols), len(x.Alias.Colnames))
+		}
+		if x.Alias.Aliasname != "" {
+			r.alias = x.Alias.Aliasname
+		}
+		applyColnames(r.cols, x.Alias)
+	}
+	return r, nil
+}
+
+// indirectTarget is the column an INSERT / UPDATE target with subscripts or field
+// selection (f2[1], f3.if1, f4[1].if2[2]) assigns: a copy of the column typed as that
+// element or field.
+func (a *analyzer) indirectTarget(col *schema.Column, ind []*pgparse.Node, at int32) (*schema.Column, *Error) {
+	cur := a.baseType(col.Type.OID)
+	for i := 0; i < len(ind); i++ {
+		n := ind[i]
+		switch v := n.Node.(type) {
+		case *pgparse.Node_AIndices:
+			if cur == catalog.JSONB {
+				continue // jsonb subscripting assigns a jsonb value at the path
+			}
+			t := a.typ(cur)
+			if t == nil || t.Elem == 0 {
+				return nil, errAt(codeDatatypeMismatch, at, "cannot subscript type %s because it does not support subscripting", a.s.Types.Format(ref(cur)))
+			}
+			// consecutive subscripts address one (multidimensional) array: the element
+			// type once, whatever their number, unless every one is a slice
+			// (transformContainerSubscripts)
+			slice := v.AIndices.IsSlice
+			for i+1 < len(ind) && ind[i+1].GetAIndices() != nil {
+				i++
+				slice = slice && ind[i].GetAIndices().IsSlice
+			}
+			if !slice {
+				cur = a.baseType(t.Elem)
+			}
+		case *pgparse.Node_String_:
+			t := a.typ(cur)
+			if t == nil || t.Kind != 'c' {
+				return nil, errAt(codeDatatypeMismatch, at, "column notation .%s applied to type %s, which is not a composite type", v.String_.Sval, a.s.Types.Format(ref(cur)))
+			}
+			rel := a.relByRowType(cur)
+			fc := rel.Column(v.String_.Sval)
+			if fc == nil {
+				return nil, errAt(codeUndefinedColumn, at, "column %q not found in data type %s", v.String_.Sval, t.Name)
+			}
+			cur = a.baseType(fc.Type.OID)
+		default:
+			return nil, errAt(codeFeatureNotSupported, at, "unsupported indirection in assignment target")
+		}
+	}
+	cp := *col
+	cp.Type = ref(cur)
+	cp.NotNull = false
+	return &cp, nil
+}
+
+// outParamCols are the OUT / INOUT / TABLE parameters of the function the last funcCall
+// resolved, as result columns (a function returning record through them).
+func (a *analyzer) outParamCols() []rteCol {
+	var cols []rteCol
+	if uf := a.lastUserFunc; uf != nil {
+		for _, arg := range uf.Args {
+			if arg.Mode == 't' || arg.Mode == 'o' || arg.Mode == 'b' {
+				cols = append(cols, rteCol{name: arg.Name, typ: arg.Type, nullable: true})
+			}
+		}
+	} else if cf := a.lastCatFunc; cf != nil && len(cf.ArgModes) == len(cf.AllArgTypes) {
+		for i, m := range cf.ArgModes {
+			if m == 'o' || m == 't' || m == 'b' {
+				name := ""
+				if i < len(cf.ArgNames) {
+					name = cf.ArgNames[i]
+				}
+				cols = append(cols, rteCol{name: name, typ: ref(cf.AllArgTypes[i]), nullable: true})
+			}
+		}
+	}
+	for i := range cols {
+		if cols[i].name == "" {
+			cols[i].name = "column" + strconv.Itoa(i+1) // an unnamed OUT parameter
+		}
+		if t := a.typ(cols[i].typ.OID); t != nil && t.IsPolymorphic() {
+			if r, ok := a.resolvePolymorphic(a.lastCallArgs, a.lastCallActual, cols[i].typ.OID); ok {
+				cols[i].typ = ref(r)
+			}
+		}
+	}
+	return cols
+}
+
+// windowIn returns a window function call directly in the expression (not inside a
+// subquery), or nil.
+func windowIn(n *pgparse.Node) *pgparse.FuncCall {
+	if n == nil || n.GetSubLink() != nil {
+		return nil
+	}
+	if f := n.GetFuncCall(); f != nil && f.Over != nil {
+		return f
+	}
+	for _, c := range children(n) {
+		if f := windowIn(c); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// outerLevelAggregate reports whether an aggregate in a subquery belongs to an enclosing
+// query: none of its column references resolve at this level (they are all outer
+// references), so it is that query's aggregate and allowed here.
+func (a *analyzer) outerLevelAggregate(f *pgparse.FuncCall, sc *scope) bool {
+	if sc.parent == nil {
+		return false
+	}
+	local := false
+	sawRef := false
+	here := &scope{items: sc.items, ctes: sc.ctes}
+	for _, arg := range f.Args {
+		schema.WalkNodes(arg, func(n *pgparse.Node) {
+			if cr := n.GetColumnRef(); cr != nil {
+				sawRef = true
+				if _, err := a.columnRef(cr, here); err == nil {
+					local = true
+				}
+			}
+		})
+	}
+	return sawRef && !local
+}
+
+// checkDuplicateBase rejects assigning two target columns that are the same base-table
+// column (a view exposing a column twice).
+func (a *analyzer) checkDuplicateBase(cols []*schema.Column) *Error {
+	seen := map[*schema.Column]bool{}
+	for _, c := range cols {
+		base := c
+		if b, ok := a.viewBase[c]; ok {
+			base = b
+		}
+		if seen[base] {
+			return errAt(codeSyntaxError, -1, "multiple assignments to same column %q", base.Name)
+		}
+		seen[base] = true
+	}
+	return nil
+}
+
+// checkCycleTypes is the CYCLE clause's typing: the mark value and default share a type,
+// which must have an equality operator.
+func (a *analyzer) checkCycleTypes(cy *pgparse.CTECycleClause, sc *scope) *Error {
+	mark := ref(catalog.Bool)
+	if cy.CycleMarkValue != nil {
+		me, err := a.analyzeExpr(cy.CycleMarkValue, newScope(sc))
+		if err != nil {
+			return err
+		}
+		de, err := a.analyzeExpr(cy.CycleMarkDefault, newScope(sc))
+		if err != nil {
+			return err
+		}
+		if me.oid() != catalog.Unknown && de.oid() != catalog.Unknown {
+			if _, ok := a.commonType([]catalog.OID{me.oid(), de.oid()}); !ok {
+				return errAt(codeDatatypeMismatch, cy.Location, "CYCLE types %s and %s cannot be matched", a.s.Types.Format(me.typ), a.s.Types.Format(de.typ))
+			}
+		}
+		if me.oid() != catalog.Unknown {
+			mark = me.typ
+		} else if de.oid() != catalog.Unknown {
+			mark = de.typ
+		}
+	}
+	if !a.hasComparisonOp(mark.OID, "=") {
+		return errAt(codeUndefinedFunction, cy.Location, "could not identify an equality operator for type %s", a.s.Types.Format(mark))
+	}
+	return nil
+}
+
+// checkCTEColumnList is the WITH column list arity check.
+func (a *analyzer) checkCTEColumnList(c *pgparse.CommonTableExpr, cols []rteCol) *Error {
+	if len(c.Aliascolnames) > len(cols) {
+		return errAt(codeInvalidColumnRef, c.Location, "WITH query %q has %d columns available but %d columns specified", c.Ctename, len(cols), len(c.Aliascolnames))
+	}
+	return nil
+}
+
+// hasReturning is whether a data-modifying statement has a RETURNING list.
+func hasReturning(n *pgparse.Node) bool {
+	switch v := n.Node.(type) {
+	case *pgparse.Node_InsertStmt:
+		return len(v.InsertStmt.GetReturningClause().GetExprs()) > 0
+	case *pgparse.Node_UpdateStmt:
+		return len(v.UpdateStmt.GetReturningClause().GetExprs()) > 0
+	case *pgparse.Node_DeleteStmt:
+		return len(v.DeleteStmt.GetReturningClause().GetExprs()) > 0
+	case *pgparse.Node_MergeStmt:
+		return len(v.MergeStmt.GetReturningClause().GetExprs()) > 0
+	}
+	return true
+}
+
+// lockStrength spells a locking clause the way PG's messages do.
+func lockStrength(lc *pgparse.Node) string {
+	switch lc.GetLockingClause().GetStrength() {
+	case pgparse.LockClauseStrength_LCS_FORKEYSHARE:
+		return "FOR KEY SHARE"
+	case pgparse.LockClauseStrength_LCS_FORSHARE:
+		return "FOR SHARE"
+	case pgparse.LockClauseStrength_LCS_FORNOKEYUPDATE:
+		return "FOR NO KEY UPDATE"
+	}
+	return "FOR UPDATE"
+}
+
+// checkLocking applies the FOR UPDATE / SHARE restrictions of a plain SELECT
+// (CheckSelectLocking) and resolves the locked relation names against the FROM list.
+func (a *analyzer) checkLocking(sel *pgparse.SelectStmt, sc *scope, cols []rteCol) *Error {
+	if len(sel.LockingClause) == 0 {
+		return nil
+	}
+	what := lockStrength(sel.LockingClause[0])
+	switch {
+	case len(sel.DistinctClause) > 0:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with DISTINCT clause", what)
+	case len(sel.GroupClause) > 0:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with GROUP BY clause", what)
+	case sel.HavingClause != nil:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with HAVING clause", what)
+	case sc.agg:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with aggregate functions", what)
+	case len(sel.WindowClause) > 0 || windowInTargets(sel.TargetList):
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with window functions", what)
+	case len(sel.ValuesLists) > 0:
+		return errAt(codeFeatureNotSupported, -1, "%s is not allowed with VALUES", what)
+	}
+	for _, tn := range sel.TargetList {
+		if a.srfIn(tn.GetResTarget().GetVal()) {
+			return errAt(codeFeatureNotSupported, -1, "%s is not allowed with set-returning functions in the target list", what)
+		}
+	}
+	for _, lcn := range sel.LockingClause {
+		for _, rn := range lcn.GetLockingClause().GetLockedRels() {
+			rv := rn.GetRangeVar()
+			found := false
+			for _, it := range sc.items {
+				if it.join != nil && it.alias == "" && it.join.usingAlias != nil && it.join.usingAlias.alias == rv.Relname {
+					return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a join", what)
+				}
+				if it.alias == rv.Relname {
+					found = true
+					if it.join != nil {
+						return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a join", what)
+					}
+					if it.sub != nil && it.rel == nil && it.sub.what == "CTE" {
+						return errAt(codeFeatureNotSupported, rv.Location, "%s cannot be applied to a WITH query", what)
+					}
+				}
+				if it.join != nil && !found {
+					found = joinHasAlias(it, rv.Relname)
+				}
+			}
+			if !found {
+				return errAt(codeUndefinedTable, rv.Location, "relation %q in %s clause not found in FROM clause", rv.Relname, what)
+			}
+		}
+	}
+	return nil
+}
+
+// joinHasAlias finds an alias among the leaves of a join tree.
+func joinHasAlias(r *rte, name string) bool {
+	if r == nil {
+		return false
+	}
+	if r.alias == name {
+		return true
+	}
+	if r.join != nil {
+		return joinHasAlias(r.join.left, name) || joinHasAlias(r.join.right, name)
+	}
+	return false
+}
+
+// windowInTargets / srfIn: syntactic presence checks on a target list / expression.
+func windowInTargets(list []*pgparse.Node) bool {
+	for _, tn := range list {
+		if windowIn(tn.GetResTarget().GetVal()) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// srfIn is whether the expression syntactically calls a set-returning function (a
+// catalog function by name; user functions by their declaration).
+func (a *analyzer) srfIn(n *pgparse.Node) bool {
+	if n == nil {
+		return false
+	}
+	if fc := n.GetFuncCall(); fc != nil {
+		names := strs(fc.Funcname)
+		name := names[len(names)-1]
+		for _, fn := range a.s.Catalog.FuncsByName(name) {
+			if fn.RetSet {
+				return true
+			}
+		}
+		for _, fn := range a.s.Functions {
+			if fn.Name == name && fn.RetSet {
+				return true
+			}
+		}
+	}
+	for _, c := range children(n) {
+		if a.srfIn(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// positionalMatch is whether two ORDER BY / DISTINCT ON items name the same output
+// column, one by position or alias and the other by expression.
+func positionalMatch(x, y *pgparse.Node, cols []rteCol) bool {
+	idx := func(n *pgparse.Node) int {
+		if c := n.GetAConst(); c != nil {
+			if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
+				return int(iv.Ival.Ival) - 1
+			}
+		}
+		if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
+			name := cr.Fields[0].GetString_().GetSval()
+			for i, c := range cols {
+				if c.name == name {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	i, j := idx(x), idx(y)
+	return i >= 0 && i == j
+}

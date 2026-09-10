@@ -5,12 +5,11 @@ go 1.26.1
 // The binary is its own module so that it can be GPLv2 (it carries the MySQL parser) while
 // the runtime and pgtest stay Apache 2.0 at their import paths. The three modules of the
 // repository release in lockstep under one version: scripts/release.sh vX.Y.Z sets the
-// requires below to X.Y.Z and tags vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z on one
-// commit.
-require (
-	github.com/kr9ly/sqlshape v1.3.0-rc.2
-	github.com/kr9ly/sqlshape/mysql v1.3.0-rc.2
-)
+// requires below to X.Y.Z and tags every module on one commit. A module of the repository
+// that has no tag yet is not listed here (a require of a version that does not exist
+// breaks module loading even in a workspace); go.work resolves it, and release.sh adds
+// the require with the first tag.
+require github.com/kr9ly/sqlshape v1.3.0-rc.2
 
 require golang.org/x/tools v0.49.0
 

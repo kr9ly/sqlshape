@@ -3,7 +3,7 @@
 [日本語](checks.ja.md)
 
 The checker finds every `sqlshape.Query[R, P](template)`, `sqlshape.One[R, P](template)`,
-`sqlshape.Copy[R](...)` and `sqlshape.MatView(...)` in a package, expands each template into every
+`postgres.Copy[R](...)` and `postgres.MatView(...)` in a package, expands each template into every
 combination of its branches ([templates.md](templates.md)), analyzes each expansion against
 `schema.sql`, and compares the result with the Go types. This page goes through what you write,
 situation by situation, and shows what is rejected and what passes, together with the diagnostic
@@ -667,8 +667,8 @@ INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
 ```
 
 ```go
-_, err := CreateCustomer.First(ctx, db, p)
-if sqlshape.Violates(err, "customers_email_key") { ... }
+_, err := postgres.First(ctx, db, CreateCustomer, p)
+if postgres.Violates(err, "customers_email_key") { ... }
 ```
 
 Listed are unique constraints and primary keys, foreign keys in both directions (the inserted row
@@ -837,7 +837,7 @@ the point of the check: make this a `Query`, or make `.ID` a non-pointer and dro
 
 ### Bulk loading with COPY
 
-`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)` is checked like an INSERT: the table
+`postgres.Copy[R]("order_items", "order_id", "line_no", ...)` is checked like an INSERT: the table
 and columns exist, each column's type fits the field that feeds it, and every column left out has a
 default or is generated.
 
@@ -848,7 +848,7 @@ type Item struct {
 	OrderID int64
 	Sku     string
 }
-var Load = sqlshape.Copy[Item]("order_items", "order_id", "sku")
+var Load = postgres.Copy[Item]("order_items", "order_id", "sku")
 // Copy into order_items: column "line_no" is NOT NULL without a default and is not copied
 ```
 
@@ -860,7 +860,7 @@ type Item struct {
 	LineNo  int16
 	Sku     string
 }
-var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
+var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 ```
 
 ## Part 2 — Rules the schema declares

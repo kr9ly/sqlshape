@@ -9,9 +9,9 @@ import (
 
 	"golang.org/x/tools/go/analysis/singlechecker"
 
-	"github.com/kr9ly/sqlshape/internal/cli"
-	"github.com/kr9ly/sqlshape/internal/vet"
-	_ "github.com/kr9ly/sqlshape/mysql/dialect" // a schema.sql declaring `-- sqlshape: mysql 8.4`
+	_ "github.com/kr9ly/sqlshape/check/mysql/dialect" // a schema.sql declaring `-- sqlshape: mysql 8.4`
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/cli"
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/internal/vet"
 )
 
 func main() {

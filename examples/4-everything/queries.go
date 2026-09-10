@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 // --- Go types for the schema's types -------------------------------------------------------
@@ -223,7 +224,7 @@ var UtilizationOf = sqlshape.Query[Utilization, struct {
 -- sqlshape: not null booked_minutes
 SELECT room_id, day, booked_minutes, bookings FROM app.utilization WHERE tenant_id = {{.TenantID}} AND day >= {{.Since}} ORDER BY day, room_id`)
 
-var UtilizationView = sqlshape.MatView("app.utilization")
+var UtilizationView = postgres.MatView("app.utilization")
 
 var BookedMinutes = sqlshape.One[int64, struct {
 	Tenanted
@@ -308,7 +309,7 @@ type Event struct {
 	Took      *time.Duration
 }
 
-var AppendEvents = sqlshape.Copy[Event]("app.events", "tenant_id", "at", "kind", "booking_id", "client_ip", "took")
+var AppendEvents = postgres.Copy[Event]("app.events", "tenant_id", "at", "kind", "booking_id", "client_ip", "took")
 
 type EventCount struct {
 	Kind EventKind

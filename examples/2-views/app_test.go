@@ -11,6 +11,7 @@ import (
 
 	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/pgtest"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 func TestOrderBookThroughViews(t *testing.T) {
@@ -32,15 +33,15 @@ func TestOrderBookThroughViews(t *testing.T) {
 	}
 	conn := db.Conn()
 
-	statuses, err := ListStatuses.Collect(ctx, conn, struct{}{})
+	statuses, err := postgres.Collect(ctx, conn, ListStatuses, struct{}{})
 	if err != nil || len(statuses) != 4 || statuses[0].Code != Pending || statuses[0].Label != "Awaiting payment" {
 		t.Fatalf("statuses: %v %+v", err, statuses)
 	}
-	alice, err := CreateCustomer.First(ctx, conn, NewCustomer{Email: "alice@example.com", Name: "Alice"})
+	alice, err := postgres.First(ctx, conn, CreateCustomer, NewCustomer{Email: "alice@example.com", Name: "Alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := CustomerByEmail.Get(ctx, conn, struct{ Email string }{"alice@example.com"})
+	c, err := postgres.Get(ctx, conn, CustomerByEmail, struct{ Email string }{"alice@example.com"})
 	if err != nil || c.ID != alice {
 		t.Fatalf("by email: %v %+v", err, c)
 	}
@@ -58,7 +59,7 @@ func TestOrderBookThroughViews(t *testing.T) {
 	}
 	// a negative price is rejected by the database too, but PlaceOrder only special-cases
 	// the quantity check: the generic path returns the raw error
-	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 1, Price: "-1.00"}}); !sqlshape.Violates(err, "order_items_price_check") {
+	if _, err := PlaceOrder(ctx, conn, alice, nil, []NewItem{{Sku: "BOOK", Qty: 1, Price: "-1.00"}}); !postgres.Violates(err, "order_items_price_check") {
 		t.Fatalf("price check: %v", err)
 	}
 	// a context already done fails at Begin, before any statement runs; use a
@@ -74,47 +75,47 @@ func TestOrderBookThroughViews(t *testing.T) {
 	}
 	deadConn.Close(ctx)
 
-	o, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id})
+	o, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{id})
 	if err != nil || o.Total != "28.00" || o.Status != Pending || o.StatusLabel != "Awaiting payment" || o.CustomerEmail != "alice@example.com" {
 		t.Fatalf("order: %v %+v", err, o)
 	}
 	if err := Pay(ctx, conn, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Cancel.Exec(ctx, conn, struct{ ID int64 }{id}); !errors.Is(err, sqlshape.ErrNoRows) {
+	if _, err := postgres.ExecOne(ctx, conn, Cancel, struct{ ID int64 }{id}); !errors.Is(err, postgres.ErrNoRows) {
 		t.Fatalf("cancel paid: %v", err)
 	}
-	rows, err := ListOrders.Collect(ctx, conn, ListOrdersParams{CustomerID: &alice, Statuses: []OrderStatus{Paid, Shipped}, Sort: "total", Limit: 10})
+	rows, err := postgres.Collect(ctx, conn, ListOrders, ListOrdersParams{CustomerID: &alice, Statuses: []OrderStatus{Paid, Shipped}, Sort: "total", Limit: 10})
 	if err != nil || len(rows) != 1 || rows[0].ID != id {
 		t.Fatalf("list: %v %+v", err, rows)
 	}
 	if got := Describe(rows[0]); got != "order #1 for alice@example.com: 28.00 (Paid)" {
 		t.Errorf("describe: %q", got)
 	}
-	items, err := ItemsOf.Collect(ctx, conn, struct{ OrderID int64 }{id})
+	items, err := postgres.Collect(ctx, conn, ItemsOf, struct{ OrderID int64 }{id})
 	if err != nil || len(items) != 2 || items[0].Amount != "25.00" {
 		t.Fatalf("items: %v %+v", err, items)
 	}
-	totals, err := TotalsByCustomer.Collect(ctx, conn, struct{ MinOrders int64 }{1})
+	totals, err := postgres.Collect(ctx, conn, TotalsByCustomer, struct{ MinOrders int64 }{1})
 	if err != nil || len(totals) != 1 || totals[0].Spent != "28.00" {
 		t.Fatalf("totals: %v %+v", err, totals)
 	}
 
 	// archived: gone from every view but archived_orders, and not there to be paid
-	if _, err := Archive.Exec(ctx, conn, struct{ ID int64 }{id}); err != nil {
+	if _, err := postgres.ExecOne(ctx, conn, Archive, struct{ ID int64 }{id}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id}); !errors.Is(err, sqlshape.ErrNoRows) {
+	if _, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{id}); !errors.Is(err, postgres.ErrNoRows) {
 		t.Fatalf("archived order still visible: %v", err)
 	}
 	if err := Pay(ctx, conn, id); err == nil {
 		t.Fatal("paying an archived order should fail")
 	}
-	archived, err := ArchivedOrders.Collect(ctx, conn, struct{}{})
+	archived, err := postgres.Collect(ctx, conn, ArchivedOrders, struct{}{})
 	if err != nil || len(archived) != 1 || archived[0].ID != id || archived[0].Status != Paid {
 		t.Fatalf("archived: %v %+v", err, archived)
 	}
-	totals, err = TotalsByCustomer.Collect(ctx, conn, struct{ MinOrders int64 }{0})
+	totals, err = postgres.Collect(ctx, conn, TotalsByCustomer, struct{ MinOrders int64 }{0})
 	if err != nil || len(totals) != 1 || totals[0].Orders != 0 {
 		t.Fatalf("totals after archive: %v %+v", err, totals)
 	}
@@ -131,10 +132,10 @@ func TestOrderBookThroughViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	var unknown *sqlshape.UnknownLabelError
-	if _, err := OrderByID.Get(ctx, conn, struct{ ID int64 }{id2}); !errors.As(err, &unknown) || unknown.Value != "refunded" {
+	if _, err := postgres.Get(ctx, conn, OrderByID, struct{ ID int64 }{id2}); !errors.As(err, &unknown) || unknown.Value != "refunded" {
 		t.Fatalf("unknown label: %v", err)
 	}
-	if _, err := DeleteCustomer.Exec(ctx, conn, struct{ ID int64 }{alice}); !sqlshape.Violates(err, "orders_customer_id_fkey") {
+	if _, err := postgres.ExecOne(ctx, conn, DeleteCustomer, struct{ ID int64 }{alice}); !postgres.Violates(err, "orders_customer_id_fkey") {
 		t.Fatalf("delete customer with orders: %v", err)
 	}
 }

@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/kr9ly/sqlshape"
 	"github.com/kr9ly/sqlshape/pgtest"
+	"github.com/kr9ly/sqlshape/postgres"
 )
 
 func TestEverything(t *testing.T) {
@@ -38,7 +38,7 @@ func TestEverything(t *testing.T) {
 	defer pool.Close()
 
 	team, trial := Team, Trial
-	tid, err := CreateTenant.Get(ctx, pool, struct {
+	tid, err := postgres.Get(ctx, pool, CreateTenant, struct {
 		Slug string
 		Plan *Plan
 	}{"acme", &team})
@@ -46,19 +46,19 @@ func TestEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 	tenant := Tenanted{TenantID: *tid}
-	if _, err := CreateTenant.Get(ctx, pool, struct {
+	if _, err := postgres.Get(ctx, pool, CreateTenant, struct {
 		Slug string
 		Plan *Plan
-	}{"ACME", &trial}); !sqlshape.Violates(err, "tenants_slug_key") {
+	}{"ACME", &trial}); !postgres.Violates(err, "tenants_slug_key") {
 		t.Fatalf("citext unique: %v", err) // slugs compare case-insensitively
 	}
-	tn, err := TenantBySlug.Get(ctx, pool, struct{ Slug string }{"Acme"})
+	tn, err := postgres.Get(ctx, pool, TenantBySlug, struct{ Slug string }{"Acme"})
 	if err != nil || tn.Plan != Team || tn.Settings == nil {
 		t.Fatalf("tenant: %v %+v", err, tn)
 	}
 
 	ip := netip.MustParseAddr("203.0.113.7")
-	ann, err := AddMember.Get(ctx, pool, struct {
+	ann, err := postgres.Get(ctx, pool, AddMember, struct {
 		Tenanted
 		Email string
 		Name  string
@@ -67,7 +67,7 @@ func TestEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := AddMember.Get(ctx, pool, struct {
+	bob, err := postgres.Get(ctx, pool, AddMember, struct {
 		Tenanted
 		Email string
 		Name  string
@@ -77,14 +77,14 @@ func TestEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := ImportRooms.Get(ctx, pool, struct {
+	n, err := postgres.Get(ctx, pool, ImportRooms, struct {
 		Tenanted
 		Rooms []RoomIn
 	}{tenant, []RoomIn{{"Small", 4, Money{"20.00", "EUR"}}, {"Large", 12, Money{"55.00", "EUR"}}}})
 	if err != nil || *n != 2 {
 		t.Fatalf("import rooms: %v %v", err, n)
 	}
-	rooms, err := Rooms.Collect(ctx, pool, tenant)
+	rooms, err := postgres.Collect(ctx, pool, Rooms, tenant)
 	if err != nil || len(rooms) != 2 || rooms[0].Name != "Large" || rooms[0].Hourly.String() != "55.00 EUR" || rooms[0].TenantID != *tid {
 		t.Fatalf("rooms: %v %+v", err, rooms)
 	}
@@ -107,10 +107,10 @@ func TestEverything(t *testing.T) {
 	}
 	// a member that does not exist is neither BK001 nor BK002: the generic path
 	// returns the raw foreign key error
-	if _, err := Reserve(ctx, pool, tenant, large, MemberID("00000000-0000-0000-0000-000000000000"), at(13), at(14), nil); !sqlshape.Violates(err, "bookings_member_id_fkey") {
+	if _, err := Reserve(ctx, pool, tenant, large, MemberID("00000000-0000-0000-0000-000000000000"), at(13), at(14), nil); !postgres.Violates(err, "bookings_member_id_fkey") {
 		t.Fatalf("reserve unknown member: %v", err)
 	}
-	if _, err := TagBooking.Exec(ctx, pool, struct {
+	if _, err := postgres.ExecOne(ctx, pool, TagBooking, struct {
 		Tenanted
 		BookingID BookingID
 		Tags      map[string]string
@@ -118,7 +118,7 @@ func TestEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bk, err := BookingByID.Get(ctx, pool, struct {
+	bk, err := postgres.Get(ctx, pool, BookingByID, struct {
 		Tenanted
 		ID BookingID
 	}{tenant, b1})
@@ -156,14 +156,14 @@ func TestEverything(t *testing.T) {
 	if err := UtilizationView.Refresh(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	u, err := UtilizationOf.Collect(ctx, pool, struct {
+	u, err := postgres.Collect(ctx, pool, UtilizationOf, struct {
 		Tenanted
 		Since pgtype.Date
 	}{tenant, pgtype.Date{Time: day, Valid: true}})
 	if err != nil || len(u) != 2 || u[0].BookedMinutes+u[1].BookedMinutes != 240 {
 		t.Fatalf("utilization: %v %+v", err, u)
 	}
-	if m, err := BookedMinutes.Get(ctx, pool, struct {
+	if m, err := postgres.Get(ctx, pool, BookedMinutes, struct {
 		Tenanted
 		RoomID RoomID
 		Day    pgtype.Date
@@ -178,32 +178,32 @@ func TestEverything(t *testing.T) {
 	}); err != nil || n != 2 {
 		t.Fatalf("copy: %v %d", err, n)
 	}
-	if counts, err := EventCounts.Collect(ctx, pool, tenant); err != nil || len(counts) != 2 || counts[0].Kind != Booked {
+	if counts, err := postgres.Collect(ctx, pool, EventCounts, tenant); err != nil || len(counts) != 2 || counts[0].Kind != Booked {
 		t.Fatalf("event counts: %v %+v", err, counts)
 	}
 
-	if id, err := CancelBooking.Get(ctx, pool, struct {
+	if id, err := postgres.Get(ctx, pool, CancelBooking, struct {
 		Tenanted
 		BookingID BookingID
 	}{tenant, b1}); err != nil || id == nil || *id != b1 {
 		t.Fatalf("cancel: %v %v", err, id)
 	}
-	if id, err := CancelBooking.Get(ctx, pool, struct {
+	if id, err := postgres.Get(ctx, pool, CancelBooking, struct {
 		Tenanted
 		BookingID BookingID
 	}{tenant, b1}); err != nil || id != nil {
 		t.Fatalf("cancel twice: %v %v", err, id)
 	}
-	if _, err := RemoveMember.Exec(ctx, pool, struct {
+	if _, err := postgres.ExecOne(ctx, pool, RemoveMember, struct {
 		Tenanted
 		MemberID MemberID
 	}{tenant, *bob}); err != nil {
 		t.Fatal(err)
 	}
-	if ms, err := Members.Collect(ctx, pool, tenant); err != nil || len(ms) != 1 || ms[0].LastIP == nil || *ms[0].LastIP != ip {
+	if ms, err := postgres.Collect(ctx, pool, Members, tenant); err != nil || len(ms) != 1 || ms[0].LastIP == nil || *ms[0].LastIP != ip {
 		t.Fatalf("members: %v %+v", err, ms)
 	}
-	if gone, err := DeletedMembers.Collect(ctx, pool, tenant); err != nil || len(gone) != 1 || gone[0].Email != "bob@acme.example" {
+	if gone, err := postgres.Collect(ctx, pool, DeletedMembers, tenant); err != nil || len(gone) != 1 || gone[0].Email != "bob@acme.example" {
 		t.Fatalf("deleted members: %v %+v", err, gone)
 	}
 }

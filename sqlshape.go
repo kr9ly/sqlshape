@@ -11,8 +11,11 @@
 //	     LIMIT {{.Limit}}
 //	`)
 //
-// Stmt runs against pgx (Run / Collect / First / Exec); the analyzer in
-// cmd/sqlshape checks every expansion of every Query in a program.
+// This package is the declaration: it has no database dependency. A runtime executes a
+// Stmt — sqlshape/postgres over pgx, sqlshape/mysql over database/sql — and the analyzer
+// in cmd/sqlshape checks every expansion of every Query in a program. The markers the
+// checker recognizes are configurable, so a program may run its statements through a
+// runtime of its own.
 //
 // One declares a statement that returns at most one row, and the checker proves it
 // from the schema: the WHERE clause fixes a unique key of every FROM item by
@@ -22,14 +25,9 @@
 //	var userByEmail = sqlshape.One[User, struct{ Email string }](`
 //	    SELECT id, name FROM users WHERE email = {{.Email}}`)
 //
-//	u, err := userByEmail.Get(ctx, db, p)     // ErrNoRows when absent
-//	u, ok, err := userByEmail.Find(ctx, db, p)
+//	u, err := postgres.Get(ctx, db, userByEmail, p)     // ErrNoRows when absent
+//	u, ok, err := postgres.Find(ctx, db, userByEmail, p)
 package sqlshape
-
-import (
-	"context"
-	"strings"
-)
 
 // Stmt is a checked SQL template. R is the result row type, P the parameter type.
 type Stmt[R, P any] struct {
@@ -53,8 +51,17 @@ func (s Single[R, P]) Unprepared() Single[R, P] {
 	return s
 }
 
+// IsUnprepared reports whether Unprepared was applied (a runtime that prepares reads it).
+func (s Stmt[R, P]) IsUnprepared() bool { return s.unprepared }
+
 // SQLTemplate is the template text; pgtest.Verify expands and checks it against a real PG.
 func (s Stmt[R, P]) SQLTemplate() string { return s.Template }
+
+// Stmt is the statement under the single-row declaration.
+func (s Single[R, P]) Stmt() Stmt[R, P] { return s.stmt }
+
+// Render renders the template for p.
+func (s Single[R, P]) Render(p P) (Rendered, error) { return s.stmt.Render(p) }
 
 // SQLTemplate is the template text (see Stmt.SQLTemplate).
 func (s Single[R, P]) SQLTemplate() string { return s.stmt.Template }
@@ -74,32 +81,4 @@ type Single[R, P any] struct {
 // that every expansion returns at most one row.
 func One[R, P any](template string) Single[R, P] {
 	return Single[R, P]{stmt: Stmt[R, P]{Template: template}}
-}
-
-// MatView is a handle on a materialized view; the checker verifies the name against
-// schema.sql (and, with -strict, that a unique index allows RefreshConcurrently).
-//
-//	var OrderStats = sqlshape.MatView("order_stats")
-//	err := OrderStats.Refresh(ctx, db)
-type MatView string
-
-// Refresh runs REFRESH MATERIALIZED VIEW: readers block until it completes.
-func (m MatView) Refresh(ctx context.Context, db DB) error {
-	_, err := db.Exec(ctx, "REFRESH MATERIALIZED VIEW "+quoteQualified(string(m)))
-	return err
-}
-
-// RefreshConcurrently refreshes without blocking readers; the view needs a unique index.
-func (m MatView) RefreshConcurrently(ctx context.Context, db DB) error {
-	_, err := db.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY "+quoteQualified(string(m)))
-	return err
-}
-
-// quoteQualified quotes a possibly schema-qualified identifier.
-func quoteQualified(name string) string {
-	parts := strings.Split(name, ".")
-	for i, p := range parts {
-		parts[i] = `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
-	}
-	return strings.Join(parts, ".")
 }
