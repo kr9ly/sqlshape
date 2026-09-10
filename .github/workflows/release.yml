@@ -3,8 +3,8 @@
 #
 #   scripts/release.sh v1.3.0 --push
 #
-# The repository's modules (the root, postgres, pgtest, check/postgres, check/mysql,
-# cmd/sqlshape) release in lockstep: scripts/release.sh sets the inter-module requires to
+# The repository's modules (the root, postgres, mysql, mysqltest, pgtest, check/postgres,
+# check/mysql, cmd/sqlshape) release in lockstep: scripts/release.sh sets the inter-module requires to
 # the version, commits, and tags vX.Y.Z and <module>/vX.Y.Z on that commit. Only the root
 # tag triggers this workflow (the others do not start with "v").
 #

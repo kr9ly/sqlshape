@@ -31,6 +31,13 @@ release it is a candidate for.
 
 ### Added
 
+- The MySQL runtime, `github.com/kr9ly/sqlshape/mysql/v2`: `Run` / `Collect` / `First` /
+  `Exec`, `Get` / `Find` / `ExecOne`, over `database/sql` with go-sql-driver/mysql; `{{.X}}`
+  becomes `?` on the wire with the arguments in placeholder order, rows map by the shared
+  binding rules, a constraint violation is a `ConstraintError` under the schema's name for it
+  (`Violates(err, "users_email_key")`). `github.com/kr9ly/sqlshape/mysqltest/v2` boots the
+  `mysqld` on PATH with the application's schema for its tests (the analyzer's oracle runs on
+  it too). `examples/5-mysql` shows the whole path.
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result

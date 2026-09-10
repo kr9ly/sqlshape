@@ -101,3 +101,14 @@ func (pm Map) Number(off int) int {
 	}
 	return 0
 }
+
+// Order lists the n of each `?` in the MySQL text, in order: the argument a driver expecting
+// positional `?` receives at each position is the caller's argument n (1-based). The same
+// $n written twice appears twice.
+func (pm Map) Order() []int {
+	out := make([]int, len(pm.marks))
+	for i, m := range pm.marks {
+		out[i] = m.n
+	}
+	return out
+}

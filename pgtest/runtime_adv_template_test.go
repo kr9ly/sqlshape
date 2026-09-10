@@ -1,4 +1,4 @@
-package postgres_test
+package pgtest_test
 
 // Lane: template. Attack surface: expand vs. Render byte-identity, hazard detection in
 // internal/vet/hazards.go (checkActionPlacement), SQL-fragment splicing.

@@ -1,4 +1,4 @@
-package postgres_test
+package pgtest_test
 
 // Adversarial-testing lane "param" (see
 // /tmp/claude-1000/-home-kr9ly-projects-sqlshape/c120b088-d858-42eb-b453-2c47d8ce2ea3/scratchpad/adv/lane-param.md).

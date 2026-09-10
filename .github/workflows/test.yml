@@ -57,8 +57,8 @@ jobs:
       - name: Test
         run: |
           # ./... is the root module; the other modules of the workspace are named one by one
-          pkgs=$(go list ./... ./postgres/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /check/postgres/catalog/gen -e /parsegen/cmd | paste -sd,)
-          go test ./... ./postgres/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
+          pkgs=$(go list ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /check/postgres/catalog/gen -e /parsegen/cmd | paste -sd,)
+          go test ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
           grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the

@@ -7,5 +7,6 @@ go 1.26.1
 // modules they import, and the smoke test vets them in it.
 
 require (
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.10.0
 )

@@ -46,7 +46,7 @@ if [ -n "$(git status --porcelain)" ]; then
   echo "release: the working tree is not clean" >&2; exit 1
 fi
 # the nested modules, in dependency order; the root is the version's own tag
-modules=(postgres check/postgres check/mysql pgtest cmd/sqlshape)
+modules=(postgres mysql mysqltest check/postgres check/mysql pgtest cmd/sqlshape)
 tags=("$version")
 for m in "${modules[@]}"; do tags+=("$m/$version"); done
 sums=()

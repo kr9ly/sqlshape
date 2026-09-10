@@ -1,4 +1,4 @@
-package postgres_test
+package pgtest_test
 
 // Adversarial tests for lane "runtime" (row mapper, error classification, user-type
 // registration, execution paths). See scratchpad/adv/COMMON.md and lane-runtime.md.

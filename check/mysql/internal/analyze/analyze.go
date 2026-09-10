@@ -14,8 +14,8 @@ import (
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
-	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/placeholder"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/placeholder"
 )
 
 // Result is the analysis of one statement.

@@ -138,6 +138,9 @@ FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（em
 |---|---|
 | `sqlshape` | 宣言の核（依存ゼロ）: `Query[R, P]` / `One[R, P]` / `Stmt` / `Render`、行の束縛規則（`Fields`）、`Labelled` |
 | `postgres` | pgx 上のランタイム（別モジュール）: `Run` / `Collect` / `First` / `Exec` / `Get` / `Find`、`Batch` / `Copy[R]` / `MatView`、行マッパー、型登録、`ConstraintError`、描画のバイト比較） |
+| `mysql` | database/sql 上の MySQL ランタイム（別モジュール、go-sql-driver/mysql の受け型）: `Run` / `Collect` / `First` / `Exec` / `Get` / `Find` / `ExecOne`、`$n` → `?` の並べ替え（`x/placeholder`）、`ConstraintError`（1062 / 1452 / 1048 / 3819 をスキーマの名前に） |
+| `mysqltest` | PATH の mysqld を schema.sql を載せて起こす（アプリケーションのテスト用、pgtest の MySQL 版）。`check/mysql` の oracle もこの上 |
+| `x/placeholder` | `$n` → `?` の書き換えと位置の逆写像。MySQL のランタイムとアナライザーが共有 |
 | `pgtest` | schema.sqlを適用した本物のPGをアプリケーションのテストに提供する。`Verify`がアナライザーとPGを突き合わせる |
 | `x/expand` | テンプレートの全展開。`{{.X}}` → `$n`と`P`上のパス |
 | `check/postgres/pgparse` | パーサ。libpg_queryを版ごとにWebAssemblyへビルドして埋め込み、wazeroで実行する。`Version.Parse` / `Deparse` / `SplitWithScanner` / `ParsePlPgSqlToJSON`と、最新版のprotoから生成したノード型 |

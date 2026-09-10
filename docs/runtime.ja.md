@@ -115,6 +115,22 @@ sqlshape: rendered SQL differs from the checked expansion [if@64:then]: the runt
 
 確認できない場合が2つある。`{{range}}`が3要素以上のとき（検査は2要素までで行う）と、分岐の組み合わせが256を超えて代表だけが検査されたとき（[templates.ja.md](templates.ja.md#分岐が多いとき)）。この2つでは、分岐の形が検査したものと同じであることだけを確認して実行する。
 
+## MySQL
+
+`github.com/kr9ly/sqlshape/mysql/v2`は同じ宣言をMySQLの上で、`database/sql`とgo-sql-driver/mysqlを通して実行する。`mysql.DB`は`*sql.DB`、`*sql.Tx`、`*sql.Conn`のどれでもよい。
+
+```go
+for o, err := range mysql.Run(ctx, db, ListOrders, p) { ... }
+orders, err := mysql.Collect(ctx, db, ListOrders, p)
+first, err  := mysql.First(ctx, db, ListOrders, p)              // 無ければ ErrNoRows（sql.ErrNoRows）
+res, err    := mysql.Exec(ctx, db, MarkPaid, p)                 // sql.Result
+u, err      := mysql.Get(ctx, db, UserByEmail, p)               // One: Get / Find / ExecOne はPostgreSQLと同じ
+```
+
+テンプレートの`{{.X}}`はワイヤ上ではMySQLの位置指定`?`になり、引数はプレースホルダの出現順に並べ直される（2回使ったパラメータは2回送る）。行は同じ規則でフィールドに対応し、受け型はドライバのもの（`int64` / `uint64`、`DECIMAL`は`string`、日時は`parseTime=true`で`time.Time`、バイナリ文字列とJSONは`[]byte`）で、検査器が使う表と同じである。制約違反は`*mysql.ConstraintError`として返り、その`Key`はスキーマ上の名前 — UNIQUEキーの名前、FOREIGN KEYの`CONSTRAINT`名、CHECK制約の名前、NOT NULLなら列名 — なので`mysql.Violates(err, key)`で判定できる。`ExecOne`は`RowsAffected`で判定するが、MySQLは変更のあった行を数えるので、既に同じ値の行へのUPDATEはDSNに`clientFoundRows=true`が無いと`ErrNoRows`になる。
+
+MySQLにはBatch、Copy、MatViewは無い。`mysqltest.Start(ctx, schemaSQL)`はPATHの`mysqld`をスキーマを載せて起こし（アプリケーションのテスト用）、無ければ`mysqltest.ErrNoServer`を返す。
+
 ## 自前のランタイムでは得られないもの
 
 検査器が認識するのは宣言であってランタイムではない（`-query`で自前のマーカー関数を登録できる。[flags.ja.md](flags.ja.md)）。次の3つの約束はランタイムのもので、`sqlshape/postgres`で実行したときだけ成立する: 送る SQL が検査器の確かめた展開とバイト単位で一致すること（上の節）、違反が expect 行の綴りの名前で`ConstraintError`として返ること、`One`の文が2行目を返したらエラーになること。

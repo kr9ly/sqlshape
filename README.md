@@ -56,6 +56,7 @@ driver:
 ```
 $ go get github.com/kr9ly/sqlshape/v2            # Query / One: the declarations the checker reads
 $ go get github.com/kr9ly/sqlshape/postgres/v2   # running them on pgx
+$ go get github.com/kr9ly/sqlshape/mysql/v2      # or on MySQL, through database/sql
 ```
 
 Versions follow semantic versioning; every module of the repository is tagged together
@@ -136,6 +137,7 @@ Four stages of the same order book, one per level of trust in the database:
 - [`examples/2-views`](examples/2-views) — Reading through views: joins and column names decided once in the schema, so the application's SQL gets thinner
 - [`examples/3-database-api`](examples/3-database-api) — Writes as functions, meaning as domains and composite types: how the checks work once logic lives in the database
 - [`examples/4-everything`](examples/4-everything) — Every feature in one place; the index to look up how a particular feature is used
+- [`examples/5-mysql`](examples/5-mysql) — The same declarations against MySQL: `schema.sql` declares `mysql 8.4`, the statements run through `sqlshape/mysql` on database/sql, the tests boot a real mysqld with `mysqltest`
 
 ## What it checks
 

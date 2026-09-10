@@ -6,6 +6,8 @@ use (
 	./check/postgres
 	./cmd/sqlshape
 	./examples
+	./mysql
+	./mysqltest
 	./pgtest
 	./postgres
 )

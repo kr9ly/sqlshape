@@ -1,6 +1,6 @@
 //go:build unix
 
-package oracle
+package mysqltest
 
 import (
 	"os"

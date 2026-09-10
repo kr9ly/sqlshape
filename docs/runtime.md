@@ -170,6 +170,35 @@ and a template whose branch combinations exceeded 256 so that only a representat
 ([templates.md](templates.md#many-branches)). In those, only the shape of the branches is confirmed
 before running.
 
+## MySQL
+
+`github.com/kr9ly/sqlshape/mysql/v2` runs the same declarations on MySQL through
+`database/sql`, with go-sql-driver/mysql as the driver. `mysql.DB` is `*sql.DB`, `*sql.Tx` or
+`*sql.Conn`.
+
+```go
+for o, err := range mysql.Run(ctx, db, ListOrders, p) { ... }
+orders, err := mysql.Collect(ctx, db, ListOrders, p)
+first, err  := mysql.First(ctx, db, ListOrders, p)              // ErrNoRows (sql.ErrNoRows) when none
+res, err    := mysql.Exec(ctx, db, MarkPaid, p)                 // sql.Result
+u, err      := mysql.Get(ctx, db, UserByEmail, p)               // One: Get / Find / ExecOne as on PostgreSQL
+```
+
+The template's `{{.X}}` become MySQL's positional `?` on the wire, the arguments lined up in
+the order the placeholders appear (a parameter used twice is sent twice). Rows map to fields
+by the same rules; the receive types are the driver's (`int64` / `uint64`, `string` for
+`DECIMAL`, `time.Time` for temporal columns with `parseTime=true`, `[]byte` for binary strings
+and JSON), which is the table the checker uses. A constraint violation comes back as a
+`*mysql.ConstraintError` whose `Key` is the schema's name for it — the UNIQUE key's name,
+the FOREIGN KEY's `CONSTRAINT` name, the CHECK constraint's name, the column for NOT NULL —
+and `mysql.Violates(err, key)` tests for it. `ExecOne` judges `RowsAffected`, which MySQL
+counts as changed rows: an UPDATE to the values a row already has reports `ErrNoRows`
+unless the DSN sets `clientFoundRows=true`.
+
+There is no Batch, Copy or MatView on MySQL. `mysqltest.Start(ctx, schemaSQL)` boots the
+`mysqld` on PATH with the schema loaded, for the application's tests, and returns
+`mysqltest.ErrNoServer` when there is none.
+
 ## What a runtime of your own does not get
 
 The checker recognizes the declarations, not the runtime (`-query` registers a marker function

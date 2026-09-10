@@ -38,6 +38,7 @@ $ sqlshape version
 ```
 $ go get github.com/kr9ly/sqlshape/v2            # Query / One: 検査器が読む宣言
 $ go get github.com/kr9ly/sqlshape/postgres/v2   # pgxの上で実行する
+$ go get github.com/kr9ly/sqlshape/mysql/v2      # またはMySQLの上で、database/sqlを通して
 ```
 
 バージョンはsemantic versioningに従い、リポジトリの全モジュールに同じタグを打つ（`vX.Y.Z`、`postgres/vX.Y.Z`、…）。同じメジャーバージョンの中では、これらのモジュールと`pgtest`の公開API、テンプレート構文、ディレクティブ、検査器のフラグは互換を保つ。検査器が報告する内容はマイナーバージョンで増えることがある。
@@ -108,6 +109,7 @@ $ go vet -vettool="$(which sqlshape)" ./...
 - [`examples/2-views`](examples/2-views) — 読み取りをビューにまとめる。JOINや列名の決定をビューに閉じ込めて、アプリケーション側のSQLを薄くする段階
 - [`examples/3-database-api`](examples/3-database-api) — 書き込みを関数に、値の意味をドメインや複合型に移す。ロジックをデータベース側に置いたとき、検査がどう働くか
 - [`examples/4-everything`](examples/4-everything) — 全機能を使った例。特定の機能の使い方を探すときの索引
+- [`examples/5-mysql`](examples/5-mysql) — 同じ宣言をMySQLに対して。`schema.sql`が`mysql 8.4`を名乗り、文は`sqlshape/mysql`（database/sql）で実行し、テストは`mysqltest`で本物のmysqldを起こす
 
 ## 何を検査するか
 
