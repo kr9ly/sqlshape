@@ -12,8 +12,8 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/expand"
 )
 
@@ -29,15 +29,15 @@ import (
 
 // dtoColumn is one result column seen across the expansions of a call.
 type dtoColumn struct {
-	col   analyze.Column
+	col   dialect.Column
 	count int // expansions that select it
 }
 
 // dtoParam is one parameter path seen across the expansions.
 type dtoParam struct {
 	path expand.Path
-	pg   schema.TypeRef
-	src  *analyze.Source
+	typ  dialect.Type
+	src  *dialect.Source
 }
 
 // heldDiag is a diagnostic waiting for its quick fix.
@@ -63,10 +63,11 @@ func newDTO() *dto {
 }
 
 // addResult records the columns of one analyzed expansion.
-func (d *dto) addResult(r *analyze.Result) {
+func (d *dto) addResult(c *checker, r *analyze.Result) {
 	d.analyzed++
-	for _, col := range r.Columns {
-		if col.Name == "?column?" || col.Type.OID == catalog.Void {
+	for _, ac := range r.Columns {
+		col := pgdialect.ColumnOf(c.s, ac)
+		if col.Name == "" || col.Type.Kind == dialect.Void {
 			continue
 		}
 		if dc, ok := d.cols[col.Name]; ok {
@@ -79,7 +80,7 @@ func (d *dto) addResult(r *analyze.Result) {
 }
 
 // addParams records the parameters of one expansion.
-func (d *dto) addParams(e *expand.Expansion, r *analyze.Result) {
+func (d *dto) addParams(c *checker, e *expand.Expansion, r *analyze.Result) {
 	for _, p := range e.Params {
 		if p.N-1 >= len(r.Params) {
 			continue
@@ -88,7 +89,8 @@ func (d *dto) addParams(e *expand.Expansion, r *analyze.Result) {
 		if _, ok := d.params[key]; ok {
 			continue
 		}
-		d.params[key] = &dtoParam{path: p.Path, pg: r.Params[p.N-1], src: r.ParamSources[p.N-1]}
+		prm := pgdialect.ParamOf(c.s, r.Params[p.N-1], r.ParamSources[p.N-1])
+		d.params[key] = &dtoParam{path: p.Path, typ: prm.Type, src: prm.Source}
 		d.prmOrder = append(d.prmOrder, key)
 	}
 }
@@ -276,7 +278,7 @@ func (c *checker) resultStruct(d *dto, cur *types.Struct, node *ast.StructType) 
 			if f.node.Doc != nil {
 				doc = strings.TrimSpace(f.node.Doc.Text())
 			}
-			if fit := c.match(dc.col.Type, f.v.Type()); fit.ok && fit.lossy == "" && !fit.unknown && (!nullable || fit.nullable) {
+			if fit := c.fitPG(dc.col.Type, f.v.Type(), false); fit.ok && fit.lossy == "" && !fit.unknown && (!nullable || fit.nullable) {
 				typ = types.ExprString(f.node.Type)
 				if f.node.Tag != nil {
 					tag = " " + f.node.Tag.Value
@@ -290,7 +292,7 @@ func (c *checker) resultStruct(d *dto, cur *types.Struct, node *ast.StructType) 
 			}
 		}
 		if doc == "" && dc.col.Source != nil {
-			doc = c.s.Comments[dc.col.Source.Table+"."+dc.col.Source.Column]
+			doc = dc.col.Source.Comment
 		}
 		g.fields = append(g.fields, withDoc(doc, fname+" "+typ+tag))
 	}
@@ -380,11 +382,7 @@ func (c *checker) pathType(g *generated, n *pathNode, param bool) string {
 		b.WriteString("}")
 		return b.String()
 	case n.leaf != nil:
-		col := analyze.Column{Name: "", Type: n.leaf.pg, Source: n.leaf.src}
-		if nested := c.paramColumn(n.leaf.pg); nested != nil {
-			col.Fields = nested.Fields
-		}
-		return c.goType(g, col, n.control, true)
+		return c.goType(g, dialect.Column{Type: n.leaf.typ, Source: n.leaf.src}, n.control, true)
 	default:
 		return "bool"
 	}
@@ -399,7 +397,7 @@ func (c *checker) pathsFit(t types.Type, n *pathNode, prefix expand.Path) bool {
 			return false
 		}
 		if n.leaf != nil {
-			fit := c.paramFit(n.leaf.pg, gt)
+			fit := c.fitPG(n.leaf.typ, gt, true)
 			if !fit.ok || fit.lossy != "" || fit.unknown || (n.control && !fit.nullable) {
 				return false
 			}
@@ -470,9 +468,10 @@ func exportedName(col string) string {
 	return name
 }
 
-// goType renders the Go type for a column: the reverse of the type table. nullable
-// wraps in a pointer unless the type carries NULL itself (slices, maps, pgtype.*).
-func (c *checker) goType(g *generated, col analyze.Column, nullable, param bool) string {
+// goType renders the Go type for a column: the dialect's first choice, a bound type where
+// the column carries a nominal type. nullable wraps in a pointer unless the type carries
+// NULL itself (slices, maps, pgtype.*).
+func (c *checker) goType(g *generated, col dialect.Column, nullable, param bool) string {
 	typ, selfNullable := c.goTypeValue(g, col, param)
 	if nullable && !selfNullable {
 		return "*" + typ
@@ -480,141 +479,94 @@ func (c *checker) goType(g *generated, col analyze.Column, nullable, param bool)
 	return typ
 }
 
-const pgtypePkg = "github.com/jackc/pgx/v5/pgtype"
-
-func (c *checker) goTypeValue(g *generated, col analyze.Column, param bool) (typ string, selfNullable bool) {
-	pg := col.Type
+func (c *checker) goTypeValue(g *generated, col dialect.Column, param bool) (typ string, selfNullable bool) {
 	// a Go type already bound to this enum / value set / domain / key is the one to use
-	if n, ok := c.nominalOf(pg, col.Source); ok && n.kind != 'k' {
+	if n, ok := nominalOf(col.Type, col.Source); ok && n.kind != 'k' {
 		if name := c.boundTypeName(g, n); name != "" {
 			return name, false
 		}
 	}
-	base := c.s.Types.BaseOf(pg)
-	pt := c.s.Types.ByOID(base.OID)
-	if pt == nil {
-		return "any", false
+	return c.renderType(g, col.Type, param)
+}
+
+// renderType renders the Go type the dialect lists first for the type — or, among the
+// listed options, the one whose package the program already imports (a decimal type, a
+// uuid type), so that a generated struct follows the program's own choices.
+func (c *checker) renderType(g *generated, dt dialect.Type, param bool) (string, bool) {
+	// the value's canonical Go type is the result list's first, in either direction (the
+	// parameter list is ordered by what fits, narrow types first)
+	list := dt.Result
+	if len(list) == 0 {
+		list = dt.Param
 	}
-	// arrays
-	if pt.Elem != 0 && strings.HasPrefix(pt.Name, "_") {
-		elem := analyze.Column{Name: col.Name, Type: schema.TypeRef{OID: pt.Elem, Typmod: -1}, Fields: col.Fields}
-		et, _ := c.goTypeValue(g, elem, param)
-		return "[]" + et, true
+	if len(list) == 0 {
+		return "any /* " + dt.Name + ": no known mapping */", true
 	}
-	pgt := func(name string) (string, bool) {
-		g.need(pgtypePkg)
-		return "pgtype." + name, true
-	}
-	switch base.OID {
-	case catalog.Int2:
-		return "int16", false
-	case catalog.Int4:
-		return "int32", false
-	case catalog.Int8:
-		return "int64", false
-	case catalog.OIDType:
-		return "uint32", false
-	case catalog.Float4:
-		return "float32", false
-	case catalog.Float8:
-		return "float64", false
-	case catalog.Numeric:
-		if c.imports("github.com/shopspring/decimal") {
-			g.need("github.com/shopspring/decimal")
-			return "decimal.Decimal", false
+	chosen := list[0].Go
+	for _, opt := range list {
+		if path := spellingPkg(opt.Go); path != "" && strings.Contains(path, ".") && !strings.HasSuffix(path, "pgtype") && c.imports(path) {
+			chosen = opt.Go
+			break
 		}
-		return pgt("Numeric")
-	case catalog.Bool:
-		return "bool", false
-	case catalog.Text, catalog.Varchar, catalog.BPChar, catalog.Name, catalog.Char, catalog.Cstring:
-		return "string", false
-	case catalog.Bytea:
+	}
+	return c.renderSpelling(g, chosen, dt, param)
+}
+
+// renderSpelling writes one GoSpelling as Go source, importing what it needs; the second
+// result says whether the type carries NULL itself (a slice, a map, a Valid-bearing value).
+func (c *checker) renderSpelling(g *generated, spell string, dt dialect.Type, param bool) (string, bool) {
+	switch {
+	case spell == "struct":
+		return c.rowStruct(g, dt.Fields, param), false
+	case spell == "json":
+		return "any", true
+	case spell == "[]byte":
 		return "[]byte", true
-	case catalog.UUID:
-		if c.imports("github.com/google/uuid") {
-			g.need("github.com/google/uuid")
-			return "uuid.UUID", false
+	case strings.HasPrefix(spell, "map["):
+		return spell, true
+	case spell == "[]$elem":
+		if dt.Elem == nil {
+			return "[]any", true
 		}
-		return "string", false
-	case catalog.Date, catalog.Timestamp, catalog.TimestampTZ, catalog.Time:
-		g.need("time")
-		return "time.Time", false
-	case catalog.TimeTZ:
-		return "string", false
-	case catalog.Interval:
-		g.need("time")
-		return "time.Duration", false
-	case catalog.JSON, catalog.JSONB:
-		g.need("encoding/json")
-		return "json.RawMessage", true // a slice: nil for NULL
-	case catalog.Record:
-		return c.rowStruct(g, col, param), false
-	}
-	switch pt.Kind {
-	case 'e':
-		return "string", false
-	case 'c':
-		return c.rowStruct(g, col, param), false
-	case 'r':
-		if rng := c.s.Types.RangeOf(base.OID); rng != nil {
-			st, _ := c.goTypeValue(g, analyze.Column{Type: schema.TypeRef{OID: rng.Subtype, Typmod: -1}}, param)
-			g.need(pgtypePkg)
-			return "pgtype.Range[" + st + "]", true
+		et, _ := c.renderType(g, *dt.Elem, param)
+		return "[]" + et, true
+	case strings.HasSuffix(spell, "[$elem]"):
+		base, _ := c.renderSpelling(g, strings.TrimSuffix(spell, "[$elem]"), dt, param)
+		et := "any"
+		if dt.Elem != nil {
+			et, _ = c.renderType(g, *dt.Elem, param)
 		}
-	case 'm':
-		if rng := c.s.Types.RangeOfMulti(base.OID); rng != nil {
-			st, _ := c.goTypeValue(g, analyze.Column{Type: schema.TypeRef{OID: rng.Subtype, Typmod: -1}}, param)
-			g.need(pgtypePkg)
-			return "pgtype.Multirange[pgtype.Range[" + st + "]]", true
-		}
+		return base + "[" + et + "]", true
+	case strings.HasPrefix(spell, "[") && strings.HasSuffix(spell, "]byte"):
+		return spell, false
 	}
-	if pt.Schema == "" || pt.Schema == "pg_catalog" {
-		switch pt.Name {
-		case "inet", "cidr":
-			g.need("net/netip")
-			return "netip.Prefix", false
-		case "macaddr", "macaddr8":
-			g.need("net")
-			return "net.HardwareAddr", true
-		case "bit", "varbit":
-			return pgt("Bits")
-		case "point":
-			return pgt("Point")
-		case "lseg":
-			return pgt("Lseg")
-		case "path":
-			return pgt("Path")
-		case "box":
-			return pgt("Box")
-		case "polygon":
-			return pgt("Polygon")
-		case "line":
-			return pgt("Line")
-		case "circle":
-			return pgt("Circle")
-		case "tsvector":
-			return pgt("TSVector")
-		case "xml", "money", "tsquery", "jsonpath", "tid", "pg_lsn", "txid_snapshot", "pg_snapshot", "aclitem", "regclass", "regtype", "regproc", "regprocedure", "regoper", "regoperator", "regnamespace", "regrole", "regconfig", "regdictionary", "regcollation":
-			return "string", false
-		}
+	if path := spellingPkg(spell); path != "" {
+		g.need(path)
+		name := spell[strings.LastIndexByte(spell, '.')+1:]
+		pkg := path[strings.LastIndexByte(path, '/')+1:]
+		self := strings.HasSuffix(path, "pgtype") || spell == "encoding/json.RawMessage" || spell == "net.HardwareAddr"
+		return pkg + "." + name, self
 	}
-	switch pt.Name {
-	case "hstore":
-		return "map[string]*string", true
-	case "citext", "ltree", "lquery", "ltxtquery":
-		return "string", false
+	return spell, false
+}
+
+// spellingPkg is the package path of a named-type spelling ("net/netip.Addr" → "net/netip"),
+// "" for anything else.
+func spellingPkg(spell string) string {
+	if strings.HasPrefix(spell, "[") || strings.HasPrefix(spell, "map[") || !strings.ContainsAny(spell, "./") {
+		return ""
 	}
-	return "any /* " + c.s.Types.Format(pg) + ": no known mapping */", true
+	return spell[:strings.LastIndexByte(spell, '.')]
 }
 
 // rowStruct renders a record / composite column as a nested struct of its fields.
-func (c *checker) rowStruct(g *generated, col analyze.Column, param bool) string {
-	if len(col.Fields) == 0 {
+func (c *checker) rowStruct(g *generated, fields []dialect.Column, param bool) string {
+	if len(fields) == 0 {
 		return "struct{}"
 	}
 	var b strings.Builder
 	b.WriteString("struct {\n")
-	for _, f := range col.Fields {
+	for _, f := range fields {
 		b.WriteString("\t" + exportedName(f.Name) + " " + c.goType(g, f, f.Nullable, param) + "\n")
 	}
 	b.WriteString("}")

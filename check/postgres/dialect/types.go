@@ -111,7 +111,9 @@ func qualified(s *schema.Schema, pt *catalog.Type) string {
 	return pt.Name
 }
 
-// rowFields are a composite type's columns: the relation whose row type it is.
+// rowFields are a composite type's columns: the relation whose row type it is. A
+// composite value's fields are not subject to the table's NOT NULL, and their nullability
+// in a result is the analyzer's to say (ColumnOf takes its fields); here they are plain.
 func rowFields(s *schema.Schema, oid catalog.OID, depth int) []dialect.Column {
 	for _, r := range s.Relations {
 		if r.RowType != oid {
@@ -119,7 +121,7 @@ func rowFields(s *schema.Schema, oid catalog.OID, depth int) []dialect.Column {
 		}
 		var out []dialect.Column
 		for _, c := range r.Columns {
-			out = append(out, dialect.Column{Name: c.Name, Type: typeOf(s, c.Type, depth+1), Nullable: !c.NotNull})
+			out = append(out, dialect.Column{Name: c.Name, Type: typeOf(s, c.Type, depth+1)})
 		}
 		return out
 	}
@@ -149,7 +151,7 @@ func scalarFits(pt *catalog.Type) (result, param []dialect.GoFit) {
 		return []dialect.GoFit{{Go: "float64"}, lossy("float32", "double precision into float32")},
 			fits("float32", "float64")
 	case catalog.Numeric:
-		exact := []string{pgtype + "Numeric", "decimal.Decimal", "apd.Decimal", "big.Rat", "string"}
+		exact := []string{pgtype + "Numeric", "github.com/shopspring/decimal.Decimal", "github.com/cockroachdb/apd.Decimal", "math/big.Rat", "string"}
 		return append(fits(exact...),
 				lossy("float64", "numeric into float64 loses precision"), lossy("float32", "numeric into float32 loses precision"),
 				lossy("int64", "numeric into int64 drops the fraction"), lossy("int", "numeric into int drops the fraction"), lossy("int32", "numeric into int32 drops the fraction")),
@@ -161,8 +163,14 @@ func scalarFits(pt *catalog.Type) (result, param []dialect.GoFit) {
 	case catalog.Bytea:
 		return fits("[]byte"), fits("[]byte")
 	case catalog.UUID:
-		return fits("string", "uuid.UUID", "[16]byte"), fits("string", "uuid.UUID", "[16]byte")
-	case catalog.Date, catalog.Timestamp, catalog.TimestampTZ:
+		return fits("string", "github.com/google/uuid.UUID", "[16]byte"), fits("string", "github.com/google/uuid.UUID", "[16]byte")
+	case catalog.Timestamp:
+		advice := "timestamp without time zone into time.Time: which zone the value is in becomes the application's implicit choice (prefer timestamptz)"
+		return []dialect.GoFit{{Go: "time.Time", Advice: advice}}, []dialect.GoFit{{Go: "time.Time", Advice: advice}}
+	case catalog.Date:
+		advice := "date into time.Time: a zone conversion can move the day (keep it at UTC midnight or use a civil date type)"
+		return []dialect.GoFit{{Go: "time.Time", Advice: advice}}, []dialect.GoFit{{Go: "time.Time", Advice: advice}}
+	case catalog.TimestampTZ:
 		return fits("time.Time"), fits("time.Time")
 	case catalog.Time:
 		return fits("time.Time", "string"), fits("time.Time", "string")

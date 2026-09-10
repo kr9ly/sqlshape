@@ -7,12 +7,9 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
-	"strconv"
 	"strings"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // Interpretation sharing: a Go named type that meets a DB nominal type — an enum, a
@@ -69,146 +66,42 @@ func (n nominal) String() string {
 	return "key " + n.key
 }
 
-// nominalOf classifies a PG type + provenance.
-func (c *checker) nominalOf(pg schema.TypeRef, src *analyze.Source) (nominal, bool) {
-	t := c.s.Types.ByOID(pg.OID)
-	if t == nil {
-		return nominal{}, false
-	}
-	if t.Elem != 0 && strings.HasPrefix(t.Name, "_") {
-		t = c.s.Types.ByOID(t.Elem)
-		if t == nil {
-			return nominal{}, false
-		}
+// nominalOf classifies a dialect type and its provenance: the enum or domain it is (an
+// array of one counts as one), else what the schema says about the column it comes from
+// (a CHECK IN value set, a seeded lookup key, a key identity).
+func nominalOf(dt dialect.Type, src *dialect.Source) (nominal, bool) {
+	t := dt
+	if t.Kind == dialect.Array && t.Elem != nil {
+		t = *t.Elem
 	}
 	switch t.Kind {
-	case 'e':
-		return nominal{kind: 'e', key: t.Name, labels: c.s.Types.Enums[t.OID]}, true
-	case 'd':
-		return nominal{kind: 'd', key: t.Name}, true
+	case dialect.Enum:
+		return nominal{kind: 'e', key: t.Named, labels: t.Labels}, true
+	case dialect.Domain:
+		return nominal{kind: 'd', key: t.Named}, true
 	}
 	if src != nil {
-		if rel := c.relByFullName(src.Table); rel != nil {
-			if col := rel.Column(src.Column); col != nil && len(col.Values) > 0 {
-				return nominal{kind: 'v', key: rel.Name + "." + col.Name, labels: col.Values}, true
-			}
+		if src.ValuesFrom == "check" {
+			return nominal{kind: 'v', key: bareTable(src.Table) + "." + src.Column, labels: src.Values}, true
 		}
-		if id, ok := c.identity(src.Table, src.Column, 0); ok {
+		if src.Identity != "" {
 			// a key column of a seeded table (or a column referencing it) carries one of the
 			// declared rows: a value set like enum labels
-			if labels, ok := c.lookupLabels(id); ok {
-				return nominal{kind: 'l', key: id, labels: labels}, true
+			if src.ValuesFrom == "seed" {
+				return nominal{kind: 'l', key: src.Identity, labels: src.Values}, true
 			}
-			return nominal{kind: 'k', key: id}, true
+			return nominal{kind: 'k', key: src.Identity}, true
 		}
 	}
 	return nominal{}, false
 }
 
-// lookupLabels returns the values of the key column "table.column" when the table is
-// seeded with rows identified by that column alone.
-func (c *checker) lookupLabels(id string) ([]string, bool) {
-	dot := strings.LastIndex(id, ".")
-	if dot < 0 {
-		return nil, false
+// bareTable is a table's name without its schema.
+func bareTable(full string) string {
+	if i := strings.LastIndexByte(full, '.'); i >= 0 {
+		return full[i+1:]
 	}
-	rel := c.relByFullName(id[:dot])
-	if rel == nil || rel.Seed == nil || len(rel.Seed.Key) != 1 || rel.Seed.Key[0] != id[dot+1:] {
-		return nil, false
-	}
-	labels := make([]string, 0, len(rel.Seed.Rows))
-	for _, row := range rel.Seed.Rows {
-		labels = append(labels, constText(row[seedIndex(rel.Seed, id[dot+1:])]))
-	}
-	return labels, true
-}
-
-func seedIndex(sd *schema.Seed, col string) int {
-	for i, c := range sd.Columns {
-		if c == col {
-			return i
-		}
-	}
-	return -1
-}
-
-// constText is the value of a constant as Go constants spell it: the string itself for a
-// string, digits for an integer; other expressions as SQL text.
-func constText(e schema.Expr) string {
-	if ac := e.GetAConst(); ac != nil {
-		switch v := ac.Val.(type) {
-		case *pgparse.A_Const_Sval:
-			return v.Sval.GetSval()
-		case *pgparse.A_Const_Ival:
-			return strconv.Itoa(int(v.Ival.GetIval()))
-		}
-	}
-	if tc := e.GetTypeCast(); tc != nil {
-		return constText(tc.Arg)
-	}
-	return schema.Deparse(e)
-}
-
-// identity follows single-column PK / FK structure to the root key column.
-func (c *checker) identity(table, column string, depth int) (string, bool) {
-	if depth > 10 {
-		return "", false
-	}
-	rel := c.relByFullName(table)
-	if rel == nil {
-		return "", false
-	}
-	for _, con := range rel.Constraints {
-		if con.Kind != schema.ForeignKey {
-			continue
-		}
-		pos := -1
-		for i, col := range con.Columns {
-			if col == column {
-				pos = i
-			}
-		}
-		if pos < 0 {
-			continue
-		}
-		// a composite FK maps its columns to the referenced key by position
-		refCols := con.RefColumns
-		if len(refCols) == 0 {
-			if ref := c.relByFullName(con.RefTable); ref != nil {
-				for _, rc := range ref.Constraints {
-					if rc.Kind == schema.PrimaryKey {
-						refCols = rc.Columns
-					}
-				}
-			}
-		}
-		if pos < len(refCols) {
-			if id, ok := c.identity(con.RefTable, refCols[pos], depth+1); ok {
-				return id, true
-			}
-		}
-	}
-	for _, con := range rel.Constraints {
-		if con.Kind != schema.PrimaryKey {
-			continue
-		}
-		for _, col := range con.Columns {
-			if col == column {
-				// each column of a (possibly composite) primary key is an identity of its own
-				return table + "." + column, true
-			}
-		}
-	}
-	return "", false
-}
-
-func (c *checker) relByFullName(name string) *schema.Relation {
-	for _, r := range c.s.Relations {
-		if r.FullName() == name {
-			return r
-		}
-	}
-	return nil
+	return full
 }
 
 // namedOf strips pointers / slices / nullable wrappers and returns the Go named type, if any.
@@ -234,8 +127,8 @@ func namedOf(t types.Type) *types.Named {
 
 // meet records that Go type gt carries a value of PG type pg (from src). Returns the
 // established binding's key mismatch, if any, as a diagnostic message.
-func (c *checker) meet(gt types.Type, pg schema.TypeRef, src *analyze.Source, pos token.Pos, what string) {
-	n, ok := c.nominalOf(pg, src)
+func (c *checker) meet(gt types.Type, dt dialect.Type, src *dialect.Source, pos token.Pos, what string) {
+	n, ok := nominalOf(dt, src)
 	named := namedOf(gt)
 	if !ok {
 		return

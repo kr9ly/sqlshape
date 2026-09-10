@@ -25,7 +25,7 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
+	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
@@ -782,8 +782,8 @@ func (c *checker) checkCall(call *ast.CallExpr) {
 		}
 		c.checkParams(e, r, pType, lit, reportP, where)
 		checkBareOrderBy(c.s.Version, e, lit, report, where)
-		d.addParams(e, r)
-		d.addResult(r)
+		d.addParams(c, e, r)
+		d.addResult(c, r)
 		for name, t := range c.checkResult(call.Pos(), r, rType, lit, reportR, where) {
 			missing[name]++
 			missingType[name] = t
@@ -871,86 +871,48 @@ func (c *checker) checkParams(e *expand.Expansion, r *analyze.Result, pType type
 		if p.N-1 >= len(r.Params) {
 			continue
 		}
-		pg := r.Params[p.N-1]
-		c.meet(gt, pg, r.ParamSources[p.N-1], lit.pos(p.Pos), "parameter "+p.Path.String())
-		f := c.paramFit(pg, gt)
+		prm := pgdialect.ParamOf(c.s, r.Params[p.N-1], r.ParamSources[p.N-1])
+		c.meet(gt, prm.Type, prm.Source, lit.pos(p.Pos), "parameter "+p.Path.String())
+		f := c.fitPG(prm.Type, gt, true)
 		switch {
 		case !f.ok:
-			report(lit.pos(p.Pos), "parameter %s is %s but SQL expects %s%s", p.Path, gt, c.s.Types.Format(pg), where)
+			report(lit.pos(p.Pos), "parameter %s is %s but SQL expects %s%s", p.Path, gt, prm.Type.Name, where)
 		case f.lossy != "":
 			report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, f.lossy, where)
 		case f.unknown:
-			report(lit.pos(p.Pos), "parameter %s: no known Go mapping for %s, not checked%s", p.Path, c.s.Types.Format(pg), where)
+			report(lit.pos(p.Pos), "parameter %s: no known Go mapping for %s, not checked%s", p.Path, prm.Type.Name, where)
 		}
 		if f.ok {
 			// a composite (or composite[]) parameter: the struct's fields must line up with the type's columns
-			if col := c.paramColumn(pg); col != nil {
-				c.checkNested(*col, gt, lit.pos(p.Pos), "parameter "+p.Path.String(), report, where, true)
-			}
+			c.checkNested(dialect.Column{Type: prm.Type}, gt, lit.pos(p.Pos), "parameter "+p.Path.String(), report, where, true)
 		}
 		if c.strict && f.ok {
-			c.adviseParam(p, gt, pg, r.ParamSources[p.N-1], lit, report, where)
+			c.adviseParam(p, gt, prm.Type, prm.Source, f, lit, report, where)
 		}
 	}
 }
 
 // adviseParam reports advisory findings about a parameter (-strict).
-func (c *checker) adviseParam(p expand.Param, gt types.Type, pg schema.TypeRef, src *analyze.Source, lit literal, report func(token.Pos, string, ...any), where string) {
+func (c *checker) adviseParam(p expand.Param, gt types.Type, dt dialect.Type, src *dialect.Source, f fit, lit literal, report func(token.Pos, string, ...any), where string) {
 	inner, nullable := unwrapNullable(gt)
-	if msg := c.fidelity(pg, gt); msg != "" {
-		report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, msg, where)
+	if f.advice != "" {
+		report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, f.advice, where)
 	}
-	if t := c.s.Types.ByOID(c.s.Types.BaseOf(pg).OID); t != nil && t.Kind == 'e' && !nullable && inner != nil {
-		report(lit.pos(p.Pos), "parameter %s is a non-pointer %s: its zero value \"\" is not a label of enum %s and fails at runtime (SQLSTATE 22P02) when unset%s", p.Path, gt, t.Name, where)
+	base := dt
+	for base.Kind == dialect.Domain && base.Base != nil {
+		base = *base.Base
+	}
+	if base.Kind == dialect.Enum && !nullable && inner != nil {
+		report(lit.pos(p.Pos), "parameter %s is a non-pointer %s: its zero value \"\" is not a label of enum %s and fails at runtime (SQLSTATE 22P02) when unset%s", p.Path, gt, base.Named, where)
 	}
 	if src != nil && src.Assigned && !nullable {
-		if rel := c.relByFullName(src.Table); rel != nil {
-			if col := rel.Column(src.Column); col != nil {
-				switch {
-				case col.Default != nil:
-					report(lit.pos(p.Pos), "parameter %s always sends a value into %s.%s, so its DEFAULT never applies: decide which side owns the default (make the column conditional with {{if}} to use the database's)%s", p.Path, rel.Name, col.Name, where)
-				case col.Identity != 0:
-					report(lit.pos(p.Pos), "parameter %s sends a value into %s.%s, which the database generates%s", p.Path, rel.Name, col.Name, where)
-				}
-			}
+		switch {
+		case src.HasDefault:
+			report(lit.pos(p.Pos), "parameter %s always sends a value into %s.%s, so its DEFAULT never applies: decide which side owns the default (make the column conditional with {{if}} to use the database's)%s", p.Path, bareTable(src.Table), src.Column, where)
+		case src.Generated:
+			report(lit.pos(p.Pos), "parameter %s sends a value into %s.%s, which the database generates%s", p.Path, bareTable(src.Table), src.Column, where)
 		}
 	}
-}
-
-// fidelity says where a Go type receives a PG type faithfully but with an implicit
-// interpretation the application then owns (advisory).
-func (c *checker) fidelity(pg schema.TypeRef, gt types.Type) string {
-	inner, _ := unwrapNullable(gt)
-	if inner == nil {
-		return ""
-	}
-	// an array parameter/result: apply the same advice to the element type, the way
-	// matchValue's array branch decides an element's fit (multi-dimensional arrays
-	// recurse the same way, one level of []/[N] at a time).
-	base := c.s.Types.BaseOf(pg)
-	if pt := c.s.Types.ByOID(base.OID); pt != nil && pt.Elem != 0 && strings.HasPrefix(pt.Name, "_") {
-		var elem types.Type
-		switch u := inner.Underlying().(type) {
-		case *types.Slice:
-			elem = u.Elem()
-		case *types.Array:
-			elem = u.Elem()
-		}
-		if elem == nil {
-			return ""
-		}
-		return c.fidelity(schema.TypeRef{OID: pt.Elem, Typmod: -1}, elem)
-	}
-	if !isNamed(inner, "time", "Time") {
-		return ""
-	}
-	switch base.OID {
-	case catalog.Timestamp:
-		return "timestamp without time zone into time.Time: which zone the value is in becomes the application's implicit choice (prefer timestamptz)"
-	case catalog.Date:
-		return "date into time.Time: a zone conversion can move the day (keep it at UTC midnight or use a civil date type)"
-	}
-	return ""
 }
 
 // checkResult matches result columns against R. It returns the struct fields that had
@@ -960,12 +922,20 @@ func (c *checker) fidelity(pg schema.TypeRef, gt types.Type) string {
 func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) map[string]types.Type {
 	at := callPos
 	// `-- sqlshape: not null a, b` in the template overrides the analyzer's nullability
+	// a void column (SELECT some_procedure_like_function(...)) carries nothing: it binds to no field
+	var cols []dialect.Column
+	for _, ac := range r.Columns {
+		col := pgdialect.ColumnOf(c.s, ac)
+		if col.Type.Kind != dialect.Void {
+			cols = append(cols, col)
+		}
+	}
 	overrides, _ := notNullOverrides(lit.text)
 	for name, off := range overrides {
 		found := false
-		for i := range r.Columns {
-			if r.Columns[i].Name == name {
-				r.Columns[i].Nullable = false
+		for i := range cols {
+			if cols[i].Name == name {
+				cols[i].Nullable = false
 				found = true
 			}
 		}
@@ -973,24 +943,16 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			report(lit.pos(off), "not null: the query has no result column %q%s", name, where)
 		}
 	}
-	// a void column (SELECT some_procedure_like_function(...)) carries nothing: it binds to no field
-	cols := r.Columns[:0:0]
-	for _, col := range r.Columns {
-		if col.Type.OID != catalog.Void {
-			cols = append(cols, col)
-		}
-	}
-	r.Columns = cols
 	st, isStruct := rType.Underlying().(*types.Struct)
 	if !isStruct || isNamed(rType, "time", "Time") {
 		// scalar R: exactly one column
-		if len(r.Columns) != 1 {
-			report(at, "R is %s but the query returns %d columns%s", rType, len(r.Columns), where)
+		if len(cols) != 1 {
+			report(at, "R is %s but the query returns %d columns%s", rType, len(cols), where)
 			return nil
 		}
-		col := r.Columns[0]
+		col := cols[0]
 		c.meet(rType, col.Type, col.Source, at, "R")
-		f := c.match(col.Type, rType)
+		f := c.fitPG(col.Type, rType, false)
 		c.reportFit(report, at, "column "+col.Name, col, rType, f, where)
 		if f.ok {
 			c.checkNested(col, rType, at, "R", report, where, false)
@@ -1002,8 +964,8 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 	}
 	// struct R: every column needs a distinct name to bind to a field
 	byName := map[string]int{}
-	for i, col := range r.Columns {
-		if col.Name == "?column?" {
+	for i, col := range cols {
+		if col.Name == "" {
 			report(at, "result column %d has no name: give it an alias (... AS name) so it can bind to a field of %s%s", i+1, rType, where)
 			continue
 		}
@@ -1033,7 +995,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		}
 	}
 	matched := map[string]bool{}
-	for _, col := range r.Columns {
+	for _, col := range cols {
 		fv, ok := fields[col.Name]
 		if !ok {
 			// case-insensitive fallback
@@ -1046,7 +1008,7 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 			}
 		}
 		if !ok {
-			if col.Name != "?column?" {
+			if col.Name != "" {
 				report(at, "result column %q has no field in %s%s", col.Name, rType, where)
 			}
 			continue
@@ -1057,15 +1019,15 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 		}
 		fname := fieldName[col.Name]
 		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fname)
-		f := c.match(col.Type, fv.Type())
+		f := c.fitPG(col.Type, fv.Type(), false)
 		if notnull[col.Name] {
 			col.Nullable = false
 		}
 		c.reportFit(report, at, "field "+fname, col, fv.Type(), f, where)
 		if f.ok {
 			c.checkNested(col, fv.Type(), at, "field "+fname, report, where, false)
-			if msg := c.fidelity(col.Type, fv.Type()); msg != "" && c.strict {
-				report(at, "field %s: %s%s", fname, msg, where)
+			if f.advice != "" && c.strict {
+				report(at, "field %s: %s%s", fname, f.advice, where)
 			}
 		}
 	}
@@ -1078,8 +1040,8 @@ func (c *checker) checkResult(callPos token.Pos, r *analyze.Result, rType types.
 	return missing
 }
 
-func (c *checker) reportFit(report func(token.Pos, string, ...any), at token.Pos, what string, col analyze.Column, gt types.Type, f fit, where string) {
-	pgName := c.s.Types.Format(col.Type)
+func (c *checker) reportFit(report func(token.Pos, string, ...any), at token.Pos, what string, col dialect.Column, gt types.Type, f fit, where string) {
+	pgName := col.Type.Name
 	switch {
 	case !f.ok:
 		report(at, "%s is %s but column %q is %s%s", what, gt, col.Name, pgName, where)
@@ -1189,8 +1151,8 @@ func (c *checker) adviseSchema(at token.Pos) {
 			// with a MERGE, its rows can carry a label and an order, and the checker reads
 			// it just as well
 			for _, col := range rel.Columns {
-				if t := c.s.Types.ByOID(col.Type.OID); t != nil && t.Kind == 'e' && !rel.Temp {
-					c.pass.Reportf(at, "sqlshape: schema: %s.%s is enum %s: a seeded lookup table (rows in schema.sql, referenced by a foreign key) is easier to change — an enum cannot drop or reorder a label without being recreated under every column — and is checked the same way", rel.FullName(), col.Name, t.Name)
+				if t := pgdialect.TypeOf(c.s, col.Type); t.Kind == dialect.Enum && !rel.Temp {
+					c.pass.Reportf(at, "sqlshape: schema: %s.%s is enum %s: a seeded lookup table (rows in schema.sql, referenced by a foreign key) is easier to change — an enum cannot drop or reorder a label without being recreated under every column — and is checked the same way", rel.FullName(), col.Name, t.Named)
 				}
 			}
 		}

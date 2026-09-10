@@ -9,6 +9,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	pgdialect "github.com/kr9ly/sqlshape/check/postgres/v2/dialect"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
 
@@ -152,7 +153,7 @@ func (c *checker) checkCopy(call *ast.CallExpr) {
 			continue
 		}
 		fed[f.col] = true
-		c.meet(f.v.Type(), col.Type, &analyze.Source{Table: rel.FullName(), Column: col.Name, NotNull: col.NotNull, Assigned: true}, call.Pos(), "field "+f.name)
+		c.meet(f.v.Type(), pgdialect.TypeOf(c.s, col.Type), pgdialect.SourceOf(c.s, &analyze.Source{Table: rel.FullName(), Column: col.Name, NotNull: col.NotNull, Assigned: true}), call.Pos(), "field "+f.name)
 		c.copyFit(report, col, f.v.Type(), "field "+f.name)
 	}
 	for _, f := range flat {

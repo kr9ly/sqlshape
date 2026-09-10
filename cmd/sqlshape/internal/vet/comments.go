@@ -10,6 +10,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // COMMENT ON in schema.sql is the documentation of a column or table. With -sync-comments
@@ -18,11 +19,11 @@ import (
 // and shows up on hover in the editor.
 
 // suggestFieldComment proposes the column's COMMENT as the doc comment of an undocumented field.
-func (c *checker) suggestFieldComment(fv *types.Var, col analyze.Column) {
+func (c *checker) suggestFieldComment(fv *types.Var, col dialect.Column) {
 	if col.Source == nil {
 		return
 	}
-	comment := c.s.Comments[col.Source.Table+"."+col.Source.Column]
+	comment := col.Source.Comment
 	if comment == "" {
 		return
 	}

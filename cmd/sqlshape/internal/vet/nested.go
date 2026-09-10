@@ -5,9 +5,7 @@ import (
 	"go/types"
 	"strconv"
 
-	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
-	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // Nested rows. A record / composite column (or an array of them) is received by a Go
@@ -19,8 +17,9 @@ import (
 // checkNested matches the fields of a record column against the Go struct receiving it
 // (param = false), or of a composite parameter against the struct passed for it (param =
 // true: the runtime encodes the struct's fields positionally as pgtype.CompositeFields).
-func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, what string, report func(token.Pos, string, ...any), where string, param bool) {
-	if len(col.Fields) == 0 {
+func (c *checker) checkNested(col dialect.Column, gt types.Type, at token.Pos, what string, report func(token.Pos, string, ...any), where string, param bool) {
+	rowFields, named := nestedFields(col.Type)
+	if len(rowFields) == 0 {
 		return
 	}
 	inner, _ := unwrapNullable(gt)
@@ -44,8 +43,6 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 	if _, declared := c.declaredOf(inner); declared || implementsScanner(inner) {
 		return // the type decodes the value itself; its fields are not columns
 	}
-	et := c.s.Types.ByOID(elemOID(c, col))
-	named := et != nil && et.Kind == 'c'
 	flat, dups := structFields(st)
 	for _, d := range dups {
 		report(at, "%s: %s: fields %s%s", what, inner, d, where)
@@ -62,11 +59,11 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 			}
 		}
 	}
-	if len(fields) != len(col.Fields) {
-		report(at, "%s: %s has %d fields but the row type has %d (%s)%s", what, inner, len(fields), len(col.Fields), rowShape(c, col), where)
+	if len(fields) != len(rowFields) {
+		report(at, "%s: %s has %d fields but the row type has %d (%s)%s", what, inner, len(fields), len(rowFields), rowShape(rowFields), where)
 		return
 	}
-	for i, f := range col.Fields {
+	for i, f := range rowFields {
 		fv := fields[i]
 		sub := what + "." + goNames[i]
 		if named && names[i] != f.Name {
@@ -74,7 +71,7 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 			continue
 		}
 		c.meet(fv.Type(), f.Type, f.Source, at, sub)
-		fit := c.matchDir(f.Type, fv.Type(), param)
+		fit := c.fitPG(f.Type, fv.Type(), param)
 		if notnull[i] {
 			f.Nullable = false
 		}
@@ -83,53 +80,27 @@ func (c *checker) checkNested(col analyze.Column, gt types.Type, at token.Pos, w
 	}
 }
 
-// paramColumn describes a composite parameter (or an array of composites) like a result
-// column, so checkNested can match the struct passed for it: the fields are the declared
-// columns of the relation whose row type it is, recursively. Nil for other types.
-func (c *checker) paramColumn(pg schema.TypeRef) *analyze.Column {
-	oid := c.s.Types.BaseOf(pg).OID
-	if t := c.s.Types.ByOID(oid); t != nil && t.IsArray() {
-		oid = t.Elem
+// nestedFields are the columns of a row-typed value (a composite, a record, or an array
+// of either; a domain over one), and whether the row type is named (a composite: the
+// field names must agree, not only the positions).
+func nestedFields(t dialect.Type) ([]dialect.Column, bool) {
+	for t.Kind == dialect.Domain && t.Base != nil {
+		t = *t.Base
 	}
-	rel := c.relByRowType(oid)
-	if rel == nil {
-		return nil
+	if t.Kind == dialect.Array && t.Elem != nil {
+		t = *t.Elem
 	}
-	col := &analyze.Column{Type: pg}
-	for _, rc := range rel.Columns {
-		f := analyze.Column{Name: rc.Name, Type: rc.Type}
-		if sub := c.paramColumn(rc.Type); sub != nil {
-			f.Fields = sub.Fields
-		}
-		col.Fields = append(col.Fields, f)
-	}
-	return col
+	return t.Fields, t.Kind == dialect.Composite
 }
 
-func (c *checker) relByRowType(oid catalog.OID) *schema.Relation {
-	for _, r := range c.s.Relations {
-		if r.RowType == oid {
-			return r
-		}
-	}
-	return nil
-}
-
-func elemOID(c *checker, col analyze.Column) catalog.OID {
-	oid := col.Type.OID
-	if t := c.s.Types.ByOID(oid); t != nil && t.IsArray() {
-		oid = t.Elem
-	}
-	return oid
-}
-
-func rowShape(c *checker, col analyze.Column) string {
+// rowShape spells a row type's columns for a diagnostic.
+func rowShape(fields []dialect.Column) string {
 	s := ""
-	for i, f := range col.Fields {
+	for i, f := range fields {
 		if i > 0 {
 			s += ", "
 		}
-		s += f.Name + " " + c.s.Types.Format(f.Type)
+		s += f.Name + " " + f.Type.Name
 	}
 	return strconv.Quote(s)
 }

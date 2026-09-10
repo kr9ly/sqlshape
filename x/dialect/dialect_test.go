@@ -6,6 +6,7 @@ type nopAnalyzer struct{}
 
 func (nopAnalyzer) Analyze(string) (*Result, error) { return &Result{}, nil }
 func (nopAnalyzer) Problems() []string              { return nil }
+func (nopAnalyzer) Traits() Traits                  { return Traits{} }
 
 func TestDeclared(t *testing.T) {
 	Register("testdb", func(string) (Analyzer, error) { return nopAnalyzer{}, nil })

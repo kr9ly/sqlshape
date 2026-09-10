@@ -61,39 +61,44 @@ func fitValue(dt dialect.Type, t types.Type, param bool, tr dialect.Traits) fit 
 		list = dt.Param
 	}
 	for _, g := range list {
-		if ok, lossy := matchSpelling(g.Go, dt, t, param, tr); ok {
-			if lossy != "" {
-				return fit{ok: true, lossy: lossy}
+		if ok, sub := matchSpelling(g.Go, dt, t, param, tr); ok {
+			f := fit{ok: true, lossy: g.Lossy, advice: g.Advice}
+			if sub.lossy != "" {
+				f.lossy = sub.lossy
 			}
-			return fit{ok: true, lossy: g.Lossy}
+			if sub.advice != "" {
+				f.advice = sub.advice
+			}
+			return f
 		}
 	}
 	return fit{}
 }
 
 // matchSpelling reads one GoSpelling against t. For a compound spelling ([]$elem, a
-// generic over $elem) the element's fit is Elem's, and its lossiness is carried up.
-func matchSpelling(spell string, dt dialect.Type, t types.Type, param bool, tr dialect.Traits) (ok bool, lossy string) {
+// generic over $elem) the element's fit is Elem's, and its lossiness and advice are
+// carried up in sub.
+func matchSpelling(spell string, dt dialect.Type, t types.Type, param bool, tr dialect.Traits) (ok bool, sub fit) {
 	switch {
 	case spell == "struct":
 		_, isStruct := t.Underlying().(*types.Struct)
-		return isStruct, ""
+		return isStruct, fit{}
 	case spell == "json":
 		if k, isBasic := basicKind(t); isBasic && k != types.String {
-			return false, ""
+			return false, fit{}
 		}
-		return true, ""
+		return true, fit{}
 	case spell == "[]byte":
-		return isByteSlice(t), ""
+		return isByteSlice(t), fit{}
 	case strings.HasPrefix(spell, "map["):
-		return matchMap(spell, t), ""
+		return matchMap(spell, t), fit{}
 	case strings.HasSuffix(spell, "$elem") && (strings.HasPrefix(spell, "[]") || strings.HasPrefix(spell, "[")):
 		// []$elem or [N]$elem
 		var et types.Type
 		switch u := t.Underlying().(type) {
 		case *types.Slice:
 			if !strings.HasPrefix(spell, "[]") {
-				return false, ""
+				return false, fit{}
 			}
 			et = u.Elem()
 		case *types.Array:
@@ -101,55 +106,55 @@ func matchSpelling(spell string, dt dialect.Type, t types.Type, param bool, tr d
 			if strings.HasPrefix(spell, "[]") {
 				et = u.Elem()
 			} else if err != nil || n != u.Len() {
-				return false, ""
+				return false, fit{}
 			} else {
 				et = u.Elem()
 			}
 		default:
-			return false, ""
+			return false, fit{}
 		}
 		if dt.Elem == nil {
-			return false, ""
+			return false, fit{}
 		}
 		ef := fitType(*dt.Elem, et, param, tr)
 		if ef.unknown {
-			return true, ""
+			return true, fit{}
 		}
-		return ef.ok, ef.lossy
+		return ef.ok, ef
 	case strings.HasSuffix(spell, "[$elem]"):
 		// pkg.Name[$elem]
 		n, isNamed := t.(*types.Named)
 		if !isNamed || !sameNamed(n, strings.TrimSuffix(spell, "[$elem]")) {
-			return false, ""
+			return false, fit{}
 		}
 		args := n.TypeArgs()
 		if args == nil || args.Len() != 1 || dt.Elem == nil {
-			return false, ""
+			return false, fit{}
 		}
 		ef := fitType(*dt.Elem, args.At(0), param, tr)
-		return ef.ok, ef.lossy
+		return ef.ok, ef
 	case strings.HasPrefix(spell, "[") && strings.HasSuffix(spell, "]byte"):
 		arr, isArr := t.Underlying().(*types.Array)
 		if !isArr {
-			return false, ""
+			return false, fit{}
 		}
 		n, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(spell, "["), "]byte"), 10, 64)
 		if err != nil || n != arr.Len() {
-			return false, ""
+			return false, fit{}
 		}
 		k, isBasic := basicKind(arr.Elem())
-		return isBasic && (k == types.Byte || k == types.Uint8), ""
+		return isBasic && (k == types.Byte || k == types.Uint8), fit{}
 	}
 	if strings.ContainsAny(spell, "./") {
 		n, isNamed := t.(*types.Named)
-		return isNamed && sameNamed(n, spell), ""
+		return isNamed && sameNamed(n, spell), fit{}
 	}
 	// a basic type, by its own or its underlying spelling (a named string carries text)
 	b, isBasic := t.Underlying().(*types.Basic)
 	if !isBasic {
-		return false, ""
+		return false, fit{}
 	}
-	return b.Name() == spell || (spell == "byte" && b.Kind() == types.Uint8), ""
+	return b.Name() == spell || (spell == "byte" && b.Kind() == types.Uint8), fit{}
 }
 
 // sameNamed: the named type's package path and name spell "path.Name" (the path matched

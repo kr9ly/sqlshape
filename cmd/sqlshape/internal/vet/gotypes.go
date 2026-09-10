@@ -16,6 +16,7 @@ type fit struct {
 	ok       bool   // the Go type can carry the PG value
 	nullable bool   // the Go type can carry NULL (pointer, sql.Null*, pgtype.*)
 	lossy    string // non-empty when the mapping loses information (e.g. numeric → float64)
+	advice   string // what a faithful mapping still leaves to the application (-strict)
 	unknown  bool   // PG type has no known Go mapping; accepted with a note
 }
 

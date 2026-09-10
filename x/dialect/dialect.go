@@ -126,9 +126,17 @@ type Source struct {
 	// columns with the same Identity hold the same kind of value; the checker binds a Go
 	// type to it.
 	Identity string
-	// Values are the values the column may hold when the schema fixes them: a CHECK
-	// (col IN (...)) list, or the key values of a seeded lookup table. Nil otherwise.
-	Values []string
+	// Values are the values the column may hold when the schema fixes them, and
+	// ValuesFrom says how: "check" for a CHECK (col IN (...)), "seed" for the key of a
+	// lookup table seeded in the schema (Identity names the key). Nil otherwise.
+	Values     []string
+	ValuesFrom string
+	// HasDefault: the column has a DEFAULT; Generated: the database computes it (an
+	// identity or generated column). Both matter to a parameter assigned to the column.
+	HasDefault bool
+	Generated  bool
+	// Comment is the column's COMMENT, "" for none.
+	Comment string
 }
 
 // Note is a finding about the statement that is not an error.
@@ -196,6 +204,7 @@ const (
 	Multirange // Elem is the range
 	Enum
 	Domain // Base is the underlying type
+	Void   // a column that carries nothing (a procedure-like function's result)
 )
 
 // Unknown reports a type the dialect has no Go mapping for.
@@ -206,8 +215,12 @@ type GoFit struct {
 	// Go is a spelling of the Go type (GoSpelling).
 	Go string
 	// Lossy is why the mapping loses information ("numeric into float64 loses precision"),
-	// "" when it is faithful; the checker reports a lossy fit under -strict.
+	// "" when it is faithful; the checker reports a lossy fit as a finding.
 	Lossy string
+	// Advice is what the mapping leaves to the application even when faithful ("timestamp
+	// without time zone into time.Time: the zone is the application's implicit choice");
+	// the checker reports it under -strict.
+	Advice string
 }
 
 // GoSpelling is the grammar of GoFit.Go, what the checker matches a Go type against:
