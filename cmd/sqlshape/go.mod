@@ -8,7 +8,7 @@ go 1.26.1
 // requires below to X.Y.Z and tags vX.Y.Z, mysql/vX.Y.Z and cmd/sqlshape/vX.Y.Z on one
 // commit. Until the MySQL module's first tag it is resolved through go.work alone (a
 // require of a version that does not exist yet breaks module loading even in a workspace).
-require github.com/kr9ly/sqlshape v1.2.0
+require github.com/kr9ly/sqlshape v1.3.0-rc.1
 
 require golang.org/x/tools v0.49.0
 
@@ -17,6 +17,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
+	github.com/kr9ly/sqlshape/mysql v1.3.0-rc.1
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
