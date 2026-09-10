@@ -535,7 +535,7 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		name := "VARCHAR"
 		switch {
 		case class == "Item_func_str_to_date":
-			name = "DATETIME"
+			name = strToDateType(args)
 		case len(ts) > 0 && ts[0].known && ts[0].typ.Name == "time":
 			name = "TIME"
 		case len(ts) > 0 && ts[0].known && isTemporal(ts[0].typ):
@@ -843,4 +843,42 @@ func intOr(v mysqlast.Value, def int) int {
 
 func isTrue(v mysqlast.Value) bool {
 	return str(v) == "true"
+}
+
+// strToDateType is the type STR_TO_DATE gives from a literal format
+// (Item_func_str_to_date::fix_from_format): a TIME when the format has only time parts, a
+// DATE when only date parts, a DATETIME when both (or when the format is not a literal).
+func strToDateType(args []mysqlast.Value) string {
+	if len(args) < 2 {
+		return "DATETIME"
+	}
+	n, ok := args[1].(*mysqlast.Node)
+	if !ok || n.Class != "PTI_text_literal_text_string" {
+		return "DATETIME"
+	}
+	tok, ok := n.Arg("literal").(mysqlast.Token)
+	if !ok {
+		return "DATETIME"
+	}
+	format := tok.Value
+	date, time := false, false
+	for i := 0; i+1 < len(format); i++ {
+		if format[i] != '%' {
+			continue
+		}
+		i++
+		switch {
+		case format[i] == 'f', strings.IndexByte("HISThiklrs", format[i]) >= 0:
+			time = true
+		case strings.IndexByte("MVUXYWabcjmvuxyw", format[i]) >= 0:
+			date = true
+		}
+	}
+	switch {
+	case time && date:
+		return "DATETIME"
+	case time:
+		return "TIME"
+	}
+	return "DATE"
 }

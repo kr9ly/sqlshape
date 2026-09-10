@@ -97,6 +97,24 @@ release it is a candidate for.
   identities and diffs `ENUM` labels against typed constants on MySQL too. `REGEXP_LIKE` is a
   bigint(1), `REGEXP_REPLACE` nullable, `QUOTE` of a binary a character string: the probe
   golden has no disagreement left.
+- MySQL, after an adversarial round against a running mysqld (7 lanes, 21 findings, every one
+  a regression test now): a `USING` or `NATURAL` join coalesces its common columns (an
+  unqualified name is not ambiguous, `SELECT *` lists it once); `GROUP BY` on the alias of an
+  aggregate is 1056; multi-table `DELETE t1, t2 FROM ...` / `DELETE FROM t1 USING ...` is
+  analyzed, its targets judged for the failure modes; the select list is resolved before the
+  `WHERE`, as the server does, so its error comes first; a `BIT` operand is unsigned in
+  arithmetic; `WITH ROLLUP` makes every non-aggregated result column nullable; `STR_TO_DATE`
+  follows a literal format into `DATE` / `TIME` / `DATETIME`; `col -> 'path'` and `->>` parse.
+  The facts no longer take an expression bound to the execution (`RAND()`) for a known value,
+  so `GROUP BY RAND()` is not one row and `tenant_id = FLOOR(RAND() * 3)` pins nothing. The
+  failure modes: `REPLACE` violates no key but may violate a referencing foreign key (1451), a
+  multi-table `UPDATE` judges each assignment against its own table, an `UPDATE` through an
+  updatable view judges the base table (its parameters carry the base column too). The
+  schema loader names unnamed `CHECK` and `FOREIGN KEY` constraints the server's way, one above
+  the highest generated number, so `ALTER TABLE ... DROP CHECK t_chk_1` finds its constraint,
+  and reads table and view names case-sensitively (lower_case_table_names=0). The runtime's
+  `ExecOne` accepts the 0 / 1 / 2 rows `INSERT ... ON DUPLICATE KEY UPDATE` and `REPLACE`
+  report for the one row their key names.
 - MySQL, a first slice. A `schema.sql` that declares `-- sqlshape: mysql 8.4` is loaded by the
   MySQL schema loader and every `Query` is judged by the MySQL analyzer: the statement's own errors
   (unknown table or column, ambiguity, syntax, with MySQL's message and error number), result

@@ -62,23 +62,30 @@ func (a *analyzer) violations() []Violation {
 	if w == nil || w.table == nil || w.ignore {
 		return nil
 	}
+	var out []Violation
 	switch w.kind {
 	case facts.Insert:
-		return a.insertViolations(w)
+		out = a.insertViolations(w)
 	case facts.Update:
-		return a.updateViolations(w.table, w.values, nil)
+		out = a.updateViolations(w.table, w.values, nil)
+		for _, m := range w.more {
+			out = append(out, a.updateViolations(m.table, m.values, nil)...)
+		}
 	case facts.Delete:
-		return a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
+		out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
+		for _, m := range w.more {
+			out = append(out, a.referencingViolations(m.table, nil, true, map[*schema.Table]bool{})...)
+		}
 	}
-	return nil
+	return dedupe(out)
 }
 
 func (a *analyzer) insertViolations(w *write) []Violation {
 	t := w.table
 	var out []Violation
 	for _, k := range t.Keys {
-		if k.Kind != schema.Primary && k.Kind != schema.Unique || w.onDuplicate != nil {
-			continue
+		if k.Kind != schema.Primary && k.Kind != schema.Unique || w.onDuplicate != nil || w.replace {
+			continue // ON DUPLICATE KEY UPDATE and REPLACE absorb a colliding key
 		}
 		cols, ok := keyColumns(k)
 		if !ok || systemGenerated(t, cols, w.inserted) || leftNull(t, cols, w.inserted) {
@@ -99,6 +106,10 @@ func (a *analyzer) insertViolations(w *write) []Violation {
 	out = append(out, notNullViolations(t, w.values)...)
 	if w.onDuplicate != nil {
 		out = append(out, a.updateViolations(t, w.onDuplicate, nil)...)
+	}
+	if w.replace {
+		// the row a REPLACE displaces is deleted: the rows referring to it object
+		out = append(out, a.referencingViolations(t, nil, true, map[*schema.Table]bool{})...)
 	}
 	return dedupe(out)
 }

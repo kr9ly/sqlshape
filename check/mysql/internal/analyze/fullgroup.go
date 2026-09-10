@@ -787,11 +787,11 @@ func deterministic(v mysqlast.Value) bool {
 	return true
 }
 
-// ndNode: a node whose value is bound to the execution -- a parameter, a variable, a
-// function of the clock, the session or chance.
+// ndNode: a node whose value is bound to the execution -- a variable, a function of the
+// clock, the session or chance (a parameter is fixed for the execution: not one).
 func ndNode(x *mysqlast.Node) bool {
 	switch x.Class {
-	case "Item_param", "PTI_user_variable", "PTI_variable_aux_set_var", "PTI_variable_aux_ident_or_text", "PTI_variable_aux_3d",
+	case "PTI_user_variable", "PTI_variable_aux_set_var", "PTI_variable_aux_ident_or_text", "PTI_variable_aux_3d",
 		"PTI_get_system_variable", "Item_func_get_user_var", "Item_func_get_system_var", "Item_func_set_user_var":
 		return true
 	case "PTI_function_call_generic_ident_sys":
@@ -1114,7 +1114,7 @@ func constItem(v mysqlast.Value) bool {
 		}
 		return true
 	case *mysqlast.Node:
-		if ndNode(x) || isColumnRef(x) || isAggregateLike(x) || isWindowFunction(x) {
+		if x.Class == "Item_param" || ndNode(x) || isColumnRef(x) || isAggregateLike(x) || isWindowFunction(x) {
 			return false
 		}
 		if x.Class == "PT_subquery" {

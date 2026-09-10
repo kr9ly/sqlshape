@@ -171,6 +171,29 @@ type write struct {
 	inserted map[string]bool
 	// query: the values come from a query (INSERT ... SELECT), nullability per column
 	query bool
+	// replace: REPLACE INTO -- a colliding row is deleted first, so no key is violated
+	// but the rows referring to the replaced one are (1451)
+	replace bool
+	// more are the further tables a multi-table UPDATE assigns or a multi-table DELETE
+	// deletes from, each with its own assignments; table / values are the first's
+	more []moreTarget
+}
+
+// moreTarget is one further table of a multi-table write.
+type moreTarget struct {
+	table  *schema.Table
+	values []assignment
+}
+
+// appendTarget adds an assignment to the table's entry in more.
+func appendTarget(more []moreTarget, t *schema.Table, as assignment) []moreTarget {
+	for i := range more {
+		if more[i].table == t {
+			more[i].values = append(more[i].values, as)
+			return more
+		}
+	}
+	return append(more, moreTarget{table: t, values: []assignment{as}})
 }
 
 // assignment is one value stored into a column.
@@ -270,6 +293,40 @@ type scope struct {
 	// info is the block's record for the ONLY_FULL_GROUP_BY and DISTINCT checks, set by
 	// querySpecification
 	info *blockInfo
+	// itemList is the select list as written, for the clauses that name its aliases
+	itemList mysqlast.List
+	// merged are the columns a USING / NATURAL join coalesces: one name over the leaves
+	// that carry it. An unqualified reference to it is not ambiguous, and `*` lists it once,
+	// first (the left side's).
+	merged []mergedCol
+}
+
+// mergedCol is one coalesced join column.
+type mergedCol struct {
+	name   string
+	leaves []int
+}
+
+// mergedLeaves reports whether every leaf in leaves is one a merged column of that name
+// spans (the reference is to the coalesced column).
+func (sc *scope) mergedLeaves(name string, leaves []int) bool {
+	for _, m := range sc.merged {
+		if !strings.EqualFold(m.name, name) {
+			continue
+		}
+		all := true
+		for _, l := range leaves {
+			found := false
+			for _, ml := range m.leaves {
+				found = found || ml == l
+			}
+			all = all && found
+		}
+		if all {
+			return true
+		}
+	}
+	return false
 }
 
 // nnMark is a column a conjunct rejects NULL for; restrict is the outer join's nullable
@@ -344,7 +401,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		return fmt.Errorf("analyze: INSERT into a view is not supported yet")
 	}
 	rel.target = true
-	w := &write{kind: facts.Insert, table: rel.table, ignore: isTrue(arg(n, "ignore", 2)), inserted: map[string]bool{}}
+	w := &write{kind: facts.Insert, table: rel.table, ignore: isTrue(arg(n, "ignore", 2)), inserted: map[string]bool{}, replace: isTrue(n.Arg("is_replace"))}
 	a.write = w
 	// the column list names the targets; without one the row lists every column in order
 	var targets []*schema.Column
@@ -449,9 +506,13 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 	}
 	cols, _ := n.Arg("column_list").(mysqlast.List)
 	vals, _ := n.Arg("value_list").(mysqlast.List)
-	var assigned []*schema.Column
-	var values []facts.Term
-	var target *relation
+	type perTarget struct {
+		rel      *relation
+		table    *schema.Table
+		assigned []*schema.Column
+		values   []facts.Term
+	}
+	var targets []*perTarget
 	w := &write{kind: facts.Update, ignore: isTrue(n.Arg("opt_ignore"))}
 	a.write = w
 	for i, c := range cols {
@@ -465,14 +526,32 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 			return &Error{Message: fmt.Sprintf("The target table %s of the UPDATE is not updatable", col.rel.alias), Code: 1288, Position: a.ph.Back(nodeStart(c))}
 		}
 		col.rel.target = true
-		target = col.rel
-		if w.table == nil {
-			w.table = col.rel.table
+		table := col.rel.table
+		if table == nil {
+			table = col.c.baseTable // an updatable view: the write reaches its base table
 		}
-		assigned = append(assigned, col.col)
+		var tg *perTarget
+		for _, t := range targets {
+			if t.rel == col.rel {
+				tg = t
+			}
+		}
+		if tg == nil {
+			tg = &perTarget{rel: col.rel, table: table}
+			targets = append(targets, tg)
+		}
+		tg.assigned = append(tg.assigned, col.col)
 		if i < len(vals) {
-			w.values = append(w.values, a.assign(sc, col.rel.table, col.col, vals[i]))
-			values = append(values, a.storedTerm(sc, vals[i]))
+			as := a.assign(sc, table, col.col, vals[i])
+			tg.values = append(tg.values, a.storedTerm(sc, vals[i]))
+			if w.table == nil {
+				w.table = table
+			}
+			if table == w.table {
+				w.values = append(w.values, as)
+			} else {
+				w.more = appendTarget(w.more, table, as)
+			}
 		}
 	}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
@@ -485,8 +564,10 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		return err
 	}
 	a.facts = &facts.Facts{Kind: facts.Update, AtMostOne: limitOne(n.Arg("opt_limit_clause"))}
-	if target != nil && target.table != nil {
-		a.facts.Writes = []facts.Write{a.writeFacts(facts.Update, target, assigned, values)}
+	for _, tg := range targets {
+		if tg.rel.table != nil {
+			a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Update, tg.rel, tg.assigned, tg.values))
+		}
 	}
 	a.facts.Top = a.block(&sc, n)
 	a.facts.Top.Children = append(a.facts.Top.Children, cteBodies(ctes)...)
@@ -497,6 +578,9 @@ func (a *analyzer) delete(n *mysqlast.Node) error {
 	ctes, err := a.with(n.Arg("with_clause"), nil)
 	if err != nil {
 		return err
+	}
+	if list, ok := n.Arg("table_list").(mysqlast.List); ok && len(list) > 0 {
+		return a.multiDelete(n, list, ctes)
 	}
 	rel, err := a.target(n.Arg("table_ident"), n.Arg("opt_table_alias"), &scope{ctes: ctes})
 	if err != nil {
@@ -568,6 +652,50 @@ func arg(n *mysqlast.Node, name string, i int) mysqlast.Value {
 	if i < len(n.Args) {
 		return n.Args[i]
 	}
+	return nil
+}
+
+// multiDelete types `DELETE t1, t2 FROM ... JOIN ...` and `DELETE FROM t1, t2 USING ...`:
+// the joined tables are the scope, the listed names (aliases of the join) the targets.
+func (a *analyzer) multiDelete(n *mysqlast.Node, list mysqlast.List, ctes []relation) error {
+	sc, err := a.from(n.Arg("join_table_list"), scope{ctes: ctes, kids: new([]*facts.Scope)})
+	if err != nil {
+		return err
+	}
+	w := &write{kind: facts.Delete, ignore: deleteIgnore(n.Arg("opt_delete_options"))}
+	a.write = w
+	a.facts = &facts.Facts{Kind: facts.Delete}
+	for _, item := range list {
+		ti, ok := item.(*mysqlast.Node)
+		if !ok {
+			return fmt.Errorf("analyze: DELETE target not understood: %s", mysqlast.Sprint(item))
+		}
+		name := str(ti.Arg("table"))
+		var rel *relation
+		for i := range sc.rels {
+			if strings.EqualFold(sc.rels[i].alias, name) {
+				rel = &sc.rels[i]
+			}
+		}
+		if rel == nil {
+			return &Error{Message: fmt.Sprintf("Unknown table '%s' in MULTI DELETE", name), Code: 1109, Position: a.ph.Back(ti.Start)}
+		}
+		if rel.table == nil {
+			return &Error{Message: fmt.Sprintf("The target table %s of the DELETE is not updatable", rel.alias), Code: 1288, Position: a.ph.Back(ti.Start)}
+		}
+		rel.target = true
+		if w.table == nil {
+			w.table = rel.table
+		} else {
+			w.more = append(w.more, moreTarget{table: rel.table})
+		}
+		a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Delete, rel, nil, nil))
+	}
+	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
+		return err
+	}
+	a.facts.Top = a.block(&sc, n)
+	a.facts.Top.Children = append(a.facts.Top.Children, cteBodies(ctes)...)
 	return nil
 }
 
@@ -644,7 +772,19 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 			sc.joins = append(sc.joins, jc)
 			return a.condition(*sc, n.Arg("on"), "on clause")
 		}
-		if fields, ok := n.Arg("using_fields").(mysqlast.List); ok {
+		fields, _ := n.Arg("using_fields").(mysqlast.List)
+		if strings.Contains(jt, "NATURAL") {
+			// NATURAL JOIN: USING over every column name both sides have
+			fields = nil
+			for _, l := range jc.left {
+				for _, c := range sc.rels[l].columns() {
+					if _, ok := a.colIn(sc, jc.right, c.Name); ok {
+						fields = append(fields, mysqlast.Token{Text: c.Name, Value: c.Name})
+					}
+				}
+			}
+		}
+		if fields != nil {
 			// USING (c): c must be a column of both sides (not ambiguous: it names the pair)
 			for _, f := range fields {
 				name := str(f)
@@ -655,6 +795,13 @@ func (a *analyzer) tableRef(sc *scope, v mysqlast.Value, nullable bool) error {
 					return &Error{Message: fmt.Sprintf("Unknown column '%s' in 'from clause'", name), Code: 1054, Position: a.ph.Back(nodeStart(f))}
 				}
 				jc.using = append(jc.using, name)
+				leaves := []int{}
+				for _, i := range append(append([]int{}, jc.left...), jc.right...) {
+					if _, ok := sc.rels[i].column(name); ok {
+						leaves = append(leaves, i)
+					}
+				}
+				sc.merged = append(sc.merged, mergedCol{name: name, leaves: leaves})
 			}
 			sc.joins = append(sc.joins, jc)
 		}
@@ -860,7 +1007,8 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 			}
 		}
 		var found []colRef
-		var leaf int
+		var leaves []int
+		leaf := 0
 		for i := range s.rels {
 			rel := &s.rels[i]
 			if table != "" && !strings.EqualFold(rel.alias, table) {
@@ -868,8 +1016,12 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 			}
 			if ref, ok := rel.column(field); ok {
 				found = append(found, ref)
+				leaves = append(leaves, i)
 				leaf = i
 			}
+		}
+		if len(found) > 1 && table == "" && s.mergedLeaves(field, leaves) {
+			found, leaf = found[:1], leaves[0] // the coalesced column of a USING / NATURAL join
 		}
 		switch len(found) {
 		case 1:
@@ -968,6 +1120,21 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 		case "Item_asterisk":
 			table := str(arg(n, "opt_table_name", 1))
 			matched := false
+			seen := map[string]bool{} // the coalesced columns already listed
+			if table == "" {
+				for _, m := range sc.merged {
+					if seen[strings.ToLower(m.name)] || len(m.leaves) == 0 {
+						continue
+					}
+					rel := &sc.rels[m.leaves[0]]
+					if c, ok := rel.column(m.name); ok {
+						col := c.c
+						col.leaf1, col.leafCol = m.leaves[0]+1, col.Name
+						out = append(out, col)
+						seen[strings.ToLower(m.name)] = true
+					}
+				}
+			}
 			for i := range sc.rels {
 				rel := &sc.rels[i]
 				if table != "" && !strings.EqualFold(rel.alias, table) {
@@ -975,6 +1142,9 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 				}
 				matched = true
 				for _, c := range rel.columns() {
+					if table == "" && seen[strings.ToLower(c.Name)] && sc.mergedLeaves(c.Name, []int{i}) {
+						continue
+					}
 					c.leaf1, c.leafCol = i+1, c.Name
 					out = append(out, c)
 				}

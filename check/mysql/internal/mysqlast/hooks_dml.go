@@ -47,6 +47,19 @@ func init() {
 		l, _ := kids[5].(List)
 		return &Node{Class: "Item_func_in", Names: []string{"list", "is_negation"}, Args: []Value{append(List{kids[0], kids[3]}, l...), Const("false")}, Start: n.Start, End: n.End}, nil
 	})
+	// simple_expr: simple_ident -> 'path' is JSON_EXTRACT(ident, 'path'); ->> wraps it in
+	// JSON_UNQUOTE. The grammar builds the Item classes directly; here they are the generic
+	// calls the analyzer types through the catalog.
+	jsonPath := func(n *mysqlparse.Node, ident Value, path Value) *Node {
+		lit := &Node{Class: "PTI_text_literal_text_string", Names: []string{"is_7bit", "literal"}, Args: []Value{Const("true"), path}, Start: n.Start, End: n.End}
+		return genericCall(n, "JSON_EXTRACT", ident, lit)
+	}
+	register("simple_expr", "simple_ident JSON_SEPARATOR_SYM TEXT_STRING_literal", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return jsonPath(n, kids[0], kids[2]), nil
+	})
+	register("simple_expr", "simple_ident JSON_UNQUOTED_SEPARATOR_SYM TEXT_STRING_literal", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return genericCall(n, "JSON_UNQUOTE", jsonPath(n, kids[0], kids[2])), nil
+	})
 	// predicate: bit_expr not IN_SYM table_subquery -> NOT (Item_in_subselect): two nodes in
 	// one action
 	register("predicate", "bit_expr not IN_SYM table_subquery", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
@@ -383,4 +396,21 @@ func init() {
 		return &Node{Class: "PT_generated_field_def", Names: []string{"type_node", "expr", "virtual_or_stored", "opt_attrs"},
 			Args: []Value{kids[0], kids[5], kids[7], attrs}, Start: n.Start, End: n.End}, nil
 	})
+}
+
+// genericCall builds the node of a generic function call `name(args...)` as the grammar's
+// function_call_generic does.
+func genericCall(n *mysqlparse.Node, name string, args ...Value) *Node {
+	list := make(List, 0, len(args))
+	for _, a := range args {
+		list = append(list, &Node{Class: "PTI_udf_expr", Names: []string{"expr", "select_alias"}, Args: []Value{a, nil}, Start: n.Start, End: n.End})
+	}
+	return &Node{Class: "PTI_function_call_generic_ident_sys", Names: []string{"ident", "opt_udf_expr_list"},
+		Args: []Value{Token{Kind: identKind(), Text: name, Value: name}, list}, Start: n.Start, End: n.End}
+}
+
+// identKind is the token kind of an identifier.
+func identKind() mysqlparse.Kind {
+	k, _ := mysqlparse.KindOf("IDENT")
+	return k
 }

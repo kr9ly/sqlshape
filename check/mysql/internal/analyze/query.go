@@ -132,6 +132,9 @@ func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, w
 			if _, err := a.lookup(*block, "", name, where, n.Start); err == nil {
 				return nil
 			}
+			if matches == 1 && aliasOfAggregate(block.itemList, name) {
+				return &Error{Message: fmt.Sprintf("Can't group on '%s'", name), Code: 1056, Position: a.ph.Back(n.Start)}
+			}
 		}
 		if matches == 1 {
 			return nil
@@ -207,14 +210,17 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := a.condition(sc, body.Arg("opt_where_clause"), "where clause"); err != nil {
-		return nil, nil, err
-	}
+	// the select list is resolved before the WHERE (setup_fields, then setup_conds): its
+	// errors come first
 	cols, err := a.items(sc, body.Arg("item_list"))
 	if err != nil {
 		return nil, nil, err
 	}
 	sc.items = cols
+	sc.itemList, _ = body.Arg("item_list").(mysqlast.List)
+	if err := a.condition(sc, body.Arg("opt_where_clause"), "where clause"); err != nil {
+		return nil, nil, err
+	}
 	if err := a.orderBy(body.Arg("opt_group_clause"), cols, &sc, "group statement"); err != nil {
 		return nil, nil, err
 	}
@@ -231,6 +237,28 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 	sc.facts = a.block(&sc, body)
 	if err := a.groupCheck(&sc, body); err != nil {
 		return nil, nil, err
+	}
+	if sc.info != nil && sc.info.rollup {
+		// the super-aggregate rows of ROLLUP hold NULL in every non-aggregated column
+		k := 0
+		for _, it := range sc.itemList {
+			n, ok := it.(*mysqlast.Node)
+			if !ok {
+				continue
+			}
+			switch n.Class {
+			case "PTI_expr_with_alias":
+				if k < len(cols) && !isAggregateLike(exprNode(n.Arg("expr"))) {
+					cols[k].Nullable = true
+				}
+				k++
+			case "Item_asterisk":
+				for ; k < len(cols); k++ {
+					cols[k].Nullable = true
+				}
+			}
+		}
+		sc.items = cols
 	}
 	// the statement's own block (not a subquery's, not a set operation's arm) is what the
 	// contracts are judged on
@@ -583,4 +611,25 @@ func singleBlock(v mysqlast.Value) bool {
 // typeOfColumn is a result column as a typed value.
 func typeOfColumn(c Column) typed {
 	return typed{typ: c.Type, known: c.Known, nullable: c.Nullable}
+}
+
+// aliasOfAggregate reports a select alias whose expression is an aggregate: the server
+// cannot group on it (ER_WRONG_GROUP_FIELD, "Can't group on 'c'").
+func aliasOfAggregate(items mysqlast.List, name string) bool {
+	for _, it := range items {
+		ewa, ok := it.(*mysqlast.Node)
+		if !ok || ewa.Class != "PTI_expr_with_alias" || !strings.EqualFold(str(ewa.Arg("alias")), name) {
+			continue
+		}
+		return containsAggregate(ewa.Arg("expr"))
+	}
+	return false
+}
+
+// exprNode is v as a node (an empty node otherwise).
+func exprNode(v mysqlast.Value) *mysqlast.Node {
+	if n, ok := v.(*mysqlast.Node); ok {
+		return n
+	}
+	return &mysqlast.Node{}
 }

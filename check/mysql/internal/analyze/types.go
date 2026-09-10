@@ -229,10 +229,10 @@ func numOp(a, b typed, mod bool) typed {
 		out.typ.Unsigned = a.typ.Unsigned && b.typ.Unsigned
 	default:
 		out = known("bigint", false)
-		out.typ.Unsigned = a.typ.Unsigned || b.typ.Unsigned
+		out.typ.Unsigned = unsignedOperand(a.typ) || unsignedOperand(b.typ)
 	}
 	if mod {
-		out.typ.Unsigned = a.typ.Unsigned
+		out.typ.Unsigned = unsignedOperand(a.typ)
 	}
 	out.known = a.known && b.known
 	out.nullable = a.nullable || b.nullable
@@ -251,7 +251,7 @@ func num1(a typed, intVal bool) typed {
 	switch kindOf(a.typ) {
 	case "INT_RESULT":
 		out = known("bigint", a.nullable)
-		out.typ.Unsigned = a.typ.Unsigned
+		out.typ.Unsigned = unsignedOperand(a.typ)
 	case "DECIMAL_RESULT":
 		out = known("decimal", a.nullable)
 		out.typ.Unsigned = a.typ.Unsigned
@@ -627,4 +627,10 @@ func familyRoots() map[string]bool {
 		}
 	}
 	return roots
+}
+
+// unsignedOperand: the operand counts as unsigned in arithmetic -- declared so, or a BIT
+// (Field_bit::unsigned_flag is set).
+func unsignedOperand(t schema.Type) bool {
+	return t.Unsigned || t.Name == "bit"
 }

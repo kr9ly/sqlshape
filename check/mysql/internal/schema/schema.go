@@ -139,10 +139,12 @@ type View struct {
 	Waived     map[string][]string
 }
 
-// Table returns the table named name, or nil.
+// Table returns the table named name, or nil. Table and view names are case-sensitive,
+// as they are on a server with lower_case_table_names=0 (the Linux default); column and
+// key names are not.
 func (s *Schema) Table(name string) *Table {
 	for _, t := range s.Tables {
-		if strings.EqualFold(t.Name, name) {
+		if t.Name == name {
 			return t
 		}
 	}
@@ -152,7 +154,7 @@ func (s *Schema) Table(name string) *Table {
 // View returns the view named name, or nil.
 func (s *Schema) View(name string) *View {
 	for _, v := range s.Views {
-		if strings.EqualFold(v.Name, name) {
+		if v.Name == name {
 			return v
 		}
 	}
@@ -649,7 +651,7 @@ func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
 
 func (s *Schema) dropTable(name string) {
 	for i, t := range s.Tables {
-		if strings.EqualFold(t.Name, name) {
+		if t.Name == name {
 			s.Tables = append(s.Tables[:i], s.Tables[i+1:]...)
 			return
 		}
@@ -658,7 +660,7 @@ func (s *Schema) dropTable(name string) {
 
 func (s *Schema) dropView(name string) {
 	for i, v := range s.Views {
-		if strings.EqualFold(v.Name, name) {
+		if v.Name == name {
 			s.Views = append(s.Views[:i], s.Views[i+1:]...)
 			return
 		}
@@ -886,6 +888,7 @@ func (t *Table) dropColumn(name string) bool {
 }
 
 func (t *Table) dropConstraint(name string) bool {
+	t.nameUnnamed() // the server's generated names are what a DROP names
 	for i, fk := range t.ForeignKeys {
 		if strings.EqualFold(fk.Name, name) {
 			t.ForeignKeys = append(t.ForeignKeys[:i], t.ForeignKeys[i+1:]...)

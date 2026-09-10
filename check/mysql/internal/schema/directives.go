@@ -2,6 +2,7 @@ package schema
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/v2/x/obligation"
@@ -87,37 +88,51 @@ func (s *Schema) viewDirectives(v *View, sql string, pos int) {
 // CheckName is the CHECK constraint's name as the server reports it: the declared one, or
 // the generated `<table>_chk_<n>` numbering the unnamed constraints in order.
 func (t *Table) CheckName(c *Check) string {
-	if c.Name != "" {
-		return c.Name
-	}
-	n := 0
-	for _, other := range t.Checks {
-		if other.Name == "" {
-			n++
-		}
-		if other == c {
-			break
-		}
-	}
-	return t.Name + "_chk_" + itoa(n)
+	t.nameUnnamed()
+	return c.Name
 }
 
 // ForeignKeyName is the REFERENCES constraint's name as the server reports it: the
 // declared one, or the generated `<table>_ibfk_<n>`.
 func (t *Table) ForeignKeyName(fk *ForeignKey) string {
-	if fk.Name != "" {
-		return fk.Name
-	}
-	n := 0
-	for _, other := range t.ForeignKeys {
-		if other.Name == "" {
-			n++
+	t.nameUnnamed()
+	return fk.Name
+}
+
+// nameUnnamed gives every unnamed CHECK and FOREIGN KEY the name the server generates
+// for it: `<table>_chk_<n>` / `<table>_ibfk_<n>` with n one above the highest number
+// already generated (dropping one does not free its number for the next).
+func (t *Table) nameUnnamed() {
+	chk, ibfk := t.Name+"_chk_", t.Name+"_ibfk_"
+	next := func(prefix string, names []string) int {
+		n := 0
+		for _, name := range names {
+			if strings.HasPrefix(name, prefix) {
+				if k, err := strconv.Atoi(name[len(prefix):]); err == nil && k > n {
+					n = k
+				}
+			}
 		}
-		if other == fk {
-			break
+		return n + 1
+	}
+	for _, c := range t.Checks {
+		if c.Name == "" {
+			var names []string
+			for _, o := range t.Checks {
+				names = append(names, o.Name)
+			}
+			c.Name = chk + itoa(next(chk, names))
 		}
 	}
-	return t.Name + "_ibfk_" + itoa(n)
+	for _, fk := range t.ForeignKeys {
+		if fk.Name == "" {
+			var names []string
+			for _, o := range t.ForeignKeys {
+				names = append(names, o.Name)
+			}
+			fk.Name = ibfk + itoa(next(ibfk, names))
+		}
+	}
 }
 
 func itoa(n int) string {

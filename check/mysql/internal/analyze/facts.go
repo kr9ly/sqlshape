@@ -618,8 +618,8 @@ func (a *analyzer) termFacts(sc *scope, v mysqlast.Value) (facts.Term, bool) {
 		"PTI_text_literal_underscore_charset", "Item_hex_string", "Item_bin_string", "Item_null", "Item_func_true", "Item_func_false":
 		return facts.Term{Kind: facts.Const, Const: a.textOf(n)}, true
 	}
-	if a.readsBlock(sc, v) {
-		return facts.Term{}, false
+	if a.readsBlock(sc, v) || !deterministic(v) {
+		return facts.Term{}, false // a value the row decides, or one the execution decides (RAND()), is not known
 	}
 	if isColumnRef(n) && sc.outer != nil {
 		// a column of the enclosing block: the link a correlated subquery witnesses through

@@ -158,6 +158,15 @@ func ExecOne[R, P any](ctx context.Context, db DB, s sqlshape.Single[R, P], p P)
 	if err != nil {
 		return res, nil // a driver that does not count: nothing to judge
 	}
+	if r, err := s.Stmt().Render(p); err == nil && insertLike(r.SQL) {
+		// INSERT ... ON DUPLICATE KEY UPDATE and REPLACE report 1 for an insert, 2 for an
+		// update (or a delete and insert) and 0 for an update to the same values: every
+		// one of them is the one row the key names
+		if n <= 2 {
+			return res, nil
+		}
+		return res, ErrManyRows
+	}
 	switch {
 	case n == 0:
 		return res, ErrNoRows
@@ -165,6 +174,30 @@ func ExecOne[R, P any](ctx context.Context, db DB, s sqlshape.Single[R, P], p P)
 		return res, ErrManyRows
 	}
 	return res, nil
+}
+
+// insertLike reports an INSERT or REPLACE statement (after leading comments and space).
+func insertLike(sql string) bool {
+	for {
+		sql = strings.TrimLeft(sql, " \t\r\n")
+		switch {
+		case strings.HasPrefix(sql, "--"):
+			if i := strings.IndexByte(sql, '\n'); i >= 0 {
+				sql = sql[i+1:]
+				continue
+			}
+			return false
+		case strings.HasPrefix(sql, "/*"):
+			if i := strings.Index(sql, "*/"); i >= 0 {
+				sql = sql[i+2:]
+				continue
+			}
+			return false
+		}
+		break
+	}
+	head := strings.ToUpper(sql[:min(7, len(sql))])
+	return strings.HasPrefix(head, "INSERT") || strings.HasPrefix(head, "REPLACE")
 }
 
 // --- row mapping -----------------------------------------------------------
