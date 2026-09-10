@@ -19,7 +19,8 @@
 #      module's go.mod, whose hash another module's go.sum records);
 #   4. builds cmd/sqlshape the way `go install …/cmd/sqlshape@vX.Y.Z` will (outside the
 #      workspace, from the tagged modules), and runs the smoke test on the result;
-#   5. pushes the commit and the three tags. The root tag triggers .github/workflows/release.yml.
+#   5. pushes the commit and the tags, the root tag last and alone (GitHub raises no workflow
+#      event for a push of more than three tags). The root tag triggers .github/workflows/release.yml.
 #
 # Between step 2 and the push the workspace does not build: every `go` command reads the
 # required versions' go.mod from the proxy, and they are not there yet. A failure before
@@ -119,10 +120,14 @@ cleanup
 trap 'rollback' ERR
 
 echo "release: $version at $(git rev-parse --short HEAD), tags ${tags[*]}"
+# The commit and the nested modules' tags go first, the root tag alone last: GitHub creates
+# no workflow event for a push of more than three tags, and the root tag is what triggers
+# release.yml.
 if [ "$push" = 1 ]; then
-  git push origin HEAD "${tags[@]}"
+  git push origin HEAD "${tags[@]:1}"
+  git push origin "$version"
 else
   echo "release: not pushed; the workspace builds again once these are upstream:"
-  echo "  git push origin HEAD ${tags[*]}"
+  echo "  git push origin HEAD ${tags[*]:1} && git push origin $version"
   echo "or undo with: git tag -d ${tags[*]} && git reset --hard $base"
 fi
