@@ -57,6 +57,16 @@ release it is a candidate for.
 
 ### Added
 
+- `sqlshape diff`, `apply` and `verify-schema` work on a MySQL schema. Both sides are read as the
+  server's own `SHOW CREATE TABLE` / `SHOW CREATE VIEW`, parsed by the loader that reads
+  `schema.sql`; the target is canonicalized in a scratch database on the `-db` server (dropped when
+  done), or on a `mysqld` from `PATH` with `-from`. Compared: tables, columns (their position
+  included, which the plan settles with `MODIFY COLUMN ... AFTER`), keys, foreign keys, checks and
+  views; not triggers, procedures or seeded rows. The plan emits MySQL's own definitions; `-- @migrate`
+  is the same grammar, with `enum` naming the ENUM column. `apply` runs statement by statement
+  (MySQL's DDL commits implicitly) and reports the statement that failed. The MySQL analyzer now
+  rejects an expression the server rejects in an INSERT's or UPDATE's value (`SET total = nope`,
+  1054) instead of typing it as unknown.
 - The schema declares the server settings its judgments depend on, one per line next to the
   version: `-- sqlshape: server sql_mode = 'ANSI,STRICT_ALL_TABLES'`,
   `-- sqlshape: server lower_case_table_names = 1`. MySQL reads these two (any other variable, a

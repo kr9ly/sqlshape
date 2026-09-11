@@ -29,7 +29,7 @@ CREATE TABLE ...
 - スキーマ自身も検査する。SQL関数とPL/pgSQL関数の本体、ビュー、トリガ、行レベルセキュリティのポリシーはロード時に解析され、PL/pgSQLの`RAISE`はその関数を呼ぶ文の失敗モードに加わる。
 - PostgreSQLのスキーマ（`CREATE SCHEMA app`）は関係の名前の一部である。`-schemas=a_api,b_private`はパッケージが参照してよいスキーマを絞る。1つのデータベースを複数サービスで使うときの境界になる（[checks.ja.md](checks.ja.md#パッケージは自分のスキーマだけを参照する-schemaspostgresql)）。
 
-PostgreSQLにだけあるもの: `postgres.Copy`と`postgres.MatView`（[下](#ランタイム-pgx)）、PL/pgSQL、ドメイン、複合型と配列、`-schemas`、`// sqlshape: type`、マイグレーションコマンド。
+PostgreSQLにだけあるもの: `postgres.Copy`と`postgres.MatView`（[下](#ランタイム-pgx)）、PL/pgSQL、ドメイン、複合型と配列、`-schemas`、`// sqlshape: type`、マイグレーションのseed表。
 
 ## Go型の表
 
@@ -156,7 +156,7 @@ tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)               // One: 1行�
 
 ## マイグレーション
 
-`sqlshape diff`、`apply`、`verify-schema`は、データベースと`schema.sql`の差分からDDLを導き、そのDDLが本当に`schema.sql`に至ることを確かめてから実行する。両側を`pg_dump`の出力として比較するので、宣言したバージョンの`pg_dump`が`PATH`に要り、`schema.sql`を読むために宣言したバージョンの埋め込みPostgreSQL（初回にダウンロードされ、`~/.cache/sqlshape`にキャッシュされる）を起動する。[migrations.ja.md](migrations.ja.md)は全部PostgreSQLのものである。
+`sqlshape diff`、`apply`、`verify-schema`は、データベースと`schema.sql`の差分からDDLを導き、そのDDLが本当に`schema.sql`に至ることを確かめてから実行する。両側を`pg_dump`の出力として比較するので、宣言したバージョンの`pg_dump`が`PATH`に要り、`schema.sql`を読むために宣言したバージョンの埋め込みPostgreSQL（初回にダウンロードされ、`~/.cache/sqlshape`にキャッシュされる）を起動する。コマンドは[migrations.ja.md](migrations.ja.md)にあり、MySQLで違うところはそのMySQLの節にある。
 
 ## License
 

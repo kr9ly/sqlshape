@@ -353,7 +353,7 @@ func TestChangeTargetUnmatched(t *testing.T) {
 func TestImpactsSkipsUnmatchedKind(t *testing.T) {
 	idx := consumers.New()
 	idx.AddRelation("t", consumers.Site{Owner: "pkg.Foo"})
-	got := impacts([]diff.Change{{Op: diff.Drop, Kind: "index", Name: "t_idx"}}, idx)
+	got := impacts(pgChanges([]diff.Change{{Op: diff.Drop, Kind: "index", Name: "t_idx"}}), idx)
 	if len(got) != 0 {
 		t.Fatalf("impacts = %+v, want none", got)
 	}
@@ -364,7 +364,7 @@ func TestImpactsSkipsUnmatchedKind(t *testing.T) {
 func TestImpactsRelationLevel(t *testing.T) {
 	idx := consumers.New()
 	idx.AddRelation("t", consumers.Site{Owner: "pkg.Baz"})
-	got := impacts([]diff.Change{{Op: diff.Drop, Kind: "table", Name: "t"}}, idx)
+	got := impacts(pgChanges([]diff.Change{{Op: diff.Drop, Kind: "table", Name: "t"}}), idx)
 	if len(got) != 1 || len(got[0].sites) != 1 {
 		t.Fatalf("impacts = %+v", got)
 	}
@@ -378,7 +378,7 @@ func TestImpactsAlterTypeColumn(t *testing.T) {
 		Op: diff.Alter, Kind: "column", Name: "t.c",
 		Fields: []diff.Field{{Name: "type", From: "text", To: "int"}},
 	}}
-	got := impacts(changes, idx)
+	got := impacts(pgChanges(changes), idx)
 	if len(got) != 1 || len(got[0].sites) != 1 {
 		t.Fatalf("impacts = %+v", got)
 	}
@@ -389,10 +389,10 @@ func TestImpactsAlterTypeColumn(t *testing.T) {
 // summary line.
 func TestImpactTextMultilineHead(t *testing.T) {
 	list := []impact{{
-		change: diff.Change{
+		change: pgChanges([]diff.Change{{
 			Op: diff.Alter, Kind: "column", Name: "t.c",
 			Fields: []diff.Field{{Name: "type", From: "text", To: "int"}},
-		},
+		}})[0],
 		sites: []consumers.Site{{Owner: "pkg.Bar"}},
 	}}
 	text := impactText(list, "-- ")
@@ -404,7 +404,7 @@ func TestImpactTextMultilineHead(t *testing.T) {
 // indexConsumers reports a package pattern that fails to load (packages.PrintErrors)
 // distinctly from one that loads clean.
 func TestIndexConsumersBadPackage(t *testing.T) {
-	_, err := indexConsumers([]string{"./no/such/dir"}, pgparse.Default, "")
+	_, err := indexConsumers([]string{"./no/such/dir"}, pgDeclared(pgparse.Default, ""))
 	if err == nil || !strings.Contains(err.Error(), "packages did not load") {
 		t.Fatalf("indexConsumers: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestIndexConsumersBadPackage(t *testing.T) {
 // that os.CreateTemp fail.
 func TestIndexConsumersTempFileError(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
-	if _, err := indexConsumers([]string{"./no/such/dir"}, pgparse.Default, "x"); err == nil {
+	if _, err := indexConsumers([]string{"./no/such/dir"}, pgDeclared(pgparse.Default, "x")); err == nil {
 		t.Fatal("indexConsumers: want error from an unwritable TMPDIR")
 	}
 }

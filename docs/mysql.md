@@ -4,7 +4,7 @@
 
 Everything about sqlshape that is MySQL's: the version and server settings the schema declares,
 what the checker embeds and how its verdicts are verified, the types and constraint names the
-rules use, and the runtime on `database/sql`. The rules themselves are in
+rules use, the runtime on `database/sql`, and the migration commands. The rules themselves are in
 [checks.md](checks.md) and are the same for every database; this page is where the names,
 numbers and types in those rules come from when the schema declares `mysql`.
 
@@ -142,8 +142,7 @@ mind case.
 
 What does not exist on MySQL is not checked there: `Copy` and `MatView`, PL/pgSQL, domains,
 composite types and arrays, `-schemas` (a MySQL schema is one database), `// sqlshape: type`, and
-the migration commands (`diff` / `apply` / `verify-schema` compare `pg_dump` output; there is no
-MySQL counterpart yet).
+seeded tables in migrations.
 
 ## The runtime: database/sql
 
@@ -190,6 +189,15 @@ runs, errors under the expect line's names) is in [runtime.md](runtime.md). What
   ```go
   if err := mysql.Verify(ctx, db, schemaSQL); err != nil { ... }
   ```
+
+## Migrations
+
+`sqlshape diff`, `apply` and `verify-schema` work on a MySQL schema the way they do on
+PostgreSQL: the difference between the database and `schema.sql` becomes DDL, the DDL is checked
+by its end state, then run. Both sides are read as the server's own `SHOW CREATE TABLE` /
+`SHOW CREATE VIEW`, the target's in a scratch database on the `-db` server, and the DDL runs
+statement by statement since MySQL's DDL commits implicitly. What is compared, the `enum`
+declaration's form and the requirements are in [migrations.md](migrations.md#mysql).
 
 ## License
 

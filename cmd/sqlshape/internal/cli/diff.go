@@ -38,6 +38,11 @@ func runDiff(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
+	if text, isMySQL, err := declaresMySQL(schemaPath); err != nil {
+		return err
+	} else if isMySQL {
+		return runDiffMySQL(ctx, schemaPath, text, *db, *from, *pkgs, stdout)
+	}
 	text, version, err := readTarget(schemaPath)
 	if err != nil {
 		return err
@@ -81,11 +86,11 @@ func runDiff(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		fmt.Fprintln(stdout, stmt)
 	}
 	if *pkgs != "" {
-		index, err := indexConsumers(strings.Split(*pkgs, ","), tgt.canonical.Version, currentText)
+		index, err := indexConsumers(strings.Split(*pkgs, ","), pgDeclared(tgt.canonical.Version, currentText))
 		if err != nil {
 			return err
 		}
-		if list := impacts(diff.Compare(current, tgt.canonical), index); len(list) > 0 {
+		if list := impacts(pgChanges(diff.Compare(current, tgt.canonical)), index); len(list) > 0 {
 			fmt.Fprint(stdout, "\n-- consumers of what this plan drops or retypes:\n"+impactText(list, "-- "))
 		}
 	}

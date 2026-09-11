@@ -79,7 +79,7 @@ In `schema.sql`:
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW` | the view's own definition opts out, as a statement would |
 | `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
 | `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |
-| `-- sqlshape: seed` | `INSERT ... VALUES` | the seed is additive: rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables)) |
+| `-- sqlshape: seed` | `INSERT ... VALUES` | the seed is additive: rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables-postgresql)) |
 | `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 
 In Go, `// sqlshape: type money_amount` in a type's doc comment binds the type to that PostgreSQL

@@ -32,6 +32,11 @@ func runVerify(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
+	if text, isMySQL, err := declaresMySQL(schemaPath); err != nil {
+		return err
+	} else if isMySQL {
+		return runVerifyMySQL(ctx, schemaPath, text, *db, stdout, stderr)
+	}
 	text, version, err := readTarget(schemaPath)
 	if err != nil {
 		return err

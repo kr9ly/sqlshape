@@ -450,7 +450,7 @@ const (
 )
 ```
 
-補足。`OrderStatus("typo")`のような変換は`sqlshape: OrderStatus("typo") is not a label of ...`、すべてのラベルを扱っていない`switch`は`sqlshape: switch on OrderStatus does not handle ... labels: shipped`として報告される。型に`Known() bool`を実装しておくと、実行時にこのビルドが知らないラベルを受け取ったとき、行マッパーが`*UnknownLabelError`を返す。値集合の置き場としてはenumよりseed済みlookupテーブルを推奨する（[migrations.ja.md](migrations.ja.md#seed済みテーブル)）。
+補足。`OrderStatus("typo")`のような変換は`sqlshape: OrderStatus("typo") is not a label of ...`、すべてのラベルを扱っていない`switch`は`sqlshape: switch on OrderStatus does not handle ... labels: shipped`として報告される。型に`Known() bool`を実装しておくと、実行時にこのビルドが知らないラベルを受け取ったとき、行マッパーが`*UnknownLabelError`を返す。値集合の置き場としてはenumよりseed済みlookupテーブルを推奨する（[migrations.ja.md](migrations.ja.md#seed済みテーブルpostgresql)）。
 
 #### 別のテーブルのIDを渡さない
 

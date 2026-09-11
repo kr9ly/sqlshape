@@ -487,7 +487,10 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
 		}
 		for i, v := range vals {
-			as := a.assign(scope{rels: []relation{*rel}}, rel.table, targets[i], v)
+			as, err := a.assign(scope{rels: []relation{*rel}}, rel.table, targets[i], v)
+			if err != nil {
+				return err
+			}
 			w.values = append(w.values, as)
 			if ri == 0 {
 				values = append(values, a.storedTerm(scope{rels: []relation{*rel}}, targets[i], v))
@@ -508,7 +511,11 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return err
 		}
 		if i < len(dupVals) {
-			w.onDuplicate = append(w.onDuplicate, a.assign(scope{rels: []relation{*rel}}, rel.table, col, dupVals[i]))
+			as, err := a.assign(scope{rels: []relation{*rel}}, rel.table, col, dupVals[i])
+			if err != nil {
+				return err
+			}
+			w.onDuplicate = append(w.onDuplicate, as)
 		}
 	}
 	return nil
@@ -561,7 +568,10 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		}
 		tg.assigned = append(tg.assigned, col.col)
 		if i < len(vals) {
-			as := a.assign(sc, table, col.col, vals[i])
+			as, err := a.assign(sc, table, col.col, vals[i])
+			if err != nil {
+				return err
+			}
 			tg.values = append(tg.values, a.storedTerm(sc, col.col, vals[i]))
 			if w.table == nil {
 				w.table = table
@@ -1271,18 +1281,22 @@ func (a *analyzer) limit(v mysqlast.Value) error {
 
 // assign types v, stored into col: a placeholder takes the column's type. The assignment
 // says whether the value may be NULL (a placeholder always may; the checker drops the NOT
-// NULL violation when the Go type cannot be nil).
-func (a *analyzer) assign(sc scope, table *schema.Table, col *schema.Column, v mysqlast.Value) assignment {
+// NULL violation when the Go type cannot be nil). An expression the server rejects (an
+// unknown column, 1054) is the statement's error.
+func (a *analyzer) assign(sc scope, table *schema.Table, col *schema.Column, v mysqlast.Value) (assignment, error) {
 	if isParam(v) {
 		a.setParam(v, col.Type)
 		a.noteParamSource(v, table, col, true)
-		return assignment{col: col, nullable: true, param: a.ph.Number(nodeStart(v))}
+		return assignment{col: col, nullable: true, param: a.ph.Number(nodeStart(v))}, nil
 	}
 	if n, ok := v.(*mysqlast.Node); ok && n.Class == "Item_default_value" {
-		return assignment{col: col, nullable: col.Default == nil && !col.NotNull}
+		return assignment{col: col, nullable: col.Default == nil && !col.NotNull}, nil
 	}
-	t, _ := a.expr(sc, v, "field list") // an INSERT's expressions: errors surface as unknown types
-	return assignment{col: col, nullable: !t.known || t.nullable}
+	t, err := a.expr(sc, v, "field list")
+	if err != nil {
+		return assignment{}, err
+	}
+	return assignment{col: col, nullable: !t.known || t.nullable}, nil
 }
 
 // storedTerm is the value stored into col as the facts spell it: a parameter, a literal,

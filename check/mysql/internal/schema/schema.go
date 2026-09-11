@@ -33,6 +33,8 @@ type Schema struct {
 	Tables   []*Table
 	Views    []*View
 	Problems []Problem
+	// cur is the statement being applied, for the element texts (Column.Text ...)
+	cur string
 }
 
 // Settings are the server variables that change how statements are judged. The schema
@@ -132,6 +134,11 @@ type Column struct {
 	Comment       string
 	Invisible     bool
 	Collation     string
+	// Text is the column's definition as written in the statement that declared it
+	// (`\`id\` bigint unsigned NOT NULL AUTO_INCREMENT` in a CREATE TABLE), what an ALTER
+	// TABLE ... MODIFY COLUMN takes; "" when the column came from a statement the loader
+	// does not keep the text of
+	Text string
 }
 
 // KeyKind is a MySQL index kind.
@@ -156,6 +163,7 @@ type Key struct {
 	Parts     []KeyPart
 	Invisible bool
 	Comment   string
+	Text      string // the key's definition as written inline in its CREATE TABLE, "" otherwise
 }
 
 // KeyPart is one key column, or a prefix of it, or an expression.
@@ -174,6 +182,7 @@ type ForeignKey struct {
 	RefColumns []string
 	OnDelete   string // CASCADE, SET NULL, RESTRICT, NO ACTION, SET DEFAULT, or "" for the default
 	OnUpdate   string
+	Text       string // the constraint's definition as written inline in its CREATE TABLE, "" otherwise
 }
 
 // Check is a CHECK constraint.
@@ -181,6 +190,7 @@ type Check struct {
 	Name     string
 	Expr     mysqlast.Value
 	Enforced bool
+	Text     string // the constraint's definition as written inline in its CREATE TABLE, "" otherwise
 }
 
 // View is a CREATE VIEW.
@@ -342,6 +352,7 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 		s.problem(st.Offset, "not a statement the schema loader reads: %s", mysqlast.Sprint(v))
 		return
 	}
+	s.cur = st.SQL
 	at := func(v mysqlast.Value) int {
 		if x, ok := v.(*mysqlast.Node); ok {
 			return st.Offset + x.Start
@@ -440,10 +451,15 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 		s.problem(at(el), "table element not understood: %s", mysqlast.Sprint(el))
 		return
 	}
+	text := ""
+	if n.Start >= 0 && n.End <= len(s.cur) && n.Start < n.End {
+		text = s.cur[n.Start:n.End]
+	}
 	switch n.Class {
 	case "PT_column_def":
 		x, _ := mysqlast.AsPTColumnDef(n)
 		col, keys, fk, check := s.column(str(x.FieldIdent()), x.FieldDef(), at)
+		col.Text = text
 		t.Columns = append(t.Columns, col)
 		t.Keys = append(t.Keys, keys...)
 		if fk != nil {
@@ -457,7 +473,7 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 		}
 	case "PT_inline_index_definition":
 		x, _ := mysqlast.AsPTInlineIndexDefinition(n)
-		k := &Key{Name: str(x.Name()), Kind: keyKind(str(x.TypePar()))}
+		k := &Key{Name: str(x.Name()), Kind: keyKind(str(x.TypePar())), Text: text}
 		for _, p := range list(x.Cols()) {
 			k.Parts = append(k.Parts, keyPart(p))
 		}
@@ -466,7 +482,7 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 	case "PT_foreign_key_definition":
 		x, _ := mysqlast.AsPTForeignKeyDefinition(n)
 		fk := &ForeignKey{Name: str(x.ConstraintName()), RefTable: s.tableKey(tableName(x.ReferencedTable())),
-			OnDelete: fkOption(str(x.FkDeleteOpt())), OnUpdate: fkOption(str(x.FkUpdateOpt()))}
+			OnDelete: fkOption(str(x.FkDeleteOpt())), OnUpdate: fkOption(str(x.FkUpdateOpt())), Text: text}
 		if fk.Name == "" {
 			fk.Name = str(x.KeyName())
 		}
@@ -479,7 +495,7 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 		t.ForeignKeys = append(t.ForeignKeys, fk)
 	case "PT_check_constraint":
 		x, _ := mysqlast.AsPTCheckConstraint(n)
-		t.Checks = append(t.Checks, &Check{Name: str(x.Name()), Expr: x.Expr(), Enforced: !isFalse(x.IsEnforced())})
+		t.Checks = append(t.Checks, &Check{Name: str(x.Name()), Expr: x.Expr(), Enforced: !isFalse(x.IsEnforced()), Text: text})
 	default:
 		s.problem(at(n), "table element not understood: %s", n.Class)
 	}

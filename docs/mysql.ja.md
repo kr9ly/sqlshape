@@ -2,7 +2,7 @@
 
 [English](mysql.md)
 
-sqlshapeのうちMySQLに属するものを1枚にまとめる。スキーマが名乗るバージョンとサーバ設定、検査器が何を埋め込みどう検証しているか、規則が使う型と制約名、`database/sql`の上のランタイム。規則そのものは[checks.ja.md](checks.ja.md)にあり、どのデータベースでも同じである。規則の中に出てくる名前・番号・型が、`mysql`を名乗るスキーマではどこから来るのか、がこのページの中身になる。
+sqlshapeのうちMySQLに属するものを1枚にまとめる。スキーマが名乗るバージョンとサーバ設定、検査器が何を埋め込みどう検証しているか、規則が使う型と制約名、`database/sql`の上のランタイム、マイグレーションコマンド。規則そのものは[checks.ja.md](checks.ja.md)にあり、どのデータベースでも同じである。規則の中に出てくる名前・番号・型が、`mysql`を名乗るスキーマではどこから来るのか、がこのページの中身になる。
 
 ## スキーマがバージョンとサーバ設定を名乗る
 
@@ -79,7 +79,7 @@ SELECT name, count(*) FROM users GROUP BY id            -- OK: id は主キー
 
 ### MySQLに無いもの
 
-MySQLに無いものは検査しない。`Copy`と`MatView`、PL/pgSQL、ドメイン、複合型と配列、`-schemas`（MySQLのスキーマは1つのデータベース）、`// sqlshape: type`、マイグレーションコマンド（`diff` / `apply` / `verify-schema`は`pg_dump`の出力を比較する。MySQL向けのものはまだ無い）。
+MySQLに無いものは検査しない。`Copy`と`MatView`、PL/pgSQL、ドメイン、複合型と配列、`-schemas`（MySQLのスキーマは1つのデータベース）、`// sqlshape: type`、マイグレーションのseed表。
 
 ## ランタイム: database/sql
 
@@ -112,6 +112,10 @@ res, err   := mysql.ExecOne(ctx, db, MarkPaid, p)               // One: 1行も�
   ```go
   if err := mysql.Verify(ctx, db, schemaSQL); err != nil { ... }
   ```
+
+## マイグレーション
+
+`sqlshape diff`、`apply`、`verify-schema`はMySQLのスキーマにもPostgreSQLと同じに働く。データベースと`schema.sql`の差分がDDLになり、DDLは到達する状態で検査され、それから実行される。両側はサーバ自身の`SHOW CREATE TABLE` / `SHOW CREATE VIEW`で読み、目標側は`-db`のサーバ上の一時データベースで正準化する。MySQLのDDLは暗黙にコミットされるので、DDLは1文ずつ実行する。何を比較するか、`enum`宣言の形、必要な環境は[migrations.ja.md](migrations.ja.md#mysql)にある。
 
 ## License
 

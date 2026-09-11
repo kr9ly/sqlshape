@@ -48,6 +48,11 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	if text, isMySQL, err := declaresMySQL(schemaPath); err != nil {
+		return err
+	} else if isMySQL {
+		return runApplyMySQL(ctx, schemaPath, text, *db, ddl, *pkgs, *dryRun, *force, stdout, stderr)
+	}
 	text, version, err := readTarget(schemaPath)
 	if err != nil {
 		return err
@@ -82,11 +87,11 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		fmt.Fprintln(stderr, "note: "+strings.ReplaceAll(n.String(), "\n", "\n  "))
 	}
 	if *pkgs != "" {
-		index, err := indexConsumers(strings.Split(*pkgs, ","), tgt.canonical.Version, currentText)
+		index, err := indexConsumers(strings.Split(*pkgs, ","), pgDeclared(tgt.canonical.Version, currentText))
 		if err != nil {
 			return err
 		}
-		if list := impacts(diff.Compare(current, tgt.canonical), index); len(list) > 0 {
+		if list := impacts(pgChanges(diff.Compare(current, tgt.canonical)), index); len(list) > 0 {
 			if !*force {
 				return found("statements still depend on what the DDL drops or retypes (-force runs it anyway):\n%s", impactText(list, "  "))
 			}

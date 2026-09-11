@@ -24,6 +24,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
 )
 
 // Subcommands lists the names Main handles; anything else is the checker's business.
@@ -93,9 +94,13 @@ const usage = `usage: sqlshape <command> [flags] [arguments]
   version                        print the version
 
 -schema defaults to schema.sql, or a schema/ directory of *.sql files, in the working
-directory or above. -packages names Go packages (go list patterns) whose statements are
-indexed as consumers of the columns a change drops or retypes. pg_dump is needed on PATH
-(or $SQLSHAPE_PG_DUMP); its major version must be at least the server's.
+directory or above; its declaration (postgres / mysql) selects the database the commands
+speak to. -packages names Go packages (go list patterns) whose statements are indexed as
+consumers of the columns a change drops or retypes. On PostgreSQL, pg_dump is needed on
+PATH (or $SQLSHAPE_PG_DUMP); its major version must be at least the server's. On MySQL, the
+schema is canonicalized in a scratch database on the -db server (CREATE / DROP DATABASE
+privileges), or with -from on a mysqld from PATH; DDL runs statement by statement, since
+MySQL's DDL commits implicitly (-no-transaction has no effect).
 `
 
 // server is the embedded PostgreSQL the comparisons run on.
@@ -148,6 +153,26 @@ type target struct {
 	path      string
 	text      string
 	canonical *schema.Schema
+}
+
+// pgDeclared puts the PostgreSQL declaration in front of a canonical text (pg_dump writes
+// none), so the packages are judged against the version the target schema declares.
+func pgDeclared(v pgparse.Version, text string) string {
+	return fmt.Sprintf("-- sqlshape: postgres %d\n%s", int(v.Or()), text)
+}
+
+// declaresMySQL reads the schema at path and reports whether it declares MySQL: the
+// migration commands then take the MySQL path (mysql.go). The text is returned for it.
+func declaresMySQL(path string) (string, bool, error) {
+	text, err := dialect.ReadSchema(path)
+	if err != nil {
+		return "", false, err
+	}
+	d, err := dialect.Declared(text)
+	if err != nil {
+		return "", false, err
+	}
+	return text, d.Name == "mysql", nil
 }
 
 // readTarget reads the schema text at path and the PostgreSQL version it declares, which

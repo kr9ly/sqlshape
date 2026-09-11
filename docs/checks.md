@@ -522,7 +522,7 @@ A conversion such as `OrderStatus("typo")` is reported as
 label as `sqlshape: switch on OrderStatus does not handle ... labels: shipped`. If the type
 implements `Known() bool`, the row mapper returns `*UnknownLabelError` at run time for a label this
 build does not know. A seeded lookup table is the recommended home for a value set, over an enum
-([migrations.md](migrations.md#seeded-tables)).
+([migrations.md](migrations.md#seeded-tables-postgresql)).
 
 #### Do not pass another table's ID
 

@@ -18,7 +18,7 @@ u, err := postgres.Get(ctx, db, ByEmail, struct{ Email string }{Email: email})  
 
 - 生成ではなく検査。列と構造体のフィールドの対応、パラメータの型、NULLの扱い、`One`と宣言した文が本当に1行しか返さないこと、INSERTやUPDATEが違反しうる制約を宣言していることを、`schema.sql`と照らして確かめる。判定するのは、使うデータベース自身のパーサと規則から組み上げたpure Goのアナライザーである。`{{if}}`や`{{range}}`で分岐するSQLは、分岐の全組み合わせが検査される。違反は`go vet`の診断として、コードを実行する前に出る。
 - SQLインジェクションは起きない。`{{.X}}`は必ずプレースホルダになり、値がSQLの文字列に埋め込まれることはない。実行時も、検査済みのSQLのみが実行できる。
-- スキーマの定義は`schema.sql`の1ファイルだけ。静的検査も、PostgreSQLならマイグレーションも、このファイルから導かれるので、モデル定義やマイグレーションファイルを別に書く必要はない。ビュー・関数・ドメイン・複合型・行レベルセキュリティ・seed済みのlookupテーブルもテーブルと同じ厳しさで検査されるので、ロジックをデータベース側に置いても検査の抜け穴にはならない。
+- スキーマの定義は`schema.sql`の1ファイルだけ。静的検査もマイグレーションもこのファイルから導かれるので、モデル定義やマイグレーションファイルを別に書く必要はない。ビュー・関数・ドメイン・複合型・行レベルセキュリティ・seed済みのlookupテーブルもテーブルと同じ厳しさで検査されるので、ロジックをデータベース側に置いても検査の抜け穴にはならない。
 - プロジェクトが使うデータベースは1つ。どちらかは`schema.sql`が名乗り（`-- sqlshape: postgres 17`か`-- sqlshape: mysql 8.4`）、文法、型、診断に出る制約の名前、importするランタイムモジュールはすべてその宣言から決まる。片方にしか関係しないことは[docs/postgres.ja.md](docs/postgres.ja.md)と[docs/mysql.ja.md](docs/mysql.ja.md)にまとめてあり、他のドキュメントは両方の読者に向けて書いてある。
 
 ## インストール
@@ -32,7 +32,7 @@ $ sqlshape version
 
 ビルド済みのバイナリは[releasesページ](https://github.com/kr9ly/sqlshape/releases)にある。Linux・macOS・Windowsそれぞれamd64とarm64で、`sqlshape_<version>_<os>_<arch>.tar.gz`（Windowsは`.zip`）と`checksums.txt`。展開して`sqlshape`を`PATH`に置く。
 
-検査に他の準備は要らない。パーサ（PostgreSQLはlibpg_queryを対応するメジャーバージョンごとに、MySQLは8.4自身の文法と字句解析器）はWebAssemblyとして埋め込まれwazeroで動くので、Cコンパイラもリンクするライブラリも無い。初回だけモジュールのコンパイルに1秒ほどかかり、結果はユーザーのキャッシュディレクトリ（Linuxでは`~/.cache/sqlshape`）に置かれる。本物のデータベースを動かすのはマイグレーションコマンドだけで、初回に宣言したバージョンのPostgreSQLのバイナリを同じキャッシュにダウンロードする。
+検査に他の準備は要らない。パーサ（PostgreSQLはlibpg_queryを対応するメジャーバージョンごとに、MySQLは8.4自身の文法と字句解析器）はWebAssemblyとして埋め込まれwazeroで動くので、Cコンパイラもリンクするライブラリも無い。初回だけモジュールのコンパイルに1秒ほどかかり、結果はユーザーのキャッシュディレクトリ（Linuxでは`~/.cache/sqlshape`）に置かれる。本物のデータベースを動かすのはマイグレーションコマンドだけである。PostgreSQLでは初回に宣言したバージョンのバイナリを同じキャッシュにダウンロードし、MySQLでは対象サーバ上の一時データベースを使う。
 
 宣言（`sqlshape.Query`、`sqlshape.One`）は依存の無いGoモジュールで、DBごとのランタイムは別のモジュールになっている。アプリケーションが取り込むのは自分のドライバだけである:
 
@@ -190,9 +190,9 @@ sqlshape: 2 finding(s)
 
 文脈（`-context ops`）で、その呼び出し元に適用する規約を選ぶ。詳細は[docs/checks.ja.md](docs/checks.ja.md#goの外のsqlにも同じ規約を適用するsqlshape-check)。
 
-## マイグレーション（PostgreSQL）
+## マイグレーション
 
-マイグレーションファイルは書かない。`schema.sql`を直すと、`sqlshape`がデータベースとの差分からDDLを生成する（PostgreSQLのみ。比較は`pg_dump`の出力で行う）:
+マイグレーションファイルは書かない。`schema.sql`を直すと、`sqlshape`がデータベースとの差分からDDLを生成する:
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # データベースの状態から schema.sql に至る DDL
@@ -205,12 +205,12 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 ## ドキュメント
 
-- [docs/postgres.ja.md](docs/postgres.ja.md) — PostgreSQLに属するもの全部: バージョンの宣言、検査器が埋め込むものとその検証、pgxの上のランタイム（`Batch`、`Copy`、`MatView`、型の登録）、マイグレーション
-- [docs/mysql.ja.md](docs/mysql.ja.md) — MySQLに属するもの全部: バージョンと`server`の宣言、Go型の表、制約名とエラー番号、`ONLY_FULL_GROUP_BY`の検査、`database/sql`の上のランタイム
+- [docs/postgres.ja.md](docs/postgres.ja.md) — PostgreSQLに属するもの全部: バージョンの宣言、検査器が埋め込むものとその検証、pgxの上のランタイム（`Batch`、`Copy`、`MatView`、型の登録）、PostgreSQLのマイグレーション
+- [docs/mysql.ja.md](docs/mysql.ja.md) — MySQLに属するもの全部: バージョンと`server`の宣言、Go型の表、制約名とエラー番号、`ONLY_FULL_GROUP_BY`の検査、`database/sql`の上のランタイム、MySQLのマイグレーション
 - [docs/checks.ja.md](docs/checks.ja.md) — 検査器が確かめること全部（両データベース共通）: 形、意味、失敗モード、カーディナリティ、スキーマが宣言する規約（`require`、集約、`sqlshape check`）
 - [docs/templates.ja.md](docs/templates.ja.md) — テンプレートで使える構文、ディレクティブ、共有フラグメント、危険な書き方、疎検査
 - [docs/runtime.ja.md](docs/runtime.ja.md) — どのランタイムでも同じこと: `Run` / `Collect` / `First` / `Exec`、`One`、行のマッピング、エラー、検査済みのSQLだけが走る保証
-- [docs/migrations.ja.md](docs/migrations.ja.md) — `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境（PostgreSQL）
+- [docs/migrations.ja.md](docs/migrations.ja.md) — `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境、MySQLで違うところ
 - [docs/flags.ja.md](docs/flags.ja.md) — 全フラグ、`-strict`の助言一覧、エディタ設定
 - [docs/design.md](docs/design.md) — 設計上の裁定。何を決めたか、なぜか、何を棄てたか
 
@@ -218,7 +218,7 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 PostgreSQL 17と18。構文はPostgreSQL自身のもの（宣言したバージョンのlibpg_query）で、アナライザーはそのバージョンのカタログから組み上げてある。判定はPostgreSQL自身の回帰テストで裏付けている。アナライザーと本物のサーバを並走させ、17では22,103文のうち19件、18では23,384文のうち31件だけが一致せず、全件を列挙して理由を付けてある（[docs/postgres.ja.md](docs/postgres.ja.md#検査器が埋め込んでいるもの)）。
 
-MySQL 8.4。パーサと字句解析器はサーバのソースから切り出したMySQL自身のもので、関数の表も同じソースから読む。判定は動いている`mysqld`と照合している。組み込み関数全部の結果型、エラーになる文、`ONLY_FULL_GROUP_BY`の検査、`sql_mode`を変えた場合が8.4と一致する（[docs/mysql.ja.md](docs/mysql.ja.md#検査器が埋め込んでいるもの)）。MySQLに無いもの（`Copy`、`MatView`、PL/pgSQL、ドメイン、複合型と配列、`-schemas`、`// sqlshape: type`、マイグレーションコマンド）はそこに列挙してある。
+MySQL 8.4。パーサと字句解析器はサーバのソースから切り出したMySQL自身のもので、関数の表も同じソースから読む。判定は動いている`mysqld`と照合している。組み込み関数全部の結果型、エラーになる文、`ONLY_FULL_GROUP_BY`の検査、`sql_mode`を変えた場合が8.4と一致する（[docs/mysql.ja.md](docs/mysql.ja.md#検査器が埋め込んでいるもの)）。MySQLに無いもの（`Copy`、`MatView`、PL/pgSQL、ドメイン、複合型と配列、`-schemas`、`// sqlshape: type`、マイグレーションのseed表）はそこに列挙してある。
 
 ## License
 

@@ -63,7 +63,7 @@ SELECT id FROM products
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW`の直上 | ビュー定義自身が文としてopt-outする |
 | `-- sqlshape: not null` | `CREATE FUNCTION`の直上 | この関数の戻り値はNULLにならない |
 | `-- sqlshape: error P0401 = OrderTooLarge` | 関数の`CREATE FUNCTION`の直上 | この関数が送出するSQLSTATEに名前を付け、expect行と`Violates`でその名前を使えるようにする。PL/pgSQL本体の`RAISE`は注釈なしでもコードで検出される |
-| `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | このseedは追加のみ。宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブル)） |
+| `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | このseedは追加のみ。宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブルpostgresql)） |
 | `-- @migrate ...` | どこでも | マイグレーションの意図の宣言（[migrations.ja.md](migrations.ja.md#diffだけでは決められないことを宣言する)） |
 
 Goのコードの中では、型宣言のdocコメントに`// sqlshape: type money_amount`と書くと、その型をPostgreSQLの型に結びつけられる（[checks.ja.md](postgres.ja.md#go型の表)。PostgreSQLのみ。MySQLには結びつける先の名前付きの型が無い）。パッケージコメントの`// sqlshape: context ops`は、そのパッケージが判定される義務の文脈を選ぶ。

@@ -2,7 +2,7 @@
 
 [English](migrations.md)
 
-`schema.sql`がデータベースの唯一の定義であり、マイグレーションファイルは書かない。`sqlshape`が稼働中のデータベースと`schema.sql`を比較してDDLを生成し、そのDDLを当てれば本当に`schema.sql`の状態になることを確認してから実行する。このコマンド群はPostgreSQLのものである。両側を`pg_dump`の出力として比較するためで、MySQL向けのものはまだ無い。
+`schema.sql`がデータベースの唯一の定義であり、マイグレーションファイルは書かない。`sqlshape`が稼働中のデータベースと`schema.sql`を比較してDDLを生成し、そのDDLを当てれば本当に`schema.sql`の状態になることを確認してから実行する。コマンドはPostgreSQLとMySQLの両方で使える。どちらに話すかはスキーマの宣言が決め、MySQLで違うところは下の[MySQL](#mysql)の節にまとめてある。
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # データベースの状態から schema.sql に至る DDL
@@ -13,7 +13,7 @@ $ sqlshape verify-schema -db "$DSN"         # ドリフト検出: データベ�
 
 ## 何を比較するか
 
-両側とも`pg_dump`の出力として読むので、比較されるのは`schema.sql`の書き方ではなく、PostgreSQLが実際に保持している定義である。`'x'`と`'x'::text`、`IN (...)`と`= ANY (ARRAY[...])`のような書き方の違いは差分にならない。`-- sqlshape:`のディレクティブはデータベースの状態ではないので比較対象に入らない。
+PostgreSQLでは両側とも`pg_dump`の出力として読むので、比較されるのは`schema.sql`の書き方ではなく、PostgreSQLが実際に保持している定義である。`'x'`と`'x'::text`、`IN (...)`と`= ANY (ARRAY[...])`のような書き方の違いは差分にならない。`-- sqlshape:`のディレクティブはデータベースの状態ではないので比較対象に入らない。
 
 比較はオブジェクト単位で行う。テーブル、列、制約、インデックス、ビュー、関数、型、ドメイン、enum、トリガー、ルール、ポリシー、行セキュリティの設定、シーケンス、拡張、コメントが対象で、seed済みテーブルは行単位でも比較する。
 
@@ -54,7 +54,7 @@ renameは`RENAME TO` / `RENAME COLUMN`になる。renameした列を含む制約
 
 `sqlshape verify-schema -db DSN`は、データベースが`schema.sql`と違う箇所を列挙する。ドリフト、手で当てたマイグレーション、追従が遅れた環境を見つけるために使う。違いがあれば終了コード1、一致していれば0を返す。
 
-## seed済みテーブル
+## seed済みテーブル（PostgreSQL）
 
 行を`schema.sql`に普通の`INSERT ... VALUES`で書いておくテーブルをseed済みテーブルと呼ぶ。その行はスキーマの一部として扱われる。
 
@@ -79,10 +79,30 @@ INSERTそのものを消すと、そのテーブルは普通のテーブルに�
 
 検査器も同じ行を値集合として使う。キー列、またはそれを参照する列に使われたGoのnamed typeは、enumのラベルと同じ規則でこの行と比較される（[checks.ja.md](checks.ja.md#型に意味を持たせる)）。値集合の置き場としてlookupテーブルを推奨する理由はここにある。値の追加・ラベル変更・並び替え・廃止はどれも1行の変更と`MERGE` 1文で済むが、enumでは型を作り直してすべての列に当て直すことになる。
 
+## MySQL
+
+MySQLでは両側をサーバ自身の描き方で読む。全部の表とビューに`SHOW CREATE TABLE` / `SHOW CREATE VIEW`をかけ、`schema.sql`を読むのと同じローダーで読む。比較されるのは`schema.sql`の書き方ではなくMySQLが保持している定義なので、`INT`と`int(11)`、`0`と書いた既定値と`'0'`で保持されたもの、サーバが名前を付けたキー（`orders_ibfk_1`、`orders_chk_1`）は差分にならない。目標側の正準形は、`-db`のサーバ上に一時データベース（`sqlshape_scratch_<乱数>`）を作って`schema.sql`を適用し、読み返してから落として得る。マイグレーションの対象そのもののサーバが、そのバージョンと設定（`-- sqlshape: server`）で正規化するということである。`-from`（テキスト同士、サーバ無し）では`PATH`の`mysqld`を使う。
+
+比較するのはオブジェクトごとに、表（エンジン・文字集合・照合・コメント）、列（型、サーバが綴った定義全体、位置。MySQLは列を並べ替えられるので、順序の違いは差分であり、計画は`MODIFY COLUMN ... AFTER`で直す）、キー、外部キー、CHECK制約、ビュー。比較しないのは、ローダーが読まないトリガ・ストアドプロシージャ・イベントと、MySQLのローダーがまだ知らないseed行。
+
+計画はMySQL自身の定義を使う。新しい表は正準の`CREATE TABLE`、変わった列は目標の定義による`ALTER TABLE ... MODIFY COLUMN`、変わったキー・外部キー・CHECKは`DROP`と`ADD`、変わったビューは`CREATE OR REPLACE VIEW`。消える表は、それを参照する外部キーを先に落とす。`-- @migrate`の宣言は同じだが1点だけ違う。MySQLではENUMは列の型なので、`enum`は列を名指す（`-- @migrate enum orders.status: drop 'canceled' using 'cancelled'`）。計画は型を狭める前に行を更新する。
+
+`apply`はDDLを1文ずつ実行する。MySQLのDDLは暗黙にコミットされるのでスクリプトはトランザクションにならず、`-no-transaction`は効かない。ある文が失敗したら、`apply`はどの文かと、その前の何文が適用済みかを言う。その状態から`sqlshape diff`をかければ残りが出る。
+
 ## 必要な環境
+
+PostgreSQL:
 
 - `pg_dump`。`PATH`にあるか、`$SQLSHAPE_PG_DUMP`で指定する。メジャーバージョンは対象データベース以上であること。
 - 比較のために、`sqlshape`はスキーマが宣言したバージョン（`-- sqlshape: postgres 17`）の専用PostgreSQLを初回にダウンロードして`~/.cache/sqlshape`（`$SQLSHAPE_PG_CACHE`）にキャッシュし、そこで`schema.sql`を実行する。接続先のデータベースが宣言と違うメジャーバージョンで動いているときは、その旨をstderrに出して続行する。DDLは宣言したバージョンの規則で判定される。初回はダウンロードに数秒かかり、以後は0.25秒程度で起動する。利用者のデータベースはこの用途には使わない。
+
+MySQL:
+
+- `-db`では、接続ユーザーに`CREATE DATABASE`と`DROP DATABASE`の権限が要る（一時データベースのため）。サーバの`lower_case_table_names`はスキーマが宣言した値（宣言が無ければ0）でなければならず、違えばコマンドは止まる。サーバがスキーマの宣言と違うバージョンのMySQLで動いているときは、その旨を出して続行する。
+- `-from`（テキスト同士）では、`PATH`の`mysqld`（`nix-shell -p mysql84`、ディストリビューションのパッケージ、サーバtarballの`bin/`）をスキーマの宣言した設定で起こす。
+
+共通:
+
 - `-schema PATH`で`schema.sql`、または`*.sql`を名前順に適用する`schema/`ディレクトリを指定できる。既定は作業ディレクトリから上に辿って最初に見つかるもの。
 
 終了コードは、0が差分なし、1が何かを見つけた（差分、ドリフト、拒否されたapply）、2が使い方か環境のエラー。

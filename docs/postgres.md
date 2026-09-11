@@ -65,8 +65,8 @@ build.
   ([checks.md](checks.md#a-package-references-only-its-schemas--schemas-postgresql)).
 
 Only on PostgreSQL: `postgres.Copy` and `postgres.MatView` ([below](#the-runtime-pgx)), PL/pgSQL,
-domains, composite types and arrays as first-class types, `-schemas`, `// sqlshape: type`, the
-migration commands.
+domains, composite types and arrays as first-class types, `-schemas`, `// sqlshape: type`, seeded
+tables in migrations.
 
 ## The Go type table
 
@@ -236,8 +236,8 @@ runs, errors under the expect line's names) is in [runtime.md](runtime.md). What
 database and `schema.sql`, check that the DDL leads to `schema.sql`, and run it. They compare
 both sides as `pg_dump` output, so they need the declared version's `pg_dump` on `PATH`, and they
 boot an embedded PostgreSQL of the declared version (downloaded on first use, cached under
-`~/.cache/sqlshape`) to read `schema.sql` through it. The whole of [migrations.md](migrations.md) is
-PostgreSQL's.
+`~/.cache/sqlshape`) to read `schema.sql` through it. [migrations.md](migrations.md) has the
+commands; its MySQL section says what differs there.
 
 ## License
 

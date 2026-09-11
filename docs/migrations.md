@@ -4,8 +4,9 @@
 
 `schema.sql` is the only definition of the database. There are no migration files to write:
 the `sqlshape` binary compares the live database with `schema.sql` and derives the DDL, checks
-that the DDL really leads to `schema.sql`, and runs it. The commands are PostgreSQL's: both sides
-are read as `pg_dump` output, and there is no MySQL counterpart yet.
+that the DDL really leads to `schema.sql`, and runs it. The commands work on PostgreSQL and MySQL;
+the schema's declaration selects the database, and the [MySQL](#mysql) section below has what is
+MySQL's about them.
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to schema.sql
@@ -16,7 +17,7 @@ $ sqlshape verify-schema -db "$DSN"         # drift: where a database differs fr
 
 ## What is compared
 
-Both sides are read through `pg_dump`, so what is compared is what PostgreSQL itself stores,
+On PostgreSQL both sides are read through `pg_dump`, so what is compared is what PostgreSQL itself stores,
 not the spelling in `schema.sql`: `'x'` and `'x'::text`, or `IN (...)` and `= ANY (ARRAY[...])`,
 are not differences. `-- sqlshape:` directives are not database state and are not compared.
 
@@ -94,7 +95,7 @@ else refuses. Then the DDL runs in one transaction.
 migration applied by hand, an environment that fell behind. Exit code 1 when there is a
 difference, 0 when the database matches.
 
-## Seeded tables
+## Seeded tables (PostgreSQL)
 
 A table whose rows are written in `schema.sql` with an ordinary `INSERT ... VALUES` is a seeded
 table; its rows are part of the schema.
@@ -136,7 +137,38 @@ column referencing it, is diffed against them like enum labels
 recommended home for a value set: adding, relabelling, reordering and retiring a value are each
 a one-row change and a `MERGE`, where an enum needs the type recreated under every column.
 
+## MySQL
+
+On MySQL both sides are read as the server's own rendering: `SHOW CREATE TABLE` and `SHOW CREATE
+VIEW` for every table and view, parsed by the loader that reads `schema.sql`. What is compared is
+therefore what MySQL stores, not the spelling of `schema.sql`: `INT` and `int(11)`, a default written
+`0` and stored `'0'`, a key named by the server (`orders_ibfk_1`, `orders_chk_1`) are not
+differences. The target's canonical form comes from applying `schema.sql` to a scratch database
+(`sqlshape_scratch_<random>`) on the `-db` server, dropped when done, so it is normalized by the
+very server the migration targets, version and settings (`-- sqlshape: server`) included; with
+`-from` (two texts, no server) it comes from a `mysqld` on `PATH`.
+
+Compared, object by object: tables (engine, charset, collation, comment), columns (type, the
+whole definition as the server spells it, and their position: MySQL can reorder columns, so an
+order difference is a change the plan settles with `MODIFY COLUMN ... AFTER`), keys, foreign
+keys, check constraints and views. Not compared: triggers, stored procedures and events, which the
+loader does not read, and seeded rows, which the MySQL loader does not know yet.
+
+The plan uses MySQL's own definitions: a new table is the canonical `CREATE TABLE`, a changed
+column an `ALTER TABLE ... MODIFY COLUMN` with the target's definition, a changed key, foreign key
+or check a `DROP` and an `ADD`, a changed view a `CREATE OR REPLACE VIEW`. A table that goes has
+the foreign keys referencing it dropped first. The `-- @migrate` declarations are the same, with
+one difference: an ENUM is a column type on MySQL, so `enum` names the column
+(`-- @migrate enum orders.status: drop 'canceled' using 'cancelled'`), and the plan updates the
+rows before it narrows the type.
+
+`apply` runs the DDL statement by statement: MySQL's DDL commits implicitly, so a script is not a
+transaction and `-no-transaction` has no effect. When a statement fails, `apply` says which one
+and how many before it are applied; `sqlshape diff` from that state gives what remains.
+
 ## Requirements
+
+PostgreSQL:
 
 - `pg_dump` on `PATH` or named by `$SQLSHAPE_PG_DUMP`; its major version must be at least the
   database's.
@@ -146,6 +178,18 @@ a one-row change and a `MERGE`, where an enum needs the type recreated under eve
   afterwards it starts in a quarter of a second. Your database is never used for this. When the
   database runs another major version than the schema declares, the commands say so on stderr
   and go on: the DDL is judged by the declared version's rules.
+
+MySQL:
+
+- With `-db`, the connection's user can `CREATE DATABASE` and `DROP DATABASE` (for the scratch
+  database). The server's `lower_case_table_names` must be the one the schema declares (0 when
+  it declares none); the commands stop otherwise. When the server runs another MySQL version than
+  the schema declares, the commands say so and go on.
+- With `-from` (two schema texts), a `mysqld` on `PATH` (`nix-shell -p mysql84`, a distribution
+  package, a server tarball's `bin/`), started with the schema's declared settings.
+
+Both:
+
 - `-schema PATH` names `schema.sql`, or a `schema/` directory whose `*.sql` files apply in name
   order; the default is the nearest one from the working directory up.
 

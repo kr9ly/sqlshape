@@ -25,8 +25,8 @@ u, err := postgres.Get(ctx, db, ByEmail, struct{ Email string }{Email: email})  
 - Plain SQL, no injection. Templates are Go `text/template`: `{{.X}}` always becomes a
   parameter, never text, and every `{{if}}` / `{{range}}` combination is expanded and checked. The
   runtime refuses any rendering the checker never saw.
-- `schema.sql` is the only definition. The checker reads it, and on PostgreSQL `sqlshape diff`
-  derives the migration from it. Views,
+- `schema.sql` is the only definition. The checker reads it, and `sqlshape diff` derives the
+  migration from it. Views,
   functions, domains, composite types, row-level security and seeded lookup tables are all part
   of the checked surface, so the database can expose a typed API instead of raw tables.
 - One database per project. `schema.sql` declares which (`-- sqlshape: postgres 17` or
@@ -51,8 +51,9 @@ Nothing else is needed to check code. The parsers (PostgreSQL's libpg_query per 
 version, MySQL 8.4's own grammar and lexer) are embedded as WebAssembly and run on wazero, so
 there is no C compiler to install and no library to link; the first run compiles the module
 (about a second) and caches the result under the user cache directory (`~/.cache/sqlshape` on
-Linux). Only the migration commands run a real database; they download the declared PostgreSQL
-version's binaries into the same cache on first use.
+Linux). Only the migration commands run a real database: on PostgreSQL they download the declared
+version's binaries into the same cache on first use, on MySQL they use a scratch database on the
+server they migrate.
 
 The declarations (`sqlshape.Query`, `sqlshape.One`) are a Go module with no dependencies, and
 the runtime for each database is a module of its own, so an application pulls in only its own
@@ -247,10 +248,10 @@ sqlshape: 2 finding(s)
 A context (`-context ops`) selects the rules that apply to that caller. Details in
 [docs/checks.md](docs/checks.md#the-same-rules-for-sql-outside-go-sqlshape-check).
 
-## Migrations (PostgreSQL)
+## Migrations
 
 There are no migration files. Edit `schema.sql`, and `sqlshape` derives the DDL from the
-difference between it and the database (PostgreSQL only: the comparison reads `pg_dump` output):
+difference between it and the database:
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to schema.sql
@@ -267,12 +268,12 @@ rename or the removal of an enum label, are declared in `schema.sql` with `-- @m
 
 ## Documentation
 
-- [docs/postgres.md](docs/postgres.md) — everything PostgreSQL's: the version declaration, what the checker embeds and how it is verified, the runtime on pgx (`Batch`, `Copy`, `MatView`, type registration), migrations
-- [docs/mysql.md](docs/mysql.md) — everything MySQL's: the version and `server` declarations, the Go type table, constraint names and error numbers, the `ONLY_FULL_GROUP_BY` check, the runtime on `database/sql`
+- [docs/postgres.md](docs/postgres.md) — everything PostgreSQL's: the version declaration, what the checker embeds and how it is verified, the runtime on pgx (`Batch`, `Copy`, `MatView`, type registration), migrations on PostgreSQL
+- [docs/mysql.md](docs/mysql.md) — everything MySQL's: the version and `server` declarations, the Go type table, constraint names and error numbers, the `ONLY_FULL_GROUP_BY` check, the runtime on `database/sql`, migrations on MySQL
 - [docs/checks.md](docs/checks.md) — everything the checker verifies, for both databases: shapes, meaning, failure modes, cardinality, the rules a schema declares (`require`, aggregates, `sqlshape check`)
 - [docs/templates.md](docs/templates.md) — the template subset, directives, shared fragments, hazards, sparse checking
 - [docs/runtime.md](docs/runtime.md) — what every runtime does: `Run` / `Collect` / `First` / `Exec`, `One`, row mapping, errors, the guarantee that only checked SQL runs
-- [docs/migrations.md](docs/migrations.md) — `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements (PostgreSQL)
+- [docs/migrations.md](docs/migrations.md) — `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements, what differs on MySQL
 - [docs/flags.md](docs/flags.md) — every flag, the `-strict` advisories, editor setup
 - [docs/design.md](docs/design.md) — design decisions: what was decided, why, and what was rejected (Japanese)
 
@@ -289,7 +290,7 @@ function catalog comes from the same source. The verdicts are checked against a 
 the result types of every built-in function, the error statements, the `ONLY_FULL_GROUP_BY` check
 and the `sql_mode` variants agree with 8.4 ([docs/mysql.md](docs/mysql.md#what-the-checker-embeds)).
 What has no MySQL counterpart (`Copy`, `MatView`, PL/pgSQL, domains, composite types and arrays,
-`-schemas`, `// sqlshape: type`, the migration commands) is listed there.
+`-schemas`, `// sqlshape: type`, seeded tables in migrations) is listed there.
 
 ## License
 
