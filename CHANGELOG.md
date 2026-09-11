@@ -16,7 +16,9 @@ release it is a candidate for.
   fail (0A000); `ON CONFLICT (cols)` absorbs a unique constraint only when it can be the arbiter, so a
   `DEFERRABLE` key (55000) or a partial index whose predicate the `ON CONFLICT ... WHERE` does not
   repeat (42P10) keeps its 23505 in the list, and `ON CONFLICT ON CONSTRAINT <exclusion> DO UPDATE`
-  is reported as certain to fail (42809). A `NOT NULL` that a domain, not the column, declares is
+  is reported as certain to fail (42809); `ON CONFLICT DO NOTHING` without a target absorbs the
+  exclusion constraints and partial unique indexes too, and is certain to fail (55000) when any
+  key of the table is `DEFERRABLE`. A `NOT NULL` that a domain, not the column, declares is
   keyed by the domain's name (schema-qualified unless public): PostgreSQL reports no table or column
   for it, and `postgres.ConstraintError.Key()` now returns the domain's name for that error, so
   `Violates(err, "email")` matches what the checker predicted. `ORDER BY` / `GROUP BY` resolve an

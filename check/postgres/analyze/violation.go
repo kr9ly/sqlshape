@@ -189,11 +189,20 @@ func (a *analyzer) insertViolations(ins *pgparse.InsertStmt) []Violation {
 				}
 			}
 		} else {
-			// ON CONFLICT DO NOTHING without arbiter: any unique violation is absorbed
+			// ON CONFLICT DO NOTHING without arbiter: every unique constraint, unique index
+			// (partial ones included) and exclusion constraint of the table is an arbiter, so
+			// each one's violation is absorbed -- unless one of them is DEFERRABLE, which the
+			// server refuses as an arbiter and, with no target to narrow the choice, refuses
+			// the statement (SQLSTATE 55000) whether or not a row conflicts
 			for _, con := range rel.Constraints {
-				if con.Kind == schema.PrimaryKey || con.Kind == schema.Unique {
-					absorbed[con.Name] = true
+				if con.Kind != schema.PrimaryKey && con.Kind != schema.Unique && con.Kind != schema.Exclude {
+					continue
 				}
+				if con.Deferrable {
+					a.note(noteAlwaysFails, ins.Relation.Location, "ON CONFLICT DO NOTHING without a conflict target on "+rel.Name+
+						": every execution fails (SQLSTATE 55000): "+con.Name+" is DEFERRABLE, and a deferrable constraint cannot be an arbiter")
+				}
+				absorbed[con.Name] = true
 			}
 		}
 		if oc.Action == pgparse.OnConflictAction_ONCONFLICT_UPDATE {
