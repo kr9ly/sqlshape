@@ -2,7 +2,7 @@
 
 [English](runtime.md)
 
-文は`sqlshape`パッケージで宣言し（`Query`、`One`。依存は無い）、DBごとのランタイムモジュールで実行する。`github.com/kr9ly/sqlshape/postgres/v2`はpgxの上で実行するランタイムで、実行先の`postgres.DB`は`*pgx.Conn`、`*pgxpool.Pool`、`pgx.Tx`のどれでもよいので、同じ文をトランザクションの中でもそのまま実行できる。検査器が読むのは宣言だけなので、自前のランタイムで実行してもよい。その場合に得られないものは末尾に書く。
+文は`sqlshape`パッケージで宣言し（`Query`、`One`。依存は無い）、使うデータベースのランタイムモジュールで実行する。`github.com/kr9ly/sqlshape/postgres/v2`はpgxの上（[postgres.ja.md](postgres.ja.md#ランタイム-pgx)）、`github.com/kr9ly/sqlshape/mysql/v2`は`database/sql`の上（[mysql.ja.md](mysql.ja.md#ランタイム-databasesql)）。このページは両方が同じにやることを書く。例はpostgresの関数で示すが、mysqlの関数も同じ名前と同じ形をしている。検査器が読むのは宣言だけなので、自前のランタイムで実行してもよい。その場合に得られないものは末尾に書く。
 
 ## 文の実行
 
@@ -12,10 +12,10 @@ var ListOrders = sqlshape.Query[Order, ListParams](`...`)
 for o, err := range postgres.Run(ctx, db, ListOrders, p) { ... }   // iter.Seq2[Order, error]、逐次読み出し
 orders, err := postgres.Collect(ctx, db, ListOrders, p)            // []Order
 first, err  := postgres.First(ctx, db, ListOrders, p)              // 最初の行。無ければ ErrNoRows
-tag, err    := postgres.Exec(ctx, db, ListOrders, p)               // pgconn.CommandTag。行は捨てる
+tag, err    := postgres.Exec(ctx, db, MarkPaid, p)                 // ドライバの結果（pgconn.CommandTag / sql.Result）。行は捨てる
 ```
 
-`One[R, P]`は`Single`を返す。`Render`と`Unprepared`は`Stmt`と同じで、実行方法は3つある:
+`One[R, P]`は`Single`を返す。`Render`は`Stmt`と同じで、実行方法は3つある:
 
 ```go
 var UserByEmail = sqlshape.One[User, struct{ Email string }](`...`)
@@ -27,33 +27,15 @@ tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)      // 1行も対象にな
 
 3つとも、2行目が返ってきたら`ErrManyRows`を返す。検査器は1行以下しか返らないことをスキーマから証明しているので、これが起きるのは、証明の根拠になった一意制約が実際のデータベースでは外れているときである。
 
-`Stmt.Unprepared()`は、サーバー側のprepared statementを使わずに実行するコピーを返す。プランナーが毎回、実際のパラメータ値でプランを作る。パラメータの値の分布が偏っていて、pgxのstatement cacheが汎用プランに固定されると遅くなる文に使う。それ以外の文では、prepared statementのキャッシュは展開ごとにpgxが管理する。
-
 ## 行のマッピング
 
-結果列は名前でフィールドに対応づけられる。`col:"..."`タグ、次に`db:"..."`タグ、次にフィールド名をsnake_caseにしたものの順で探す。埋め込み構造体のフィールドは平坦化される。NULLを受けられるフィールド（ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`）はNULLをゼロ値として受ける。この展開の結果に列が無いフィールド（一部の分岐だけが選ぶ列）もゼロ値のままになる。`R`がスカラーなら1列を直接受ける。`numeric`は`string`で受けると全桁が保たれる。
+結果列は名前でフィールドに対応づけられる。`col:"..."`タグ、次に`db:"..."`タグ、次にフィールド名をsnake_caseにしたものの順で探す。埋め込み構造体のフィールドは平坦化される。NULLを受けられるフィールド（ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`のようなドライバのNULL可の値型）はNULLをゼロ値として受ける。この展開の結果に列が無いフィールド（一部の分岐だけが選ぶ列）もゼロ値のままになる。`R`がスカラーなら1列を直接受ける。`numeric` / `DECIMAL`は`string`で受けると全桁が保たれる。列やパラメータをどのGo型で受けられるかはデータベースごとの表にある（[postgres.ja.md](postgres.ja.md#規則が使うもの)、[mysql.ja.md](mysql.ja.md#go型の表)）。
 
 Goのenum型に`Known() bool`を実装しておくと（`Labelled`インターフェース）、マッパーはこのビルドが知らないラベルを受け取ったとき、switchで扱えない値をアプリケーションに渡す代わりに`*UnknownLabelError`を返す。
 
-## ネストした行とユーザー定義型
-
-`array_agg(row(o.id, o.total))`、`array_agg(o)`、`row(...)`、複合型の列は、構造体または構造体のスライスにフィールドごとに読み込まれる。無名のレコードは位置で、名前付きの複合型は列の順序で対応づける。複合型のパラメータ（SQL側が`money_amount`を期待する位置の`{{.Price}}`、`order_items[]`を期待する位置の`{{.Items}}`）も、同じ規則で構造体や構造体のスライスからencodeされる。
-
-pgxはユーザー定義型（enum、複合型、ドメイン、範囲型、多重範囲型、およびそれらの配列）をdecodeする前に、その型を知っていなければならない。`Run`は結果に必要な型を、初めて出会った時点でその接続に登録する。ただし無名レコードの内側にネストした型はscanする前には見えないので、その場合とプールを使う場合は、接続時にまとめて登録する:
-
-```go
-cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-	return postgres.LoadUserTypes(ctx, conn)
-}
-```
-
-pgx自身の型ローダーが読まない拡張のスカラー型（`citext`、`hstore`、`ltree`など）も登録される。`hstore`はpgxのhstore codec（`map[string]*string`）で、それ以外はテキストとして（`string`、配列なら`[]string`）扱う。`money`のようにpgxにcodecの無い型を持つテーブルも読み込める。
-
-宣言型バインディング（`// sqlshape: type money_amount`）を持つ型は、その型自身の`sql.Scanner` / `driver.Valuer`で変換される。ランタイムはその列についてPostgreSQLにテキスト形式を要求するので、Scannerには値のテキスト表現が渡る。この要求は文ごとに覚えておくので、以降の実行では余計な往復が省ける。もしその後に型が削除・再作成されていたら（マイグレーション、名前は同じでOIDだけ変わる）、ランタイムはPostgreSQLが返す「cached plan must not change result type」に気づいて要求を1回だけ作り直すので、再起動なしに文は動き続ける。
-
 ## エラー
 
-制約違反（SQLSTATEクラス23）は`*ConstraintError`として返る。PostgreSQLが報告した`Code`、`Constraint`、`Table`、`Column`、`Detail`を持ち、元の`*pgconn.PgError`を包んでいる。`Key()`はexpect行に書くのと同じ表記の名前を返す。制約名、またはNOT NULLなら`table.column`である。ドメイン由来のNOT NULL（`CREATE DOMAIN ... NOT NULL`または`ALTER DOMAIN ... SET NOT NULL`）はPostgreSQLがtableもcolumnも一切返さない唯一のケースで、値はドメイン自身の型変換の内側で拒否され、PostgreSQLが名指せる列にまだ達していない。そのため`Key()`はこの場合ドメイン自身の名前にフォールバックする。docs/checks.mdの制約名の表と一致させてある。expect行で名指したSQLSTATE（トリガーの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
+制約違反はランタイムの`*ConstraintError`として返る（`postgres.ConstraintError`は`*pgconn.PgError`を、`mysql.ConstraintError`はドライバのエラーを包む）。サーバが報告した内容を持ち、`Key()`はexpect行に書くのと同じ表記の名前を返す。データベースが制約に付ける名前、またはNOT NULLなら`table.column`である（[postgres.ja.md](postgres.ja.md#規則が使うもの)、[mysql.ja.md](mysql.ja.md#制約名と失敗モード)）。expect行で名指したSQLSTATE（PostgreSQLのトリガの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
 
 ```go
 _, err := postgres.First(ctx, db, CreateCustomer, p)
@@ -62,46 +44,7 @@ if postgres.Violates(err, "customers_email_key") {
 }
 ```
 
-この名前は検査器が列挙したものと同じなので、コードが処理していない違反があれば、それはexpect行に書いてあるのに扱っていない違反である（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)）。`ErrNoRows`は`pgx.ErrNoRows`と同じもので、`IsNoRows(err)`で判定できる。
-
-## バッチ
-
-`Batch`は複数の文を1往復で送る（`pgx.Batch`）:
-
-```go
-b := postgres.NewBatch()
-orders := postgres.Queue(b, ListOrders, ListParams{Status: &paid})
-paid   := postgres.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
-if err := b.Send(ctx, db); err != nil { ... }
-rows, err := orders.Rows()    // []Order。First() なら最初の行
-tag, err  := paid.Tag()
-```
-
-`BatchDB`は`SendBatch`を持つもので、接続・プール・トランザクションのどれでもよい。バッチの途中では型を登録できないので、ユーザー定義のenumや複合型を使う文があるなら、先に`LoadUserTypes`を呼んでおく（プールなら`AfterConnect`で）。結果に`sql.Scanner`型が含まれる文はpgxのバッチには乗せられない（バッチではテキスト形式を要求できない）ので、`Send`はそれをバッチの直後に、キューに入れた順で通常のクエリとして実行する。
-
-キューに入れた文の制約違反や`-- sqlshape: expect`のSQLSTATEは、`Run`と同じ規則で`*ConstraintError`に包まれる。行を返す文として積んだか、`Exec`（`RETURNING`なし）として積んだかは関係ない。`Send`は最初に失敗した文のエラーを返し、それより後にキューへ入れた文は実行されない。それらの`Rows` / `Tag`は`ErrNotSent`を返す。
-
-## 一括ロード
-
-```go
-var loadItems = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku", "qty")
-
-n, err := loadItems.From(ctx, db, items)           // []Item
-n, err := loadItems.FromSeq(ctx, db, seq)          // iter.Seq[Item]
-```
-
-`Copy`は`pgx.CopyFrom`による`COPY ... FROM`である。各列には、それに対応する`R`のフィールド（タグまたはsnake_case、埋め込み構造体は平坦化）から値が入る。列を指定しなければ各フィールドが自分の名前の列に入り、`R`がスカラーなら1列に入る。検査器はテーブルと列の存在、各列の型とフィールドの対応、指定しなかった列に既定値があることを確かめる。
-
-## マテリアライズドビュー
-
-```go
-var OrderStats = postgres.MatView("order_stats")
-
-err := OrderStats.Refresh(ctx, db)              // 完了まで読み手はブロックされる
-err := OrderStats.RefreshConcurrently(ctx, db)  // ビューに一意インデックスが必要
-```
-
-検査器は名前が`schema.sql`にあることを確かめ、`-strict`では`RefreshConcurrently`を呼んでいるビューに一意インデックスがあることも確かめる。
+この名前は検査器が列挙したものと同じなので、コードが処理していない違反があれば、それはexpect行に書いてあるのに扱っていない違反である（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)）。`ErrNoRows`はドライバのもの（`pgx.ErrNoRows`、`sql.ErrNoRows`）で、`IsNoRows(err)`で判定できる。
 
 ## 検査済みのSQLのみが実行できる
 
@@ -115,45 +58,10 @@ sqlshape: rendered SQL differs from the checked expansion [if@64:then]: the runt
 
 確認できない場合が2つある。`{{range}}`が3要素以上のとき（検査は2要素までで行う）と、分岐の組み合わせが256を超えて代表だけが検査されたとき（[templates.ja.md](templates.ja.md#分岐が多いとき)）。この2つでは、分岐の形が検査したものと同じであることだけを確認して実行する。
 
-## MySQL
+## データベースのランタイムが足すもの
 
-`github.com/kr9ly/sqlshape/mysql/v2`は同じ宣言をMySQLの上で、`database/sql`とgo-sql-driver/mysqlを通して実行する。`mysql.DB`は`*sql.DB`、`*sql.Tx`、`*sql.Conn`のどれでもよい。
-
-```go
-for o, err := range mysql.Run(ctx, db, ListOrders, p) { ... }
-orders, err := mysql.Collect(ctx, db, ListOrders, p)
-first, err  := mysql.First(ctx, db, ListOrders, p)              // 無ければ ErrNoRows（sql.ErrNoRows）
-res, err    := mysql.Exec(ctx, db, MarkPaid, p)                 // sql.Result
-u, err      := mysql.Get(ctx, db, UserByEmail, p)               // One: Get / Find / ExecOne はPostgreSQLと同じ
-```
-
-テンプレートの`{{.X}}`はワイヤ上ではMySQLの位置指定`?`になり、引数はプレースホルダの出現順に並べ直される（2回使ったパラメータは2回送る）。行は同じ規則でフィールドに対応し、受け型はドライバのもの（`int64` / `uint64`、`DECIMAL`は`string`、日時は`parseTime=true`で`time.Time`、バイナリ文字列とJSONは`[]byte`）で、検査器が使う表と同じである。制約違反は`*mysql.ConstraintError`として返り、その`Key`はスキーマ上の名前 — UNIQUEキーの名前、FOREIGN KEYの`CONSTRAINT`名、CHECK制約の名前、NOT NULLなら列名 — なので`mysql.Violates(err, key)`で判定できる。`ExecOne`は`RowsAffected`で判定するが、MySQLは変更のあった行を数えるので、既に同じ値の行へのUPDATEはDSNに`clientFoundRows=true`が無いと`ErrNoRows`になる。
-
-MySQLにはBatch、Copy、MatViewは無い。`mysqltest.Start(ctx, schemaSQL)`はPATHの`mysqld`をスキーマを載せて起こし（アプリケーションのテスト用）、無ければ`mysqltest.ErrNoServer`を返す。サーバはスキーマが宣言した設定（`-- sqlshape: server sql_mode = '...'`、`lower_case_table_names = N`。[checks.md](checks.ja.md#スキーマはサーバの設定を名乗るserver)）で起こすので、テストは検査器が判定したのと同じモードで走る。
-
-```go
-if err := mysql.Verify(ctx, db, schemaSQL); err != nil { ... }
-```
-
-`mysql.Verify`は接続のセッションの`@@sql_mode`とサーバの`lower_case_table_names`を読み、スキーマの宣言（無ければサーバの既定値）と違えばエラーを返す。DSNの`sql_mode=...`、プールのセッション初期化、別の設定で立てたサーバは、検査器が判定に使わなかった規則で文を走らせることになる。プールを開いた直後に1回呼ぶ。
+上の関数の他に、各ランタイムはそのドライバとデータベースにあって相手に無いものを持つ。pgxでは`Unprepared`、ネストした行とユーザー定義型と`LoadUserTypes`、`Batch`、`Copy`、`MatView`（[postgres.ja.md](postgres.ja.md#ランタイム-pgx)）。`database/sql`では`ExecOne`の`RowsAffected`の読み方と、サーバ設定を確かめる`mysql.Verify`（[mysql.ja.md](mysql.ja.md#ランタイム-databasesql)）。
 
 ## 自前のランタイムでは得られないもの
 
-検査器が認識するのは宣言であってランタイムではない（`-query`で自前のマーカー関数を登録できる。[flags.ja.md](flags.ja.md)）。次の3つの約束はランタイムのもので、`sqlshape/postgres`で実行したときだけ成立する: 送る SQL が検査器の確かめた展開とバイト単位で一致すること（上の節）、違反が expect 行の綴りの名前で`ConstraintError`として返ること、`One`の文が2行目を返したらエラーになること。
-
-## 本物のPostgreSQLでのテスト
-
-`pgtest`は`schema.sql`を適用した埋め込みPostgreSQL（初回にダウンロードされ、`~/.cache/sqlshape`にキャッシュされる）を一時ディレクトリに起動する。`Close`で消える:
-
-```go
-schemaSQL, _ := pgtest.ReadSchema("schema.sql")   // schema/ ディレクトリでもよい
-db, err := pgtest.Start(ctx, schemaSQL)
-defer db.Close()
-
-if err := db.Verify(ctx, ListOrders, UserByEmail, CreateCustomer); err != nil {
-	t.Fatal(err)
-}
-conn := db.Conn()   // *pgx.Conn。db.ConnString() もある
-```
-
-`Verify`は各文のすべての展開をサーバーでprepareし、PostgreSQLが返すパラメータ型、結果列の名前と型、または構文エラーを、検査器の結論と比較する。不一致があれば、その文についての検査器の判定は信用できないということであり、エラーには不一致ごとにSQLと両者の判定が列挙される。アプリケーションのテストの隣に置いておけば、静的検査の結論が実際に使うPostgreSQLで成り立つことをテストスイートが保証する。`db.Conn()`はビュー・関数・トリガーを直接叩くための接続である。
+検査器が認識するのは宣言であってランタイムではない（`-query`で自前のマーカー関数を登録できる。[flags.ja.md](flags.ja.md)）。次の3つの約束はランタイムのもので、`sqlshape/postgres`か`sqlshape/mysql`で実行したときだけ成立する: 送る SQL が検査器の確かめた展開とバイト単位で一致すること（上の節）、違反が expect 行の綴りの名前で`ConstraintError`として返ること、`One`の文が2行目を返したらエラーになること。

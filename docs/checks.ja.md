@@ -2,7 +2,7 @@
 
 [English](checks.md)
 
-検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`postgres.Copy[R](...)`、`postgres.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
+検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`postgres.Copy[R](...)`、`postgres.MatView(...)`（PostgreSQL）をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。規則はPostgreSQLとMySQLで同じである。例はPostgreSQLのもので、規則がデータベースの名前・番号・型を使う箇所（制約名、Go型の表、診断のエラーコード）は[postgres.ja.md](postgres.ja.md)と[mysql.ja.md](mysql.ja.md)にそれぞれのものがある。
 
 検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージを対象に実行され、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を実行する（[第2部](#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
 
@@ -15,7 +15,7 @@
   - [型に意味を持たせる](#型に意味を持たせる)
   - [書き込みの失敗に備える](#書き込みの失敗に備える)
   - [1行だけ返す（`One`）](#1行だけ返すone)
-  - [COPYで一括ロードする](#copyで一括ロードする)
+  - [COPYで一括ロードする（PostgreSQL）](#copyで一括ロードするpostgresql)
 - [第2部 — スキーマが宣言する規約](#第2部--スキーマが宣言する規約)
   - [宣言の仕組み](#宣言の仕組み)
   - [必ず付ける読み取り条件（`visible where`）](#必ず付ける読み取り条件visible-where)
@@ -29,11 +29,11 @@
   - [呼び出し元ごとに規約を変える（`context`）](#呼び出し元ごとに規約を変えるcontext)
   - [Goの外のSQLにも同じ規約を適用する（`sqlshape check`）](#goの外のsqlにも同じ規約を適用するsqlshape-check)
 - [第3部 — 文の外側](#第3部--文の外側)
-  - [スキーマはPostgreSQLの版を名乗る（`postgres`）](#スキーマはpostgresqlの版を名乗るpostgres)
-  - [スキーマはMySQLの版を名乗る（`mysql`）](#スキーマはmysqlの版を名乗るmysql)
+  - [スキーマはPostgreSQLのバージョンを名乗る（`postgres`）](#スキーマはpostgresqlのバージョンを名乗るpostgres)
+  - [スキーマはMySQLのバージョンを名乗る（`mysql`）](#スキーマはmysqlのバージョンを名乗るmysql)
   - [スキーマはサーバの設定を名乗る（`server`）](#スキーマはサーバの設定を名乗るserver)
   - [sqlshapeを通さないSQLを書かない（`-raw-sql`）](#sqlshapeを通さないsqlを書かない-raw-sql)
-  - [パッケージは自分のスキーマだけを参照する（`-schemas`）](#パッケージは自分のスキーマだけを参照する-schemas)
+  - [パッケージは自分のスキーマだけを参照する（`-schemas`、PostgreSQL）](#パッケージは自分のスキーマだけを参照する-schemaspostgresql)
   - [スキーマ自体の問題](#スキーマ自体の問題)
 
 ## 第1部 — すべての文にかかる検査
@@ -94,7 +94,7 @@ SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.cust
 
 #### NULLになりうる列はNULLを受けられる型で受ける
 
-NULLを受けられる型は、ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、`sql.Scanner`を実装した型。
+NULLを受けられる型は、ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`のようなドライバのNULL可の値型、`sql.Scanner`を実装した型。
 
 NG
 
@@ -255,47 +255,11 @@ type Order struct {
 
 #### Go型の表
 
-pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQLで確認したもの。列を受けるときも、パラメータを渡すときも同じ表に従う。
-
-| PostgreSQL | Go |
-|---|---|
-| `bool` | `bool` |
-| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int`（狭いGo型で受けると`bigint into int32`のような注記が付く） |
-| `real` / `double precision` | `float32` / `float64`（`double precision into float32`は注記付き） |
-| `numeric` | `string`（全桁が保たれる）、`pgtype.Numeric`、`big.Rat`、`shopspring/decimal.Decimal`、`apd.Decimal`。floatや整数でも受けられるが精度の注記が付く |
-| `text` / `varchar` / `char` / `name` / `citext`などテキスト系の拡張型 | `string`（`string`はパラメータとしてはどの型にも渡せる） |
-| `bytea` | `[]byte` |
-| `uuid` | `uuid.UUID`（パッケージは問わない）、`[16]byte`、`string` |
-| `timestamptz` / `timestamp` / `date` | `time.Time`（`timestamp`と`date`はタイムゾーンや時刻が失われるので`-strict`で注記） |
-| `time` | `time.Time`、`string` |
-| `interval` | `pgtype.Interval`（月・日・マイクロ秒を分けたまま保持する）。`time.Duration`はこれらを固定長に均してしまうため、PostgreSQL自身のカレンダー演算と日単位でずれ得る旨の常時の注記が付く |
-| `json` / `jsonb` | `[]byte`、`json.RawMessage`、`string`、またはpgxがunmarshalできる構造体・スライス・マップ |
-| `inet` | `netip.Addr` / `netip.Prefix` |
-| `cidr` | `netip.Prefix` |
-| `macaddr` | `net.HardwareAddr` / `string` |
-| `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)`（各要素は単体の`T`のパラメータ/列と同じ判定を受ける。注記も含めて）。PostgreSQLは配列の要素自体がNOT NULLであることを保証しない――列自身の`NOT NULL`は配列値全体が`NULL`になることを禁じるだけである――ため、`NULL`を受けられない要素型（ポインタでないもの）には常時の注記が付き、`-strict`では拒否としても報告される。`integer[]`に対する`[]int32`、複合型の配列に対する`[]Item`はどちらも`NULL`要素を安全に受けるために`[]*int32`/`[]*Item`が要る（複合型の要素はより厄介で、pgxは`NULL`要素をエラーにせずゼロ値の構造体として黙って復号する） |
-| 範囲型 | `pgtype.Range[T]`。`T`はサブタイプと照合される（ユーザー定義の範囲型も同様） |
-| 多重範囲型 | `pgtype.Multirange[pgtype.Range[T]]` |
-| `bit` / `point` / `tsvector` | `pgtype`の対応する型 |
-| `xml` / `money` / `tsquery` / `jsonpath` / `timetz` | `string` |
-| `oid` | `uint32` |
-| enum、seed済みlookupテーブルのキー、CHECKによる値集合 | Goのnamed string type（[下記](#型に意味を持たせる)） |
-| ドメイン | 基底型に対応するGo型、またはドメインに結びつけたnamed type |
-| 複合型、レコード | 構造体 |
-
-表に無い型、あるいは自前の型で受けたい型は、Go側の型にdocコメントで対応するPostgreSQL型を宣言する:
-
-```go
-// sqlshape: type money_amount
-type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
-```
-
-検査器は、SQL側が`money_amount`（その配列と、それを基底型とするドメインを含む）である位置でだけ`Money`を受け入れ、それ以外の位置では報告する。値の変換は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerにはテキスト形式が渡る）。
+列をどのGo型で受けられるか、パラメータをどのGo型で渡せるかは、データベースとそのドライバが決める。[PostgreSQLの表](postgres.ja.md#go型の表)、[MySQLの表](mysql.ja.md#go型の表)。どちらも列を受けるときとパラメータを渡すときに同じに従う。PostgreSQLでは、表に無い型や自前の型で受けたい型を、Goの型に`// sqlshape: type <PGの型>`と書いて結びつける。変換はその型自身の`sql.Scanner` / `driver.Valuer`が行う（MySQLには結びつける先の名前付きの型が無い）。
 
 ### パラメータを渡す
 
-`{{.X}}`はSQLの中では`$n`パラメータになる。検査器は`$n`が使われている場所からPostgreSQL側で必要な型を推論し（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）、`P`の対応するフィールドの型がそれに合うことを確かめる。型の対応は上のGo型の表に従う。
+`{{.X}}`はSQLの中ではパラメータになる（PostgreSQLでは`$n`、MySQLでは`?`。検査器はどちらでも`$n`と番号を振る）。検査器はパラメータが使われている場所からSQL側で必要な型を推論し（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）、`P`の対応するフィールドの型がそれに合うことを確かめる。型の対応はデータベースのGo型の表に従う。
 
 #### パラメータの型は使われる場所の型に合わせる
 
@@ -520,7 +484,7 @@ type Params struct {
 }
 ```
 
-#### 単位の違うドメインを混ぜない
+#### 単位の違うドメインを混ぜない（PostgreSQL）
 
 ドメインの列に使われたnamed typeはそのドメインに結びつけられる。SQLの中でも、ドメインは基底型とは別の単位として扱う。PostgreSQL自身は基底型に戻して演算を許すが、検査器は報告する。
 
@@ -616,24 +580,9 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 
 #### 制約の名前
 
-名前を付けた制約はその名前で呼ぶ。名前を付けなかった制約にはPostgreSQLが付ける名前がそのまま使われるので、診断・expect行・実行時エラーで同じ文字列になる。
+失敗モードのキーは、データベースが制約に付ける名前か、NOT NULLなら`table.column`である。診断・expect行・実行時エラーで同じ文字列になる。名前を付けなかった制約に付く名前と、制約名を持たない失敗（トリガのエラー、ビューの`WITH CHECK OPTION`）のキーはデータベースごとに違う。[PostgreSQL](postgres.ja.md#制約の名前)、[MySQL](mysql.ja.md#制約名と失敗モード)。
 
-| 制約 | キー | 例 |
-|---|---|---|
-| `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
-| `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
-| 列`(a)`の`REFERENCES` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| 列をちょうど1つだけ参照するテーブルの`CHECK` `(a)` | `<table>_<a>_check`（複数列を参照するか、列を参照しないCHECKは`<table>_check`） | `orders_total_check` |
-| ドメインの`CHECK` | `<domain>_check` | `yen_check` |
-| `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
-| `NOT NULL` | `<table>.<column>` | `orders.total` |
-| ドメインの`NOT NULL` | ドメインの名前（`public`以外はスキーマ修飾） | `email` |
-| トリガーが送出するエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
-| ビューの`WITH CHECK OPTION` | SQLSTATE（PostgreSQL自身の44000エラーは制約名を持たない） | `44000` |
-
-同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。生成した名前がPostgreSQLの63バイトという識別子の上限を超える場合は、マルチバイト文字を途中で切らないよう、PostgreSQLと同じやり方で切り詰める。
-
-#### トリガーが送出するエラーには名前を付ける
+#### トリガーが送出するエラーには名前を付ける（PostgreSQL）
 
 検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。注釈はそのコードに名前を付けるためのもので、expect行と`Violates`でその名前を使えるようになる:
 
@@ -655,7 +604,7 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 
 トリガーが付いているテーブルへの、トリガーが発火するイベント（この例ではINSERTとUPDATE）の失敗モードに、そのSQLSTATEが加わる。
 
-#### RAISE無しで失敗するPL/pgSQL文
+#### RAISE無しで失敗するPL/pgSQL文（PostgreSQL）
 
 PL/pgSQLの一部の文は`RAISE`が無くても失敗しうる。検査器はそのSQLSTATEも、明示的な`RAISE`と同様に本体の失敗モードへ加える。
 
@@ -713,7 +662,7 @@ SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
 
 `.ID`がnilの分岐では条件が無くなり、全行が返る。それを見つけるのがこの検査の意図なので、この文は`Query`にするか、`.ID`を非ポインタにして分岐を外す。
 
-### COPYで一括ロードする
+### COPYで一括ロードする（PostgreSQL）
 
 `postgres.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がその列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であること。
 
@@ -842,7 +791,7 @@ UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}} AND version = {{.Versi
 -- orders.version is not pinned: every statement on orders must fix version by equality (or assign it)
 ```
 
-補足。版を上げるのはトリガ、見た版を名指しするのは文、何も当たらなかった`One`のUPDATEは`ErrNoRows`を返す（先を越された）。
+補足。バージョンを上げるのはトリガ、見たバージョンを名指しするのは文、何も当たらなかった`One`のUPDATEは`ErrNoRows`を返す（先を越された）。
 
 ### テーブルを直接読まない（`via view`、`-no-table-reads` / `-no-tables`）
 
@@ -914,13 +863,13 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 -- sqlshape: aggregate orders (order_items, order_item_tags) lock version
 ```
 
-ルートは`pinned(version) on update, delete`（見た版を名指しする）を負い、各子表はUPDATE / DELETEで、外部キーをたどった先（孫なら親を経由して）のルート行がその版であることの`EXISTS`を負う。
+ルートは`pinned(version) on update, delete`（見たバージョンを名指しする）を負い、各子表はUPDATE / DELETEで、外部キーをたどった先（孫なら親を経由して）のルート行がそのバージョンであることの`EXISTS`を負う。
 
 ```sql
 UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND o.version = {{.V}} AND i.id = {{.ID}}
 ```
 
-補足。版を上げるのはDBの仕事のまま（ルートのトリガ。子から上げるなら子のトリガがルートを更新する）。何も当たらなかった`One`の書き込みは`ErrNoRows`を返す。
+補足。バージョンを上げるのはDBの仕事のまま（ルートのトリガ。子から上げるなら子のトリガがルートを更新する）。何も当たらなかった`One`の書き込みは`ErrNoRows`を返す。
 
 ### ステータス列は宣言した遷移でしか動かさない（`transitions`）
 
@@ -1034,9 +983,9 @@ sqlshape: 2 finding(s)
 
 ## 第3部 — 文の外側
 
-### スキーマはPostgreSQLの版を名乗る（`postgres`）
+### スキーマはPostgreSQLのバージョンを名乗る（`postgres`）
 
-`schema.sql`は、どの版のPostgreSQL向けに書かれているかを1回宣言する。この宣言が判定の土台になる。スキーマと全部の文を読む文法、型・関数・演算子を解決するカタログ、`pgtest`とマイグレーション系コマンドが起動するPostgreSQLの版が、ここで決まる。宣言の無いスキーマは読まない。
+`schema.sql`は、どのバージョンのPostgreSQL向けに書かれているかを1回宣言する。この宣言が判定の土台になる。スキーマと全部の文を読む文法、型・関数・演算子を解決するカタログ、マイグレーション系コマンドが起動するPostgreSQLのバージョンが、ここで決まる。宣言の無いスキーマは読まない。規則の中でPostgreSQLに属するもの（Go型の表、制約名、`One`の証明の材料、ランタイム、マイグレーションコマンド）は[postgres.ja.md](postgres.ja.md)にまとめてある。
 
 ```sql
 -- sqlshape: postgres 18
@@ -1046,18 +995,18 @@ CREATE TABLE ...
 NG
 
 - `schema.sql`（ディレクトリなら`*.sql`のどれか）に宣言が無い
-- sqlshapeが持っていない版（メッセージが対応版を列挙する。17と18）
+- sqlshapeが持っていないバージョン（メッセージが対応バージョンを列挙する。17と18）
 - 値の違う宣言が2つある
 
 OK
 
 - ファイルのどこに書いてもよい。同じ値なら繰り返しもよい
 
-新しい版だけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古い版を宣言していれば構文エラーになる。その版のサーバに流したときと同じ結果である。PostgreSQLの版を上げる作業は、この数字を変えて検査器の報告を読むことになる。
+新しいバージョンだけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古いバージョンを宣言していれば構文エラーになる。そのバージョンのサーバに流したときと同じ結果である。PostgreSQLのバージョンを上げる作業は、この数字を変えて検査器の報告を読むことになる。
 
-### スキーマはMySQLの版を名乗る（`mysql`）
+### スキーマはMySQLのバージョンを名乗る（`mysql`）
 
-同じ宣言でMySQLを名乗れる。そのときはMySQL自身の文法がスキーマと全部の文を読み、MySQLの規則が式に型を付け、文は`github.com/kr9ly/sqlshape/mysql/v2`が`database/sql`の上で実行する（[runtime.md](runtime.ja.md#mysql)）。
+同じ宣言でMySQLを名乗れる。そのときはMySQL自身の文法がスキーマと全部の文を読み、MySQLの規則が式に型を付け、文は`github.com/kr9ly/sqlshape/mysql/v2`が`database/sql`の上で実行する。
 
 ```sql
 -- sqlshape: mysql 8.4
@@ -1066,51 +1015,14 @@ CREATE TABLE ...
 
 NG
 
-- sqlshapeが持っていない版（持っているのは8.4）
+- sqlshapeが持っていないバージョン（持っているのは8.4）
 - 値の違う宣言が2つある、または`postgres`も同時に名乗る
 
-第1部と第2部の規則はMySQLのスキーマにも同じにかかる。判定するのがPostgreSQLではなくMySQLのアナライザーになるだけである。結果列とパラメータとGo型の対応、NULLの扱い、型の意味、失敗モード、`One`の証明、第2部の宣言すべて（`visible where`、`pinned`、`via view`、`EXISTS`、`aggregate`、`transitions`、`never`、`paired`、`single`、`sensitive`、`context`）。MySQLに無いものは検査しない。`Copy`と`MatView`、PL/pgSQL、ドメイン、複合型と配列、`-schemas`（MySQLのスキーマは1つのデータベース）、そして`// sqlshape: type`宣言（束縛先となる名前付きの型がMySQLに無い）。診断はMySQLのエラー番号とメッセージ文を運ぶ（`Unknown column 'nope' in 'field list' (MySQL error 1054)`）。これは動いている`mysqld`と照合してある。型を付けた5,033文、エラーになる65文、下のグループ検査の376文が8.4と一致する。
-
-MySQLがPostgreSQLと違うところでは、検査器はMySQLに従う。
-
-- 型。整数は`int64`（`BIGINT UNSIGNED`は`uint64`）、`DECIMAL`はその文字列、時刻型は`time.Time`（ドライバの`parseTime=true`）か文字列、バイナリ文字列とJSONは`[]byte`で届く。比較と論理演算子は`bigint(1)`で、`bool`で受けられる。`TINYINT(1)`も同じ。表にすると
-
-  | MySQL | Go |
-  |---|---|
-  | `TINYINT` / `SMALLINT` / `MEDIUMINT` / `INT` / `YEAR` | `int64` / `int32` / `int`（`UNSIGNED`なら`uint64` / `uint32` / `uint`も）。`TINYINT(1)`は`bool`も |
-  | `BIGINT` | `int64` / `int`（`UNSIGNED`なら`uint64` / `int64`）。`bigint(1)`は`bool`も |
-  | `DECIMAL` | `string` |
-  | `FLOAT` / `DOUBLE` | `float32` / `float64` / `float64` |
-  | `BIT` | `[]byte` |
-  | `CHAR` / `VARCHAR` / `TEXT` / `ENUM` / `SET` | `string` / `[]byte` |
-  | `BINARY` / `VARBINARY` / `BLOB` | `[]byte` |
-  | `JSON` | `[]byte` / `string` |
-  | `DATE` / `DATETIME` / `TIMESTAMP` | `time.Time` / `string` |
-  | `TIME` | `string` |
-  | `ENUM`列、キーの同一性 | Goのnamed type（[上](#型に意味を持たせる)）。`ENUM`は`CHECK (col IN (...))`と同じ値集合 |
-
-- 制約の名前。主キーは`PRIMARY`、`UNIQUE`キーはそのキー名、外部キーは`CONSTRAINT`名か無ければ`<table>_ibfk_<n>`、`CHECK`は`CONSTRAINT`名か`<table>_chk_<n>`、`NOT NULL`は`<table>.<column>`。失敗モードはMySQLのもの。キーは1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反できない）、外部キーは1452と1451（親側は`ON DELETE` / `ON UPDATE CASCADE`に従う）、`NOT NULL`は1048、`CHECK`は3819。`INSERT IGNORE`は何も違反せず、`ON DUPLICATE KEY UPDATE`はINSERTのキー違反を吸収する。`mysql.Violates(err, key)`は同じ名前で実行時エラーを判定する。
-
-- `One`。列全体にかかる`PRIMARY KEY`と`UNIQUE`キー、`LIMIT 1`、`GROUP BY`無しの集約から証明する。MySQLに部分インデックスは無い。
-
-- グループ化。MySQLはsql_mode `ONLY_FULL_GROUP_BY`の検査を行うので、検査器も同じ番号で行う。グループ化または集約する問い合わせでは、select list、`HAVING`、`ORDER BY`、windowの`PARTITION BY` / `ORDER BY`の各式が、`GROUP BY`の式か、集約か、グループ列に関数従属する列だけから成ること（1055。`GROUP BY`が無ければ1140）。サーバが認める従属を検査器も認める。`PRIMARY`か`UNIQUE`キーが決まったテーブルの全列（nullableなキー列はNULLを弾く述語があるときだけ）、`WHERE`と内部結合の`col = col`と`col = リテラル`、外部結合の`ON`はnullable側へ、派生表とビューの本体はその出力列を通して。`ROLLUP`はグループ式そのものしか認めない。`HAVING`で集約の外に書く列はselect listの列か別名か`GROUP BY`の列でなければならない（1054）。`DISTINCT`があるとき、select listに無い`ORDER BY`の式はselect listの列しか読めない（3065）。どこでも集約しない問い合わせの`ORDER BY`の集約（3029）、集合演算の`ORDER BY`の集約（3028）は弾く。
-
-  ```sql
-  SELECT email, count(*) FROM users GROUP BY name
-  -- Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column
-  -- 'users.email' which is not functionally dependent on columns in GROUP BY clause; this is
-  -- incompatible with sql_mode=only_full_group_by (MySQL error 1055)
-
-  SELECT name, count(*) FROM users GROUP BY id            -- OK: idは主キー
-  ```
-
-- 名前解決。`ORDER BY`、`GROUP BY`、`HAVING`はサーバと同じにselect listの別名を見る（`GROUP BY`では同名のテーブル列が勝つ）。派生表には別名が要る（1248）。`QUALIFY`は8.4がhypergraph optimizer無しで弾くとおりに弾く（6037）。
-
-検査器のMySQL側（`check/mysql`）はMySQLのパーサを内包し、GNU General Public License v2で配布する。READMEを参照。
+第1部と第2部の規則はMySQLのスキーマにも同じにかかる。判定するのがPostgreSQLではなくMySQLのアナライザーになるだけである。規則が名前・番号・型を使う箇所（制約名とエラー番号、Go型の表、`One`の証明の材料、`ONLY_FULL_GROUP_BY`の検査）でMySQLのものが何かは、MySQLに無くて検査しないものと合わせて[mysql.ja.md](mysql.ja.md)にある。
 
 ### スキーマはサーバの設定を名乗る（`server`）
 
-文の判定を変えるサーバ変数は、版と並べて1行に1つ宣言する。検査器、テスト用サーバ、本番の接続の三者を同じ設定に揃えるための行である。宣言が無ければ検査器はサーバの既定値を仮定する。MySQL 8.4なら既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`、つまりLinuxで初期化したままのサーバである。
+文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である。宣言が無ければ検査器はサーバの既定値を仮定する。MySQL 8.4なら既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`、つまりLinuxで初期化したままのサーバである。
 
 ```sql
 -- sqlshape: mysql 8.4
@@ -1136,10 +1048,10 @@ OK
 - `ONLY_FULL_GROUP_BY`は上のグループ検査（1055、1140、`DISTINCT`の3065）の有無を決める。`HAVING`の名前解決（1054）と`ORDER BY`の集約の規則（3029、3028）はサーバと同じくどのモードでもかかる
 - 厳密モード（`STRICT_TRANS_TABLES`か`STRICT_ALL_TABLES`）は2つを決める。文字列関数（`CONCAT`、`SUBSTRING`、`LOWER`など）がNULL可になるのは厳密モードのときだけで、無ければ`NOT NULL`列の`CONCAT(name, 'x')`は`*string`ではなく`string`で受ける。`NOT NULL`列への`NULL`が失敗モード（1048）になるのも厳密モードのときで、無ければ1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけが`NULL`を拒み、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、検査器はそれらに1048を挙げない
 - `NO_UNSIGNED_SUBTRACTION`なら符号なし同士の減算は符号付き（`uint64`ではなく`int64`）になる
-- 残りの名前（`NO_ZERO_DATE`、`ERROR_FOR_DIVISION_BY_ZERO`、`NO_ENGINE_SUBSTITUTION`、`PAD_CHAR_TO_FULL_LENGTH`など）は実行時にしか効かない。検査器は受け付けて、テスト用サーバに渡すだけである
+- 残りの名前（`NO_ZERO_DATE`、`ERROR_FOR_DIVISION_BY_ZERO`、`NO_ENGINE_SUBSTITUTION`、`PAD_CHAR_TO_FULL_LENGTH`など）は実行時にしか効かない。検査器はそのまま受け付ける
 - `lower_case_table_names = 1`は表名とビュー名を小文字にして持つ。サーバの報告と同じである（`SELECT * FROM Users`は表`users`を読み、factsも境界の検査もその名前で見る）。2は宣言どおりの綴りで持ち、大文字小文字を無視して照合する。0は`Users`と`users`を区別する（1146）。ディレクティブ（`unfiltered`、`waive`、義務）が名乗る表名も同じ規則で解決する。1と2ならどの綴りでも届き、0なら`CREATE`の綴りで書く
 
-サーバは宣言どおりに動く。`mysqltest.Start`は宣言した変数をそのまま`mysqld`の`--変数=値`オプションにする（`mysqld`が知らない変数なら起動しない。`lower_case_table_names`は専用のデータディレクトリを初期化する）ので、検査器が判定した文、アナライザー自身の照合テスト、アプリケーションのテストは1つのモードの下で走る。本番の接続には`mysql.Verify(ctx, db, schemaSQL)`がある。セッションの`@@sql_mode`（DSNやプールの初期化が上書きしうる）とサーバの`lower_case_table_names`を読み、宣言との差を返す（[runtime.md](runtime.ja.md#mysql)）。
+宣言は「文が走るサーバはこう設定されている」という約束であり、`mysql.Verify(ctx, db, schemaSQL)`がそれを確かめる。接続のセッションの`@@sql_mode`（DSNやプールの初期化が上書きしうる）とサーバの`lower_case_table_names`を読み、宣言との差を返す（[mysql.ja.md](mysql.ja.md#ランタイム-databasesql)）。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 
@@ -1160,7 +1072,7 @@ rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
 
 補足。`-raw-sql=forbid`は定数であってもsqlshapeを通らない文をすべて拒否する（`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`）。移行中のパッケージは`-raw-sql-allow=pkg/...`で除外する。
 
-### パッケージは自分のスキーマだけを参照する（`-schemas`）
+### パッケージは自分のスキーマだけを参照する（`-schemas`、PostgreSQL）
 
 `-schemas=a_api,b_private`は、そのパッケージが参照してよいPostgreSQLのスキーマを限定する。1つのデータベースを複数サービスで使うときの境界。
 

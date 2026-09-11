@@ -128,6 +128,10 @@ RDBMSを使うアプリケーションに要るのは4つ。SQLの構文と型�
 - DB × 言語の行列: Go の各 DB が`sqlshape/<db>`、TypeScript は別リポジトリの`@sqlshape/<db>`、`check/<db>`は言語非依存で共有、言語フロントエンド（vet）は`cmd/`側
 - 退けた案: ルートに PG ランタイムを残して MySQL だけ別モジュール（依存の混入が残る）、ランタイム間で`Run(ctx, db, stmt, p)`の関数形を揃える（揃える理由が無い）
 
+### ユーザーのテストはsqlshapeの関心外で、pgtest / mysqltestは開発者の道具
+
+裁定 2026-09-11。`pgtest.Verify`が確かめるのは「検査器の判定がサーバと一致するか」で、これはsqlshapeの正しさの検証であってアプリケーションのテストではない。ユーザーのスキーマ固有の文で不一致が出てもそれはsqlshapeのバグで、報告してもらうもの。ユーザーのテストに自己検証を持ち込ませるのは「静的解析は信用できないかもしれない」と言うのと同じで、製品として弱い。サーバを起こす便宜（`Start`）も、本物のDBでテストしたいユーザーは自分の環境（testcontainers等）を既に持っていて、sqlshapeが口を出す理由が無い。そこで`pgtest`と`mysqltest`はユーザー向けAPIから外し、`check/*`と同じ「ツール向け、互換性の約束なし」の位置に置く。モジュールは残す（oracle、examples、敵対的テスト、regressの照合が使う）。ユーザー向けdocs（README、runtime、postgres.md / mysql.md）からテスト用サーバの節を消し、互換性の約束の文からも外した。sqlshape自身の正しさはregress 22,103文、oracleの5,033文、敵対的テストの照合で保証し、ユーザーにはその数字を見せる。退けた案: `Verify`を任意の接続に対して使える形にしてユーザーに勧める（検証の主語が逆）、mysqltestに`Verify`を足す（oracleがGPL側にあるのでApacheのmysqltestからは呼べず、構図も成立しない）
+
 ## スコープ外
 
 FETCH（カーソルの列は静的に決まらない）。EXPLAINの実行（embedded PGの統計は本番と違う。性能の助言は構造的に判定できるもの、インデックスの先頭列とビューへの述語押し込みに限る）。初期リリースではPostgreSQL以外のRDBMS（下記「検討中」のMySQL参照）。

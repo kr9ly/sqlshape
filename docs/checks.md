@@ -3,11 +3,14 @@
 [日本語](checks.ja.md)
 
 The checker finds every `sqlshape.Query[R, P](template)`, `sqlshape.One[R, P](template)`,
-`postgres.Copy[R](...)` and `postgres.MatView(...)` in a package, expands each template into every
-combination of its branches ([templates.md](templates.md)), analyzes each expansion against
-`schema.sql`, and compares the result with the Go types. This page goes through what you write,
-situation by situation, and shows what is rejected and what passes, together with the diagnostic
-you will see.
+`postgres.Copy[R](...)` and `postgres.MatView(...)` (PostgreSQL) in a package, expands each template
+into every combination of its branches ([templates.md](templates.md)), analyzes each expansion
+against `schema.sql`, and compares the result with the Go types. This page goes through what you
+write, situation by situation, and shows what is rejected and what passes, together with the
+diagnostic you will see. The rules are the same for PostgreSQL and MySQL; the examples are
+PostgreSQL's, and where a rule uses the database's names, numbers or types (the constraint names,
+the Go type table, the error codes in the diagnostics), [postgres.md](postgres.md) and
+[mysql.md](mysql.md) have each database's.
 
 The checker has two entry points. `go vet -vettool=sqlshape` (or `sqlshape ./...`) runs it over Go
 packages, where the SQL lives in `Query` / `One` templates and is compared with the Go types.
@@ -28,7 +31,7 @@ statement: the Go code around it, and the schema itself.
   - [Giving types a meaning](#giving-types-a-meaning)
   - [Preparing for a write to fail](#preparing-for-a-write-to-fail)
   - [Returning one row (`One`)](#returning-one-row-one)
-  - [Bulk loading with COPY](#bulk-loading-with-copy)
+  - [Bulk loading with COPY (PostgreSQL)](#bulk-loading-with-copy-postgresql)
 - [Part 2 — Rules the schema declares](#part-2--rules-the-schema-declares)
   - [How a declaration works](#how-a-declaration-works)
   - [Every read carries the visibility predicate (`visible where`)](#every-read-carries-the-visibility-predicate-visible-where)
@@ -46,7 +49,7 @@ statement: the Go code around it, and the schema itself.
   - [The schema names its MySQL version (`mysql`)](#the-schema-names-its-mysql-version-mysql)
   - [The schema names the server's settings (`server`)](#the-schema-names-the-servers-settings-server)
   - [Do not run SQL that bypasses sqlshape (`-raw-sql`)](#do-not-run-sql-that-bypasses-sqlshape--raw-sql)
-  - [A package references only its schemas (`-schemas`)](#a-package-references-only-its-schemas--schemas)
+  - [A package references only its schemas (`-schemas`, PostgreSQL)](#a-package-references-only-its-schemas--schemas-postgresql)
   - [Problems in the schema itself](#problems-in-the-schema-itself)
 
 ## Part 1 — Checks on every statement
@@ -110,7 +113,7 @@ SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.cust
 
 #### A column that may be NULL needs a field that can hold NULL
 
-Fields that can hold NULL: pointers, slices, maps, `sql.Null*`, `pgtype.*`, and any type that
+Fields that can hold NULL: pointers, slices, maps, `sql.Null*`, the driver's nullable value types such as `pgtype.*`, and any type that
 implements `sql.Scanner`.
 
 Rejected
@@ -286,53 +289,19 @@ treated as a nested row.
 
 #### The Go type table
 
-What pgx actually scans and encodes, verified against a running PostgreSQL. The same table applies
-to receiving columns and to passing parameters.
-
-| PostgreSQL | Go |
-|---|---|
-| `bool` | `bool` |
-| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int` (a narrower Go type is accepted with a note such as `bigint into int32`) |
-| `real` / `double precision` | `float32` / `float64` (`double precision into float32` is noted) |
-| `numeric` | `string` (keeps every digit), `pgtype.Numeric`, `big.Rat`, `shopspring/decimal.Decimal`, `apd.Decimal`; a float or an integer is accepted with a precision note |
-| `text` / `varchar` / `char` / `name` / `citext` and other text-like extension types | `string` (a `string` also encodes as a parameter of any type) |
-| `bytea` | `[]byte` |
-| `uuid` | `uuid.UUID` (any package), `[16]byte`, `string` |
-| `timestamptz` / `timestamp` / `date` | `time.Time` (`-strict` notes that `timestamp` and `date` lose the zone or the time) |
-| `time` | `time.Time`, `string` |
-| `interval` | `pgtype.Interval` (keeps months, days and microseconds apart); `time.Duration` flattens them into a fixed span and carries a standing note that this can disagree with PostgreSQL's own calendar arithmetic on the same interval by whole days |
-| `json` / `jsonb` | `[]byte`, `json.RawMessage`, `string`, or any struct, slice or map pgx unmarshals into |
-| `inet` | `netip.Addr` / `netip.Prefix` |
-| `cidr` | `netip.Prefix` |
-| `macaddr` | `net.HardwareAddr` / `string` |
-| `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)` (each element is checked the same way a plain `T` parameter or column is, notes included). PostgreSQL never guarantees an array's elements are themselves not null -- a column's own `NOT NULL` only forbids the array value as a whole from being `NULL` -- so a result element type that cannot itself carry `NULL` (not already a pointer) carries a standing note, and `-strict` additionally reports it as rejected: `[]int32` for `integer[]` and `[]Item` for a composite array both need `[]*int32` / `[]*Item` to receive a `NULL` element safely (a composite element is worse: pgx silently decodes a `NULL` one as a zero-valued struct instead of erroring) |
-| ranges | `pgtype.Range[T]`, with `T` checked against the subtype (user-defined ranges too) |
-| multiranges | `pgtype.Multirange[pgtype.Range[T]]` |
-| `bit` / `point` / `tsvector` | the `pgtype` value |
-| `xml` / `money` / `tsquery` / `jsonpath` / `timetz` | `string` |
-| `oid` | `uint32` |
-| enums, seeded lookup keys, CHECK value sets | a Go named string type ([below](#giving-types-a-meaning)) |
-| domains | the base type's Go type, or a named type bound to the domain |
-| composites, records | a struct |
-
-A type not in the table, or one you want to receive with your own type, is declared on the Go type
-in its doc comment:
-
-```go
-// sqlshape: type money_amount
-type Money struct{ ... }   // implements sql.Scanner / driver.Valuer
-```
-
-The checker then accepts `Money` exactly where the SQL has `money_amount` (its arrays and domains
-over it included) and reports it anywhere else. Conversion is left to the type's own
-`sql.Scanner` / `driver.Valuer`; the Scanner receives the text form.
+The Go types a column may be received with, and a parameter passed as, are the database's, as its
+driver scans and encodes them: [PostgreSQL's table](postgres.md#the-go-type-table),
+[MySQL's table](mysql.md#the-go-type-table). Both apply to receiving columns and to passing
+parameters alike. On PostgreSQL a type not in the table, or one you want to receive with your own
+type, is bound with `// sqlshape: type <pg type>` on the Go type; conversion is then the type's own
+`sql.Scanner` / `driver.Valuer` (MySQL has no named types to bind to).
 
 ### Passing parameters
 
-`{{.X}}` becomes a `$n` parameter in the SQL. The checker infers the PostgreSQL type each `$n` needs
-from where it is used (`WHERE id = $1` needs `bigint`, `= ANY($1)` an array) and verifies that the
-corresponding field of `P` fits, by the type table above.
+`{{.X}}` becomes a parameter in the SQL (`$n` on PostgreSQL, `?` on MySQL; the checker numbers them
+`$n` either way). The checker infers the SQL type each parameter needs from where it is used
+(`WHERE id = $1` needs `bigint`, `= ANY($1)` an array) and verifies that the corresponding field of
+`P` fits, by the database's type table.
 
 #### A parameter's type follows where it is used
 
@@ -589,7 +558,7 @@ type Params struct {
 }
 ```
 
-#### Do not mix domains of different units
+#### Do not mix domains of different units (PostgreSQL)
 
 A named type used with a domain column is bound to that domain. Inside SQL too, a domain is a unit
 distinct from its base type: PostgreSQL itself falls back to the base type and allows the
@@ -707,27 +676,13 @@ that are no longer needed.
 
 #### Constraint names
 
-A named constraint goes by its name. An unnamed one goes by the name PostgreSQL gives it, so the
-diagnostic, the expect line and the run-time error all carry the same string.
+A failure mode is keyed by the constraint's name as the database names it, or `table.column` for
+`NOT NULL`, so the diagnostic, the expect line and the run-time error all carry the same string.
+The names an unnamed constraint gets, and the keys of the failures no constraint names (a
+trigger's error, a view's `WITH CHECK OPTION`), are each database's:
+[PostgreSQL's](postgres.md#constraint-names), [MySQL's](mysql.md#constraint-names-and-failure-modes).
 
-| constraint | key | example |
-|---|---|---|
-| `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
-| `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
-| `REFERENCES` on `(a)` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| table `CHECK` referencing exactly one column `(a)` | `<table>_<a>_check` (a CHECK on several columns, or on none, is `<table>_check`) | `orders_total_check` |
-| domain `CHECK` | `<domain>_check` | `yen_check` |
-| `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
-| `NOT NULL` | `<table>.<column>` | `orders.total` |
-| domain `NOT NULL` | the domain's name, schema-qualified unless `public` | `email` |
-| an error raised by a trigger | the SQLSTATE, or the name given with `-- sqlshape: error` | `P0401`, `OrderTooLarge` |
-| `WITH CHECK OPTION` on a view | the SQLSTATE (PostgreSQL's own 44000 error names no constraint) | `44000` |
-
-A second constraint that would get the same name is numbered, as PostgreSQL does
-(`orders_total_check1`). A generated name over PostgreSQL's 63-byte identifier limit is cut down the
-same way PostgreSQL cuts it, without splitting a multibyte character.
-
-#### Name the errors a trigger raises
+#### Name the errors a trigger raises (PostgreSQL)
 
 The checker reads a PL/pgSQL trigger body, so a `RAISE EXCEPTION ... USING ERRCODE = 'P0401'`
 inside it already adds `P0401` to the failure modes (a `RAISE` without `ERRCODE` is `P0001`).
@@ -752,7 +707,7 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 The SQLSTATE joins the failure modes of the statements on the trigger's table for the events it
 fires on (here INSERT and UPDATE).
 
-#### PL/pgSQL statements that fail on their own
+#### PL/pgSQL statements that fail on their own (PostgreSQL)
 
 A few PL/pgSQL statements can fail without a `RAISE`, and the checker adds their SQLSTATE to the
 body's failure modes the same way it does for an explicit one:
@@ -841,7 +796,7 @@ SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
 In the branch where `.ID` is nil the condition disappears and every row comes back. Finding that is
 the point of the check: make this a `Query`, or make `.ID` a non-pointer and drop the branch.
 
-### Bulk loading with COPY
+### Bulk loading with COPY (PostgreSQL)
 
 `postgres.Copy[R]("order_items", "order_id", "line_no", ...)` is checked like an INSERT: the table
 and columns exist, each column's type fits the field that feeds it, and every column left out has a
@@ -1261,8 +1216,10 @@ accepted as in vet.
 
 `schema.sql` declares, once, the PostgreSQL major version it is written for. The declaration
 decides how everything else is judged: the grammar that parses the schema and every statement, the
-catalog of types, functions and operators they resolve against, and the PostgreSQL `pgtest` and the
-migration commands boot. A schema without it is not read.
+catalog of types, functions and operators they resolve against, and the PostgreSQL the migration
+commands boot. A schema without it is not read. What is PostgreSQL's in the rules (the
+Go type table, the constraint names, the `One` proof's materials, the runtime, the migration
+commands) is gathered in [postgres.md](postgres.md).
 
 ```sql
 -- sqlshape: postgres 18
@@ -1288,7 +1245,7 @@ checker reports.
 
 The same declaration can name MySQL instead. Then MySQL's own grammar parses the schema and every
 statement, MySQL's rules type the expressions, and the statements run through
-`github.com/kr9ly/sqlshape/mysql/v2` on `database/sql` ([runtime.md](runtime.md#mysql)).
+`github.com/kr9ly/sqlshape/mysql/v2` on `database/sql`.
 
 ```sql
 -- sqlshape: mysql 8.4
@@ -1301,83 +1258,15 @@ Rejected
 - two declarations that disagree, or one that also names `postgres`
 
 Every rule in Part 1 and Part 2 applies to a MySQL schema the same way, judged by the MySQL
-analyzer instead of the PostgreSQL one: result columns and parameters against the Go types, the
-NULL handling, the meaning of types, the failure modes, the `One` proof, and every declaration of
-Part 2 (`visible where`, `pinned`, `via view`, `EXISTS`, `aggregate`, `transitions`, `never`,
-`paired`, `single`, `sensitive`, `context`). What does not exist on MySQL is not checked there:
-`Copy` and `MatView`, PL/pgSQL, domains, composite types and arrays, `-schemas` (a MySQL schema is
-one database), and the `// sqlshape: type` declaration (MySQL has no named types to bind it to).
-Diagnostics carry MySQL's error numbers and message texts (`Unknown column 'nope' in 'field list'
-(MySQL error 1054)`), checked against a running `mysqld`: 5,033 typed statements, 65 error
-statements and the 376 statements of the group check below agree with 8.4.
-
-Where MySQL differs from PostgreSQL, the checker follows MySQL:
-
-- Types. An integer arrives as `int64` (`uint64` for `BIGINT UNSIGNED`), a `DECIMAL` as its text,
-  temporal types as `time.Time` (the driver's `parseTime=true`) or a string, binary strings and
-  JSON as `[]byte`. A comparison or a logical operator is a `bigint(1)`, which `bool` may receive;
-  so may a `TINYINT(1)`. The table:
-
-  | MySQL | Go |
-  |---|---|
-  | `TINYINT` / `SMALLINT` / `MEDIUMINT` / `INT` / `YEAR` | `int64` / `int32` / `int` (`uint64` / `uint32` / `uint` too when `UNSIGNED`); `TINYINT(1)` also `bool` |
-  | `BIGINT` | `int64` / `int` (`uint64` / `int64` when `UNSIGNED`); a `bigint(1)` also `bool` |
-  | `DECIMAL` | `string` |
-  | `FLOAT` / `DOUBLE` | `float32` / `float64` / `float64` |
-  | `BIT` | `[]byte` |
-  | `CHAR` / `VARCHAR` / `TEXT` / `ENUM` / `SET` | `string` / `[]byte` |
-  | `BINARY` / `VARBINARY` / `BLOB` | `[]byte` |
-  | `JSON` | `[]byte` / `string` |
-  | `DATE` / `DATETIME` / `TIMESTAMP` | `time.Time` / `string` |
-  | `TIME` | `string` |
-  | `ENUM` columns, key identities | a Go named type ([above](#giving-types-a-meaning)); an `ENUM` is a value set like a `CHECK (col IN (...))` |
-
-- Constraint names. `PRIMARY` for the primary key, the key's name for a `UNIQUE` key, the
-  `CONSTRAINT` name for a foreign key or `<table>_ibfk_<n>` when it has none, the `CONSTRAINT`
-  name for a `CHECK` or `<table>_chk_<n>`, `<table>.<column>` for `NOT NULL`. The failure modes
-  are MySQL's: 1062 for a key (a key the server numbers itself, or one a NULL leaves alone,
-  cannot be violated), 1452 and 1451 for a foreign key (the parent side following `ON DELETE` /
-  `ON UPDATE CASCADE`), 1048 for `NOT NULL`, 3819 for `CHECK`; `INSERT IGNORE` violates nothing,
-  `ON DUPLICATE KEY UPDATE` absorbs the insert's key violations. `mysql.Violates(err, key)` tests
-  the run-time error by the same names.
-
-- `One`. Proved from `PRIMARY KEY` and `UNIQUE` keys over whole columns, `LIMIT 1`, and an
-  aggregate without `GROUP BY`; MySQL has no partial indexes.
-
-- Grouping. MySQL runs the checks of sql_mode `ONLY_FULL_GROUP_BY`, and so does the checker,
-  with the server's numbers: in a grouped or aggregated query every select-list, `HAVING`,
-  `ORDER BY` and window `PARTITION BY` / `ORDER BY` expression is a `GROUP BY` expression, an
-  aggregate, or made of columns functionally dependent on the group columns (1055; 1140 without
-  `GROUP BY`). The dependencies the server recognizes are the ones the checker recognizes: a
-  table's columns once its `PRIMARY` or `UNIQUE` key is known (a nullable key column only where
-  a conjunct rejects its NULL), `col = col` and `col = literal` in `WHERE` and inner joins, an
-  outer join's `ON` into its nullable side, and a derived table's or view's body through its
-  outputs; `ROLLUP` allows the group expressions only. A column named outside an aggregate in
-  `HAVING` must be a select-list column or alias or a `GROUP BY` column (1054); with `DISTINCT`
-  an `ORDER BY` expression not in the select list may read only select-list columns (3065); an
-  aggregate in the `ORDER BY` of a query that aggregates nowhere else (3029) or of a set
-  operation (3028) is rejected.
-
-  ```sql
-  SELECT email, count(*) FROM users GROUP BY name
-  -- Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column
-  -- 'users.email' which is not functionally dependent on columns in GROUP BY clause; this is
-  -- incompatible with sql_mode=only_full_group_by (MySQL error 1055)
-
-  SELECT name, count(*) FROM users GROUP BY id            -- OK: id is the primary key
-  ```
-
-- Name resolution. `ORDER BY`, `GROUP BY` and `HAVING` see the select list's aliases as the
-  server does (a table column of the same name wins in `GROUP BY`); a derived table needs an alias
-  (1248); `QUALIFY` is rejected as 8.4 rejects it without the hypergraph optimizer (6037).
-
-The MySQL side of the checker (`check/mysql`) carries MySQL's parser and is licensed under the GNU
-General Public License v2; see the README.
+analyzer instead of the PostgreSQL one. Where the rules use a name, a number or a type
+(constraint names and error numbers, the Go type table, the materials of the `One` proof, the
+`ONLY_FULL_GROUP_BY` check), MySQL's are in [mysql.md](mysql.md), together with what does not
+exist on MySQL and is not checked there.
 
 ### The schema names the server's settings (`server`)
 
 A server variable that changes how a statement is judged is declared next to the version, one per
-line, so the checker, the test server and the production connection agree on it. Without the line
+line, so the checker and the production connection agree on it. Without the line
 the checker assumes the server's defaults; on MySQL 8.4 that is the default `sql_mode`
 (`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`)
 and `lower_case_table_names = 0`, a freshly initialized Linux server.
@@ -1422,22 +1311,17 @@ What the checker does with them:
 - `NO_UNSIGNED_SUBTRACTION` makes the difference of unsigned operands signed (`int64`, not
   `uint64`).
 - The remaining names (`NO_ZERO_DATE`, `ERROR_FOR_DIVISION_BY_ZERO`, `NO_ENGINE_SUBSTITUTION`,
-  `PAD_CHAR_TO_FULL_LENGTH`, ...) act at run time only; the checker accepts them and passes them
-  to the test server.
+  `PAD_CHAR_TO_FULL_LENGTH`, ...) act at run time only; the checker accepts them as written.
 - `lower_case_table_names = 1` stores table and view names lower-cased, as the server reports
   them (`SELECT * FROM Users` reads the table `users`, and so do the facts and the boundary
   checks); `2` keeps the declared spelling and compares without case; `0` distinguishes
   `Users` from `users` (1146). A directive (`unfiltered`, `waive`, the obligations) names a
   table by the same rule: under 1 or 2 any spelling reaches it, under 0 the `CREATE`'s.
 
-The server runs as declared. `mysqltest.Start` passes every declared variable to `mysqld` as
-a `--variable=value` option (a variable `mysqld` does not know keeps it from starting; with
-`lower_case_table_names` it initializes a data directory of its own), so the statements the
-checker judged, the analyzer's own conformance tests and the application's tests all run under
-one mode. For the production connection, `mysql.Verify(ctx, db, schemaSQL)` reads the session's
-`@@sql_mode` (a DSN or a pool's setup may override it) and the server's
-`lower_case_table_names`, and reports a difference from the declaration
-([runtime.md](runtime.md#mysql)).
+The declaration is a promise about the server the statements run on, and `mysql.Verify(ctx, db,
+schemaSQL)` checks it: it reads the connection's session `@@sql_mode` (a DSN or a pool's setup
+may override it) and the server's `lower_case_table_names`, and reports a difference from the
+declaration ([mysql.md](mysql.md#the-runtime-databasesql)).
 
 ### Do not run SQL that bypasses sqlshape (`-raw-sql`)
 
@@ -1460,7 +1344,7 @@ rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
 (`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`).
 Packages still migrating are exempted with `-raw-sql-allow=pkg/...`.
 
-### A package references only its schemas (`-schemas`)
+### A package references only its schemas (`-schemas`, PostgreSQL)
 
 `-schemas=a_api,b_private` restricts the PostgreSQL schemas a package may reference: a service
 boundary over one database.

@@ -4,7 +4,8 @@
 
 `schema.sql` is the only definition of the database. There are no migration files to write:
 the `sqlshape` binary compares the live database with `schema.sql` and derives the DDL, checks
-that the DDL really leads to `schema.sql`, and runs it.
+that the DDL really leads to `schema.sql`, and runs it. The commands are PostgreSQL's: both sides
+are read as `pg_dump` output, and there is no MySQL counterpart yet.
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to schema.sql

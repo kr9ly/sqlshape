@@ -46,6 +46,15 @@ release it is a candidate for.
   they were, and now written down: `paired` requires the write, not matching values; `RETURNING` a
   `sensitive` column is reading it.
 
+- `pgtest` and `mysqltest` are sqlshape's own test tooling, like `check/*`: they boot a real server
+  for the examples, the oracles and the conformance tests, and carry no compatibility promise. An
+  application tests its database with the server it runs on; the agreement between the checker
+  and the server is sqlshape's to keep. The documentation no longer presents them as part of the
+  API, and is reorganized for a reader who uses one database: `docs/postgres.md` and
+  `docs/mysql.md` gather what is each database's (the declaration, the Go type table, the
+  constraint names and error numbers, the runtime, what has no counterpart), the README has a
+  quickstart per database, and `checks.md` / `runtime.md` are written for both.
+
 ### Added
 
 - The schema declares the server settings its judgments depend on, one per line next to the

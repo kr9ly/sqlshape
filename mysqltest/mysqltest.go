@@ -1,7 +1,9 @@
-// Package mysqltest starts a real MySQL server loaded with the application's schema.sql, for
-// the application's tests: the counterpart of pgtest for MySQL. It runs the `mysqld` on
-// PATH (`nix-shell -p mysql84`, a distribution package, or a server tarball's bin/) and
-// returns ErrNoServer when there is none, so a test can skip.
+// Package mysqltest starts a real MySQL server loaded with a schema.sql: the counterpart of
+// pgtest for MySQL, and like it sqlshape's own test tooling (the MySQL oracle, the examples and
+// the conformance tests run on it) rather than part of the API an application is meant to use.
+// It carries no compatibility promise. It runs the `mysqld` on PATH (`nix-shell -p mysql84`, a
+// distribution package, or a server tarball's bin/) and returns ErrNoServer when there is none,
+// so a test can skip.
 //
 // The first Start initializes a data directory once per server version under
 // ~/.cache/sqlshape/mysqld-<version>/template (--initialize-insecure, a few seconds); every

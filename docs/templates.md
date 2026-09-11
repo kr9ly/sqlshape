@@ -3,7 +3,7 @@
 [日本語](templates.ja.md)
 
 SQL is written as a subset of Go's `text/template`. The input is a value of the parameter type `P`;
-each `{{.X}}` becomes a `$n` placeholder, and `{{if}}` and `{{range}}` switch the shape of the
+each `{{.X}}` becomes a placeholder (`$n` on PostgreSQL, `?` on MySQL), and `{{if}}` and `{{range}}` switch the shape of the
 statement. The checker expands every combination of branches and checks each one; the runtime
 executes only SQL the checker has seen. Expansion happens at lint time, so the template must be a
 string constant.
@@ -11,7 +11,7 @@ string constant.
 ## What can be written
 
 Values. `{{.Field}}`, `{{.Outer.Inner}}`, `{{.}}`, and `{{$x}}` inside a `range`. Each becomes a
-`$n` parameter in the SQL; a value is never spliced in as text. Function calls, method calls and
+parameter in the SQL; a value is never spliced in as text. Function calls, method calls and
 pipelines are not allowed in value position.
 
 Branches. `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`, `{{with}}`, `{{range}}`. There is no
@@ -83,7 +83,7 @@ In `schema.sql`:
 | `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 
 In Go, `// sqlshape: type money_amount` in a type's doc comment binds the type to that PostgreSQL
-type ([checks.md](checks.md#the-go-type-table)), and `// sqlshape: context ops` in a package comment
+type ([checks.md](postgres.md#the-go-type-table); PostgreSQL only, MySQL has no named types to bind to), and `// sqlshape: context ops` in a package comment
 selects the obligation context the package is judged under.
 
 ## Sharing SQL

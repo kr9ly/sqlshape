@@ -78,7 +78,7 @@ func TestAdvTypefit_ScalarArrayNullElement(t *testing.T) {
 // []Item field for an item[] column, item a composite type) has the identical static
 // gap, but the runtime failure mode is worse: pgx does not error on a NULL composite
 // array element, it silently decodes it as a zero-valued Item{} -- indistinguishable
-// from a real all-empty-fields row ROW('', 0)::item. This is not a rejection sqlshape
+// from a real all-empty-fields row ROW(”, 0)::item. This is not a rejection sqlshape
 // merely fails to warn about; it is silent data corruption sqlshape's type acceptance
 // gives no signal for at all.
 //

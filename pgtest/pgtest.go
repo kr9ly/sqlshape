@@ -1,7 +1,10 @@
-// Package pgtest starts a real PostgreSQL with a schema.sql applied, for testing the
-// database side of an application (views, functions, triggers, constraints) from Go the
-// same way the checker's oracle does. Nothing persists: the server lives in a temporary
-// directory and dies with Close.
+// Package pgtest starts a real PostgreSQL with a schema.sql applied and verifies the
+// checker's conclusions against it. It is sqlshape's own test tooling (the examples and the
+// conformance tests run on it), not part of the API an application is meant to use: an
+// application tests its database with whatever server it runs on, and the agreement between
+// the checker and PostgreSQL is sqlshape's promise to keep, not the application's to check.
+// Like check/*, it carries no compatibility promise. Nothing persists: the server lives in a
+// temporary directory and dies with Close.
 package pgtest
 
 import (
