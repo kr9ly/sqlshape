@@ -1,6 +1,7 @@
 package vet
 
 import (
+	"fmt"
 	"go/types"
 	"strconv"
 	"strings"
@@ -120,6 +121,15 @@ func matchSpelling(spell string, dt dialect.Type, t types.Type, param bool, tr d
 		if ef.unknown {
 			return true, fit{}
 		}
+		// PostgreSQL never guarantees an array's elements are themselves not null: a
+		// column's own NOT NULL only forbids the array value as a whole from being NULL.
+		// A Go element type that cannot itself carry NULL (not already a pointer / nullable
+		// wrapper) is accepted by default with a standing note, and additionally flagged as
+		// a rejection under -strict (matchColumns/checkNested still run against it: the
+		// array is accepted, only the missing NULL-safety is being called out).
+		if ef.ok && !param && dt.Kind == dialect.Array && !ef.nullable {
+			addArrayNullElemNotes(&ef, dt, t, et)
+		}
 		return ef.ok, ef
 	case strings.HasSuffix(spell, "[$elem]"):
 		// pkg.Name[$elem]
@@ -155,6 +165,36 @@ func matchSpelling(spell string, dt dialect.Type, t types.Type, param bool, tr d
 		return false, fit{}
 	}
 	return b.Name() == spell || (spell == "byte" && b.Kind() == types.Uint8), fit{}
+}
+
+// addArrayNullElemNotes attaches the array-null-element note to ef.lossy (shown in both
+// modes, so the checker always says elements can be NULL and a non-pointer element
+// cannot receive one) and a stronger, -strict-only rejection note to ef.advice (shown
+// only under -strict, per vet.go's own advice/strict gating). t is the full Go type
+// received (a slice or a fixed-size array), et its element type.
+func addArrayNullElemNotes(ef *fit, dt dialect.Type, t, et types.Type) {
+	arrGo := t.String()
+	elemGo := et.String()
+	ptrArrGo := "[]*" + elemGo
+	if arr, isArr := t.Underlying().(*types.Array); isArr {
+		ptrArrGo = fmt.Sprintf("[%d]*%s", arr.Len(), elemGo)
+	}
+	if dt.Elem != nil && (dt.Elem.Kind == dialect.Composite || dt.Elem.Kind == dialect.Record) {
+		short := typeName(et)
+		appendNote(&ef.lossy, fmt.Sprintf("%s may contain a NULL element even though the column is not NULL; %s silently receives it as a zero-valued %s with no error (use %s)", dt.Name, arrGo, short, ptrArrGo))
+		appendNote(&ef.advice, fmt.Sprintf("-strict rejects %s for %s: a NULL element is silently decoded as a zero-valued %s instead of an error (use %s)", arrGo, dt.Name, short, ptrArrGo))
+		return
+	}
+	appendNote(&ef.lossy, fmt.Sprintf("%s may contain a NULL element even though the column is not NULL; %s cannot receive one (use %s)", dt.Name, arrGo, ptrArrGo))
+	appendNote(&ef.advice, fmt.Sprintf("-strict rejects %s for %s: pgx errors scanning a NULL element into %s (use %s)", arrGo, dt.Name, elemGo, ptrArrGo))
+}
+
+func appendNote(dst *string, note string) {
+	if *dst == "" {
+		*dst = note
+		return
+	}
+	*dst += "; " + note
 }
 
 // sameNamed: the named type's package path and name spell "path.Name" (the path matched

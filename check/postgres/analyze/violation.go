@@ -3,6 +3,7 @@ package analyze
 import (
 	"strings"
 
+	"github.com/kr9ly/sqlshape/check/postgres/v2/catalog"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
 )
@@ -78,6 +79,9 @@ func (a *analyzer) violations(stmt *pgparse.Node) []Violation {
 	case *pgparse.Node_DeleteStmt:
 		rel := a.s.Relation(st.DeleteStmt.Relation.Schemaname, st.DeleteStmt.Relation.Relname)
 		return append(a.referencingViolations(rel, nil, true), a.triggerViolations(rel, 'd', nil)...)
+	case *pgparse.Node_TruncateStmt:
+		a.truncateNotes(st.TruncateStmt)
+		return nil
 	case *pgparse.Node_MergeStmt:
 		// the union of what its actions may violate
 		rel := a.s.Relation(st.MergeStmt.Relation.Schemaname, st.MergeStmt.Relation.Relname)
@@ -155,10 +159,17 @@ func (a *analyzer) insertViolations(ins *pgparse.InsertStmt) []Violation {
 	}
 	// ON CONFLICT absorbs the arbiter's unique constraint
 	absorbed := map[string]bool{}
+	var arbiter *schema.Constraint
 	var conflictSet map[string]bool
 	if oc := ins.OnConflictClause; oc != nil {
 		if inf := oc.Infer; inf != nil {
 			if inf.Conname != "" {
+				for _, con := range rel.Constraints {
+					if con.Name == inf.Conname {
+						arbiter = con
+						break
+					}
+				}
 				absorbed[inf.Conname] = true
 			} else {
 				var cols []string
@@ -166,7 +177,13 @@ func (a *analyzer) insertViolations(ins *pgparse.InsertStmt) []Violation {
 					cols = append(cols, ie.GetIndexElem().GetName())
 				}
 				for _, con := range rel.Constraints {
-					if (con.Kind == schema.PrimaryKey || con.Kind == schema.Unique) && sameColumns(con.Columns, cols) {
+					// PG never accepts a DEFERRABLE unique/exclusion constraint as an
+					// inference arbiter, and a partial one only when its own predicate is
+					// exactly the ON CONFLICT specification's WHERE clause (SQLSTATE
+					// 42P10 / 55000 otherwise) -- so an unmatched candidate is left
+					// unabsorbed rather than silently accepted.
+					if (con.Kind == schema.PrimaryKey || con.Kind == schema.Unique) && sameColumns(con.Columns, cols) &&
+						!con.Deferrable && predicateMatches(con.Predicate, inf.WhereClause) {
 						absorbed[con.Name] = true
 					}
 				}
@@ -180,6 +197,13 @@ func (a *analyzer) insertViolations(ins *pgparse.InsertStmt) []Violation {
 			}
 		}
 		if oc.Action == pgparse.OnConflictAction_ONCONFLICT_UPDATE {
+			if arbiter != nil && arbiter.Kind == schema.Exclude {
+				// PG never allows DO UPDATE when the arbiter is an exclusion constraint
+				// (only DO NOTHING is supported there), unconditionally.
+				a.note(noteAlwaysFails, ins.Relation.Location, "ON CONFLICT ON CONSTRAINT "+arbiter.Name+
+					" DO UPDATE: every execution fails (SQLSTATE 42809): exclusion constraints are not "+
+					"supported as a DO UPDATE arbiter")
+			}
 			conflictSet = map[string]bool{}
 			for _, tn := range oc.TargetList {
 				conflictSet[tn.GetResTarget().GetName()] = true
@@ -301,7 +325,7 @@ func (a *analyzer) columnViolations(rel *schema.Relation, c *schema.Column) []Vi
 	if c.NotNull || a.domainNotNull(c.Type.OID) {
 		for _, as := range a.assigned {
 			if as.rel == rel && as.col == c && as.e.nullable {
-				v := Violation{Code: codeNotNullViolation, Table: rel.Name, Columns: []string{c.Name}}
+				v := a.notNullViolation(rel.Name, c)
 				v.Param = as.e.param
 				if v.Param == 0 {
 					v.Param = as.e.fparam
@@ -324,6 +348,40 @@ func (a *analyzer) columnViolations(rel *schema.Relation, c *schema.Column) []Vi
 		oid = t.BaseType
 	}
 	return out
+}
+
+// notNullViolation builds the 23502 for storing NULL into c of the named table: PG names a
+// column's own NOT NULL by <table>.<column> (it has no constraint name to report), but a
+// NOT NULL that comes from a domain instead is reported by the domain's own name -- PG's
+// error there carries no table/column at all, so <table>.<column> could not be built even if
+// wanted (a domain's DataTypeName is all pgconn.PgError gives the runtime; see
+// postgres/runtime.go).
+func (a *analyzer) notNullViolation(tableName string, c *schema.Column) Violation {
+	v := Violation{Code: codeNotNullViolation, Table: tableName, Columns: []string{c.Name}}
+	if !c.NotNull {
+		v.Constraint = a.domainNotNullName(c.Type.OID)
+	}
+	return v
+}
+
+// domainNotNullName returns the key of the first NOT NULL domain in oid's domain chain,
+// schema-qualified unless the domain lives in "public" (the same rule every other
+// constraint name in this package follows: schema.Relation.FullName, Source.Table, ...).
+// "" when oid is not a domain, or none of its layers is declared NOT NULL.
+func (a *analyzer) domainNotNullName(oid catalog.OID) string {
+	for {
+		t := a.s.Types.ByOID(oid)
+		if t == nil || t.Kind != 'd' {
+			return ""
+		}
+		if d := a.s.Types.Domains[oid]; d != nil && d.NotNull {
+			if t.Schema == "" || t.Schema == "public" {
+				return t.Name
+			}
+			return t.Schema + "." + t.Name
+		}
+		oid = t.BaseType
+	}
 }
 
 // referencingViolations lists foreign keys of other tables that point at rel and would
@@ -370,20 +428,60 @@ func (a *analyzer) cascadingViolations(rel *schema.Relation, changed map[string]
 			case 'n': // SET NULL: the FK columns are set to NULL
 				for _, cn := range con.Columns {
 					if c := other.Column(cn); c != nil && (c.NotNull || a.domainNotNull(c.Type.OID)) {
-						out = append(out, Violation{Code: codeNotNullViolation, Table: other.Name, Columns: []string{cn}})
+						out = append(out, a.notNullViolation(other.Name, c))
 					}
 				}
 			case 'd': // SET DEFAULT: the FK columns take their DEFAULT, which the parent may not have
 				out = append(out, Violation{Code: codeForeignKeyViolation, Constraint: con.Name, Table: other.Name, Columns: con.Columns, RefTable: rel.Name})
 				for _, cn := range con.Columns {
 					if c := other.Column(cn); c != nil && (c.NotNull || a.domainNotNull(c.Type.OID)) && c.Default == nil {
-						out = append(out, Violation{Code: codeNotNullViolation, Table: other.Name, Columns: []string{cn}})
+						out = append(out, a.notNullViolation(other.Name, c))
 					}
 				}
 			}
 		}
 	}
 	return out
+}
+
+// truncateNotes flags a TRUNCATE that can never succeed: PostgreSQL refuses to truncate a
+// table still referenced, by an enforced foreign key, from a table that is neither named in
+// the same TRUNCATE list nor reached by CASCADE (SQLSTATE 0A000). This is a purely
+// structural, row-independent check -- like a NOT NULL column left out of an INSERT, it
+// fails on every execution, so it is reported as a Note rather than a maybe-Violation.
+func (a *analyzer) truncateNotes(tr *pgparse.TruncateStmt) {
+	if tr.Behavior == pgparse.DropBehavior_DROP_CASCADE {
+		return // CASCADE truncates every referencing table along with the named ones
+	}
+	targets := map[*schema.Relation]bool{}
+	type target struct {
+		rel *schema.Relation
+		loc int32
+	}
+	var rels []target
+	for _, rv := range tr.Relations {
+		r := rv.GetRangeVar()
+		rel := a.s.Relation(r.Schemaname, r.Relname)
+		if rel == nil {
+			continue
+		}
+		targets[rel] = true
+		rels = append(rels, target{rel: rel, loc: r.Location})
+	}
+	for _, t := range rels {
+		for _, other := range a.s.Relations {
+			if targets[other] {
+				continue
+			}
+			for _, con := range other.Constraints {
+				if con.Kind == schema.ForeignKey && !con.NotEnforced && a.relByFullName(con.RefTable) == t.rel {
+					a.note(noteAlwaysFails, t.loc, "TRUNCATE "+t.rel.Name+": every execution fails (SQLSTATE 0A000): "+
+						other.Name+" references "+t.rel.Name+" and is not included in the same TRUNCATE (add it, or use TRUNCATE ... CASCADE)")
+					return
+				}
+			}
+		}
+	}
 }
 
 func colSet(cols []string) map[string]bool {
@@ -480,6 +578,17 @@ func anyIn(cols []string, set map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// predicateMatches reports whether a candidate unique/exclusion constraint's own predicate
+// (nil for a non-partial one) is one the ON CONFLICT inference specification's WHERE clause
+// satisfies as an arbiter: PostgreSQL only infers a partial index when its predicate is
+// exactly the specification's WHERE clause (a non-partial index needs none).
+func predicateMatches(conPredicate schema.Expr, whereClause *pgparse.Node) bool {
+	if conPredicate == nil {
+		return true
+	}
+	return whereClause != nil && equalIgnoringLocation(conPredicate, whereClause)
 }
 
 func sameColumns(x, y []string) bool {

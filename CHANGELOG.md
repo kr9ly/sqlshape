@@ -8,6 +8,42 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL after a third adversarial round against a running server (8 lanes, 23 findings, each a
+  regression test in `adv_*_test.go`), the failure modes first. `TRUNCATE` of a table another table's
+  foreign key still references (no `CASCADE`, the referrer not in the list) is reported as certain to
+  fail (0A000); `ON CONFLICT (cols)` absorbs a unique constraint only when it can be the arbiter, so a
+  `DEFERRABLE` key (55000) or a partial index whose predicate the `ON CONFLICT ... WHERE` does not
+  repeat (42P10) keeps its 23505 in the list, and `ON CONFLICT ON CONSTRAINT <exclusion> DO UPDATE`
+  is reported as certain to fail (42809). A `NOT NULL` that a domain, not the column, declares is
+  keyed by the domain's name (schema-qualified unless public): PostgreSQL reports no table or column
+  for it, and `postgres.ConstraintError.Key()` now returns the domain's name for that error, so
+  `Violates(err, "email")` matches what the checker predicted. `ORDER BY` / `GROUP BY` resolve an
+  output name the way PostgreSQL does: two output columns of one name are ambiguous (42702) unless
+  they are the same expression; the ungrouped-column error names its table (`"t1.v"`); an error the
+  select list and the `WHERE` share is reported at the select list's position. The result of a
+  set-returning function in the select list (`unnest(arr)`) is nullable whatever its argument is:
+  an element can be NULL when the array cannot. The `One` proof sees through a cast on the grouped
+  column, takes a one-element `= ANY(ARRAY[v])` and a `NOT NULL` column's `IS NOT DISTINCT FROM v`
+  for equalities, and matches a partial index's predicate with the literal casts a statement spells
+  out; `col = NULL` fixes nothing (it is never true), so it neither pins nor proves single, on MySQL
+  too. `SET col = DEFAULT` stores the column's literal default, so a `transitions` declaration
+  judges it as a transition to that state (a non-literal default is refused as before, with a
+  message that says why). `-strict` rejects `[]T` / `[N]T` for an array whose Go element cannot be
+  NULL (`integer[]` into `[]int32`, a composite array into `[]Item`), and both modes note that
+  PostgreSQL never promises an array's elements are non-null even when the column is; `interval`
+  into `time.Duration` carries a Lossy note (a month flattened to 30 days disagrees with the
+  server's calendar arithmetic). vet no longer skips a `sqlshape.Query[R, P]` called through a
+  package-level variable (`var q = sqlshape.Query[R, P]; q(...)`), and checks the fields an `{{if}}`
+  reads through a nested call (`{{if gt (len .Xs) 0}}`) against `P`. Migrations: rewriting a
+  generated column's expression, or its `STORED` / `VIRTUAL` kind (PostgreSQL 18), drops and restores
+  the indexes, constraints and referencing foreign keys the `DROP COLUMN` would take with it, instead
+  of losing the index or emitting DDL the server refuses (2BP01); a kind-only change is no longer a
+  no-op. An `unfiltered` / `waive` written above a `CREATE TABLE` is told where it belongs. Kept as
+  they were, and now written down: `paired` requires the write, not matching values; `RETURNING` a
+  `sensitive` column is reading it.
+
 ### Added
 
 - The schema declares the server settings its judgments depend on, one per line next to the

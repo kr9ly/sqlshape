@@ -89,8 +89,13 @@ statement keeps working without a restart.
 A constraint violation (SQLSTATE class 23) comes back as a `*ConstraintError` with the
 `Code`, `Constraint`, `Table`, `Column` and `Detail` PostgreSQL reported, wrapping the
 `*pgconn.PgError`. Its `Key()` is the violation as the template's expect line spells it: the
-constraint's name, or `table.column` for NOT NULL. A SQLSTATE the expect line names (a
-trigger's `P0401`, or the name given to it with `-- sqlshape: error`) is wrapped the same way.
+constraint's name, or `table.column` for NOT NULL. A NOT NULL raised by a domain (`CREATE
+DOMAIN ... NOT NULL` / `ALTER DOMAIN ... SET NOT NULL`) is the one case PostgreSQL reports
+with no table or column at all — the value is rejected inside the domain's own type
+coercion, before it reaches a column PostgreSQL can name — so `Key()` falls back to the
+domain's own name there, matching docs/checks.md's constraint-name table. A SQLSTATE the
+expect line names (a trigger's `P0401`, or the name given to it with `-- sqlshape: error`)
+is wrapped the same way.
 
 ```go
 _, err := postgres.First(ctx, db, CreateCustomer, p)

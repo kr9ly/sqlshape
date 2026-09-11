@@ -171,7 +171,14 @@ func (g *grouping) check(n *pgparse.Node) *Error {
 		if g.grouped[k] || g.dependent(k) {
 			return nil
 		}
-		return errAt(codeGroupingError, v.ColumnRef.Location, "column %q must appear in the GROUP BY clause or be used in an aggregate function", strings.Join(strs(v.ColumnRef.Fields), "."))
+		// PG always qualifies the offending column with its table in this message
+		// (check_ungrouped_columns / get_variable), even when the query wrote it
+		// unqualified.
+		name := strs(v.ColumnRef.Fields)
+		if len(name) == 1 && k.r.alias != "" {
+			name = []string{k.r.alias, name[0]}
+		}
+		return errAt(codeGroupingError, v.ColumnRef.Location, "column %q must appear in the GROUP BY clause or be used in an aggregate function", strings.Join(name, "."))
 	case *pgparse.Node_FuncCall:
 		if v.FuncCall.Over == nil && g.a.isAggregateName(strs(v.FuncCall.Funcname)) {
 			if v.FuncCall.AggWithinGroup {

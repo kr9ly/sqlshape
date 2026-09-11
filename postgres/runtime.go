@@ -50,10 +50,19 @@ func (e *ConstraintError) Error() string {
 
 func (e *ConstraintError) Unwrap() error { return e.Err }
 
-// Key is the violation as the expect line spells it: the constraint name, or table.column for NOT NULL.
+// Key is the violation as the expect line spells it: the constraint name, or table.column
+// for NOT NULL. A NOT NULL raised by a domain (`CREATE DOMAIN ... NOT NULL` / `ALTER
+// DOMAIN ... SET NOT NULL`) is the one class-23 case PostgreSQL reports with neither a
+// TableName nor a ColumnName (nor a ConstraintName) — the violation happens inside the
+// domain's own type coercion, before the value reaches a column PostgreSQL can name — so
+// table.column cannot be formed. Key falls back to the domain's own name (PgError's
+// DataTypeName) in that case, matching the failure mode the checker predicts for it.
 func (e *ConstraintError) Key() string {
 	if e.Constraint != "" {
 		return e.Constraint
+	}
+	if e.Table == "" && e.Column == "" && e.Err != nil && e.Err.DataTypeName != "" {
+		return e.Err.DataTypeName
 	}
 	return e.Table + "." + e.Column
 }

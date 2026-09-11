@@ -53,7 +53,7 @@ pgx自身の型ローダーが読まない拡張のスカラー型（`citext`、
 
 ## エラー
 
-制約違反（SQLSTATEクラス23）は`*ConstraintError`として返る。PostgreSQLが報告した`Code`、`Constraint`、`Table`、`Column`、`Detail`を持ち、元の`*pgconn.PgError`を包んでいる。`Key()`はexpect行に書くのと同じ表記の名前を返す。制約名、またはNOT NULLなら`table.column`である。expect行で名指したSQLSTATE（トリガーの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
+制約違反（SQLSTATEクラス23）は`*ConstraintError`として返る。PostgreSQLが報告した`Code`、`Constraint`、`Table`、`Column`、`Detail`を持ち、元の`*pgconn.PgError`を包んでいる。`Key()`はexpect行に書くのと同じ表記の名前を返す。制約名、またはNOT NULLなら`table.column`である。ドメイン由来のNOT NULL（`CREATE DOMAIN ... NOT NULL`または`ALTER DOMAIN ... SET NOT NULL`）はPostgreSQLがtableもcolumnも一切返さない唯一のケースで、値はドメイン自身の型変換の内側で拒否され、PostgreSQLが名指せる列にまだ達していない。そのため`Key()`はこの場合ドメイン自身の名前にフォールバックする。docs/checks.mdの制約名の表と一致させてある。expect行で名指したSQLSTATE（トリガーの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
 
 ```go
 _, err := postgres.First(ctx, db, CreateCustomer, p)

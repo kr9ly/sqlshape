@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
@@ -150,7 +151,10 @@ func (a *analyzer) shape(fs *facts.Scope, sel *pgparse.SelectStmt, sc *scope, p 
 // groupTerm classifies one GROUP BY expression: a column of a leaf, a value known before
 // the statement runs, or an expression over the row.
 func (a *analyzer) groupTerm(p *prover, g *pgparse.Node) facts.Term {
-	if k, ok := p.resolve(g); ok {
+	// a cast of a column (or an alias for one, already resolved to the cast by groupExpr)
+	// groups by the same value as the bare column: every row's cast is a deterministic
+	// function of the one value a WHERE equality already pins.
+	if k, ok := p.resolve(stripCasts(g)); ok {
 		for i, l := range p.leaves {
 			if l == k.r && k.i < len(l.cols) {
 				return facts.Term{Kind: facts.Column, Col: facts.ColRef{Leaf: i, Column: l.cols[k.i].name}}
@@ -381,6 +385,9 @@ func clearPositions(fs *facts.Scope) {
 // pinsColumn).
 func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts.ColRef, bool), policy bool) facts.Pred {
 	known := func(x *pgparse.Node) bool {
+		if nullConst(x) {
+			return false // col = NULL is never true: it fixes nothing (and pins nothing)
+		}
 		if policy {
 			return !readsColumn(x)
 		}
@@ -392,7 +399,7 @@ func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts
 		}
 		return termFacts(x)
 	}
-	if l, r := equalitySides(n); l != nil {
+	if l, r, notDistinct := equalitySides(n); l != nil {
 		lk, lcol := p.resolve(l)
 		rk, rcol := p.resolve(r)
 		lr, lok := facts.ColRef{}, false
@@ -404,11 +411,11 @@ func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts
 			rr, rok = ref(rk)
 		}
 		switch {
-		case lok && rok:
+		case lok && rok && !notDistinct:
 			return facts.Pred{Op: facts.Eq, Col: lr, Term: facts.Term{Kind: facts.Column, Col: rr}}
-		case lok && !rcol && known(r):
+		case lok && !rcol && known(r) && (!notDistinct || p.notNull(lk)):
 			return facts.Pred{Op: facts.Eq, Col: lr, Term: term(r)}
-		case rok && !lcol && known(l):
+		case rok && !lcol && known(l) && (!notDistinct || p.notNull(rk)):
 			return facts.Pred{Op: facts.Eq, Col: rr, Term: term(l)}
 		}
 	}
@@ -458,8 +465,12 @@ func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts
 			}
 		}
 	}
-	// opaque: the text with this level's column references reduced to bare names
-	clone := proto.Clone(n).(*pgparse.Node)
+	// opaque: the text with this level's column references reduced to bare names, and any
+	// explicit cast of a literal unwrapped -- a partial index's own predicate (read back
+	// from its declaration the same way a statement's WHERE is) may spell a literal's cast
+	// out where the statement's copy of the same predicate does not (or the reverse), and
+	// the two must still compare equal.
+	clone := stripLiteralCasts(proto.Clone(n).(*pgparse.Node))
 	var cols []facts.ColRef
 	schema.WalkNodes(clone, func(m *pgparse.Node) {
 		cr := m.GetColumnRef()
@@ -500,8 +511,8 @@ func (a *analyzer) alternatives(n *pgparse.Node) (*pgparse.Node, []*pgparse.Node
 	var col *pgparse.Node
 	var alts []*pgparse.Node
 	for _, arm := range b.Args {
-		l, r := equalitySides(arm)
-		if l == nil {
+		l, r, notDistinct := equalitySides(arm)
+		if l == nil || notDistinct {
 			return nil, nil, false
 		}
 		if l.GetColumnRef() == nil {
@@ -547,7 +558,7 @@ func (a *analyzer) existsFacts(p *prover, sub *pgparse.SubLink, ref func(colKey)
 				return facts.Pred{}, false
 			}
 			t = facts.Term{Kind: facts.Outer, Col: r}
-		} else if p.isKnown(sub.Testexpr) {
+		} else if p.isKnown(sub.Testexpr) && !nullConst(sub.Testexpr) {
 			t = termFacts(sub.Testexpr)
 		} else {
 			return facts.Pred{}, false
@@ -587,6 +598,80 @@ func (p *prover) outerRef(n *pgparse.Node) (facts.ColRef, bool) {
 		}
 	}
 	return facts.ColRef{}, false
+}
+
+// nullConst reports whether n is the literal NULL (under casts).
+func nullConst(n *pgparse.Node) bool {
+	for {
+		tc := n.GetTypeCast()
+		if tc == nil {
+			break
+		}
+		n = tc.Arg
+	}
+	c := n.GetAConst()
+	return c != nil && c.Isnull
+}
+
+// stripLiteralCasts rewrites every explicit cast of a literal constant (`'x'::t`) in m to
+// the bare literal, in place: an explicit cast on a literal never changes which value is
+// meant, so two predicates that agree once such casts are gone say the same thing (see the
+// Opaque case of predFacts).
+func stripLiteralCasts(m *pgparse.Node) *pgparse.Node {
+	if r := castLiteral(m); r != m {
+		m = r
+	}
+	walkMutate(m)
+	return m
+}
+
+// castLiteral returns n's literal when n is an explicit cast of one, n itself otherwise.
+func castLiteral(n *pgparse.Node) *pgparse.Node {
+	if n == nil {
+		return n
+	}
+	if tc := n.GetTypeCast(); tc != nil && tc.Arg.GetAConst() != nil {
+		return tc.Arg
+	}
+	return n
+}
+
+// walkMutate descends into every message-kind field of m, folding any *pgparse.Node value
+// it finds through castLiteral and writing the result back -- schema.WalkNodes, but able to
+// replace a node rather than only read it.
+func walkMutate(m proto.Message) {
+	if m == nil {
+		return
+	}
+	rm := m.ProtoReflect()
+	rm.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if fd.Kind() != protoreflect.MessageKind {
+			return true
+		}
+		if fd.IsList() {
+			l := v.List()
+			for i := 0; i < l.Len(); i++ {
+				item := l.Get(i).Message().Interface()
+				if node, ok := item.(*pgparse.Node); ok {
+					if r := castLiteral(node); r != node {
+						l.Set(i, protoreflect.ValueOfMessage(r.ProtoReflect()))
+						item = r
+					}
+				}
+				walkMutate(item)
+			}
+			return true
+		}
+		item := v.Message().Interface()
+		if node, ok := item.(*pgparse.Node); ok {
+			if r := castLiteral(node); r != node {
+				rm.Set(fd, protoreflect.ValueOfMessage(r.ProtoReflect()))
+				item = r
+			}
+		}
+		walkMutate(item)
+		return true
+	})
 }
 
 // termFacts classifies the known side of an equality.
@@ -747,6 +832,15 @@ func (a *analyzer) buildFacts(stmt *pgparse.Node, top *scope) *facts.Facts {
 			v := facts.Term{Kind: facts.Known, Text: "?"}
 			if as.e != nil && as.e.node != nil {
 				v = termFacts(as.e.node)
+				if as.e.node.GetSetToDefault() != nil {
+					// SET col = DEFAULT stores the column's default: a literal default is the
+					// value the row gets (a transition to it is judged as one), any other
+					// default is an expression the statement does not spell
+					v = facts.Term{Kind: facts.Known, Text: "DEFAULT"}
+					if as.col.Default != nil && termFacts(as.col.Default).Kind == facts.Const {
+						v = termFacts(as.col.Default)
+					}
+				}
 			}
 			fw.Values = append(fw.Values, v)
 		}

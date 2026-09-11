@@ -177,7 +177,8 @@ func scalarFits(pt *catalog.Type) (result, param []dialect.GoFit) {
 	case catalog.TimeTZ:
 		return fits("string"), fits("string") // pgx has no timetz codec: text only
 	case catalog.Interval:
-		return fits("time.Duration"), fits("time.Duration")
+		durationLossy := lossy("time.Duration", "interval into time.Duration approximates months as 30 days; PostgreSQL's own calendar arithmetic on the same interval can land on a different day")
+		return []dialect.GoFit{durationLossy}, []dialect.GoFit{durationLossy}
 	case catalog.JSON, catalog.JSONB:
 		return fits("encoding/json.RawMessage", "json"), fits("encoding/json.RawMessage", "json")
 	case catalog.Record:

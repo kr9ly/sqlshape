@@ -870,6 +870,9 @@ func (a *analyzer) fdClosure(info *blockInfo, top bool, seeds, seedNonNull []fac
 		}
 		return fd
 	}
+	for _, c := range a.nullEq[fs] {
+		fd.known[c] = true // `col = NULL`: a constant equality to the server's dependency check
+	}
 	for _, m := range sc.nnMarks {
 		// an ON marks its nullable side only, unless the WHERE makes the join inner
 		if m.restrict == nil || allowed(m.col, m.restrict) || sc.simplified(m.restrict) {

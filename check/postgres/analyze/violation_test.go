@@ -24,12 +24,15 @@ func TestViolations(t *testing.T) {
 		want  string // sorted "code key[@param]" entries joined by ", "
 		notes string
 	}{
+		// email's NOT NULL is the domain's, not the column's (`email email UNIQUE`, no
+		// column-level NOT NULL): PG's own error carries no table/column for it, so the
+		// key is the domain's name, "email", not "users.email" (docs/checks.md).
 		{sql: "INSERT INTO users (email, name) VALUES ($1, $2)",
-			want: "23502 users.email@1, 23505 users_email_key, 23514 email_check"},
+			want: "23502 email@1, 23505 users_email_key, 23514 email_check"},
 		{sql: "INSERT INTO users (email, name) VALUES ('a@x', $1)",
 			want: "23505 users_email_key, 23514 email_check"},
 		{sql: "INSERT INTO users (email, balance) VALUES ($1, $2)",
-			want: "23502 users.balance@2, 23502 users.email@1, 23505 users_email_key, 23514 email_check, 23514 yen_check"},
+			want: "23502 email@1, 23502 users.balance@2, 23505 users_email_key, 23514 email_check, 23514 yen_check"},
 		{sql: "INSERT INTO orders (user_id, total) VALUES ($1, $2)",
 			want: "23502 orders.total@2, 23502 orders.user_id@1, 23503 orders_user_id_fkey, 23505 orders_pkey, 23505 orders_user_note_key, 23514 orders_total_check, P0401 P0401"},
 		{sql: "INSERT INTO orders (user_id, total) VALUES ($1, 10) ON CONFLICT (user_id, note) DO NOTHING",

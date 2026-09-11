@@ -268,13 +268,13 @@ pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQL
 | `uuid` | `uuid.UUID`（パッケージは問わない）、`[16]byte`、`string` |
 | `timestamptz` / `timestamp` / `date` | `time.Time`（`timestamp`と`date`はタイムゾーンや時刻が失われるので`-strict`で注記） |
 | `time` | `time.Time`、`string` |
-| `interval` | `time.Duration`、`pgtype.Interval` |
+| `interval` | `pgtype.Interval`（月・日・マイクロ秒を分けたまま保持する）。`time.Duration`はこれらを固定長に均してしまうため、PostgreSQL自身のカレンダー演算と日単位でずれ得る旨の常時の注記が付く |
 | `json` / `jsonb` | `[]byte`、`json.RawMessage`、`string`、またはpgxがunmarshalできる構造体・スライス・マップ |
 | `inet` | `netip.Addr` / `netip.Prefix` |
 | `cidr` | `netip.Prefix` |
 | `macaddr` | `net.HardwareAddr` / `string` |
 | `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)`（各要素は単体の`T`のパラメータ/列と同じ判定を受ける。注記も含めて） |
+| `T[]` | `[]Go(T)`（各要素は単体の`T`のパラメータ/列と同じ判定を受ける。注記も含めて）。PostgreSQLは配列の要素自体がNOT NULLであることを保証しない――列自身の`NOT NULL`は配列値全体が`NULL`になることを禁じるだけである――ため、`NULL`を受けられない要素型（ポインタでないもの）には常時の注記が付き、`-strict`では拒否としても報告される。`integer[]`に対する`[]int32`、複合型の配列に対する`[]Item`はどちらも`NULL`要素を安全に受けるために`[]*int32`/`[]*Item`が要る（複合型の要素はより厄介で、pgxは`NULL`要素をエラーにせずゼロ値の構造体として黙って復号する） |
 | 範囲型 | `pgtype.Range[T]`。`T`はサブタイプと照合される（ユーザー定義の範囲型も同様） |
 | 多重範囲型 | `pgtype.Multirange[pgtype.Range[T]]` |
 | `bit` / `point` / `tsvector` | `pgtype`の対応する型 |
@@ -627,6 +627,7 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 | ドメインの`CHECK` | `<domain>_check` | `yen_check` |
 | `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
+| ドメインの`NOT NULL` | ドメインの名前（`public`以外はスキーマ修飾） | `email` |
 | トリガーが送出するエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
 | ビューの`WITH CHECK OPTION` | SQLSTATE（PostgreSQL自身の44000エラーは制約名を持たない） | `44000` |
 
@@ -698,7 +699,7 @@ var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email FROM users WHERE email = {{.Email}}`)
 ```
 
-補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`DEFERRABLE`と宣言したキーも同様——一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。時制キー（`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`、PostgreSQL 18）は、スカラー列が等値で固定され、範囲列が既知の値と等しいか、要素型の既知の点を含む（`valid_at @> {{.Day}}::date`）ときに固定される。同じ`id`の行どうしは範囲が重ならないので、1つの点を含む行は多くても1つである。既知側が範囲だと足りない（空の範囲はどの範囲にも含まれる）。重なり（`&&`）でも足りない。
+補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。`col = NULL`は何も固定しない（決して真にならない）。`col IS NOT DISTINCT FROM v`は、列が`NOT NULL`で`v`が既知かつ`NULL`でなければ固定する。要素1個の`col = ANY(ARRAY[v])`は`col = v`と同じ。列へのキャスト（`GROUP BY status::text`）は透かして見る。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`DEFERRABLE`と宣言したキーも同様——一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。時制キー（`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`、PostgreSQL 18）は、スカラー列が等値で固定され、範囲列が既知の値と等しいか、要素型の既知の点を含む（`valid_at @> {{.Day}}::date`）ときに固定される。同じ`id`の行どうしは範囲が重ならないので、1つの点を含む行は多くても1つである。既知側が範囲だと足りない（空の範囲はどの範囲にも含まれる）。重なり（`&&`）でも足りない。
 
 #### すべての分岐で証明できなければならない
 
@@ -968,6 +969,8 @@ INSERT INTO outbox (id, payload) SELECT id, 'created' FROM o
 -- a write to orders must also write outbox in the same statement (a data-modifying WITH): require paired(outbox) on insert
 ```
 
+規則は「同じ文で両方の表に書く」であって、`outbox`に書く値と`orders`の行の対応は見ない（無関係な値を書いたoutbox行も通る）。対になっていることが約束で、中身は文の責任である。
+
 `single`は、DELETEが高々1行しか触らないことを`One`と同じ証明で求める。
 
 ```sql
@@ -985,7 +988,7 @@ CREATE TABLE orders (...);
 CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone_masked FROM orders;
 ```
 
-ラベルの付いた列は、そのラベルを`may read`する文脈（[文脈](#呼び出し元ごとに規約を変えるcontext)）でしか参照できない。SELECT句でもWHEREでも同じ。値を書き込むのは読むことではない。ラベルは列をそのまま通すビューと、その表の行を返す関数（`RETURNS SETOF orders`）を通って伝わり、式（マスクした列）で止まる。
+ラベルの付いた列は、そのラベルを`may read`する文脈（[文脈](#呼び出し元ごとに規約を変えるcontext)）でしか参照できない。SELECT句でもWHEREでも同じ。値を書き込むのは読むことではないが、`RETURNING`で返すのは読むこと（誰が渡した値でも、データベースの外に出る）。ラベルは列をそのまま通すビューと、その表の行を返す関数（`RETURNS SETOF orders`）を通って伝わり、式（マスクした列）で止まる。
 
 ```sql
 SELECT email FROM orders WHERE id = {{.ID}}            -- billing以外ではNG

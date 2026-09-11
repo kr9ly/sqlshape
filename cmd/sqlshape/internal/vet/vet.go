@@ -410,21 +410,66 @@ func markerOf(obj *types.Func) (marker, bool) {
 	return marker{}, false
 }
 
-// calledFunc is the function a (possibly instantiated) selector call names.
+// calledFunc is the function a (possibly instantiated) selector call names. The call may
+// go through a package-level var holding the instantiated generic function directly
+// (`var q = sqlshape.Query[R, P]; q(...)`); calledFunc follows the var to its initializer
+// so the returned *ast.Ident is still the one carrying the generic instantiation (the
+// use-site ident, e.g. `q`, has none).
 func calledFunc(pass *analysis.Pass, call *ast.CallExpr) (*types.Func, *ast.Ident) {
-	var fun ast.Expr = call.Fun
+	return resolveCallee(pass, call.Fun, map[*types.Var]bool{})
+}
+
+// resolveCallee unwraps a (possibly instantiated) selector expression, following at most
+// one level of package-level var indirection per recursion, until it reaches the selector
+// naming the function.
+func resolveCallee(pass *analysis.Pass, fun ast.Expr, seen map[*types.Var]bool) (*types.Func, *ast.Ident) {
 	switch f := fun.(type) {
 	case *ast.IndexExpr:
 		fun = f.X
 	case *ast.IndexListExpr:
 		fun = f.X
 	}
-	sel, ok := fun.(*ast.SelectorExpr)
-	if !ok {
-		return nil, nil
+	switch f := fun.(type) {
+	case *ast.SelectorExpr:
+		obj, _ := pass.TypesInfo.Uses[f.Sel].(*types.Func)
+		return obj, f.Sel
+	case *ast.Ident:
+		v, ok := pass.TypesInfo.Uses[f].(*types.Var)
+		if !ok || v == nil || seen[v] {
+			return nil, nil
+		}
+		seen[v] = true
+		if init := varInit(pass, v); init != nil {
+			return resolveCallee(pass, init, seen)
+		}
 	}
-	obj, _ := pass.TypesInfo.Uses[sel.Sel].(*types.Func)
-	return obj, sel.Sel
+	return nil, nil
+}
+
+// varInit is the initializer expression at a package-level var's declaration (e.g. the
+// `sqlshape.Query[int64, P]` in `var f = sqlshape.Query[int64, P]`), or nil if v is not
+// such a var or has no single initializer.
+func varInit(pass *analysis.Pass, v *types.Var) ast.Expr {
+	for _, f := range pass.Files {
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				vs := sp.(*ast.ValueSpec)
+				if len(vs.Values) != len(vs.Names) {
+					continue
+				}
+				for i, name := range vs.Names {
+					if obj, ok := pass.TypesInfo.Defs[name].(*types.Var); ok && obj == v {
+						return vs.Values[i]
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // isQueryCall recognizes sqlshape.Query[R, P](...), sqlshape.One[R, P](...) and the markers

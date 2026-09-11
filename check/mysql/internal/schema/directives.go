@@ -53,6 +53,10 @@ func obligationDirective(norm string) bool {
 func (s *Schema) tableDirectives(t *Table, sql string, pos int) {
 	for _, d := range leadingDirectives(sql) {
 		if !obligationDirective(d) {
+			if lower := strings.ToLower(d); strings.HasPrefix(lower, "unfiltered ") || strings.HasPrefix(lower, "waive ") {
+				s.problem(pos, "table %s: directive %q is a view's or a statement's opt-out: write it above the CREATE VIEW, or above the statement, whose reads it waives", t.Name, d)
+				continue
+			}
 			s.problem(pos, "table %s: unknown directive %q", t.Name, d)
 			continue
 		}

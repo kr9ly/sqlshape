@@ -556,6 +556,10 @@ func (c *checker) transition(sc *facts.Scope, i int, w *facts.Write, o *Obligati
 		return
 	}
 	if value.Kind != facts.Const {
+		if value.Kind == facts.Known && value.Text == "DEFAULT" {
+			d.Message = fmt.Sprintf("%s.%s is a state machine: SET it to a declared state (a literal); DEFAULT is not one here, the column's default is not a literal", rel.Name(), tr.Column)
+			return
+		}
 		d.Message = fmt.Sprintf("%s.%s is a state machine: SET it to a declared state (a literal), not to %s", rel.Name(), tr.Column, value)
 		return
 	}

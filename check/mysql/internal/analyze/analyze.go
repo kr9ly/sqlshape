@@ -156,6 +156,10 @@ type analyzer struct {
 	// fdConst says of an equality's known side (pred text + term text) whether the server
 	// treats it as a constant for functional dependencies (a literal, not a parameter)
 	fdConst map[string]bool
+	// nullEq are the columns a block compares with the literal NULL (`u = NULL`): never true,
+	// so no fact fixes them, but the server's ONLY_FULL_GROUP_BY check takes the equality
+	// for a constant one and derives functional dependencies from it (aggregate_check.cc)
+	nullEq map[*facts.Scope][]facts.ColRef
 	// inHaving are the blocks whose HAVING is being typed: a nested query's unqualified
 	// name may be one of their select aliases
 	inHaving []*relation
@@ -486,7 +490,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			as := a.assign(scope{rels: []relation{*rel}}, rel.table, targets[i], v)
 			w.values = append(w.values, as)
 			if ri == 0 {
-				values = append(values, a.storedTerm(scope{rels: []relation{*rel}}, v))
+				values = append(values, a.storedTerm(scope{rels: []relation{*rel}}, targets[i], v))
 			}
 		}
 	}
@@ -558,7 +562,7 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		tg.assigned = append(tg.assigned, col.col)
 		if i < len(vals) {
 			as := a.assign(sc, table, col.col, vals[i])
-			tg.values = append(tg.values, a.storedTerm(sc, vals[i]))
+			tg.values = append(tg.values, a.storedTerm(sc, col.col, vals[i]))
 			if w.table == nil {
 				w.table = table
 			}
@@ -1281,9 +1285,21 @@ func (a *analyzer) assign(sc scope, table *schema.Table, col *schema.Column, v m
 	return assignment{col: col, nullable: !t.known || t.nullable}
 }
 
-// storedTerm is the value stored into a column as the facts spell it: a parameter, a
-// literal, a value known before the statement runs, or an expression (Known "?").
-func (a *analyzer) storedTerm(sc scope, v mysqlast.Value) facts.Term {
+// storedTerm is the value stored into col as the facts spell it: a parameter, a literal,
+// a value known before the statement runs, or an expression (Known "?"). DEFAULT is the
+// column's default: a literal default is the value the row gets, any other default an
+// expression the statement does not spell (Known "DEFAULT").
+func (a *analyzer) storedTerm(sc scope, col *schema.Column, v mysqlast.Value) facts.Term {
+	if n, ok := v.(*mysqlast.Node); ok && n.Class == "Item_default_value" {
+		if col != nil && col.Default != nil {
+			if d, ok := col.Default.(*mysqlast.Node); ok && literalClass(d.Class) {
+				if text := literalText(d); text != "" {
+					return facts.Term{Kind: facts.Const, Const: text}
+				}
+			}
+		}
+		return facts.Term{Kind: facts.Known, Text: "DEFAULT"}
+	}
 	if t, ok := a.termFacts(&sc, v); ok {
 		return t
 	}

@@ -1121,6 +1121,10 @@ func (s *Schema) createTable(st *pgparse.CreateStmt, loc int32) {
 			}
 			rel.Visible = pred
 		default:
+			if lower := strings.ToLower(norm); strings.HasPrefix(lower, "unfiltered ") || strings.HasPrefix(lower, "waive ") {
+				s.problem(loc, "table %s: directive %q is a view's or a statement's opt-out: write it above the CREATE VIEW, or above the statement, whose reads it waives", name, d)
+				continue
+			}
 			s.problem(loc, "table %s: unknown directive %q", name, d)
 		}
 	}

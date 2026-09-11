@@ -404,6 +404,13 @@ func (a *analyzer) eqFacts(sc *scope, fs *facts.Scope, left, right mysqlast.Valu
 		if okr {
 			col, other = r, left
 		}
+		if isNullLiteral(other) && allowed(col, restrict) {
+			if a.nullEq == nil {
+				a.nullEq = map[*facts.Scope][]facts.ColRef{}
+			}
+			a.nullEq[fs] = append(a.nullEq[fs], col)
+			return false
+		}
 		if term, ok := a.termFacts(sc, other); ok && allowed(col, restrict) {
 			fs.Preds = append(fs.Preds, facts.Pred{Op: facts.Eq, Col: col, Term: term, Text: pr.Text, Restricts: pr.Restricts, Origin: facts.FromStatement})
 			fs.Fixed = append(fs.Fixed, col)
@@ -614,8 +621,8 @@ func (a *analyzer) termFacts(sc *scope, v mysqlast.Value) (facts.Term, bool) {
 	switch n.Class {
 	case "Item_param":
 		return facts.Term{Kind: facts.Param, Param: int32(a.ph.Number(n.Start))}, true
-	case "Item_int", "Item_uint", "Item_decimal", "Item_float", "PTI_text_literal_text_string", "PTI_text_literal_nchar_string",
-		"PTI_text_literal_underscore_charset", "Item_hex_string", "Item_bin_string", "Item_null", "Item_func_true", "Item_func_false":
+	}
+	if literalClass(n.Class) {
 		return facts.Term{Kind: facts.Const, Const: a.textOf(n)}, true
 	}
 	if a.readsBlock(sc, v) || !deterministic(v) {
@@ -631,6 +638,46 @@ func (a *analyzer) termFacts(sc *scope, v mysqlast.Value) (facts.Term, bool) {
 		return facts.Term{}, false // a subquery's value is not known before the statement runs (unless it reads no table)
 	}
 	return facts.Term{Kind: facts.Known, Text: a.textOf(n)}, true
+}
+
+// literalClass reports whether class is a literal's (a Const term).
+func literalClass(class string) bool {
+	switch class {
+	case "Item_int", "Item_uint", "Item_decimal", "Item_float", "PTI_text_literal_text_string", "PTI_text_literal_nchar_string",
+		"PTI_text_literal_underscore_charset", "Item_hex_string", "Item_bin_string", "Item_null", "Item_func_true", "Item_func_false":
+		return true
+	}
+	return false
+}
+
+// isNullLiteral reports whether v is the literal NULL: `col = NULL` is never true and fixes
+// nothing.
+func isNullLiteral(v mysqlast.Value) bool {
+	n, ok := v.(*mysqlast.Node)
+	return ok && n.Class == "Item_null"
+}
+
+// literalText renders a literal of the schema text (a column's DEFAULT) as the statement
+// would spell it: the source text of its tokens. "" when v is not made of tokens alone.
+func literalText(v mysqlast.Value) string {
+	switch x := v.(type) {
+	case mysqlast.Token:
+		return x.Text
+	case *mysqlast.Node:
+		var b strings.Builder
+		for _, arg := range x.Args {
+			switch arg.(type) {
+			case mysqlast.Token, *mysqlast.Node:
+				t := literalText(arg)
+				if t == "" {
+					return ""
+				}
+				b.WriteString(t)
+			}
+		}
+		return b.String() // the constructor's other arguments (flags, THD state) spell nothing
+	}
+	return ""
 }
 
 // readsBlock reports whether v references a column of this block.

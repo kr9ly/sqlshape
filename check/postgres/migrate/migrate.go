@@ -504,13 +504,34 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 				p.emit("ALTER TABLE %s ALTER COLUMN %s SET GENERATED %s", qrel(r), q(c.Name), identityWord(c.Identity))
 			}
 		}
-		if fp["generated"] != tp["generated"] {
+		if fp["generated"] != tp["generated"] || fp["generated kind"] != tp["generated kind"] {
 			if c.Generated == nil {
 				p.emit("ALTER TABLE %s ALTER COLUMN %s DROP EXPRESSION", qrel(r), q(c.Name))
 			} else {
-				// a generation expression cannot be added or changed in place
+				// a generation expression (and STORED vs VIRTUAL, PostgreSQL 18) cannot be
+				// added or changed in place: PostgreSQL has no in-place ALTER, only DROP
+				// COLUMN + ADD COLUMN. DROP COLUMN silently takes down, without needing
+				// CASCADE, any index or table constraint defined solely on this column --
+				// and refuses outright if another table's foreign key rests on such a
+				// constraint. Drop what would block it and restore what it would otherwise
+				// lose, around the rewrite.
+				localIdx := p.soleColumnIndexes(r, c.Name)
+				localCon := p.soleColumnConstraints(r, c.Name)
+				refFKs := p.foreignKeysReferencing(r, c.Name)
+				for _, fk := range refFKs {
+					p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(fk.rel), q(fk.con.Name))
+				}
 				p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
 				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, true))
+				for _, con := range localCon {
+					p.emitConstraint(r, con)
+				}
+				for _, idx := range localIdx {
+					p.emit("%s", idx.Definition)
+				}
+				for _, fk := range refFKs {
+					p.emitConstraint(fk.rel, fk.con)
+				}
 			}
 		}
 	}
@@ -520,6 +541,82 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 			p.note("table %s: %s %q -> %q cannot be altered by the plan", r.FullName(), k, fromProps[k], toProps[k])
 		}
 	}
+}
+
+// soleColumnIndexes are r's target-schema indexes whose only column is name: a
+// generated-column DROP COLUMN / ADD COLUMN rewrite (alterTable) takes these down with
+// the column, without PostgreSQL needing CASCADE, and never re-creates them on its own.
+func (p *planner) soleColumnIndexes(r *schema.Relation, name string) []*schema.Index {
+	var out []*schema.Index
+	for _, i := range r.Indexes {
+		if len(i.Columns) == 1 && i.Columns[0] == name {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// soleColumnConstraints are r's target-schema unique / primary key constraints whose
+// only column is name -- also taken down, silently, by the same rewrite.
+func (p *planner) soleColumnConstraints(r *schema.Relation, name string) []*schema.Constraint {
+	var out []*schema.Constraint
+	for _, n := range sortedKeys(constraints(r)) {
+		c := constraints(r)[n]
+		if (c.Kind == schema.PrimaryKey || c.Kind == schema.Unique) && len(c.Columns) == 1 && c.Columns[0] == name {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// referencingFK is a foreign key found on another table, elsewhere in the target
+// schema, that references r's column name.
+type referencingFK struct {
+	rel *schema.Relation
+	con *schema.Constraint
+}
+
+// foreignKeysReferencing lists the foreign keys, anywhere in the target schema, whose
+// REFERENCES points at r's column name: the referenced side is a unique or primary key
+// constraint a generated-column rewrite is about to take down along with the column, and
+// PostgreSQL refuses the DROP COLUMN outright while such a foreign key still depends on
+// it (SQLSTATE 2BP01).
+func (p *planner) foreignKeysReferencing(r *schema.Relation, name string) []referencingFK {
+	pk := p.soleColumnConstraints(r, name)
+	isPK := false
+	for _, c := range pk {
+		if c.Kind == schema.PrimaryKey {
+			isPK = true
+		}
+	}
+	var out []referencingFK
+	_, toOrder := relations(p.to)
+	for _, other := range toOrder {
+		for _, n := range sortedKeys(constraints(other)) {
+			c := constraints(other)[n]
+			if c.Kind != schema.ForeignKey || c.RefTable != r.FullName() {
+				continue
+			}
+			switch {
+			case len(c.RefColumns) == 1 && c.RefColumns[0] == name:
+				out = append(out, referencingFK{other, c})
+			case len(c.RefColumns) == 0 && isPK:
+				// empty RefColumns means the referenced table's primary key
+				out = append(out, referencingFK{other, c})
+			}
+		}
+	}
+	return out
+}
+
+// emitConstraint re-adds a target-schema constraint that a generated-column rewrite took
+// down along with the column it was defined on.
+func (p *planner) emitConstraint(r *schema.Relation, c *schema.Constraint) {
+	if c.Definition != "" {
+		p.emit("%s", c.Definition)
+		return
+	}
+	p.emit("ALTER TABLE %s ADD CONSTRAINT %s %s", qrel(r), q(c.Name), constraintText(p.to, c))
 }
 
 // --- adds ----------------------------------------------------------------------------

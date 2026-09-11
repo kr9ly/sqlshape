@@ -78,13 +78,26 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 	}
 
 	// WHERE / GROUP BY / HAVING
-	if err := a.boolClause(sel.WhereClause, sc, "WHERE"); err != nil {
-		return nil, err
-	}
+	// PG's transformSelectStmt analyzes the target list before the WHERE clause, so when
+	// both name the same undefined reference (e.g. an out-of-scope WITH name used as a
+	// column qualifier) it is the select list's earlier occurrence that gets reported.
+	// Analyze WHERE now for its side effects (nullability refinement from the predicate,
+	// which the target list's own expressions read), but hold any error until after the
+	// target list has had its chance to fail first.
+	whereErr := a.boolClause(sel.WhereClause, sc, "WHERE")
 	a.scopeSel[sc] = sel
-	a.recordFixed(sc, sel.WhereClause)
+	if whereErr == nil {
+		a.recordFixed(sc, sel.WhereClause)
+	}
 	// target list
 	var cols []rteCol
+	// origins parallels cols with the raw expression each came from (nil for a star
+	// expansion's columns, which cannot collide by name with a bare identifier written
+	// elsewhere in the same way): PG only calls an ORDER BY / GROUP BY name ambiguous
+	// when the output columns it matches are *different* expressions (equal() in
+	// findTargetlistEntrySQL92); the same expression repeated under one alias resolves
+	// fine because it doesn't matter which occurrence is picked.
+	var origins []*pgparse.Node
 	for _, tn := range sel.TargetList {
 		t := tn.GetResTarget()
 		if cr := t.Val.GetColumnRef(); cr != nil && isStar(cr) {
@@ -93,6 +106,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 				return nil, err
 			}
 			cols = append(cols, expanded...)
+			origins = append(origins, make([]*pgparse.Node, len(expanded))...)
 			continue
 		}
 		if ind := t.Val.GetAIndirection(); ind != nil && len(ind.Indirection) > 0 && ind.Indirection[len(ind.Indirection)-1].GetAStar() != nil {
@@ -102,6 +116,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 				return nil, err
 			}
 			cols = append(cols, expanded...)
+			origins = append(origins, make([]*pgparse.Node, len(expanded))...)
 			continue
 		}
 		e, err := a.analyzeExpr(t.Val, sc)
@@ -120,10 +135,14 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 			name = a.figureColname(t.Val)
 		}
 		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll})
+		origins = append(origins, t.Val)
+	}
+	if whereErr != nil {
+		return nil, whereErr
 	}
 	a.scopeCols[sc] = cols
 	for _, g := range groupingLeaves(sel.GroupClause) {
-		if err := a.orderOrGroupItem(g, sc, cols, "GROUP BY"); err != nil {
+		if err := a.orderOrGroupItem(g, sc, cols, origins, "GROUP BY"); err != nil {
 			return nil, err
 		}
 	}
@@ -144,7 +163,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 		return nil, err
 	}
 	for _, s := range sel.SortClause {
-		if err := a.orderOrGroupItem(s.GetSortBy().GetNode(), sc, cols, "ORDER BY"); err != nil {
+		if err := a.orderOrGroupItem(s.GetSortBy().GetNode(), sc, cols, origins, "ORDER BY"); err != nil {
 			return nil, err
 		}
 		a.noteEnumSort(s.GetSortBy().GetNode(), sc, cols)
@@ -162,7 +181,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 			}
 			continue
 		}
-		if err := a.orderOrGroupItem(d, sc, cols, "DISTINCT ON"); err != nil {
+		if err := a.orderOrGroupItem(d, sc, cols, origins, "DISTINCT ON"); err != nil {
 			return nil, err
 		}
 	}
@@ -213,7 +232,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 // orderOrGroupItem types an ORDER BY / GROUP BY item; a bare integer constant is an
 // output-column ordinal. Sorting or grouping compares values, so an indeterminate
 // collation is noted here (what names the clause).
-func (a *analyzer) orderOrGroupItem(n *pgparse.Node, sc *scope, cols []rteCol, what string) *Error {
+func (a *analyzer) orderOrGroupItem(n *pgparse.Node, sc *scope, cols []rteCol, origins []*pgparse.Node, what string) *Error {
 	if c := n.GetAConst(); c != nil {
 		if iv, ok := c.Val.(*pgparse.A_Const_Ival); ok {
 			i := int(iv.Ival.Ival)
@@ -226,16 +245,35 @@ func (a *analyzer) orderOrGroupItem(n *pgparse.Node, sc *scope, cols []rteCol, w
 			return a.checkComparable(cols[i-1].typ, what, loc(n))
 		}
 	}
-	// an unqualified name may refer to an output column alias first
+	// an unqualified name may refer to an output column alias first (findTargetlistEntrySQL92):
+	// two or more output columns sharing that alias make the reference itself ambiguous (PG
+	// raises 42702 naming the ORDER BY / GROUP BY item, not the output columns) -- unless every
+	// match is the very same expression (repeating one column twice under one alias is fine,
+	// since it doesn't matter which occurrence is picked)
 	if cr := n.GetColumnRef(); cr != nil && len(cr.Fields) == 1 {
 		name := cr.Fields[0].GetString_().GetSval()
-		for _, c := range cols {
+		var match *rteCol
+		var matchOrigin *pgparse.Node
+		for i, c := range cols {
 			if c.name == name {
-				if err := collConflictError(c.coll, loc(n)); err != nil {
-					return err
+				var origin *pgparse.Node
+				if i < len(origins) {
+					origin = origins[i]
 				}
-				return a.checkComparable(c.typ, what, loc(n))
+				if match != nil {
+					if origin == nil || matchOrigin == nil || !equalIgnoringLocation(matchOrigin, origin) {
+						return errAt(codeAmbiguousColumn, loc(n), "%s %q is ambiguous", what, name)
+					}
+					continue
+				}
+				match, matchOrigin = &cols[i], origin
 			}
+		}
+		if match != nil {
+			if err := collConflictError(match.coll, loc(n)); err != nil {
+				return err
+			}
+			return a.checkComparable(match.typ, what, loc(n))
 		}
 	}
 	e, err := a.analyzeExpr(n, sc)

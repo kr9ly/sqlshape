@@ -1354,7 +1354,7 @@ func (a *analyzer) funcCall(f *pgparse.FuncCall, sc *scope) (*expr, *Error) {
 		nullable = !strings.HasPrefix(name, "count")
 	case c.fn != nil && c.fn.Kind == 'w':
 		nullable = !(name == "row_number" || name == "rank" || name == "dense_rank" || name == "ntile" || name == "percent_rank" || name == "cume_dist")
-	case c.fn != nil && c.fn.IsStrict && !a.strictButNullable(name, args):
+	case c.fn != nil && c.fn.IsStrict && !c.fn.RetSet && !a.strictButNullable(name, args):
 		nullable = false
 		for _, e := range args {
 			if e.nullable {
@@ -1371,7 +1371,7 @@ func (a *analyzer) funcCall(f *pgparse.FuncCall, sc *scope) (*expr, *Error) {
 	case c.ufn != nil && c.ufn.IsAgg:
 	case c.ufn != nil && c.ufn.NotNull:
 		nullable = false
-	case c.ufn != nil && c.ufn.Strict:
+	case c.ufn != nil && c.ufn.Strict && !c.ufn.RetSet:
 		nullable = false
 		for _, e := range args {
 			if e.nullable {

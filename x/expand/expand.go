@@ -422,17 +422,28 @@ func (x *expander) rangeNode(r *parse.RangeNode, states []*state) ([]*state, err
 	return out, nil
 }
 
-// control records paths read by a condition (no expansion effect).
+// control records paths read by a condition (no expansion effect). A condition argument
+// may itself be a nested pipeline -- a parenthesized call like `(len .Xz)` in
+// `{{if gt (len .Xz) 0}}` -- so field/dot references are hunted recursively through
+// nested pipelines, not just directly on the top-level command.
 func (x *expander) control(pipe *parse.PipeNode, s *state) {
 	for _, cmd := range pipe.Cmds {
 		for _, arg := range cmd.Args {
-			switch a := arg.(type) {
-			case *parse.FieldNode:
-				x.res.Controls = append(x.res.Controls, x.rebase(append(append(Path{}, s.dot...), a.Ident...), s))
-			case *parse.DotNode:
-				x.res.Controls = append(x.res.Controls, s.dot)
-			}
+			x.controlArg(arg, s)
 		}
+	}
+}
+
+// controlArg records the paths read by one condition argument, recursing into a nested
+// pipeline's own commands and arguments.
+func (x *expander) controlArg(arg parse.Node, s *state) {
+	switch a := arg.(type) {
+	case *parse.FieldNode:
+		x.res.Controls = append(x.res.Controls, x.rebase(append(append(Path{}, s.dot...), a.Ident...), s))
+	case *parse.DotNode:
+		x.res.Controls = append(x.res.Controls, s.dot)
+	case *parse.PipeNode:
+		x.control(a, s)
 	}
 }
 

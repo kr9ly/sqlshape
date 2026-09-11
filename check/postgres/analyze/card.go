@@ -96,7 +96,7 @@ func (p *prover) addItem(r *rte) {
 func (p *prover) addQuals(n *pgparse.Node, allow map[*rte]bool) {
 	for _, c := range conjuncts(n) {
 		p.conjuncts = append(p.conjuncts, conjunct{n: c, allow: allow})
-		l, r := equalitySides(c)
+		l, r, notDistinct := equalitySides(c)
 		if l == nil {
 			continue
 		}
@@ -104,10 +104,12 @@ func (p *prover) addQuals(n *pgparse.Node, allow map[*rte]bool) {
 		rk, rcol := p.resolve(r)
 		switch {
 		case lcol && rcol:
-			p.equate(lk, rk, allow)
-		case lcol && p.isKnown(r):
+			if !notDistinct {
+				p.equate(lk, rk, allow)
+			}
+		case lcol && p.isKnown(r) && !nullConst(r) && (!notDistinct || p.notNull(lk)): // col = NULL is never true: it fixes nothing
 			p.fix(lk, allow)
-		case rcol && p.isKnown(l):
+		case rcol && p.isKnown(l) && !nullConst(l) && (!notDistinct || p.notNull(rk)):
 			p.fix(rk, allow)
 		}
 	}
@@ -189,23 +191,58 @@ func conjuncts(n *pgparse.Node) []*pgparse.Node {
 	return []*pgparse.Node{n}
 }
 
-// equalitySides returns the operands of `x = y` (also `x IN (y)` with a single item).
-func equalitySides(n *pgparse.Node) (*pgparse.Node, *pgparse.Node) {
+// equalitySides returns the operands of `x = y` (also `x IN (y)` with a single item, and
+// `x = ANY(ARRAY[y])` with a single-element array literal -- PostgreSQL never returns more
+// than one match for a singleton array any more than for `x = y` itself). notDistinct
+// reports whether n is `x IS NOT DISTINCT FROM y`: unlike `=`, that predicate also matches
+// a NULL x against a NULL y, so a caller may only treat it as pinning when it also knows y
+// cannot be NULL, or x cannot be NULL.
+func equalitySides(n *pgparse.Node) (l, r *pgparse.Node, notDistinct bool) {
 	x := n.GetAExpr()
 	if x == nil || x.Lexpr == nil {
-		return nil, nil
+		return nil, nil, false
 	}
 	switch x.Kind {
 	case pgparse.A_Expr_Kind_AEXPR_OP:
 		if parts := strs(x.Name); len(parts) > 0 && parts[len(parts)-1] == "=" {
-			return x.Lexpr, x.Rexpr
+			return x.Lexpr, x.Rexpr, false
 		}
+	case pgparse.A_Expr_Kind_AEXPR_OP_ANY:
+		if parts := strs(x.Name); len(parts) > 0 && parts[len(parts)-1] == "=" {
+			if arr := x.Rexpr.GetAArrayExpr(); arr != nil && len(arr.Elements) == 1 {
+				return x.Lexpr, arr.Elements[0], false
+			}
+		}
+	case pgparse.A_Expr_Kind_AEXPR_NOT_DISTINCT:
+		return x.Lexpr, x.Rexpr, true
 	case pgparse.A_Expr_Kind_AEXPR_IN:
 		if items := x.Rexpr.GetList().GetItems(); len(items) == 1 {
-			return x.Lexpr, items[0]
+			return x.Lexpr, items[0], false
 		}
 	}
-	return nil, nil
+	return nil, nil, false
+}
+
+// stripCasts unwraps TypeCast nodes to the underlying expression: a GROUP BY item that
+// casts a column (or an alias for that cast, already resolved to the cast by groupExpr)
+// names the same group as the column itself, since every row's cast is a deterministic
+// function of that one value.
+func stripCasts(n *pgparse.Node) *pgparse.Node {
+	for {
+		tc := n.GetTypeCast()
+		if tc == nil {
+			return n
+		}
+		n = tc.Arg
+	}
+}
+
+// notNull reports whether k's column is proven never NULL (the table's own NOT NULL, or a
+// NOT NULL domain -- see rte construction in scope.go): the only case where
+// `col IS NOT DISTINCT FROM v` behaves like `col = v` regardless of whether v itself is
+// NULL (both then agree the row does not match).
+func (p *prover) notNull(k colKey) bool {
+	return k.i < len(k.r.cols) && !k.r.cols[k.i].nullable
 }
 
 // resolve maps a column reference to a leaf column of this level; col is false for

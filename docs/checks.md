@@ -300,13 +300,13 @@ to receiving columns and to passing parameters.
 | `uuid` | `uuid.UUID` (any package), `[16]byte`, `string` |
 | `timestamptz` / `timestamp` / `date` | `time.Time` (`-strict` notes that `timestamp` and `date` lose the zone or the time) |
 | `time` | `time.Time`, `string` |
-| `interval` | `time.Duration`, `pgtype.Interval` |
+| `interval` | `pgtype.Interval` (keeps months, days and microseconds apart); `time.Duration` flattens them into a fixed span and carries a standing note that this can disagree with PostgreSQL's own calendar arithmetic on the same interval by whole days |
 | `json` / `jsonb` | `[]byte`, `json.RawMessage`, `string`, or any struct, slice or map pgx unmarshals into |
 | `inet` | `netip.Addr` / `netip.Prefix` |
 | `cidr` | `netip.Prefix` |
 | `macaddr` | `net.HardwareAddr` / `string` |
 | `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)` (each element is checked the same way a plain `T` parameter or column is, notes included) |
+| `T[]` | `[]Go(T)` (each element is checked the same way a plain `T` parameter or column is, notes included). PostgreSQL never guarantees an array's elements are themselves not null -- a column's own `NOT NULL` only forbids the array value as a whole from being `NULL` -- so a result element type that cannot itself carry `NULL` (not already a pointer) carries a standing note, and `-strict` additionally reports it as rejected: `[]int32` for `integer[]` and `[]Item` for a composite array both need `[]*int32` / `[]*Item` to receive a `NULL` element safely (a composite element is worse: pgx silently decodes a `NULL` one as a zero-valued struct instead of erroring) |
 | ranges | `pgtype.Range[T]`, with `T` checked against the subtype (user-defined ranges too) |
 | multiranges | `pgtype.Multirange[pgtype.Range[T]]` |
 | `bit` / `point` / `tsvector` | the `pgtype` value |
@@ -719,6 +719,7 @@ diagnostic, the expect line and the run-time error all carry the same string.
 | domain `CHECK` | `<domain>_check` | `yen_check` |
 | `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
 | `NOT NULL` | `<table>.<column>` | `orders.total` |
+| domain `NOT NULL` | the domain's name, schema-qualified unless `public` | `email` |
 | an error raised by a trigger | the SQLSTATE, or the name given with `-- sqlshape: error` | `P0401`, `OrderTooLarge` |
 | `WITH CHECK OPTION` on a view | the SQLSTATE (PostgreSQL's own 44000 error names no constraint) | `44000` |
 
@@ -812,7 +813,10 @@ SELECT id, email FROM users WHERE email = {{.Email}}`)
 
 A statement is single when, for every table in FROM, a unique key (primary key, `UNIQUE`, unique
 index, or a partial unique index whose predicate the WHERE clause repeats) is fixed by equality to a
-literal, a parameter, an outer reference or an uncorrelated scalar subquery. Equalities are followed
+literal, a parameter, an outer reference or an uncorrelated scalar subquery. `col = NULL` fixes
+nothing (it is never true); `col IS NOT DISTINCT FROM v` fixes a `NOT NULL` column when `v` is known
+and not `NULL`; `col = ANY(ARRAY[v])` with one element is `col = v`; a cast on the column
+(`GROUP BY status::text`) is seen through. Equalities are followed
 through joins (an outer join's ON fixes only the nullable side), views, subqueries and CTEs. An
 aggregate without `GROUP BY`, a constant `LIMIT 0` / `LIMIT 1`, a SELECT without FROM, a one-row
 `VALUES` and a one-row `INSERT ... RETURNING` are single too. A `FULL JOIN` never is, and neither is
@@ -1166,6 +1170,10 @@ INSERT INTO outbox (id, payload) SELECT id, 'created' FROM o
 -- a write to orders must also write outbox in the same statement (a data-modifying WITH): require paired(outbox) on insert
 ```
 
+The rule is that the statement writes both tables; what it writes into `outbox` is not compared
+with the `orders` row (an outbox row carrying unrelated values passes). The pairing is the promise,
+the payload is the statement's.
+
 `single` says a DELETE must provably touch at most one row, by the same proof as `One`:
 
 ```sql
@@ -1185,7 +1193,8 @@ CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone
 
 A statement may reference a labelled column -- in its SELECT list or in a WHERE alike -- only in a
 context that `may read` the label ([contexts](#different-callers-different-rules-context)); storing a
-value into it is not reading it. The label follows a column through a view that passes it through
+value into it is not reading it, but `RETURNING` it is (the value leaves the database, whoever
+supplied it). The label follows a column through a view that passes it through
 and through a function returning the table's rows (`RETURNS SETOF orders`),
 and stops at an expression (a masked column).
 
