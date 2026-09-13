@@ -55,7 +55,7 @@ var badTypes = sqlshape.Query[BadRow, struct{}](`SELECT id, total, note, status 
 
 type P2 struct{ Email int }
 
-var badParam = sqlshape.Query[int64, P2](`SELECT id FROM users WHERE email = {{.Email}}`) // want `parameter .Email is int but SQL expects text`
+var badParam = sqlshape.Query[int64, P2](`SELECT id FROM users WHERE email = {{.Email}}`) // want `parameter .Email is int but SQL expects email`
 
 var badColumn = sqlshape.Query[int64, struct{}](`SELECT idd FROM users`) // want `column "idd" does not exist \(SQLSTATE 42703\)`
 

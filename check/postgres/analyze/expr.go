@@ -1331,13 +1331,30 @@ func (a *analyzer) funcCall(f *pgparse.FuncCall, sc *scope) (*expr, *Error) {
 	} else {
 		res = a.domainFunc(name, args, res)
 	}
-	// an aggregate / function returning the record shape of its argument keeps the field list
+	// an aggregate / function returning the record shape of its argument keeps the field
+	// list: a plain RECORD result (or an array of one), but also a result typed to a named
+	// composite (or an array of one) built from a fielded argument, e.g.
+	// array_agg((a, b)::order_item) -- a free-standing CREATE TYPE has no attnotnull to ask
+	// for a field's own nullability (that is a column's property, not a type's), but the
+	// row-constructor argument that produced the value already knows it per field.
 	var fields []rteCol
-	if rt := a.typ(res); rt != nil && (res == catalog.Record || rt.Elem == catalog.Record) {
-		for _, e := range args {
-			if len(e.fields) > 0 {
-				fields = e.fields
-				break
+	if rt := a.typ(res); rt != nil {
+		elemOID := res
+		if rt.IsArray() {
+			elemOID = rt.Elem
+		}
+		composite := elemOID == catalog.Record
+		if !composite {
+			if et := a.typ(elemOID); et != nil && et.Kind == 'c' {
+				composite = true
+			}
+		}
+		if composite {
+			for _, e := range args {
+				if len(e.fields) > 0 {
+					fields = e.fields
+					break
+				}
 			}
 		}
 	}

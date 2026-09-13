@@ -38,8 +38,26 @@ func ColumnOf(s *schema.Schema, c analyze.Column) dialect.Column {
 	return out
 }
 
-// ParamOf spells a parameter: its type and the column it stands for.
+// ParamOf spells a parameter: its type and the column it stands for. PostgreSQL itself
+// resolves a parameter compared with (or assigned to) a domain column to the domain's
+// base type -- select_common_type falls back to the base type the moment the other side
+// is a placeholder, so t already lost the domain by the time it reaches here. A result
+// *column* of the same domain keeps it (TypeOf reads the column's own declared type,
+// never the placeholder's resolved one), so without this a plain int64 parameter met
+// against a domain column would be silently accepted where -strict means to flag it
+// (docs/checks.md "Do not mix domains of different units"). The column t was resolved
+// against still names the domain; use it in place of t when its base type is what
+// PostgreSQL actually settled on, so the parameter keeps the same unit its column has.
 func ParamOf(s *schema.Schema, t schema.TypeRef, src *analyze.Source) dialect.Param {
+	if src != nil {
+		if rel := s.ByFullName(src.Table); rel != nil {
+			if col := rel.Column(src.Column); col != nil {
+				if pt := s.Types.ByOID(col.Type.OID); pt != nil && pt.Kind == 'd' && pt.BaseType == t.OID {
+					t = col.Type
+				}
+			}
+		}
+	}
 	return dialect.Param{Type: TypeOf(s, t), Source: SourceOf(s, src)}
 }
 

@@ -359,11 +359,9 @@ var Q = sqlshape.Query[Order, struct{}](`+backtick(oneLineSQL(sql.body))+`)
 				nullElemNote,
 			})
 			assertDiagnostics(t, td, []string{"docsex_p1_nested_ok"}, []string{
+				// the array-element note remains until the contract can say an array's
+				// elements are provably non-NULL (see the mismatch note above)
 				nullElemNote,
-				// real behaviour, not docs' own words: nullability is not carried
-				// through the row-constructor cast (see the mismatch note above).
-				"field Items.Sku is string but column \"sku\" may be NULL (use a pointer, or tag it `col:\",notnull\"` if you know better)",
-				"field Items.Qty is int32 but column \"qty\" may be NULL (use a pointer, or tag it `col:\",notnull\"` if you know better)",
 			})
 		})
 	}
