@@ -177,15 +177,17 @@ func bodyDefinitions(what string, br *analyze.BodyResult, err error) []dialect.D
 
 // Advice: what the schema does less well than it looks (-strict). A table on an engine
 // that enforces no constraints, and a CHECK declared NOT ENFORCED.
-func (m *mysql) Advice() []string {
-	var out []string
+func (m *mysql) Advice() []dialect.Advice {
+	var out []dialect.Advice
 	for _, t := range m.s.Tables {
 		if e := strings.ToUpper(t.Engine); e != "" && e != "INNODB" {
-			out = append(out, "table "+t.Name+" uses ENGINE="+t.Engine+": foreign keys are not enforced, and a statement is not atomic under it")
+			out = append(out, dialect.Advice{Table: t.Name,
+				Message: "table " + t.Name + " uses ENGINE=" + t.Engine + ": foreign keys are not enforced, and a statement is not atomic under it"})
 		}
 		for _, c := range t.Checks {
 			if !c.Enforced {
-				out = append(out, "table "+t.Name+": CHECK "+t.CheckName(c)+" is NOT ENFORCED, so it documents an intent the server does not check")
+				out = append(out, dialect.Advice{Table: t.Name,
+					Message: "table " + t.Name + ": CHECK " + t.CheckName(c) + " is NOT ENFORCED, so it documents an intent the server does not check"})
 			}
 		}
 	}

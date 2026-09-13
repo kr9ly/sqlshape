@@ -132,19 +132,21 @@ func (a *Analyzer) Definitions() []dialect.Definition {
 // seeded lookup table would serve better, a materialized view without a unique index, row
 // security enabled without a policy or read through current_setting, a SECURITY DEFINER
 // function that policies do not bind, and the functions' own advisory notes.
-func (a *Analyzer) Advice() []string {
+func (a *Analyzer) Advice() []dialect.Advice {
 	a.define()
-	var out []string
+	var out []dialect.Advice
 	for _, rel := range a.S.Relations {
 		if rel.Kind != schema.Table || !rel.RowSecurity {
 			continue
 		}
 		if len(rel.Policies) == 0 {
-			out = append(out, fmt.Sprintf("%s has row level security enabled and no policy: every role but the owner sees no rows", rel.FullName()))
+			out = append(out, dialect.Advice{Table: rel.FullName(),
+				Message: fmt.Sprintf("%s has row level security enabled and no policy: every role but the owner sees no rows", rel.FullName())})
 		}
 		for _, pol := range rel.Policies {
 			for _, name := range analyze.SettingReads(pol) {
-				out = append(out, fmt.Sprintf("policy %s on %s reads current_setting(%q, true): a session that never set it gets NULL, so the predicate hides every row silently; without missing_ok the session fails loudly instead", pol.Name, rel.FullName(), name))
+				out = append(out, dialect.Advice{Table: rel.FullName(),
+					Message: fmt.Sprintf("policy %s on %s reads current_setting(%q, true): a session that never set it gets NULL, so the predicate hides every row silently; without missing_ok the session fails loudly instead", pol.Name, rel.FullName(), name)})
 			}
 		}
 		if rel.ForceRowSecurity {
@@ -158,7 +160,8 @@ func (a *Analyzer) Advice() []string {
 			}
 			for _, ref := range a.fnRefs[fn] {
 				if ref.Schema == rel.Schema && ref.Name == rel.Name {
-					out = append(out, fmt.Sprintf("function %s is SECURITY DEFINER and reaches %s, whose policies do not bind the owner: rows are unrestricted inside it (ALTER TABLE %s FORCE ROW LEVEL SECURITY applies them)", fn.Name, rel.FullName(), rel.FullName()))
+					out = append(out, dialect.Advice{Table: rel.FullName(),
+						Message: fmt.Sprintf("function %s is SECURITY DEFINER and reaches %s, whose policies do not bind the owner: rows are unrestricted inside it (ALTER TABLE %s FORCE ROW LEVEL SECURITY applies them)", fn.Name, rel.FullName(), rel.FullName())})
 					break
 				}
 			}
@@ -166,7 +169,9 @@ func (a *Analyzer) Advice() []string {
 	}
 	for _, fn := range a.S.Functions {
 		for _, n := range a.fnAdvice[fn] {
-			out = append(out, fmt.Sprintf("function %s: %s", fn.Name, n.Message))
+			// a function's own advisory is not about one relation: it may read or write
+			// several, or none
+			out = append(out, dialect.Advice{Message: fmt.Sprintf("function %s: %s", fn.Name, n.Message)})
 		}
 	}
 	for _, rel := range a.S.Relations {
@@ -177,7 +182,8 @@ func (a *Analyzer) Advice() []string {
 			// it just as well
 			for _, col := range rel.Columns {
 				if t := TypeOf(a.S, col.Type); t.Kind == dialect.Enum && !rel.Temp {
-					out = append(out, fmt.Sprintf("%s.%s is enum %s: a seeded lookup table (rows in schema.sql, referenced by a foreign key) is easier to change — an enum cannot drop or reorder a label without being recreated under every column — and is checked the same way", rel.FullName(), col.Name, t.Named))
+					out = append(out, dialect.Advice{Table: rel.FullName(), Column: col.Name,
+						Message: fmt.Sprintf("%s.%s is enum %s: a seeded lookup table (rows in schema.sql, referenced by a foreign key) is easier to change — an enum cannot drop or reorder a label without being recreated under every column — and is checked the same way", rel.FullName(), col.Name, t.Named)})
 				}
 			}
 		}
@@ -185,7 +191,8 @@ func (a *Analyzer) Advice() []string {
 			continue
 		}
 		if !a.relation(rel).Unique {
-			out = append(out, fmt.Sprintf("materialized view %s has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible", rel.FullName()))
+			out = append(out, dialect.Advice{Table: rel.FullName(),
+				Message: fmt.Sprintf("materialized view %s has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible", rel.FullName())})
 		}
 	}
 	return out

@@ -18,9 +18,18 @@ var OrderTooLarge = sqlshape.Error("P0401") // want OrderTooLarge:`sqlshape.Erro
 
 // advisory findings, reported only with -strict
 
+// Schema.Advice's "materialized view order_stats has no unique index" advisory is about
+// order_stats specifically: reportAdvice (vet.go) reports it for this package only because
+// matviewOrderStats below actually reads order_stats -- every schema-level advisory lands
+// at this package's first statement's position (calls[0]), not at the statement that
+// triggered it -- not merely because -strict is on. A package that never mentions
+// order_stats would not get it, which is what plainEnumParam and pointerEnumParam below no
+// longer claim.
 var plainEnumParam = sqlshape.Query[OrderID, struct{ S OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`) // want `schema: materialized view order_stats has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible` `schema: orders.status is enum order_status: a seeded lookup table .* is easier to change` `no index on orders leads with any of \(status\): this predicate scans the whole table` `parameter .S is a non-pointer strict.OrderStatus: its zero value "" is not a label of enum order_status and fails at runtime \(SQLSTATE 22P02\) when unset`
 
 var pointerEnumParam = sqlshape.Query[OrderID, struct{ S *OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`) // want `no index on orders leads with any of \(status\)`
+
+var matviewOrderStats = sqlshape.Query[struct{ N int64 }, struct{}](`SELECT n FROM order_stats`)
 
 type Times struct {
 	UpdatedAt *time.Time

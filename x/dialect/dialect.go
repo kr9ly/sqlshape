@@ -273,8 +273,12 @@ type Schema interface {
 	// error that stopped its analysis.
 	Definitions() []Definition
 	// Advice are the schema-level advisories (-strict): what the schema does less well than
-	// it looks.
-	Advice() []string
+	// it looks. An advisory about a specific relation (Table set) is reported only for a
+	// package whose statements actually reference that relation (that column too, when
+	// Column is also set); Table == "" is a schema-wide advisory (about the schema as a
+	// whole, not any one relation) and is always reported, as every advisory always was
+	// before Advice carried a subject.
+	Advice() []Advice
 	// Type resolves a type by the name a `// sqlshape: type X` declaration writes.
 	Type(name string) (Type, bool)
 	// Source describes a column of a relation the way a statement's Source would (its
@@ -294,6 +298,18 @@ type ErrorName struct {
 	// Subject is what declared it, for messages: "trigger orders_before_insert",
 	// "function check_order_size".
 	Subject string
+}
+
+// Advice is one -strict advisory the schema offers (see Schema.Advice): what it does less
+// well than it looks. Table (schema-qualified as the facts spell it, matching Source.Table
+// and RelationRef.Name) names the relation the advice is about, "" for a schema-wide
+// advisory that is not about any one relation (row-level security's SECURITY DEFINER note,
+// a function's own advisory, ...). Column further narrows a Table advisory to one column
+// ("" advises about the whole relation, e.g. a materialized view's missing unique index).
+type Advice struct {
+	Table   string
+	Column  string
+	Message string
 }
 
 // Schemaed is an Analyzer that also gives the checker its Schema.

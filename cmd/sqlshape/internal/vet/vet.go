@@ -309,9 +309,6 @@ func run(pass *analysis.Pass) (any, error) {
 		for _, p := range ls.caveats {
 			pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 		}
-		for _, a := range c.sch.Advice() {
-			pass.Reportf(calls[0].Pos(), "sqlshape: schema: %s", a)
-		}
 	}
 	// the flags are shorthand for declarations: a context's waive lifts them the same way
 	ctxName, ctxProblem := packageContext(pass)
@@ -337,9 +334,35 @@ func run(pass *analysis.Pass) (any, error) {
 			c.checkMatView(call)
 		}
 	}
+	if strictFlag {
+		// the index is only complete once every call (and copy / matview) has been
+		// checked, so an Advice about a relation the package never actually touches is
+		// reported here, not up where Advice() was first available
+		c.reportAdvice(calls[0].Pos())
+	}
 	c.finishBindings()
 	c.checkErrorDeclsCovered(calls[0].Pos())
 	return index, nil
+}
+
+// reportAdvice reports the schema's -strict advisories, narrowed to this package: an
+// advisory about a relation (or one of its columns) is reported only when this package's
+// statements actually reference that relation (that column, when the advisory names one);
+// a schema-wide advisory (Table == "") is always reported, as every advisory always was
+// before Advice carried a subject.
+func (c *checker) reportAdvice(at token.Pos) {
+	for _, a := range c.sch.Advice() {
+		if a.Table != "" {
+			if a.Column != "" {
+				if len(c.index.Column(a.Table, a.Column)) == 0 {
+					continue
+				}
+			} else if len(c.index.Relation(a.Table)) == 0 {
+				continue
+			}
+		}
+		c.pass.Reportf(at, "sqlshape: schema: %s", a.Message)
+	}
 }
 
 // owner names the declaration a call sits in: "pkg.Func", "pkg.(*T).Method", "pkg.var";

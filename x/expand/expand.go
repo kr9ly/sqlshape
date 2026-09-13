@@ -100,6 +100,13 @@ func Expand(tmpl string) (*Result, error) {
 		return nil, &Error{Pos: 0, Msg: strings.TrimPrefix(err.Error(), "template: q:")}
 	}
 	root := trees["q"].Root
+	// branchNodes already collapses repeated occurrences of the same control path (see
+	// staticKey / addBranch): a condition read twice, e.g. an {{if .Status}} in a column
+	// list and again in the matching VALUES clause, is one branch, not two, since the two
+	// occurrences always agree (they read the same value). Only the *count* here is
+	// deduped; the actual tie enforcement happens per-expansion in branches / rangeNode via
+	// state.decisions, which is exact (dot/var-aware) where this static, syntax-only key is
+	// just an approximation used to size the branch product / build sparse policies.
 	branches := branchNodes(root)
 	combos := 1
 	for _, b := range branches {
@@ -115,7 +122,7 @@ func Expand(tmpl string) (*Result, error) {
 	res := &Result{Combinations: combos}
 	if combos <= MaxExpansions {
 		x := &expander{res: res}
-		out, err := x.list(root, []*state{{dot: Path{}, vars: map[string]Path{"$": {}}}})
+		out, err := x.list(root, []*state{newRootState()})
 		if err != nil {
 			return nil, err
 		}
@@ -135,13 +142,17 @@ func Expand(tmpl string) (*Result, error) {
 	}
 	for _, pol := range policies {
 		x := &expander{res: res, choose: func(pos parse.Pos) int { return pol[pos] }}
-		out, err := x.list(root, []*state{{dot: Path{}, vars: map[string]Path{"$": {}}}})
+		out, err := x.list(root, []*state{newRootState()})
 		if err != nil {
 			return nil, err
 		}
 		x.emit(out)
 	}
 	return res, nil
+}
+
+func newRootState() *state {
+	return &state{dot: Path{}, vars: map[string]Path{"$": {}}, decisions: map[string]int{}}
 }
 
 func (x *expander) emit(out []*state) {
@@ -157,9 +168,16 @@ type branchNode struct {
 	kind byte // 'i' if, 'w' with, 'r' range
 }
 
-// branchNodes lists the control nodes of a tree in source order.
+// branchNodes lists the control nodes of a tree in source order. A control whose condition
+// is a plain field/dot/variable reference (the same shape a value action {{.Field}} must
+// have -- see pipePath) is deduped against any earlier control reading the same reference:
+// repeated reads of one path always agree, so they count, and later get tied, as one branch
+// rather than one per occurrence. Conditions that are not a plain reference (e.g. `gt .X 0`)
+// cannot be tied this way (their value isn't known without evaluating them) and are always
+// counted independently, as before.
 func branchNodes(l *parse.ListNode) []branchNode {
 	var out []branchNode
+	seen := map[string]bool{}
 	var walk func(l *parse.ListNode)
 	walk = func(l *parse.ListNode) {
 		if l == nil {
@@ -168,15 +186,15 @@ func branchNodes(l *parse.ListNode) []branchNode {
 		for _, n := range l.Nodes {
 			switch v := n.(type) {
 			case *parse.IfNode:
-				out = append(out, branchNode{v.Pos, 'i'})
+				addBranch(&out, seen, v.Pos, 'i', v.Pipe)
 				walk(v.List)
 				walk(v.ElseList)
 			case *parse.WithNode:
-				out = append(out, branchNode{v.Pos, 'w'})
+				addBranch(&out, seen, v.Pos, 'w', v.Pipe)
 				walk(v.List)
 				walk(v.ElseList)
 			case *parse.RangeNode:
-				out = append(out, branchNode{v.Pos, 'r'})
+				addBranch(&out, seen, v.Pos, 'r', v.Pipe)
 				walk(v.List)
 				walk(v.ElseList)
 			}
@@ -184,6 +202,36 @@ func branchNodes(l *parse.ListNode) []branchNode {
 	}
 	walk(l)
 	return out
+}
+
+func addBranch(out *[]branchNode, seen map[string]bool, pos parse.Pos, kind byte, pipe *parse.PipeNode) {
+	if key, ok := staticKey(pipe); ok {
+		full := string(kind) + key
+		if seen[full] {
+			return
+		}
+		seen[full] = true
+	}
+	*out = append(*out, branchNode{pos, kind})
+}
+
+// staticKey renders the syntactic shape of a plain field/dot/variable reference pipe, the
+// same shape pipePath accepts, for use as an approximate (dot/var-unaware) tie key. It is
+// only used to size the branch product and build sparse policies; the exact, scope-correct
+// tie key used to actually collapse expansions is computed live per state in pipePath.
+func staticKey(pipe *parse.PipeNode) (string, bool) {
+	if len(pipe.Cmds) != 1 || len(pipe.Cmds[0].Args) != 1 {
+		return "", false
+	}
+	switch a := pipe.Cmds[0].Args[0].(type) {
+	case *parse.FieldNode:
+		return "." + strings.Join(a.Ident, "."), true
+	case *parse.DotNode:
+		return ".", true
+	case *parse.VariableNode:
+		return "$" + strings.Join(a.Ident, "."), true
+	}
+	return "", false
 }
 
 // builtins lets conditions use the usual comparison / boolean helpers. They are never evaluated.
@@ -211,6 +259,11 @@ type state struct {
 	paramKeys map[string]int
 	// iter is the stack of active range iteration indexes (disambiguates $n across iterations)
 	iter []int
+	// decisions ties repeated reads of the same control path to the same outcome within one
+	// expansion: keyed "if:<path>" / "with:<path>" (1 = then, 0 = else) or "range:<path>"
+	// (the iteration count, 0/1/2). Set the first time a path is read, consulted (instead of
+	// branching again) on every later read of the same path in this lineage.
+	decisions map[string]int
 }
 
 func (s *state) clone() *state {
@@ -227,6 +280,10 @@ func (s *state) clone() *state {
 		c.paramKeys[k] = v
 	}
 	c.iter = append([]int{}, s.iter...)
+	c.decisions = map[string]int{}
+	for k, v := range s.decisions {
+		c.decisions[k] = v
+	}
 	return c
 }
 
@@ -295,7 +352,13 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 		return states, nil
 	case *parse.IfNode:
 		x.control(v.Pipe, states[0])
-		return x.branches(&v.BranchNode, states, "if", nil)
+		return x.branches(&v.BranchNode, states, "if", false, func(s *state) (string, Path, bool) {
+			p, err := x.pipePath(v.Pipe, s, int(v.Pos))
+			if err != nil {
+				return "", nil, false
+			}
+			return "if:" + p.String(), p, true
+		})
 	case *parse.WithNode:
 		p, err := x.pipePath(v.Pipe, states[0], int(v.Pos))
 		if err != nil {
@@ -308,7 +371,13 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 				s.vars[v.Pipe.Decl[0].Ident[0]] = p
 			}
 		}
-		return x.branches(&v.BranchNode, states, "with", &p)
+		return x.branches(&v.BranchNode, states, "with", true, func(s *state) (string, Path, bool) {
+			p, err := x.pipePath(v.Pipe, s, int(v.Pos))
+			if err != nil {
+				return "", nil, false
+			}
+			return "with:" + p.String(), p, true
+		})
 	case *parse.RangeNode:
 		return x.rangeNode(v, states)
 	case *parse.CommentNode:
@@ -319,107 +388,217 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 	return nil, &Error{Pos: int(n.Position()), Msg: fmt.Sprintf("unsupported template node %T", n)}
 }
 
-// branches expands then/else lists. withDot, if set, becomes dot inside the then-branch.
-func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, withDot *Path) ([]*state, error) {
-	var out []*state
+// branchKey resolves, for one state, the tie key ("if:<path>" / "with:<path>") and the
+// resolved path a control's condition reads, when that condition is a plain field/dot/
+// variable reference (ok=false otherwise, e.g. `gt .X 0`: not tie-able, always branches).
+type branchKey func(s *state) (key string, path Path, ok bool)
+
+// branches expands then/else lists. withDot requests that the resolved path (from kf)
+// become dot inside the then-branch ({{with}}); kf may be nil for controls that decline to
+// resolve to a tie-able path in a given state (branches independently, as before).
+//
+// A state that already has a decision recorded for kf's key (because an earlier control in
+// this same expansion read the identical path -- e.g. the same {{if .Status}} appearing
+// twice) is not branched again: it is routed straight down the branch that decision already
+// picked. This is what ties two occurrences of one condition to the same outcome instead of
+// letting them vary independently (which would multiply the expansion count and could even
+// produce impossible combinations, like a column list and its VALUES clause disagreeing on
+// whether a column is present).
+func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, withDot bool, kf branchKey) ([]*state, error) {
 	takeThen, takeElse := true, true
 	if x.choose != nil {
 		takeThen = x.choose(b.Pos) >= 1
 		takeElse = !takeThen
 	}
-	then := make([]*state, 0, len(states))
+
+	var thenIn, elseIn []*state
 	for _, s := range states {
-		c := s.clone()
-		c.branch += fmt.Sprintf(" %s@%d:then", kind, b.Pos)
-		if withDot != nil {
-			c.dot = x.rebase(*withDot, s)
+		var key string
+		var path Path
+		var ok bool
+		if kf != nil {
+			key, path, ok = kf(s)
 		}
-		then = append(then, c)
+		if ok {
+			if d, seen := s.decisions[key]; seen {
+				// Already decided by an earlier occurrence of the same path: follow it,
+				// don't re-branch this state.
+				s.branch += fmt.Sprintf(" %s@%d:%s", kind, b.Pos, thenElse(d == 1))
+				if d == 1 {
+					if withDot {
+						s.dot = x.rebase(path, s)
+					}
+					thenIn = append(thenIn, s)
+				} else {
+					elseIn = append(elseIn, s)
+				}
+				continue
+			}
+		}
+		if takeThen {
+			c := s.clone()
+			if ok {
+				c.decisions[key] = 1
+			}
+			if withDot {
+				c.dot = x.rebase(path, s)
+			}
+			c.branch += fmt.Sprintf(" %s@%d:then", kind, b.Pos)
+			thenIn = append(thenIn, c)
+		}
+		if takeElse {
+			c := s.clone()
+			if ok {
+				c.decisions[key] = 0
+			}
+			c.branch += fmt.Sprintf(" %s@%d:else", kind, b.Pos)
+			elseIn = append(elseIn, c)
+		}
 	}
-	if !takeThen {
-		then = nil
-	}
-	then, err := x.list(b.List, then)
+
+	then, err := x.list(b.List, thenIn)
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range then {
-		if withDot != nil {
+	if withDot {
+		for _, s := range then {
 			s.dot = states[0].dot
 		}
 	}
-	out = append(out, then...)
-	if !takeElse {
-		return out, nil
-	}
-	els := make([]*state, 0, len(states))
-	for _, s := range states {
-		c := s.clone()
-		c.branch += fmt.Sprintf(" %s@%d:else", kind, b.Pos)
-		els = append(els, c)
-	}
-	els, err = x.list(b.ElseList, els)
+	els, err := x.list(b.ElseList, elseIn)
 	if err != nil {
 		return nil, err
 	}
-	return append(out, els...), nil
+	return append(then, els...), nil
 }
 
-// rangeNode expands {{range}} as 0, 1 and 2 iterations.
+func thenElse(then bool) string {
+	if then {
+		return "then"
+	}
+	return "else"
+}
+
+// rangeNode expands {{range}} as 0, 1 and 2 iterations. States that range over the same
+// resolved path as an earlier {{range}} in this expansion (state.decisions["range:<path>"])
+// are tied to that earlier occurrence's iteration count instead of being re-branched into
+// their own independent 0/1/2, for the same reason if/with ties repeated conditions: two
+// reads of one path always agree.
 func (x *expander) rangeNode(r *parse.RangeNode, states []*state) ([]*state, error) {
-	p, err := x.pipePath(r.Pipe, states[0], int(r.Pos))
-	if err != nil {
-		return nil, err
+	type group struct {
+		path   Path
+		states []*state
 	}
-	x.res.Controls = append(x.res.Controls, p)
-	var out []*state
-	counts := []int{0, 1, 2}
-	if x.choose != nil {
-		counts = []int{x.choose(r.Pos)}
-	}
-	for _, count := range counts {
-		batch := make([]*state, 0, len(states))
-		for _, s := range states {
-			c := s.clone()
-			c.branch += fmt.Sprintf(" range@%d:x%d", r.Pos, count)
-			batch = append(batch, c)
+	byKey := map[string]*group{}
+	var order []string
+	for _, s := range states {
+		p, err := x.pipePath(r.Pipe, s, int(r.Pos))
+		if err != nil {
+			return nil, err
 		}
-		if count == 0 {
-			batch, err = x.list(r.ElseList, batch)
+		key := p.String()
+		g, ok := byKey[key]
+		if !ok {
+			g = &group{path: p}
+			byKey[key] = g
+			order = append(order, key)
+		}
+		g.states = append(g.states, s)
+	}
+
+	var out []*state
+	for _, key := range order {
+		g := byKey[key]
+		x.res.Controls = append(x.res.Controls, g.path)
+		tieKey := "range:" + key
+
+		byCount := map[int][]*state{}
+		var undecided []*state
+		for _, s := range g.states {
+			if c, ok := s.decisions[tieKey]; ok {
+				byCount[c] = append(byCount[c], s)
+			} else {
+				undecided = append(undecided, s)
+			}
+		}
+		for _, count := range []int{0, 1, 2} {
+			ss, ok := byCount[count]
+			if !ok {
+				continue
+			}
+			batch, err := x.runRange(r, g.path, ss, count, false, "")
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, batch...)
-			continue
 		}
-		for i := 0; i < count; i++ {
-			for _, c := range batch {
-				elem := append(append(Path{}, x.rebase(p, c)...), "[]")
-				c.dot = elem
-				c.iter = append(c.iter, i)
-				// {{range $i, $v := .X}} / {{range $v := .X}}
-				switch len(r.Pipe.Decl) {
-				case 1:
-					c.vars[r.Pipe.Decl[0].Ident[0]] = elem
-				case 2:
-					c.vars[r.Pipe.Decl[0].Ident[0]] = Path{"#index"}
-					c.vars[r.Pipe.Decl[1].Ident[0]] = elem
+		if len(undecided) > 0 {
+			counts := []int{0, 1, 2}
+			if x.choose != nil {
+				counts = []int{x.choose(r.Pos)}
+			}
+			for _, count := range counts {
+				batch, err := x.runRange(r, g.path, undecided, count, true, tieKey)
+				if err != nil {
+					return nil, err
 				}
-			}
-			batch, err = x.list(r.List, batch)
-			if err != nil {
-				return nil, err
-			}
-			for _, c := range batch {
-				c.iter = c.iter[:len(c.iter)-1]
+				out = append(out, batch...)
 			}
 		}
-		for _, c := range batch {
-			c.dot = states[0].dot
-		}
-		out = append(out, batch...)
 	}
 	return out, nil
+}
+
+// runRange runs count iterations of r.List (or r.ElseList when count == 0) over states,
+// cloning each first. path is the range's resolved path (computed once, before any dot
+// mutation -- recomputing it after the first iteration would resolve against the element
+// dot instead of the collection). When record is true, the chosen count is recorded under
+// tieKey so a later {{range}} over the identical path reuses it instead of branching again.
+func (x *expander) runRange(r *parse.RangeNode, path Path, states []*state, count int, record bool, tieKey string) ([]*state, error) {
+	parentDot := states[0].dot
+	batch := make([]*state, 0, len(states))
+	for _, s := range states {
+		c := s.clone()
+		c.branch += fmt.Sprintf(" range@%d:x%d", r.Pos, count)
+		if record {
+			c.decisions[tieKey] = count
+		}
+		batch = append(batch, c)
+	}
+	var err error
+	if count == 0 {
+		batch, err = x.list(r.ElseList, batch)
+		if err != nil {
+			return nil, err
+		}
+		return batch, nil
+	}
+	for i := 0; i < count; i++ {
+		for _, c := range batch {
+			elem := append(append(Path{}, x.rebase(path, c)...), "[]")
+			c.dot = elem
+			c.iter = append(c.iter, i)
+			// {{range $i, $v := .X}} / {{range $v := .X}}
+			switch len(r.Pipe.Decl) {
+			case 1:
+				c.vars[r.Pipe.Decl[0].Ident[0]] = elem
+			case 2:
+				c.vars[r.Pipe.Decl[0].Ident[0]] = Path{"#index"}
+				c.vars[r.Pipe.Decl[1].Ident[0]] = elem
+			}
+		}
+		batch, err = x.list(r.List, batch)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range batch {
+			c.iter = c.iter[:len(c.iter)-1]
+		}
+	}
+	for _, c := range batch {
+		c.dot = parentDot
+	}
+	return batch, nil
 }
 
 // control records paths read by a condition (no expansion effect). A condition argument

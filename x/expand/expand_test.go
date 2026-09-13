@@ -2,6 +2,7 @@ package expand
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -341,5 +342,150 @@ func TestRangeErrorInElse(t *testing.T) {
 func TestIfErrorInElse(t *testing.T) {
 	if _, err := Expand(`{{if .A}}x{{else}}{{.C .D}}{{end}}`); err == nil {
 		t.Error("expected an error from the if's else-body")
+	}
+}
+
+// TestRepeatedConditionIsOneBranch: the same condition path read twice (a column list and
+// its matching VALUES clause both gated on {{if .Status}}) is one branch, not two -- the two
+// occurrences always agree, so there are 2 expansions (not 4) and neither ever disagrees.
+func TestRepeatedConditionIsOneBranch(t *testing.T) {
+	res, err := Expand(`INSERT INTO orders (customer_id{{if .Status}}, status{{end}}) VALUES ({{.CustomerID}}{{if .Status}}, {{.Status}}{{end}})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Combinations != 2 {
+		t.Errorf("combinations = %d, want 2", res.Combinations)
+	}
+	if len(res.Expansions) != 2 {
+		t.Fatalf("expansions = %d, want 2", len(res.Expansions))
+	}
+	for _, e := range res.Expansions {
+		hasCol := strings.Contains(e.SQL, ", status")
+		hasVal := strings.Contains(e.SQL, ", $")
+		if hasCol != hasVal {
+			t.Errorf("column list and VALUES disagree: %q", e.SQL)
+		}
+	}
+}
+
+// TestRepeatedConditionInElseIf: an else-if reading the same path as the if it is chained
+// off of is also tied -- a value that was false stays false when read again.
+func TestRepeatedConditionInElseIf(t *testing.T) {
+	res, err := Expand(`{{if .A}}one{{else if .A}}two{{else}}three{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// .A true => "one"; .A false => (re-read .A, still false) => "three". "two" is
+	// unreachable, so there are 2 expansions, not 3.
+	if len(res.Expansions) != 2 {
+		t.Fatalf("expansions = %d, want 2: %#v", len(res.Expansions), res.Expansions)
+	}
+	var got []string
+	for _, e := range res.Expansions {
+		got = append(got, e.SQL)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != "one,three" {
+		t.Errorf("expansions = %v, want [one three]", got)
+	}
+}
+
+// TestNestedRepeatedConditionTiesToOuter: an if nested inside the then-branch of an if on
+// the same path is forced to the same (true) outcome, not independently re-branched.
+func TestNestedRepeatedConditionTiesToOuter(t *testing.T) {
+	res, err := Expand(`{{if .A}}outer{{if .A}}inner{{end}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// .A true (only, since the outer determines the value) => "outerinner"; .A false =>
+	// "" (outer not taken, inner never reached). 2 expansions, not 3.
+	if len(res.Expansions) != 2 {
+		t.Fatalf("expansions = %d, want 2: %#v", len(res.Expansions), res.Expansions)
+	}
+	var got []string
+	for _, e := range res.Expansions {
+		got = append(got, e.SQL)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != ",outerinner" {
+		t.Errorf("expansions = %v, want [\"\" outerinner]", got)
+	}
+}
+
+// TestRepeatedWithConditionIsOneBranch: two {{with}} blocks over the same path are tied the
+// same way {{if}} is.
+func TestRepeatedWithConditionIsOneBranch(t *testing.T) {
+	res, err := Expand(`{{with .Page}}a={{.Limit}}{{end}} {{with .Page}}b={{.Offset}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Expansions) != 2 {
+		t.Fatalf("expansions = %d, want 2: %#v", len(res.Expansions), res.Expansions)
+	}
+	for _, e := range res.Expansions {
+		hasA := strings.Contains(e.SQL, "a=$")
+		hasB := strings.Contains(e.SQL, "b=$")
+		if hasA != hasB {
+			t.Errorf("the two with-blocks disagree: %q", e.SQL)
+		}
+	}
+}
+
+// TestRepeatedRangeIsOneBranch: two {{range}} over the same path iterate the same number of
+// times in every expansion (0/1/2), not independently.
+func TestRepeatedRangeIsOneBranch(t *testing.T) {
+	res, err := Expand(`{{range .Tags}}a{{.}}{{end}} {{range .Tags}}b{{.}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Expansions) != 3 {
+		t.Fatalf("expansions = %d, want 3 (0/1/2 iterations): %#v", len(res.Expansions), res.Expansions)
+	}
+	for _, e := range res.Expansions {
+		na := strings.Count(e.SQL, "a$")
+		nb := strings.Count(e.SQL, "b$")
+		if na != nb {
+			t.Errorf("iteration counts disagree: %q", e.SQL)
+		}
+	}
+}
+
+// TestUnrelatedConditionsStillBranchIndependently: two different paths are not tied to each
+// other -- the fix must not collapse genuinely independent conditions.
+func TestUnrelatedConditionsStillBranchIndependently(t *testing.T) {
+	res, err := Expand(`{{if .A}}a{{end}}{{if .B}}b{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Expansions) != 4 {
+		t.Fatalf("expansions = %d, want 4", len(res.Expansions))
+	}
+}
+
+// TestSparseTiesRepeatedCondition: even beyond MaxExpansions, where the expander falls back
+// to a sparse set (all off / all on / each-alone), a path read twice still agrees with
+// itself in every one of those passes.
+func TestSparseTiesRepeatedCondition(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("SELECT id FROM t WHERE true")
+	for i := 0; i < 10; i++ {
+		fmt.Fprintf(&b, " {{if .C%d}} AND c%d = {{.C%d}} {{end}}", i, i, i)
+	}
+	// .C0 read again, elsewhere in the template: must agree with its first read in every
+	// pass, including the "c0 alone" pass.
+	b.WriteString(" {{if .C0}} AND again{{end}}")
+	res, err := Expand(b.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Sparse {
+		t.Fatal("expected sparse fallback")
+	}
+	for _, e := range res.Expansions {
+		hasFirst := strings.Contains(e.SQL, "c0 = $")
+		hasAgain := strings.Contains(e.SQL, "AND again")
+		if hasFirst != hasAgain {
+			t.Errorf("repeated .C0 condition disagrees with itself: %q", e.SQL)
+		}
 	}
 }
