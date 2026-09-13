@@ -8,6 +8,18 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+### Added
+
+- `cmd/sqlshape/internal/vet` gained `docs_test.go`: a harness that reads the go/sql fences out of
+  `docs/checks.md` and `checks.ja.md` at test time (both the code and the diagnostic wording a
+  Rejected fence's trailing comment claims), completes each into a compiling program under
+  `testdata/src/docsex_*`, runs it through the checker, and asserts that every diagnostic docs
+  claims is a literal substring of one the checker actually produced, with nothing left over. It
+  covers "Result columns bind to fields by name", "A column that may be NULL needs a field that can
+  hold NULL", "Fix a unique key by equality", "Bulk loading with COPY", and "Name the errors a
+  trigger raises" (both dialects) so far, in both languages -- not the full set of fences yet (see
+  NOTES.local.md and the package doc for what is not wired up and why).
+
 ### Changed
 
 - PostgreSQL after a third adversarial round against a running server (8 lanes, 23 findings, each a
