@@ -24,12 +24,12 @@ package vet
 //   - Do not leave unused fields in `P` (-strict)
 //   - Do not always send a value into a column with a DEFAULT (-strict)
 //
-// Two sections turned up a real docs/implementation mismatch (documented at each test
-// below, and in NOTES.local.md): the "Nested rows" Passes example, and both -strict
-// examples that touch an enum column, each get one diagnostic beyond what docs' prose
-// promises. In both cases the extra diagnostic is genuine, correct analyzer behaviour
-// (not a bug this task should paper over), so rather than skip the section, its expect
-// list names the extra diagnostic explicitly, with a comment saying why.
+// The "Nested rows" Passes example and both -strict examples that touch an enum column
+// each get one diagnostic beyond the one docs' prose leads with; docs itself now says so
+// (the array-element NULL note has no way to be proven absent yet; the enum-column
+// advisory is a separate, correct finding about the column rather than the parameter),
+// so each expect list below names the extra diagnostic explicitly rather than treating it
+// as an unexplained mismatch.
 
 import (
 	"strings"
@@ -86,14 +86,6 @@ func p1Paragraphs(body string) []string {
 // "Unnamed and duplicate columns need an alias"
 // ---------------------------------------------------------------------------------------
 
-// Mismatch found (statement 1 only): docs' comment claims a bare `count(*)` is an
-// unnamed result column ("has no name: give it an alias"). PostgreSQL (and this
-// checker, following it) auto-names an aggregate call by its function name -- the
-// column really is "count", not nameless -- so the actual diagnostic is a field-binding
-// mismatch ("result column \"count\" has no field in ..."), not the "no name" docs
-// promises. A genuinely nameless column needs a bare expression (`id + 1`, say), not
-// `count(*)`. Filed as a docs suggestion; statement 2 (two columns both named "id") is
-// unaffected and checks out exactly as docs says.
 func TestDocsP1Alias(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -156,8 +148,7 @@ var Q2 = sqlshape.Query[OrderCustomer, struct{}](`+backtick(okLines[1])+`)
 
 			setSchema(t, absPath(t, "testdata/docsex_colbind_schema.sql"))
 			assertDiagnostics(t, td, []string{"docsex_p1_alias_ng_group"}, []string{
-				// real behaviour, not docs' own words: see the mismatch note above.
-				`result column "count" has no field in OrderCount`,
+				docLine(t, ngStmts[0], "has no name"),
 				docLine(t, ngStmts[1], "both named"),
 			})
 			assertDiagnostics(t, td, []string{"docsex_p1_alias_ok_group"}, nil)
@@ -229,11 +220,9 @@ var Q = sqlshape.Query[Order, Params](`+backtick(oneLineSQL(sql.body))+`)
 // "Column and field types follow the table below"
 // ---------------------------------------------------------------------------------------
 
-// Mismatch found: docs' comment claims a numeric(12,2) column received into a float64
-// field is flatly rejected ("field Total is float64 but column \"total\" is
-// numeric(12,2)"). The analyzer actually accepts the binding with a precision-loss
-// note ("field Total: numeric into float64 loses precision") -- float64 is a lossy but
-// permitted receiver for numeric, not an incompatible one. Filed as a docs suggestion.
+// A numeric(12,2) column received into a float64 field is accepted with a precision-loss
+// note, not rejected: float64 is a lossy but permitted receiver for numeric, not an
+// incompatible one (see the type table in docs/postgres.md).
 func TestDocsP1ColumnTypeTable(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -245,37 +234,36 @@ func TestDocsP1ColumnTypeTable(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			blocks := parseDocBlocks(t, docsMD(tc.doc))
-			ngGo := nthBlock(t, blocks, tc.head, "go", 1)
+			lossyGo := nthBlock(t, blocks, tc.head, "go", 1)
 			sql := nthBlock(t, blocks, tc.head, "sql", 1)
-			okGo := nthBlock(t, blocks, tc.head, "go", 2)
+			silentGo := nthBlock(t, blocks, tc.head, "go", 2)
 
-			plainNG := dropInlineComment(ngGo.body, "is float64 but column")
+			plainLossy := dropInlineComment(lossyGo.body, "loses precision")
 
 			td := t.TempDir()
-			writeFile(t, td, "src/docsex_p1_coltype_ng/ng.go", `package docsex_p1_coltype_ng
+			writeFile(t, td, "src/docsex_p1_coltype_lossy/lossy.go", `package docsex_p1_coltype_lossy
 
 import "github.com/kr9ly/sqlshape/v2"
 
-`+plainNG+`
+`+plainLossy+`
 
 var Q = sqlshape.Query[Order, struct{}](`+backtick(oneLineSQL(sql.body))+`)
 `)
-			writeFile(t, td, "src/docsex_p1_coltype_ok/ok.go", `package docsex_p1_coltype_ok
+			writeFile(t, td, "src/docsex_p1_coltype_silent/silent.go", `package docsex_p1_coltype_silent
 
 import "github.com/kr9ly/sqlshape/v2"
 
-`+okGo.body+`
+`+silentGo.body+`
 
 var Q = sqlshape.Query[Order, struct{}](`+backtick(oneLineSQL(sql.body))+`)
 `)
 			copyRuntime(t, td)
 
 			setSchema(t, absPath(t, "testdata/schema.sql"))
-			assertDiagnostics(t, td, []string{"docsex_p1_coltype_ng"}, []string{
-				// real behaviour, not docs' own words: see the mismatch note above.
-				"field Total: numeric into float64 loses precision",
+			assertDiagnostics(t, td, []string{"docsex_p1_coltype_lossy"}, []string{
+				docLine(t, lossyGo.body, "loses precision"),
 			})
-			assertDiagnostics(t, td, []string{"docsex_p1_coltype_ok"}, nil)
+			assertDiagnostics(t, td, []string{"docsex_p1_coltype_silent"}, nil)
 		})
 	}
 }
@@ -283,27 +271,19 @@ var Q = sqlshape.Query[Order, struct{}](`+backtick(oneLineSQL(sql.body))+`)
 // ---------------------------------------------------------------------------------------
 // "Nested rows are received by structs"
 //
-// Two mismatches found here, both filed as docs suggestions; the analyzer's behaviour
-// in each case is real and (as far as this task can tell) correct, so the expect lists
-// below name the extra diagnostics explicitly rather than skip the section:
+// Docs now name both of the diagnostics the checker actually raises here, so the expect
+// lists below are the documented behaviour, not an unexplained mismatch:
 //
-//  1. docs' Passes example receives a composite array_agg column with a plain
-//     (non-pointer) struct slice, []Item, and calls it diagnostic-free. The analyzer's
-//     addArrayNullElemNotes (gofit.go) always attaches a "may contain a NULL element ...
-//     use []*Item" lossy note to that binding, in both directions, regardless of
-//     -strict: PostgreSQL never guarantees an array's elements are themselves non-NULL
-//     even when the column holding the array is NOT NULL. Neither the Rejected nor the
-//     Passes example is actually free of this note.
-//  2. Swapping two adjacent fields (docs' Rejected Item{Qty, Sku}) puts *both* fields at
+//  1. Swapping two adjacent fields (docs' Rejected Item{Qty, Sku}) puts *both* fields at
 //     the wrong position, not one: checkNested (nested.go) compares struct field i
 //     against row column i for every i, so both "Qty is at position 1, row column 1 is
-//     sku" and "Sku is at position 2, row column 2 is qty" fire, though docs' comment
-//     names only the first. Once a position mismatch skips a field's own type check
-//     (checkNested's continue), the Passes example -- whose fields line up -- proceeds
-//     to that type check and turns up a *third* thing docs doesn't mention: order_item's
-//     sku/qty columns are NOT NULL in the schema, but nullability is not carried through
-//     the (i.sku, i.qty)::order_item cast that builds each array element, so every field
-//     is reported as possibly NULL.
+//     sku" and "Sku is at position 2, row column 2 is qty" fire.
+//  2. docs' Passes example receives a composite array_agg column with a plain
+//     (non-pointer) struct slice, []Item, and still carries the standing "may contain a
+//     NULL element ... use []*Item" note: PostgreSQL never guarantees an array's elements
+//     are themselves non-NULL even when the column holding the array is NOT NULL, and the
+//     contract has no way yet to say the row constructor that built each element here is
+//     itself provably non-NULL (see NOTES.local.md).
 // ---------------------------------------------------------------------------------------
 
 func TestDocsP1NestedRows(t *testing.T) {
@@ -643,20 +623,6 @@ func TestDocsP1RangePaths(t *testing.T) {
 			okGo := nthBlock(t, blocks, tc.head, "go", 1)
 			sql := nthBlock(t, blocks, tc.head, "sql", 1)
 
-			// Docs fix pending: this SQL's `sku IN ({{range ...}}...{{end}})` is
-			// invalid SQL whenever .Items is empty at runtime ("IN ()" is a syntax
-			// error), and the checker's own branch-state exploration of .Items'
-			// possible lengths (0, 1, 2, ...) notices exactly that -- it reports
-			// several "at or near ..." SQLSTATE 42601 syntax-error diagnostics docs'
-			// comment does not mention (docs shows this as a plain Passes example
-			// with none). A faithful, empty-safe version needs to guard the IN
-			// clause itself, e.g. `{{if .Items}} AND sku IN (...) {{end}}`, the way
-			// testdata/src/a/a.go's indexParam avoids the same trap with `WHERE true
-			// {{range}} OR (...) {{end}}` instead of an IN list. Since docs' own SQL
-			// text cannot be hand-edited here, this section is skipped rather than
-			// asserting a syntax-error diagnostic list docs never claims.
-			t.Skip("docs fix pending: the range-in-IN() example is not empty-safe SQL; see comment above assertDiagnostics call site in docs_part1_test.go")
-
 			td := t.TempDir()
 			writeFile(t, td, "src/docsex_p1_rangepath_ok/ok.go", `package docsex_p1_rangepath_ok
 
@@ -814,20 +780,12 @@ var Q = sqlshape.Query[struct{}, NewOrder](`+backtick(oneLineSQL(okSQL.body))+`)
 				enumAdvice,
 			})
 
-			// Docs fix pending, Passes half only (the Rejected half above checks out,
-			// modulo the two extra diagnostics the enum-column schema always adds
-			// under -strict -- see this test's own comment). Docs' Passes SQL guards
-			// the same {{if .Status}} test twice, once in the column list and once
-			// in the VALUES list. The checker's branch-state exploration treats the
-			// two occurrences as independently-variable (each is its own token
-			// position), not as the same boolean evaluated twice, and tries all four
-			// combinations; two of them build a column list and a VALUES list of
-			// different lengths, which is invalid SQL the checker (rightly, given
-			// what it can prove) reports as a syntax error -- diagnostics docs never
-			// claims for what it calls a plain Passes example. Since docs' own SQL
-			// text cannot be hand-edited here, this half is skipped rather than
-			// asserting a syntax-error diagnostic list docs never claims.
-			t.Skip("docs fix pending: the repeated {{if .Status}} INSERT is not recognized as one condition by branch-state exploration, so it also reports spurious syntax errors; see comment above")
+			// Docs' Passes SQL guards the same {{if .Status}} test twice, once in the
+			// column list and once in the VALUES list; branch-state exploration now
+			// follows an if/with/range on an already-decided plain path within the
+			// same lineage, so the two occurrences are treated as one decision, not
+			// as four independently-variable combinations, and no spurious
+			// syntax-error diagnostic is produced.
 			assertDiagnostics(t, td, []string{"docsex_p1_paramdefault_ok"}, []string{
 				enumAdvice,
 			})

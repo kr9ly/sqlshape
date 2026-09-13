@@ -4,10 +4,10 @@
 -- orders table it writes to. customer_id/total are left nullable and orders carries no
 -- foreign key here (neither is shown in the doc's fence, and the point of the example is
 -- the SIGNAL alone, not a second, unrelated violation this harness would have to invent a
--- schema reason for). Unlike PostgreSQL's schema.sql / docsex_p2_call_pg_schema.sql,
--- there is no "-- sqlshape: not null" directive documented for a MySQL function
--- (mysql.md never mentions one), so the test package receives place_order's result as
--- *int64 rather than annotating it away.
+-- schema reason for). Like PostgreSQL's schema.sql / docsex_p2_call_pg_schema.sql, the
+-- function is annotated "-- sqlshape: not null" (mysql.md documents the same directive
+-- for a MySQL CREATE FUNCTION), so the test package receives place_order's result as
+-- plain int64 rather than *int64.
 CREATE TABLE orders (
     id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     customer_id BIGINT UNSIGNED,
@@ -15,6 +15,7 @@ CREATE TABLE orders (
 );
 
 -- sqlshape: error 30001 = OrderTooLarge
+-- sqlshape: not null
 CREATE FUNCTION place_order(cust_id BIGINT UNSIGNED, amount DECIMAL(10,2)) RETURNS BIGINT
 BEGIN
   IF amount > 1000000 THEN

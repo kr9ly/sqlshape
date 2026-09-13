@@ -159,15 +159,9 @@ type Order struct {
 			copyRuntime(t, td)
 
 			setSchema(t, absPath(t, "testdata/docsex_p2_enum_schema.sql"))
-			t.Run("ng", func(t *testing.T) {
-				// docs fix pending: both diagnostics here should key the lookup table by
-				// "order_statuses.code (lookup table)" (table.column, per nominal.String's
-				// 'l' case in binding.go); docs write "order_statuses (lookup table)"
-				// (missing ".code") in both the constant-not-a-label and the
-				// missing-constant diagnostic.
-				diags := runDocs(t, td, "docsex_p2_enum_ng")
-				t.Skipf("docs fix pending (checks.md / checks.ja.md, %q): both diagnostics should read \"order_statuses.code (lookup table)\", not \"order_statuses (lookup table)\" -- live diagnostics: %s",
-					tc.head, formatDiags(diags))
+			assertDiagnostics(t, td, []string{"docsex_p2_enum_ng"}, []string{
+				docLine(t, ng.body, "is not a label of value set"),
+				docLine(t, ng.body, "has no constant for it"),
 			})
 			assertDiagnostics(t, td, []string{"docsex_p2_enum_ok"}, nil)
 		})
@@ -250,7 +244,9 @@ var Q = sqlshape.Query[struct{ Total string }, Params](%s)
 
 // TestDocsP2DomainMismatch splits the section's two independent illustrations: a plain
 // SQL expression mixing two domains (no parameter involved), and a -strict advisory about
-// a parameter carrying a domain through a plain int64 versus a named type.
+// a parameter carrying a domain through a plain int64 versus a named type. A parameter
+// compared against a domain column is resolved by PostgreSQL to the domain, so both the
+// plain-SQL and the parameter advisory fire, as docs claim.
 func TestDocsP2DomainMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -307,34 +303,13 @@ var Q = sqlshape.Query[struct{ ID ProductID }, Params](%s)
 			copyRuntime(t, td)
 
 			setSchema(t, absPath(t, "testdata/docsex_p2_domain_schema.sql"))
-			t.Run("sql-ng", func(t *testing.T) {
-				// docs fix pending: docs' own wording ("mixes yen with gram (cast to the
-				// base type to drop the domain)") no longer matches the checker's message
-				// ("operands must share the domain (cast to the base type to drop it)");
-				// the diagnostic itself does fire, just under different wording.
-				diags := runDocs(t, td, "docsex_p2_domainsql_ng")
-				t.Skipf("docs fix pending (checks.md / checks.ja.md, %q): the domain-mismatch diagnostic's wording changed -- live diagnostics: %s",
-					tc.head, formatDiags(diags))
+			assertDiagnostics(t, td, []string{"docsex_p2_domainsql_ng"}, []string{
+				"domain mismatch: yen + gram: operands must share the domain (cast to the base type to drop it)",
 			})
 
 			setStrictP2(t)
-			t.Run("param-ng", func(t *testing.T) {
-				// suspected implementation gap, not asserted: docs promise this advisory
-				// for a plain int64 *parameter* compared against a domain column
-				// (`price > {{.Max}}`), the same way it already fires for a plain int64
-				// *result* column (testdata/src/strict/strict.go's plainDomain, "field
-				// Balance carries domain yen as a plain int64 ..."). meet()'s nominalOf
-				// only derives a domain nominal from the value's own resolved dialect.Type
-				// (dt.Kind == dialect.Domain); a result column's Type is the schema
-				// column's own (domain) type, but PostgreSQL resolves a parameter
-				// compared against a domain column to the domain's *base* type (domains
-				// reuse their base type's operators), so the parameter's dt never carries
-				// Domain kind, and nominalOf's Source-based fallback only covers CHECK /
-				// lookup / key bindings, not domains -- confirmed live below by testing
-				// the identical comparison as a result column instead of a parameter,
-				// which does produce the advisory.
-				diags := runDocs(t, td, "docsex_p2_domainparam_ng")
-				t.Skipf("suspected implementation gap (not a docs wording issue): a plain int64 parameter meeting a domain column via a WHERE comparison produces no -strict advisory here, unlike the equivalent result-column case -- live diagnostics: %s", formatDiags(diags))
+			assertDiagnostics(t, td, []string{"docsex_p2_domainparam_ng"}, []string{
+				"parameter .Max carries domain yen as a plain int64; declare a named type to have it checked",
 			})
 			assertDiagnostics(t, td, []string{"docsex_p2_domainparam_ok"}, nil)
 		})
@@ -520,7 +495,7 @@ import "github.com/kr9ly/sqlshape/v2"
 // ("Name the errors a trigger raises") does not crowd out the one this test is about.
 var OrderTooLarge = sqlshape.Error("30001")
 
-var Q = sqlshape.Query[*int64, struct {
+var Q = sqlshape.Query[int64, struct {
 	CustomerID uint64
 	Total      string
 }](%s)
@@ -573,21 +548,9 @@ type User struct {
 			copyRuntime(t, td)
 
 			setSchema(t, absPath(t, "testdata/docsex_p2_branch_schema.sql"))
-			// docs fix pending: the branch tag's byte offset ("[if@39:else]") is a byte
-			// offset into the template text (x/expand's Branch.Pos, "byte offset of the
-			// action in the template text"), which is deterministic for identical template
-			// text regardless of surrounding Go source -- yet the live diagnostic below
-			// computes 45, not 39, for this exact template. Asserted on the prefix only;
-			// the bracketed tag is confirmed separately and logged rather than asserted.
-			expect := docLine(t, ng.body, "One: cannot prove")
-			prefix := expect
-			if i := strings.Index(expect, " [if@"); i >= 0 {
-				prefix = expect[:i]
-			}
-			diags := runDocs(t, td, "docsex_p2_branch")
-			t.Logf("docs fix pending (checks.md / checks.ja.md, %q): docs' branch tag reads \"[if@39:else]\"; live diagnostics carry: %s",
-				tc.head, formatDiags(diags))
-			assertDiagnostics(t, td, []string{"docsex_p2_branch"}, []string{prefix})
+			assertDiagnostics(t, td, []string{"docsex_p2_branch"}, []string{
+				docLine(t, ng.body, "One: cannot prove"),
+			})
 		})
 	}
 }

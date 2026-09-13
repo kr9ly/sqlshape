@@ -876,14 +876,13 @@ var Q = sqlshape.Query[int64, struct{}](`+"`SELECT id FROM orders`"+`)
 			if want := docLine(t, execFence.body, "EXECUTE runs SQL built at run time"); !strings.Contains(joined, want) {
 				t.Errorf("diagnostics missing %q; got: %s", want, joined)
 			}
-			// The view fence's own wording (`view order_summary: column "nmae" does not
-			// exist (SQLSTATE 42703)`) does not match what the checker actually says
-			// here (`view order_summary: 42703: column c.nmae does not exist (at
-			// <offset>)`): different order, the column qualified, no `SQLSTATE` word,
-			// a byte offset instead. Flagged as a docs/implementation mismatch in the
-			// task summary rather than asserted verbatim; only that *a* problem
-			// mentioning the view and the code is produced is checked here.
-			if !strings.Contains(joined, "order_summary") || !strings.Contains(joined, "42703") {
+			// docs' fence writes the byte offset as a placeholder ("<byte offset in
+			// schema.sql>"): the real offset is where "nmae" falls in the whole
+			// schema.sql the package under test loads, not in this fence's own excerpt,
+			// so it cannot be pinned to one literal number here. Everything else in
+			// docs' line (the "42703: column c.nmae does not exist (at ...)" shape) is
+			// asserted below.
+			if !strings.Contains(joined, "order_summary") || !strings.Contains(joined, `42703: column c.nmae does not exist (at`) {
 				t.Errorf("diagnostics missing a schema problem for order_summary's column typo (42703); got: %s", joined)
 			}
 		})

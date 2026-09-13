@@ -160,7 +160,11 @@ the `RETURNS` declaration and is always nullable (a stored function's `RETURN` c
 NULL regardless of the declared type; there is no static proof otherwise), and the body's own
 failure modes (its SIGNALs, its writes' violations, what they fire) reach the calling
 statement. A function that writes a table the calling statement itself reads or writes is
-1442 on every execution (reading the table is enough, measured).
+1442 on every execution (reading the table is enough, measured). `-- sqlshape: not null`
+above a `CREATE FUNCTION` declares the function never returns NULL, the same directive
+[checks.md](checks.md#a-column-that-may-be-null-needs-a-field-that-can-hold-null) documents
+for PostgreSQL; a call then types as NOT NULL instead. A PROCEDURE or a TRIGGER still refuses
+the directive: neither returns a value for it to describe.
 
 `CALL p(...)` types an `IN` / `INOUT` argument by its parameter and requires an `OUT` /
 `INOUT` argument to be a variable (1414; a `?` counts as one); its own facts are `Kind Call`.

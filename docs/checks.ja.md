@@ -78,7 +78,7 @@ type Order struct {
 NG
 
 ```sql
-SELECT id, count(*) FROM orders GROUP BY id
+SELECT id, id + 1 FROM orders
 --         ^ result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
 
 SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
@@ -88,7 +88,7 @@ SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
 OK
 
 ```sql
-SELECT id, count(*) AS n FROM orders GROUP BY id
+SELECT id, id + 1 AS n FROM orders
 SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.customer_id
 ```
 
@@ -148,12 +148,14 @@ type Order struct {
 
 #### 列の型とフィールドの型は下の表に従う
 
-NG
+情報を失いうる対応づけ（`numeric`を`float64`で受ける、`bigint`を`int32`で受ける、など）は拒否ではなく注記付きで通る。本当に不適合な組（`text`列を`int64`フィールドで受ける、など）だけが拒否される。
+
+OK（注記あり）
 
 ```go
 type Order struct {
 	ID    int64
-	Total float64 // field Total is float64 but column "total" is numeric(12,2)
+	Total float64 // field Total: numeric into float64 loses precision
 }
 ```
 
@@ -161,7 +163,7 @@ type Order struct {
 SELECT id, total FROM orders
 ```
 
-OK
+OK（注記無し）
 
 ```go
 type Order struct {
@@ -198,6 +200,8 @@ SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items
  GROUP BY o.id
 ```
 
+（隣接する2つのフィールドを入れ替えると、片方だけでなく両方の位置がずれる。`Sku`も`order_item`型の列2「qty」に来てしまうので、その位置のずれについても2つ目の指摘が出る。）
+
 OK
 
 ```go
@@ -206,6 +210,8 @@ type Item struct {
 	Qty int32
 }
 ```
+
+（PostgreSQLは、配列を保持する列自体がNOT NULLでも、配列の要素自体が非NULLであることは保証しない。ここでの`order_item`の行コンストラクタ自体は決してNULLにならないが、検査器はまだ配列の要素についてそれを言う手段を持たないので、このOK例にも常設の注記が付く: `field Items: order_item[] may contain a NULL element even though the column is not NULL; []Item silently receives it as a zero-valued Item with no error (use []*Item)`。）
 
 #### 1列だけ返すSQLはスカラーで受けられる
 
@@ -305,6 +311,8 @@ type Params struct {
 }
 ```
 
+（`-strict`では、`orders.status`に触れるパッケージにはその列自体のenum助言、`orders.status is enum order_status: a seeded lookup table ...`も別途出る。上のパラメータについての指摘とは別の、列についての指摘。）
+
 #### ネストしたパスと`range`
 
 `{{.Filter.Name}}`は`P`のフィールド`Filter`のフィールド`Name`を指す。`{{range .Items}} … {{.Sku}} … {{end}}`の中の`{{.Sku}}`はスライス`Items`の要素型のフィールドを指す。
@@ -321,8 +329,10 @@ type Params struct {
 ```sql
 SELECT id FROM products
  WHERE true {{if .Filter.Name}} AND name = {{.Filter.Name}} {{end}}
-   AND sku IN ({{range $i, $it := .Items}}{{if $i}}, {{end}}{{$it.Sku}}{{end}})
+   AND (false {{range $i, $it := .Items}} OR sku = {{$it.Sku}} {{end}})
 ```
+
+素朴な`sku IN ({{range}}...{{end}})`は空長で安全ではない。`.Items`が空だと`sku IN ()`となり構文エラーになる。検査器は`.Items`が取りうる長さ（0、1、2、……）を全て試し、それが構文エラーを引き起こすことをそのまま報告する。`range`をこの用途で使うときは、どの長さでも文法的に妥当な形にする必要がある。上の`false {{range}} OR ... {{end}}`の形（あるいは`testdata/src/a/a.go`の`indexParam`がそうしているような`WHERE true {{range}} OR (...) {{end}}`の形）がそれにあたる。
 
 #### 複合型のパラメータは構造体で渡す
 
@@ -377,12 +387,16 @@ type NewOrder struct {
 INSERT INTO orders (customer_id, status) VALUES ({{.CustomerID}}, {{.Status}})
 ```
 
+（ここの`Status`も非ポインタの`OrderStatus`なので、前節の「NULLを渡しうるパラメータはポインタにする」の指摘も出るし、`orders.status`自体のenum助言も出る。このNG例だけで1つでなく3つの指摘になる。）
+
 OK。データベースの既定値を使うなら列ごと分岐にする。アプリケーションが常に決めるなら、列の`DEFAULT`を外す。
 
 ```sql
 INSERT INTO orders (customer_id {{if .Status}}, status{{end}})
 VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
 ```
+
+（このOK例でも`orders.status`のenum助言だけは出る。前節のOK例と同じ。）
 
 ### 型に意味を持たせる
 
@@ -435,9 +449,9 @@ type OrderStatus string
 const (
 	Pending  OrderStatus = "pending"
 	Paid     OrderStatus = "paid"
-	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses (lookup table)
+	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses.code (lookup table)
 )
-// sqlshape: value set of order_statuses (lookup table) has label "shipped" but OrderStatus has no constant for it
+// sqlshape: value set of order_statuses.code (lookup table) has label "shipped" but OrderStatus has no constant for it
 ```
 
 OK
@@ -499,7 +513,7 @@ NG
 
 ```sql
 SELECT id FROM products WHERE price + weight > 1000
---                            ^ domain mismatch: yen + gram: mixes yen with gram (cast to the base type to drop the domain)
+--                            ^ domain mismatch: yen + gram: operands must share the domain (cast to the base type to drop it)
 ```
 
 ```go
@@ -690,6 +704,7 @@ MySQLもストアドFUNCTIONの呼び出しと`CALL`されるPROCEDUREを同じ�
 ```sql
 -- schema.sql
 -- sqlshape: error 30001 = OrderTooLarge
+-- sqlshape: not null
 CREATE FUNCTION place_order(cust_id BIGINT UNSIGNED, amount DECIMAL(10,2)) RETURNS BIGINT
 BEGIN
   IF amount > 1000000 THEN
@@ -738,7 +753,7 @@ NG
 ```go
 var Find = sqlshape.One[User, struct{ ID *int64 }](`
 SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
-// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@39:else]
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@45:else]
 ```
 
 `.ID`がnilの分岐では条件が無くなり、全行が返る。それを見つけるのがこの検査の意図なので、この文は`Query`にするか、`.ID`を非ポインタにして分岐を外す。
@@ -1151,7 +1166,7 @@ OK
 rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
 ```
 
-補足。`-raw-sql=forbid`は定数であってもsqlshapeを通らない文をすべて拒否する（`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`）。移行中のパッケージは`-raw-sql-allow=pkg/...`で除外する。
+補足。`-raw-sql=forbid`は定数であってもsqlshapeを通らない文をすべて拒否する（`pgx.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / postgres.Copy (or list the package in -raw-sql-allow)`）。移行中のパッケージは`-raw-sql-allow=pkg/...`で除外する。
 
 ### パッケージは自分のスキーマだけを参照する（`-schemas`、PostgreSQL）
 
@@ -1180,7 +1195,7 @@ END $$;
 -- schema.sql
 CREATE VIEW order_summary AS
 SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
--- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
+-- sqlshape: schema schema.sql: view order_summary: 42703: column c.nmae does not exist (at <schema.sqlでのバイトオフセット>)
 ```
 
 MySQLのトリガやストアドPROCEDURE / FUNCTIONの本体も、スキーマごとに1回、同じように検査される。`NEW` / `OLD`、`DECLARE`した変数や引数、制御構造、`SELECT ... INTO`、カーソル、`CALL`、`SIGNAL` / `RESIGNAL`がスコープに入る。本体の作成時にサーバ自身が拒むものもスキーマの問題として報告される。本体についてMySQL固有のもの——制約名とエラー番号、SIGNALのキーの規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。

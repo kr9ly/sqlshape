@@ -22,6 +22,28 @@ release it is a candidate for.
 
 ### Changed
 
+- `x/expand`: an `if` / `with` / `range` over a path an earlier control in the same lineage
+  already decided (the same `{{if .Status}}` appearing twice, say, once in a column list and
+  once in `VALUES`) now follows that decision instead of branching it again, in both the full
+  and the sparse expansion; a template no longer yields impossible expansions the runtime's
+  evaluator, reading the value once per occurrence, was never actually going to produce.
+  `dialect.Advice` now carries the table and column it is about, and `-strict` reports such
+  advice only in a package whose statements touch that relation or column (schema-wide advice
+  still applies everywhere), so an enum column no longer lectures every package under
+  `-strict`. A pointer parameter used inside the then branch of `{{if .X}}` / `{{with .X}}` on
+  that very path is recognized as not NULL there (an expansion's `GuardedTrue` covers only the
+  exact path the taken guard proved, not paths below it, and the else branch proves nothing).
+  PostgreSQL: `array_agg((i.sku, i.qty)::order_item)` into `[]Item` keeps each nested row
+  field's own nullability through the cast to a named composite type, instead of discarding it
+  (a row constructor is never NULL; `array_agg` of a scalar does pass a NULL element through,
+  unaffected). A parameter compared against a domain column carries the domain (PostgreSQL
+  resolves the placeholder to the base type, so `Param.Type` is taken from the compared
+  column), so `-strict`'s "carries domain `yen` as a plain `int64`" advice reaches parameters
+  too, and a mismatch names the domain (`SQL expects email`).
+- MySQL: `-- sqlshape: not null` above a `CREATE FUNCTION` declares the function never returns
+  NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
+  or TRIGGER still refuses the directive (neither returns a value for it to describe).
+
 - PostgreSQL after a third adversarial round against a running server (8 lanes, 23 findings, each a
   regression test in `adv_*_test.go`), the failure modes first. `TRUNCATE` of a table another table's
   foreign key still references (no `CASCADE`, the referrer not in the list) is reported as certain to

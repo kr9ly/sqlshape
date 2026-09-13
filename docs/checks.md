@@ -97,7 +97,7 @@ type Order struct {
 Rejected
 
 ```sql
-SELECT id, count(*) FROM orders GROUP BY id
+SELECT id, id + 1 FROM orders
 --         ^ result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
 
 SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
@@ -107,7 +107,7 @@ SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
 Passes
 
 ```sql
-SELECT id, count(*) AS n FROM orders GROUP BY id
+SELECT id, id + 1 AS n FROM orders
 SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.customer_id
 ```
 
@@ -179,12 +179,16 @@ The branches that do not select the column leave the field nil. A field no branc
 
 #### Column and field types follow the table below
 
-Rejected
+A binding that can lose information (a `numeric` into a `float64`, a `bigint` into an `int32`, ...)
+is accepted with a note, not rejected: only a genuinely incompatible pair (a `text` column into an
+`int64` field, say) is.
+
+Passes, with a note
 
 ```go
 type Order struct {
 	ID    int64
-	Total float64 // field Total is float64 but column "total" is numeric(12,2)
+	Total float64 // field Total: numeric into float64 loses precision
 }
 ```
 
@@ -192,7 +196,7 @@ type Order struct {
 SELECT id, total FROM orders
 ```
 
-Passes
+Passes, silently
 
 ```go
 type Order struct {
@@ -231,6 +235,9 @@ SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items
  GROUP BY o.id
 ```
 
+(Swapping two adjacent fields misplaces both, not just the first: `Sku` also lands on the
+`order_item` type's column 2, "qty", so a second diagnostic names that position mismatch too.)
+
 Passes
 
 ```go
@@ -239,6 +246,12 @@ type Item struct {
 	Qty int32
 }
 ```
+
+(PostgreSQL never guarantees an array's own elements are non-NULL, even when the column holding
+the array is NOT NULL. `order_item`'s row constructor here is never NULL itself, but the checker
+does not yet have a way to say that of the array's elements, so this Passes example still carries
+a standing note: `field Items: order_item[] may contain a NULL element even though the column is
+not NULL; []Item silently receives it as a zero-valued Item with no error (use []*Item)`.)
 
 #### A single-column statement can be received by a scalar
 
@@ -352,6 +365,10 @@ type Params struct {
 }
 ```
 
+(Under `-strict`, a package that touches `orders.status` also gets that column's own enum
+advisory, `orders.status is enum order_status: a seeded lookup table ...` -- a separate finding
+from the one above, about the column rather than the parameter.)
+
 #### Nested paths and `range`
 
 `{{.Filter.Name}}` is the field `Name` of the field `Filter` of `P`. Inside
@@ -370,8 +387,14 @@ type Params struct {
 ```sql
 SELECT id FROM products
  WHERE true {{if .Filter.Name}} AND name = {{.Filter.Name}} {{end}}
-   AND sku IN ({{range $i, $it := .Items}}{{if $i}}, {{end}}{{$it.Sku}}{{end}})
+   AND (false {{range $i, $it := .Items}} OR sku = {{$it.Sku}} {{end}})
 ```
+
+A plain `sku IN ({{range}}...{{end}})` is not empty-safe: with zero `.Items`, it expands to
+`sku IN ()`, a syntax error. The checker's branch-state exploration tries every length `.Items`
+could have (0, 1, 2, ...) and reports exactly that error when it finds it. A `range` used this way
+needs a form that stays valid SQL at every length, such as the `false {{range}} OR ... {{end}}`
+above (or `WHERE true {{range}} OR (...) {{end}}`, as `testdata/src/a/a.go`'s `indexParam` does).
 
 #### Composite parameters are structs
 
@@ -427,6 +450,10 @@ type NewOrder struct {
 INSERT INTO orders (customer_id, status) VALUES ({{.CustomerID}}, {{.Status}})
 ```
 
+(`Status` here is also a non-pointer `OrderStatus`, so the "A parameter that may be NULL is a
+pointer" advisory above fires too, and so does `orders.status`'s own enum advisory: three findings
+for this one Rejected example, not one.)
+
 Passes: to use the database's default, make the column conditional. If the application always
 decides, drop the column's `DEFAULT`.
 
@@ -434,6 +461,9 @@ decides, drop the column's `DEFAULT`.
 INSERT INTO orders (customer_id {{if .Status}}, status{{end}})
 VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
 ```
+
+(The Passes example still gets `orders.status`'s enum advisory alone, the same as the previous
+section's Passes example.)
 
 ### Giving types a meaning
 
@@ -502,9 +532,9 @@ type OrderStatus string
 const (
 	Pending  OrderStatus = "pending"
 	Paid     OrderStatus = "paid"
-	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses (lookup table)
+	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses.code (lookup table)
 )
-// sqlshape: value set of order_statuses (lookup table) has label "shipped" but OrderStatus has no constant for it
+// sqlshape: value set of order_statuses.code (lookup table) has label "shipped" but OrderStatus has no constant for it
 ```
 
 Passes
@@ -575,7 +605,7 @@ Rejected
 
 ```sql
 SELECT id FROM products WHERE price + weight > 1000
---                            ^ domain mismatch: yen + gram: mixes yen with gram (cast to the base type to drop the domain)
+--                            ^ domain mismatch: yen + gram: operands must share the domain (cast to the base type to drop it)
 ```
 
 ```go
@@ -819,6 +849,7 @@ statement.
 ```sql
 -- schema.sql
 -- sqlshape: error 30001 = OrderTooLarge
+-- sqlshape: not null
 CREATE FUNCTION place_order(cust_id BIGINT UNSIGNED, amount DECIMAL(10,2)) RETURNS BIGINT
 BEGIN
   IF amount > 1000000 THEN
@@ -887,7 +918,7 @@ Rejected
 ```go
 var Find = sqlshape.One[User, struct{ ID *int64 }](`
 SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
-// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@39:else]
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@45:else]
 ```
 
 In the branch where `.ID` is nil the condition disappears and every row comes back. Finding that is
@@ -1438,7 +1469,7 @@ rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
 ```
 
 `-raw-sql=forbid` rejects every statement that does not go through sqlshape, constant or not
-(`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`).
+(`pgx.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / postgres.Copy (or list the package in -raw-sql-allow)`).
 Packages still migrating are exempted with `-raw-sql-allow=pkg/...`.
 
 ### A package references only its schemas (`-schemas`, PostgreSQL)
@@ -1480,7 +1511,7 @@ END $$;
 -- schema.sql
 CREATE VIEW order_summary AS
 SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
--- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
+-- sqlshape: schema schema.sql: view order_summary: 42703: column c.nmae does not exist (at <byte offset in schema.sql>)
 ```
 
 A MySQL trigger or stored PROCEDURE/FUNCTION body is checked the same way, once per schema:
