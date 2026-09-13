@@ -3,6 +3,7 @@ package mysql
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 
 	driver "github.com/go-sql-driver/mysql"
@@ -11,9 +12,13 @@ import (
 // ConstraintError is a constraint violation MySQL reported, mapped back to the schema:
 // Key is the constraint the way the schema names it — a UNIQUE or PRIMARY key's name, a
 // foreign key's constraint name, a CHECK constraint's name, or table.column for a NOT NULL
-// column — so that Violates(err, "users_email_key") reads like the checker's own naming.
+// column — so that Violates(err, "users_email_key") reads like the checker's own naming. A
+// trigger or routine body's own SIGNAL is a ConstraintError too: Key is the SQLSTATE (e.g.
+// "45000") when the server reports 1644 (ER_SIGNAL_EXCEPTION) or 1643 (ER_SIGNAL_NOT_FOUND),
+// or the decimal MYSQL_ERRNO (e.g. "30001") when SIGNAL set its own error number (a '45'
+// SQLSTATE), matching a schema's `-- sqlshape: error <key> = <name>` annotation.
 type ConstraintError struct {
-	Number  uint16 // MySQL's error number: 1062 duplicate key, 1452 / 1451 foreign key, 1048 NOT NULL, 3819 CHECK
+	Number  uint16 // MySQL's error number: 1062 duplicate key, 1452 / 1451 foreign key, 1048 NOT NULL, 3819 CHECK, 1644 / 1643 SIGNAL
 	Key     string
 	Message string
 	Err     *driver.MySQLError
@@ -83,7 +88,15 @@ func wrapErr(err error) error {
 		if m := reCheck.FindStringSubmatch(me.Message); m != nil {
 			c.Key = m[1]
 		}
+	case 1644, 1643: // SIGNAL / RESIGNAL (ER_SIGNAL_EXCEPTION, ER_SIGNAL_NOT_FOUND)
+		c.Key = string(me.SQLState[:])
 	default:
+		if strings.HasPrefix(string(me.SQLState[:]), "45") {
+			// SIGNAL gave its own MYSQL_ERRNO (a builtin number impersonated this way falls
+			// back to the regexes above, which is the best effort documented for that case)
+			c.Key = strconv.Itoa(int(me.Number))
+			break
+		}
 		return err
 	}
 	c.Key = strings.TrimSpace(c.Key)
