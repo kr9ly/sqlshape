@@ -118,6 +118,13 @@ func describeViolation(v analyze.Violation) string {
 		}
 		return s + code
 	}
+	if v.Function != "" {
+		s := "raised by function " + v.Function + "()"
+		if v.Name != "" {
+			s += " as " + v.Name
+		}
+		return s + code
+	}
 	if v.Name != "" {
 		return "raised as " + v.Name + code
 	}

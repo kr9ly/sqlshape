@@ -426,8 +426,18 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 	return unknown, nil
 }
 
-// call types a function of the native registry.
-func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error) {
+// funcCallParts reads a generic function call's own name and argument list, from either
+// shape the grammar builds: PTI_function_call_generic_ident_sys ("f(args)", each argument
+// wrapped in a PTI_udf_expr for a possible alias) or PTI_function_call_generic_2d
+// ("db.f(args)", a plain expr_list). db is ignored the way a table's own db qualifier
+// already is in target(): sqlshape loads a single schema, and a stored routine resolves by
+// name alone regardless of how the call qualifies it (measured on mysqld 8.4: `SELECT
+// db.f2(1)` and `SELECT f2(1)` both reach the same stored function).
+func funcCallParts(n *mysqlast.Node) (string, []mysqlast.Value) {
+	if n.Class == "PTI_function_call_generic_2d" {
+		list, _ := n.Arg("opt_expr_list").(mysqlast.List)
+		return str(n.Arg("func")), []mysqlast.Value(list)
+	}
 	name := str(n.Arg("ident"))
 	var args []mysqlast.Value
 	list, _ := n.Arg("opt_udf_expr_list").(mysqlast.List)
@@ -438,8 +448,23 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 			args = append(args, e)
 		}
 	}
+	return name, args
+}
+
+// call types a function of the native registry, or -- when no native function has that
+// name -- a schema-declared FUNCTION (storedFuncCall): measured on mysqld 8.4, an
+// unqualified call always reaches a native function of the same name first (a schema is
+// free to declare a FUNCTION named like a builtin; it is only reachable qualified,
+// `db.name(...)`, which this milestone's db-agnostic resolution cannot tell apart from an
+// unqualified one -- a corner this checker does not resolve, the native function always
+// wins here too).
+func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error) {
+	name, args := funcCallParts(n)
 	f := catalog.Lookup(name)
 	if f == nil {
+		if r := a.s.RoutineOf(schema.Function, name); r != nil {
+			return a.storedFuncCall(sc, r, args, n.Start, where)
+		}
 		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
 	}
 	if f.Min >= 0 && !f.Accepts(len(args)) {
@@ -471,6 +496,33 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 	}
 	return a.classType(f.Class, args, ts), nil
+}
+
+// storedFuncCall types a call to a schema-declared FUNCTION: its argument count must match
+// (1318, message measured: "Incorrect number of arguments for FUNCTION db.f; expected N,
+// got M" -- this checker's own message drops the db qualifier, the way its 1305 already
+// does), each argument is typed and, when it is a bare placeholder, takes the parameter's
+// own declared type (a stored function's parameters are always IN: schema.Param's own
+// doc). The result is Returns, always nullable (a stored function's RETURN can produce NULL
+// regardless of the declared type, and there is no static proof otherwise -- the same
+// reasoning a routine variable's own bodyVar.nullable always being true follows). The call
+// site is noted (noteCalledRoutine, call.go) for its own failure modes (violations(),
+// through calledRoutineViolations) and the table-overlap check (1442,
+// checkCalledRoutineOverlap).
+func (a *analyzer) storedFuncCall(sc scope, r *schema.Routine, args []mysqlast.Value, at int, where string) (typed, error) {
+	if len(args) != len(r.Params) {
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect number of arguments for FUNCTION %s; expected %d, got %d", r.Name, len(r.Params), len(args)), Code: 1318, Position: a.ph.Back(at)}
+	}
+	for i, arg := range args {
+		if _, err := a.expr(sc, arg, where); err != nil {
+			return unknown, err
+		}
+		if isParam(arg) {
+			a.setParam(arg, r.Params[i].Type)
+		}
+	}
+	a.noteCalledRoutine(r, at)
+	return typed{typ: r.Returns, known: r.Returns.Name != "", nullable: true}, nil
 }
 
 // classType is what an Item class returns over typed arguments, from the catalog: the

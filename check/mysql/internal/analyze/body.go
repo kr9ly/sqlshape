@@ -27,15 +27,25 @@ type BodyResult struct {
 	// the statement that fires it; a routine's are not consumed by this milestone (m6's
 	// concern for CALL and function-call sites), only computed correctly for it to use.
 	Violations []Violation
+	// WriteTables are the tables this body's own embedded INSERT/UPDATE/DELETE write to,
+	// named once each (walkDML): what a call site invoking this routine may collide with
+	// (1442, call.go's checkCalledRoutineOverlap) when the invoking statement itself
+	// references (reads or writes) the same table.
+	WriteTables []string
 }
 
 // BodyStatement is one DML statement's facts, with the 1-based line of the definition
 // text it starts at (0 when the position is not known), the way dialect.Definition's
 // What names a function's statement ("function pay: line 3", check/postgres's own
-// convention, mirrored here).
+// convention, mirrored here). Columns is set only for a PROCEDURE's own INTO-less top-level
+// SELECT (walkSelect): the CALL statement's own possible result columns (call.go's
+// resultColumnsOf); nil for every other kind of body statement (an INSERT/UPDATE/DELETE, a
+// SELECT ... INTO, a cursor's DECLARE ... FOR), which consume their own columns rather than
+// producing a result.
 type BodyStatement struct {
-	Facts *facts.Facts
-	Line  int
+	Facts   *facts.Facts
+	Line    int
+	Columns []Column
 }
 
 // lineAt is pos's 1-based line within the definition text (schema.Trigger.Definition /
@@ -714,11 +724,17 @@ func queryExprOf(v mysqlast.Value) mysqlast.Value {
 // the line pos falls on (its own start, the way a view's body's position is dropped to -1
 // but a routine's/trigger's statement keeps a line: check/postgres's own convention).
 func (a *analyzer) appendStatement(br *BodyResult, pos int) {
+	a.appendStatementCols(br, pos, nil)
+}
+
+// appendStatementCols is appendStatement's own work, plus cols on the recorded
+// BodyStatement (walkSelect's own PROCEDURE branch is the only caller that gives one).
+func (a *analyzer) appendStatementCols(br *BodyResult, pos int, cols []Column) {
 	if a.facts == nil {
 		return
 	}
 	a.finishFacts()
-	br.Statements = append(br.Statements, BodyStatement{Facts: a.facts, Line: a.lineAt(a.ph.Back(pos))})
+	br.Statements = append(br.Statements, BodyStatement{Facts: a.facts, Line: a.lineAt(a.ph.Back(pos)), Columns: cols})
 }
 
 // walkIf types the condition, walks the THEN statements, and continues into ELSEIF (a
@@ -1008,7 +1024,7 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 		if a.routine != nil && a.routine.Kind == schema.Function {
 			return &Error{Message: "Not allowed to return a result set from a function", Code: 1415, Position: a.ph.Back(n.Start)}
 		}
-		a.appendStatement(br, n.Start)
+		a.appendStatementCols(br, n.Start, a.columns)
 		return nil
 	}
 	if len(into) != len(a.columns) {
@@ -1066,6 +1082,16 @@ func (a *analyzer) walkDML(n *mysqlast.Node, kind facts.StmtKind, br *BodyResult
 			return &Error{Message: fmt.Sprintf("Can't update table '%s' in stored function/trigger because it is already used by statement which invoked this stored function/trigger.", name), Code: 1442, Position: a.ph.Back(n.Start)}
 		}
 	}
+	if a.write != nil {
+		if a.write.table != nil {
+			br.WriteTables = appendTableName(br.WriteTables, a.write.table.Name)
+		}
+		for _, m := range a.write.more {
+			if m.table != nil {
+				br.WriteTables = appendTableName(br.WriteTables, m.table.Name)
+			}
+		}
+	}
 	for _, v := range a.violations() {
 		if v.SQLState == "" {
 			v.SQLState = constraintSQLState(v.Code)
@@ -1074,6 +1100,17 @@ func (a *analyzer) walkDML(n *mysqlast.Node, kind facts.StmtKind, br *BodyResult
 	}
 	a.appendStatement(br, n.Start)
 	return nil
+}
+
+// appendTableName adds name to names, once (case-insensitively): BodyResult.WriteTables'
+// own bookkeeping (walkDML), read back by call.go's checkCalledRoutineOverlap.
+func appendTableName(names []string, name string) []string {
+	for _, n := range names {
+		if strings.EqualFold(n, name) {
+			return names
+		}
+	}
+	return append(names, name)
 }
 
 // ownTableWrite reports whether w writes the trigger's own table (directly, or as one of a

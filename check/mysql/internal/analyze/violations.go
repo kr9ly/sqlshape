@@ -41,6 +41,11 @@ type Violation struct {
 	// description body.go / dialect.go build).
 	Trigger string
 	Name    string
+	// Function is the stored FUNCTION whose call site (through a SELECT/WHERE/... in the
+	// analyzed statement, or the routine a CALL's own PROCEDURE runs) is where this failure
+	// mode was found: the function's/procedure's own body raised it (a SIGNAL, or one of its
+	// embedded writes), and it propagates to whatever statement called it (m6).
+	Function string
 	// SQLState is the failure's SQLSTATE class, body.go's own bookkeeping for a DECLARE ...
 	// HANDLER's absorption (SQLWARNING is class "01", NOT FOUND is class "02", SQLEXCEPTION
 	// is anything else); "" outside a trigger's/routine's body walk, where nothing absorbs.
@@ -75,30 +80,49 @@ func (v Violation) Key() string {
 // mysqld, an INSERT IGNORE whose BEFORE INSERT trigger SIGNALs, or whose trigger's own
 // embedded write collides on a constraint, still fails the whole statement).
 func (a *analyzer) violations() []Violation {
-	w := a.write
-	if w == nil || w.table == nil {
-		return nil
-	}
 	var out []Violation
-	if !w.ignore {
-		switch w.kind {
-		case facts.Insert:
-			out = a.insertViolations(w)
-		case facts.Update:
-			strict := a.s.Settings.Strict()
-			out = a.updateViolations(w.table, w.values, nil, strict)
-			for _, m := range w.more {
-				out = append(out, a.updateViolations(m.table, m.values, nil, strict)...)
-			}
-		case facts.Delete:
-			out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
-			for _, m := range w.more {
-				out = append(out, a.referencingViolations(m.table, nil, true, map[*schema.Table]bool{})...)
+	if w := a.write; w != nil && w.table != nil {
+		if !w.ignore {
+			switch w.kind {
+			case facts.Insert:
+				out = a.insertViolations(w)
+			case facts.Update:
+				strict := a.s.Settings.Strict()
+				out = a.updateViolations(w.table, w.values, nil, strict)
+				for _, m := range w.more {
+					out = append(out, a.updateViolations(m.table, m.values, nil, strict)...)
+				}
+			case facts.Delete:
+				out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
+				for _, m := range w.more {
+					out = append(out, a.referencingViolations(m.table, nil, true, map[*schema.Table]bool{})...)
+				}
 			}
 		}
+		out = append(out, a.triggerFailureModes(w)...)
 	}
-	out = append(out, a.triggerFailureModes(w)...)
+	out = append(out, a.calledRoutineViolations()...)
 	return dedupe(out)
+}
+
+// calledRoutineViolations lists what the FUNCTIONs a call site in this statement resolved
+// (expr.go's call), and the PROCEDURE a CALL statement itself runs, may raise: each one's
+// own body, analyzed once and cached (AnalyzeRoutine), already resolved to its own failure
+// modes the same way a trigger's are (body.go). Tagged with Function so the description can
+// say which one (dialect.go's describeViolation).
+func (a *analyzer) calledRoutineViolations() []Violation {
+	var out []Violation
+	for _, cr := range a.calledRoutines {
+		br, err := AnalyzeRoutine(a.s, cr.r)
+		if err != nil || br == nil {
+			continue
+		}
+		for _, v := range br.Violations {
+			v.Function = cr.r.Name
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // triggerFailureModes lists what the write's table's triggers may raise for this

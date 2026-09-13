@@ -60,4 +60,8 @@ func TestOrders(t *testing.T) {
 	if err != nil || len(totals) != 1 || totals[0].N != 1 || totals[0].Total != "12.50" {
 		t.Fatalf("totals: %+v %v", totals, err)
 	}
+	total, err := mysql.Get(ctx, db, CustomerOrderTotal, struct{ CustomerID uint64 }{alice.ID})
+	if err != nil || total.Total != "12.50" {
+		t.Fatalf("customer_order_total: %+v %v", total, err)
+	}
 }

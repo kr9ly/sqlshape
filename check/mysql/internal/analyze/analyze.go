@@ -100,6 +100,9 @@ func Analyze(s *schema.Schema, sql string) (*Result, error) {
 	if err := a.statement(root); err != nil {
 		return nil, err
 	}
+	if err := a.checkCalledRoutineOverlap(); err != nil {
+		return nil, err
+	}
 	for i := range a.params {
 		a.params[i].Source = a.paramSrc[i+1]
 	}
@@ -169,6 +172,14 @@ type analyzer struct {
 	claimed  map[*facts.Scope]bool
 	// paramSrc is the column each placeholder ($n, 1-based) met first
 	paramSrc map[int]*ParamSource
+	// calledRoutines are the schema-declared FUNCTIONs a call site in this statement
+	// resolved to (expr.go's storedFuncCall), and the PROCEDURE a CALL statement itself
+	// runs (call.go's callStmt), each once (calledSeen dedupes by pointer), in the order
+	// first met: what violations() folds in (its own failure modes) and Analyze folds in
+	// checkCalledRoutineOverlap (1442: a function writing a table this statement already
+	// reads or writes).
+	calledRoutines []calledRoutine
+	calledSeen     map[*schema.Routine]bool
 
 	// The rest is body.go's: a trigger's or routine's body walk (nil outside it). trig /
 	// trigTable are set for a trigger's body (NEW / OLD resolve against trigTable, and the
@@ -463,6 +474,8 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 		return a.update(n)
 	case "PT_delete":
 		return a.delete(n)
+	case "PT_call":
+		return a.callStmt(n)
 	}
 	return fmt.Errorf("analyze: %s is not supported yet", strings.TrimPrefix(n.Class, "PT_"))
 }

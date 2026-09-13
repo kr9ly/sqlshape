@@ -81,3 +81,10 @@ var OrderTotals = sqlshape.Query[struct {
 }, struct{}](`
 	SELECT customer_id, COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
 	  FROM orders GROUP BY customer_id ORDER BY customer_id`)
+
+// CustomerOrderTotal calls the schema's own stored FUNCTION: its result type comes from
+// RETURNS (always nullable, m6), and it has no failure mode of its own to expect (its body
+// is a single READS SQL DATA SELECT ... INTO of an aggregate, which is always exactly one
+// row, never SIGNALs).
+var CustomerOrderTotal = sqlshape.One[struct{ Total string }, struct{ CustomerID uint64 }](`
+	SELECT customer_order_total({{.CustomerID}}) AS total`)
