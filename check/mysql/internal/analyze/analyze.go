@@ -169,6 +169,21 @@ type analyzer struct {
 	claimed  map[*facts.Scope]bool
 	// paramSrc is the column each placeholder ($n, 1-based) met first
 	paramSrc map[int]*ParamSource
+
+	// The rest is body.go's: a trigger's or routine's body walk (nil outside it). trig /
+	// trigTable are set for a trigger's body (NEW / OLD resolve against trigTable, and the
+	// trigger's own timing / event decide their rules); routine is set for a routine's
+	// body (RETURN's context; nil for a trigger). vars is the block-scoped chain of
+	// declared variables and parameters (innermost first); cursors are the declared
+	// cursors of the innermost block that has one in scope; labels are the enclosing
+	// labeled blocks / loops, for LEAVE / ITERATE. sawReturn records whether the routine's
+	// body had a RETURN anywhere (a function without one is refused).
+	trig      *schema.Trigger
+	trigTable *schema.Table
+	routine   *schema.Routine
+	vars      *varScope
+	labels    []string
+	sawReturn bool
 }
 
 // write is what a statement stores, for the failure modes (violations.go).
@@ -1010,9 +1025,21 @@ func (a *analyzer) column(sc scope, v mysqlast.Value, where string) (colRef, err
 	}
 	switch n.Class {
 	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident":
-		return a.lookup(sc, "", str(n.Arg("ident")), where, n.Start)
+		name := str(n.Arg("ident"))
+		if ref, ok := a.lookupVar(name); ok {
+			return ref, nil
+		}
+		return a.lookup(sc, "", name, where, n.Start)
 	case "PTI_simple_ident_q_2d":
-		return a.lookup(sc, str(n.Arg("table")), str(n.Arg("field")), where, n.Start)
+		table, field := str(n.Arg("table")), str(n.Arg("field"))
+		if a.trig != nil && (strings.EqualFold(table, "new") || strings.EqualFold(table, "old")) {
+			col, nullable, err := a.trigRowColumn(table, field, n.Start, false)
+			if err != nil {
+				return colRef{}, err
+			}
+			return colRef{c: Column{Name: col.Name, Type: col.Type, Known: true, Nullable: nullable, base: col, baseTable: a.trigTable}}, nil
+		}
+		return a.lookup(sc, table, field, where, n.Start)
 	case "PTI_simple_ident_q_3d":
 		return a.lookup(sc, str(n.Arg("table")), str(n.Arg("field")), where, n.Start)
 	}
@@ -1197,10 +1224,12 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable}
 			if ref, ok := a.plainColumn(sc, expr); ok {
 				c.base, c.baseTable = ref.c.base, ref.c.baseTable
-				for i := range sc.rels {
-					if &sc.rels[i] == ref.rel || sc.rels[i].alias == ref.rel.alias {
-						c.leaf1, c.leafCol = i+1, ref.c.Name
-						break
+				if ref.rel != nil { // nil for a body-walk variable/NEW/OLD reference: no leaf to record
+					for i := range sc.rels {
+						if &sc.rels[i] == ref.rel || sc.rels[i].alias == ref.rel.alias {
+							c.leaf1, c.leafCol = i+1, ref.c.Name
+							break
+						}
 					}
 				}
 			}

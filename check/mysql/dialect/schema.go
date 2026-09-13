@@ -1,6 +1,7 @@
 package dialect
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/analyze"
@@ -106,7 +107,10 @@ func (m *mysql) viewResult(v *schema.View) *analyze.ViewResult {
 }
 
 // Definitions are the schema's own statements as the checker judges them: the view bodies,
-// each with the facts the schema's obligations are judged on.
+// and each trigger's / routine's body (its DML statements, one Definition per statement,
+// named the way check/postgres's own function bodies are -- "trigger x: line 3" -- so the
+// obligations see each one on its own), each with the facts the schema's obligations are
+// judged on.
 func (m *mysql) Definitions() []dialect.Definition {
 	var out []dialect.Definition
 	for _, v := range m.s.Views {
@@ -116,7 +120,38 @@ func (m *mysql) Definitions() []dialect.Definition {
 		}
 		out = append(out, dialect.Definition{What: "view " + v.Name, Facts: vr.Facts})
 	}
-	return append(out, m.viewErrs...)
+	out = append(out, m.viewErrs...)
+	for _, tg := range m.s.Triggers {
+		br, err := analyze.AnalyzeTrigger(m.s, tg)
+		out = append(out, bodyDefinitions("trigger "+tg.Name, br, err)...)
+	}
+	for _, r := range m.s.Routines {
+		what := "procedure " + r.Name
+		if r.Kind == schema.Function {
+			what = "function " + r.Name
+		}
+		br, err := analyze.AnalyzeRoutine(m.s, r)
+		out = append(out, bodyDefinitions(what, br, err)...)
+	}
+	return out
+}
+
+// bodyDefinitions turns a trigger's or a routine's body analysis into Definitions: one per
+// statement (named "<what>: line N"), or a single Definition carrying Err when the body
+// itself did not analyze (a construct the server refuses at CREATE time).
+func bodyDefinitions(what string, br *analyze.BodyResult, err error) []dialect.Definition {
+	if err != nil {
+		return []dialect.Definition{{What: what, Err: err.Error()}}
+	}
+	var out []dialect.Definition
+	for _, st := range br.Statements {
+		w := what
+		if st.Line > 0 {
+			w = fmt.Sprintf("%s: line %d", what, st.Line)
+		}
+		out = append(out, dialect.Definition{What: w, Facts: st.Facts})
+	}
+	return out
 }
 
 // Advice: what the schema does less well than it looks (-strict). A table on an engine
