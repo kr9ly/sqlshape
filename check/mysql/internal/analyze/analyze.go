@@ -184,6 +184,61 @@ type analyzer struct {
 	vars      *varScope
 	labels    []string
 	sawReturn bool
+	// raised accumulates the body's own failure modes as the walk finds them (a SIGNAL, an
+	// embedded write's own violations, a SELECT INTO's 1172): what block's own DECLARE ...
+	// HANDLER absorption filters, and what AnalyzeTrigger/AnalyzeRoutine hand back as
+	// BodyResult.Violations once the outermost block has closed.
+	raised []Violation
+	// handlerRaise is, while walking a HANDLER's own body, the exact violations this
+	// handler is catching (the block's own subset that matched its conditions): a bare
+	// RESIGNAL (no condition, no SET) re-raises them unchanged.
+	handlerRaise []Violation
+	// raises names the trigger's/routine's own `-- sqlshape: error <key> = <Name>`
+	// annotations, by key (a MYSQL_ERRNO as decimal text, or a SQLSTATE).
+	raises map[string]string
+}
+
+// condKind is which failure modes a condition (a SIGNAL's, a HANDLER's, a DECLARE
+// CONDITION's) names.
+type condKind int
+
+const (
+	condSQLState  condKind = iota // an exact 5-character SQLSTATE
+	condNumber                    // an exact MySQL error number
+	condWarning                   // SQLWARNING: SQLSTATE class "01"
+	condNotFound                  // NOT FOUND: SQLSTATE class "02"
+	condException                 // SQLEXCEPTION: any class but "00", "01", "02"
+)
+
+// condRef is one resolved condition value (sp_condition_value's _mysqlerr, or a
+// DECLARE ... CONDITION a sp_condition_name resolves to).
+type condRef struct {
+	kind     condKind
+	number   int
+	sqlstate string
+}
+
+// catches reports whether cond matches v, the way MySQL's HANDLER search does (measured:
+// SQLEXCEPTION catches a custom SQLSTATE and a schema constraint's alike; a HANDLER FOR a
+// MySQL error number matches the server's own number, whichever form raised it).
+func (c condRef) catches(v Violation) bool {
+	class := ""
+	if len(v.SQLState) >= 2 {
+		class = v.SQLState[:2]
+	}
+	switch c.kind {
+	case condNumber:
+		return v.Code == c.number
+	case condSQLState:
+		return strings.EqualFold(v.SQLState, c.sqlstate)
+	case condWarning:
+		return class == "01"
+	case condNotFound:
+		return class == "02"
+	case condException:
+		return class != "" && class != "00" && class != "01" && class != "02"
+	}
+	return false
 }
 
 // write is what a statement stores, for the failure modes (violations.go).

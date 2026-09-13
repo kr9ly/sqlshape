@@ -28,12 +28,23 @@ import (
 
 // Violation is one constraint a statement may violate.
 type Violation struct {
-	Code       int      // MySQL error number: 1062 duplicate key, 1452 foreign key (child), 1451 foreign key (parent row), 1048 NOT NULL, 3819 CHECK
-	Constraint string   // the key's, FOREIGN KEY's or CHECK's name; "" for NOT NULL
-	Table      string   // the table the constraint belongs to (the referencing table for a foreign key)
+	Code       int      // MySQL error number: 1062 duplicate key, 1452 foreign key (child), 1451 foreign key (parent row), 1048 NOT NULL, 3819 CHECK, 1442 a trigger writing its own table, 1172 SELECT INTO more than one row, 1644/1643/a custom MYSQL_ERRNO for a SIGNAL
+	Constraint string   // the key's, FOREIGN KEY's or CHECK's name; "" for NOT NULL; for a SIGNAL, the key body.go computes (the MYSQL_ERRNO as text, or the SQLSTATE)
+	Table      string   // the table the constraint belongs to (the referencing table for a foreign key, or a trigger's own table for a SIGNAL)
 	Columns    []string // constrained columns
 	RefTable   string   // foreign key: the referenced table
 	Param      int      // NOT NULL: the bare parameter whose NULL would violate (0 otherwise)
+	// Trigger / Name: a SIGNAL raised by a trigger's body (Trigger is the trigger's name);
+	// Name is the `-- sqlshape: error <key> = <Name>` annotation's name, "" when none was
+	// declared for this key. Neither is read by Key (see check/postgres/analyze/violation.go's
+	// own Key, which does not prefer Name over Constraint either -- Name only decorates the
+	// description body.go / dialect.go build).
+	Trigger string
+	Name    string
+	// SQLState is the failure's SQLSTATE class, body.go's own bookkeeping for a DECLARE ...
+	// HANDLER's absorption (SQLWARNING is class "01", NOT FOUND is class "02", SQLEXCEPTION
+	// is anything else); "" outside a trigger's/routine's body walk, where nothing absorbs.
+	SQLState string
 }
 
 const (
@@ -42,6 +53,8 @@ const (
 	codeForeignKeyRef  = 1451 // "Cannot delete or update a parent row"
 	codeNotNull        = 1048
 	codeCheckViolation = 3819
+	code1442           = 1442 // a trigger writing its own table: always fails (measured)
+	code1172           = 1172 // SELECT ... INTO with more than one row
 )
 
 // Key identifies a violation the way the expect line and mysql.Violates spell it: the
@@ -56,29 +69,109 @@ func (v Violation) Key() string {
 	return v.Table
 }
 
-// violations enumerates the constraints the analyzed statement may violate.
+// violations enumerates the constraints the analyzed statement may violate: the schema's
+// own (unique keys, foreign keys, CHECKs, NOT NULL -- absorbed by IGNORE) plus what the
+// write's table's triggers may raise for this event (never absorbed by IGNORE: measured on
+// mysqld, an INSERT IGNORE whose BEFORE INSERT trigger SIGNALs, or whose trigger's own
+// embedded write collides on a constraint, still fails the whole statement).
 func (a *analyzer) violations() []Violation {
 	w := a.write
-	if w == nil || w.table == nil || w.ignore {
+	if w == nil || w.table == nil {
 		return nil
 	}
 	var out []Violation
-	switch w.kind {
-	case facts.Insert:
-		out = a.insertViolations(w)
-	case facts.Update:
-		strict := a.s.Settings.Strict()
-		out = a.updateViolations(w.table, w.values, nil, strict)
-		for _, m := range w.more {
-			out = append(out, a.updateViolations(m.table, m.values, nil, strict)...)
-		}
-	case facts.Delete:
-		out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
-		for _, m := range w.more {
-			out = append(out, a.referencingViolations(m.table, nil, true, map[*schema.Table]bool{})...)
+	if !w.ignore {
+		switch w.kind {
+		case facts.Insert:
+			out = a.insertViolations(w)
+		case facts.Update:
+			strict := a.s.Settings.Strict()
+			out = a.updateViolations(w.table, w.values, nil, strict)
+			for _, m := range w.more {
+				out = append(out, a.updateViolations(m.table, m.values, nil, strict)...)
+			}
+		case facts.Delete:
+			out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
+			for _, m := range w.more {
+				out = append(out, a.referencingViolations(m.table, nil, true, map[*schema.Table]bool{})...)
+			}
 		}
 	}
+	out = append(out, a.triggerFailureModes(w)...)
 	return dedupe(out)
+}
+
+// triggerFailureModes lists what the write's table's triggers may raise for this
+// statement's event(s), through triggerViolations (which each trigger's own body,
+// analyzed once and cached, has already resolved with its HANDLERs absorbed -- see
+// body.go). REPLACE fires the INSERT event's triggers always and the DELETE event's when
+// it displaces a row (measured: BI, then on a collision BD/AD before AI); ON DUPLICATE KEY
+// UPDATE fires the INSERT event's triggers always and the UPDATE event's on a collision
+// (measured: BI always, then BU/AU instead of AI on a collision) -- both "may", the way
+// every other failure mode here is.
+func (a *analyzer) triggerFailureModes(w *write) []Violation {
+	var out []Violation
+	switch w.kind {
+	case facts.Insert:
+		out = append(out, triggerViolations(a.s, w.table, "INSERT")...)
+		if w.replace {
+			out = append(out, triggerViolations(a.s, w.table, "DELETE")...)
+		}
+		if w.onDuplicate != nil {
+			out = append(out, triggerViolations(a.s, w.table, "UPDATE")...)
+		}
+	case facts.Update:
+		out = append(out, triggerViolations(a.s, w.table, "UPDATE")...)
+		for _, m := range w.more {
+			out = append(out, triggerViolations(a.s, m.table, "UPDATE")...)
+		}
+	case facts.Delete:
+		out = append(out, triggerViolations(a.s, w.table, "DELETE")...)
+		for _, m := range w.more {
+			out = append(out, triggerViolations(a.s, m.table, "DELETE")...)
+		}
+	}
+	return out
+}
+
+// triggerViolations lists what t's triggers for event (INSERT/UPDATE/DELETE) may raise: each
+// matching trigger's own body, analyzed once and cached (cachedAnalyzeTrigger), already
+// resolved to its own failure modes (its SIGNALs, and what its own embedded writes may
+// violate -- including their own triggers, recursively, a cycle broken by the cache's
+// in-progress marker: see body.go).
+func triggerViolations(s *schema.Schema, t *schema.Table, event string) []Violation {
+	if t == nil {
+		return nil
+	}
+	var out []Violation
+	for _, tg := range s.Triggers {
+		if !strings.EqualFold(tg.Table, t.Name) || !strings.EqualFold(tg.Event, event) {
+			continue
+		}
+		br, err := cachedAnalyzeTrigger(s, tg)
+		if err != nil || br == nil {
+			continue
+		}
+		out = append(out, br.Violations...)
+	}
+	return dedupe(out)
+}
+
+// constraintSQLState is the SQLSTATE class a schema-constraint violation carries, for a
+// DECLARE ... HANDLER FOR SQLEXCEPTION inside a trigger/routine body to absorb it the same
+// way it absorbs a SIGNAL (see body.go's block): every one of these is a real error MySQL
+// raises, never a warning or a NOT FOUND condition, so the exact digits do not matter to
+// absorption, only that they are not "01" or "02".
+func constraintSQLState(code int) string {
+	switch code {
+	case codeDuplicateKey, codeForeignKeyRow, codeForeignKeyRef, codeNotNull, codeCheckViolation:
+		return "23000"
+	case code1442:
+		return "HY000"
+	case code1172:
+		return "42000"
+	}
+	return "HY000"
 }
 
 func (a *analyzer) insertViolations(w *write) []Violation {

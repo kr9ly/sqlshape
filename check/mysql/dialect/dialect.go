@@ -106,6 +106,20 @@ func describeViolation(v analyze.Violation) string {
 		return "NOT NULL on " + v.Table + "." + cols + code
 	case 3819:
 		return "CHECK " + v.Constraint + " on " + v.Table + " (" + cols + ")" + code
+	case 1442:
+		return "trigger " + v.Trigger + " on " + v.Table + " writes its own table" + code
+	case 1172:
+		return "SELECT ... INTO in " + v.Trigger + " may return more than one row" + code
+	}
+	if v.Trigger != "" {
+		s := "raised by trigger " + v.Trigger + " on " + v.Table
+		if v.Name != "" {
+			s += " as " + v.Name
+		}
+		return s + code
+	}
+	if v.Name != "" {
+		return "raised as " + v.Name + code
 	}
 	return v.Key() + code
 }

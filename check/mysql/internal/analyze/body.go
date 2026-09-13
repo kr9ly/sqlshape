@@ -3,10 +3,13 @@ package analyze
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 	"github.com/kr9ly/sqlshape/v2/x/placeholder"
 )
@@ -16,6 +19,14 @@ import (
 // -1 the way a view's are), ready for dialect.Definitions.
 type BodyResult struct {
 	Statements []BodyStatement
+	// Violations are the failure modes the body itself can produce once its own DECLARE ...
+	// HANDLERs have absorbed what they catch (see block, walkSignal): its SIGNALs, what its
+	// own embedded INSERT/UPDATE/DELETE may violate (including, recursively, what firing
+	// their own tables' triggers may raise), and a SELECT ... INTO that cannot be proved to
+	// return at most one row. A trigger's are what triggerViolations (violations.go) adds to
+	// the statement that fires it; a routine's are not consumed by this milestone (m6's
+	// concern for CALL and function-call sites), only computed correctly for it to use.
+	Violations []Violation
 }
 
 // BodyStatement is one DML statement's facts, with the 1-based line of the definition
@@ -36,13 +47,15 @@ func (a *analyzer) lineAt(pos int) int {
 	return strings.Count(a.text[:pos], "\n") + 1
 }
 
-// varScope is one block's declared variables (and parameters, in the outermost one) and
-// cursors, chained to the enclosing block. DECLARE ... CONDITION names are not modeled
-// (m4 does not resolve SIGNAL/HANDLER conditions; a later milestone's concern).
+// varScope is one block's declared variables (and parameters, in the outermost one),
+// cursors and named conditions, chained to the enclosing block.
 type varScope struct {
 	outer   *varScope
 	vars    map[string]bodyVar
 	cursors map[string]*cursorInfo
+	// conds are this block's DECLARE ... CONDITION FOR names, resolved to a condRef (a
+	// SQLSTATE or a MySQL error number: the only two forms sp_cond accepts).
+	conds map[string]condRef
 }
 
 // bodyVar is one declared variable or parameter: always potentially NULL (there is no NOT
@@ -113,6 +126,81 @@ func (a *analyzer) lookupCursor(name string) (*cursorInfo, bool) {
 	return nil, false
 }
 
+// declareCondition adds a DECLARE ... CONDITION FOR to the current block.
+func (a *analyzer) declareCondition(name string, ref condRef) {
+	if a.vars == nil {
+		a.pushVars()
+	}
+	if a.vars.conds == nil {
+		a.vars.conds = map[string]condRef{}
+	}
+	a.vars.conds[strings.ToLower(name)] = ref
+}
+
+// lookupCondition resolves a declared condition's name against the block chain.
+func (a *analyzer) lookupCondition(name string) (condRef, bool) {
+	for s := a.vars; s != nil; s = s.outer {
+		if c, ok := s.conds[strings.ToLower(name)]; ok {
+			return c, true
+		}
+	}
+	return condRef{}, false
+}
+
+// classifyMysqlerr reads a sp_condition_value's own `_mysqlerr` field (mysqlast folds it to
+// a mysqlast.Number for a numeric literal, or a Go string for a SQLSTATE literal or one of
+// the sp_condition_value::WARNING / NOT_FOUND / EXCEPTION constants -- measured against the
+// generated shapes).
+func classifyMysqlerr(v mysqlast.Value) condRef {
+	switch x := v.(type) {
+	case int:
+		return condRef{kind: condNumber, number: x}
+	case mysqlast.Number:
+		return condRef{kind: condNumber, number: int(x)}
+	case string:
+		switch x {
+		case "sp_condition_value::WARNING":
+			return condRef{kind: condWarning}
+		case "sp_condition_value::NOT_FOUND":
+			return condRef{kind: condNotFound}
+		case "sp_condition_value::EXCEPTION":
+			return condRef{kind: condException}
+		default:
+			return condRef{kind: condSQLState, sqlstate: strings.ToUpper(x)}
+		}
+	}
+	return condRef{}
+}
+
+// resolveCondValue resolves one condition value of a SIGNAL, a RESIGNAL or a HANDLER FOR
+// list: a bare sp_condition_value (a literal), or a sp_condition_name (a DECLARE ...
+// CONDITION FOR, resolved against the block chain).
+func (a *analyzer) resolveCondValue(v mysqlast.Value) (condRef, bool) {
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return condRef{}, false
+	}
+	switch n.Class {
+	case "sp_condition_value":
+		return classifyMysqlerr(n.Arg("_mysqlerr")), true
+	case "sp_condition_name":
+		return a.lookupCondition(str(n.Arg("name")))
+	}
+	return condRef{}, false
+}
+
+// resolveHandlerConditions resolves a HANDLER FOR's comma-separated condition list.
+func (a *analyzer) resolveHandlerConditions(v mysqlast.Value) []condRef {
+	list, _ := v.(mysqlast.List)
+	out := make([]condRef, 0, len(list))
+	for _, c := range list {
+		if ref, ok := a.resolveCondValue(c); ok {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
 // trigRowColumn resolves NEW.field / OLD.field inside a trigger body, applying the
 // server's own rules (measured on mysqld 8.4):
 //   - referencing OLD in an INSERT trigger, or NEW in a DELETE trigger, is 1363 ("There is
@@ -165,17 +253,76 @@ func (a *analyzer) trigRowColumn(qualifier, field string, at int, write bool) (*
 // for dialect.Definitions; a construct the server itself refuses at CREATE time is an
 // error instead (analyze.Error, the way Analyze's are).
 func AnalyzeTrigger(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
+	if c, ok := bodyCache.Load(tg); ok {
+		cc := c.(*bodyCached)
+		return cc.result, cc.err
+	}
+	c := &bodyCached{}
+	actual, loaded := bodyCache.LoadOrStore(tg, c)
+	if loaded {
+		// a cycle: this trigger's own analysis, further up the call stack, reaches itself
+		// (its body writes a table whose trigger writes back to this one). The in-progress
+		// placeholder has nothing yet; the outer call finishes and overwrites it once done.
+		cc := actual.(*bodyCached)
+		return cc.result, cc.err
+	}
+	br, err := analyzeTriggerBody(s, tg)
+	c.result, c.err = br, err
+	return br, err
+}
+
+// analyzeTriggerBody is AnalyzeTrigger's own work, apart from the cache: cachedAnalyzeTrigger
+// (violations.go) and AnalyzeTrigger itself both go through the cache instead.
+func analyzeTriggerBody(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
 	t := s.Table(tg.Table)
 	if t == nil {
 		return nil, fmt.Errorf("analyze: trigger %s: its table %s is not in the schema", tg.Name, tg.Table)
 	}
 	_, ph := placeholder.Rewrite(tg.Definition)
-	a := &analyzer{s: s, text: tg.Definition, ph: ph, trig: tg, trigTable: t}
+	a := &analyzer{s: s, text: tg.Definition, ph: ph, trig: tg, trigTable: t, raises: parseRaises(tg.Directives)}
 	br := &BodyResult{}
 	if err := a.walkOne(scope{}, tg.Body, br); err != nil {
 		return nil, err
 	}
+	br.Violations = dedupe(a.raised)
 	return br, nil
+}
+
+// bodyCache caches a trigger's own body analysis (AnalyzeTrigger's schema.Trigger pointer
+// is stable once the schema is loaded, the same assumption check/postgres/analyze/plpgsql.go's
+// own plBodies cache makes), so a trigger fired by several statements, or reached again
+// through its own recursive write, is walked once. The in-progress placeholder
+// (LoadOrStore's "loaded" branch) is how a cycle breaks: see AnalyzeTrigger.
+var bodyCache sync.Map // map[*schema.Trigger]*bodyCached
+
+type bodyCached struct {
+	result *BodyResult
+	err    error
+}
+
+// cachedAnalyzeTrigger is triggerViolations' own entry point (violations.go): the same
+// cache AnalyzeTrigger uses, so neither walks a trigger's body twice.
+func cachedAnalyzeTrigger(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
+	return AnalyzeTrigger(s, tg)
+}
+
+// parseRaises reads a trigger's/routine's `-- sqlshape: error <key> = <Name>` directives
+// (schema.go keeps them verbatim; this is the "later stage" that parses them) into a map
+// by key -- a MYSQL_ERRNO as decimal text, or a SQLSTATE.
+func parseRaises(directives []string) map[string]string {
+	out := map[string]string{}
+	for _, d := range directives {
+		if len(d) < 6 || !strings.EqualFold(d[:6], "error ") {
+			continue
+		}
+		rest := strings.TrimSpace(d[6:])
+		key, name, ok := strings.Cut(rest, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = strings.TrimSpace(name)
+	}
+	return out
 }
 
 // AnalyzeRoutine types r's body against s: parameters are declared variables from the
@@ -184,8 +331,27 @@ func AnalyzeTrigger(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
 // anywhere in its body is refused (1320) -- the server's own checks, not a reachability
 // analysis.
 func AnalyzeRoutine(s *schema.Schema, r *schema.Routine) (*BodyResult, error) {
+	if c, ok := routineCache.Load(r); ok {
+		cc := c.(*bodyCached)
+		return cc.result, cc.err
+	}
+	c := &bodyCached{}
+	actual, loaded := routineCache.LoadOrStore(r, c)
+	if loaded {
+		cc := actual.(*bodyCached)
+		return cc.result, cc.err
+	}
+	br, err := analyzeRoutineBody(s, r)
+	c.result, c.err = br, err
+	return br, err
+}
+
+// routineCache is AnalyzeRoutine's own cache (bodyCache's counterpart): see AnalyzeTrigger.
+var routineCache sync.Map // map[*schema.Routine]*bodyCached
+
+func analyzeRoutineBody(s *schema.Schema, r *schema.Routine) (*BodyResult, error) {
 	_, ph := placeholder.Rewrite(r.Definition)
-	a := &analyzer{s: s, text: r.Definition, ph: ph, routine: r}
+	a := &analyzer{s: s, text: r.Definition, ph: ph, routine: r, raises: parseRaises(r.Directives)}
 	a.pushVars()
 	for _, p := range r.Params {
 		a.declareVar(p.Name, p.Type)
@@ -199,6 +365,7 @@ func AnalyzeRoutine(s *schema.Schema, r *schema.Routine) (*BodyResult, error) {
 	if r.Kind == schema.Function && !a.sawReturn {
 		return nil, &Error{Message: fmt.Sprintf("No RETURN found in FUNCTION %s", r.Name), Code: 1320, Position: -1}
 	}
+	br.Violations = dedupe(a.raised)
 	return br, nil
 }
 
@@ -407,24 +574,94 @@ func flattenBinaryList(v mysqlast.Value, wrapClass string) []mysqlast.Value {
 	return []mysqlast.Value{v}
 }
 
-// walkBlock walks BEGIN ... END: a fresh block of variables/conditions/handlers/cursors,
-// then its statements, then the block closes (its DECLAREs go out of scope).
+// pendingHandler is one DECLARE ... HANDLER of the block being walked, its body deferred
+// until the block's own statements (and, so, its own failure modes) are known.
+type pendingHandler struct {
+	conds []condRef
+	body  mysqlast.Value
+}
+
+// walkBlock walks BEGIN ... END: a fresh block of variables/conditions/cursors, then its
+// statements, then the block closes (its DECLAREs go out of scope). A DECLARE ... HANDLER
+// (which MySQL requires among the block's own declarations, ahead of its statements, the
+// same position PL/pgSQL's EXCEPTION clause holds at the end of its block) is not walked
+// there: it is collected, and its scope is exactly this block's own statements, so once
+// they are walked its conditions filter what they raised (see block below) the way
+// check/postgres/analyze/plpgsql.go's own block does for an EXCEPTION list.
 func (a *analyzer) walkBlock(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	a.pushVars()
 	defer a.popVars()
+	raisedAt := len(a.raised)
 	decls, _ := n.Args[0].(mysqlast.List)
+	var handlers []pendingHandler
 	for _, d := range decls {
+		if dn, ok := d.(*mysqlast.Node); ok && dn.Class == "sp_decl_handler" {
+			handlers = append(handlers, pendingHandler{conds: a.resolveHandlerConditions(dn.Arg("conditions")), body: dn.Arg("body")})
+			continue
+		}
 		if err := a.walkOne(sc, d, br); err != nil {
 			return err
 		}
 	}
-	return a.walkOne(sc, n.Args[1], br)
+	if err := a.walkOne(sc, n.Args[1], br); err != nil {
+		return err
+	}
+	if len(handlers) == 0 {
+		return nil
+	}
+	return a.absorb(sc, raisedAt, handlers, br)
 }
 
-// walkDecl processes one DECLARE: a variable (registered, typed from the declaration),
-// a condition (not resolved -- a later milestone's concern), a handler (its condition list
-// is not resolved either; its body is walked like any other statement, since it can itself
-// hold DML/control flow), or a cursor (its query is typed once, for FETCH's column count).
+// absorb is walkBlock's own handler pass: the block's statements (from raisedAt on) may
+// have raised failure modes a HANDLER here catches; those are removed from what propagates
+// (a caught SIGNAL, or a caught constraint violation from the block's own writes, never
+// reaches the caller), then each handler's own body is walked as ordinary code (so what it
+// itself raises -- a fresh SIGNAL, a RESIGNAL -- joins back on top, subject to an
+// enclosing block's own HANDLERs in turn).
+func (a *analyzer) absorb(sc scope, raisedAt int, handlers []pendingHandler, br *BodyResult) error {
+	protected := append([]Violation(nil), a.raised[raisedAt:]...)
+	a.raised = a.raised[:raisedAt]
+	caughtBy := func(v Violation) bool {
+		for _, h := range handlers {
+			for _, c := range h.conds {
+				if c.catches(v) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, v := range protected {
+		if !caughtBy(v) {
+			a.raised = append(a.raised, v)
+		}
+	}
+	for _, h := range handlers {
+		var caught []Violation
+		for _, v := range protected {
+			for _, c := range h.conds {
+				if c.catches(v) {
+					caught = append(caught, v)
+					break
+				}
+			}
+		}
+		saved := a.handlerRaise
+		a.handlerRaise = caught
+		err := a.walkOne(sc, h.body, br)
+		a.handlerRaise = saved
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// walkDecl processes one DECLARE: a variable (registered, typed from the declaration), a
+// condition (registered against the block, for a later SIGNAL/HANDLER to resolve by name),
+// a handler (dead code along walkBlock's own path, which intercepts sp_decl_handler before
+// reaching here to defer its body -- kept as a defensive fallback), or a cursor (its query
+// is typed once, for FETCH's column count).
 func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	switch n.Class {
 	case "sp_decl_var":
@@ -441,6 +678,9 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		}
 		return nil
 	case "sp_decl_condition":
+		if ref, ok := a.resolveCondValue(n.Arg("value")); ok {
+			a.declareCondition(str(n.Arg("name")), ref)
+		}
 		return nil
 	case "sp_decl_handler":
 		return a.walkOne(sc, n.Arg("body"), br)
@@ -524,9 +764,23 @@ func (a *analyzer) walkReturn(n *mysqlast.Node) error {
 	return a.exprAt(n.Args[0], "return")
 }
 
-// walkSignal types SIGNAL/RESIGNAL's information items (m4 walks and types them; the
-// condition itself, and what a SIGNAL contributes to a failure mode, is a later
-// milestone's concern).
+// walkSignal types SIGNAL/RESIGNAL's information items and records the failure mode it
+// raises (block, above, is what absorbs it against an enclosing HANDLER).
+//
+// A SIGNAL's own condition (signal_value, sp_cond's grammar) is only ever a literal
+// SQLSTATE or a literal MySQL error number, or a sp_condition_name naming a DECLARE ...
+// CONDITION FOR one of those two (never SQLWARNING/NOT FOUND/SQLEXCEPTION, which sp_hcond
+// alone accepts); a number, bare or through a named CONDITION, is 1646 at CREATE time
+// (measured: "SIGNAL/RESIGNAL can only use a CONDITION defined with SQLSTATE"). A bare
+// RESIGNAL (no condition given) re-raises whatever the innermost enclosing HANDLER is
+// itself handling (a.handlerRaise), unchanged (measured: same number, same message) --
+// RESIGNAL with a condition is an ordinary SIGNAL instead (measured: a fresh number).
+//
+// The key (Violation.Constraint here) is the SET MYSQL_ERRNO value as decimal text when
+// the SIGNAL gives one, the SQLSTATE otherwise (mysql/errors.go's runtime uses the same
+// rule to map an error back). SQLSTATE class "01" (SQLWARNING) is never a failure mode
+// (measured: the statement succeeds); an unhandled class "02" (NOT FOUND) reports as 1643,
+// anything else unhandled and without its own MYSQL_ERRNO as 1644 (both measured).
 func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 	items, _ := n.Arg("info").(mysqlast.List)
 	for _, it := range items {
@@ -538,7 +792,62 @@ func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 			return err
 		}
 	}
+	cond := n.Arg("condition")
+	if cond == nil {
+		if n.Class == "sp_resignal" {
+			a.raised = append(a.raised, a.handlerRaise...)
+		}
+		return nil
+	}
+	ref, ok := a.resolveCondValue(cond)
+	if !ok {
+		return nil // an unresolved named condition: nothing to predict (defensive)
+	}
+	if ref.kind == condNumber {
+		return &Error{Message: "SIGNAL/RESIGNAL can only use a CONDITION defined with SQLSTATE", Code: 1646, Position: a.ph.Back(n.Start)}
+	}
+	class := ""
+	if len(ref.sqlstate) >= 2 {
+		class = ref.sqlstate[:2]
+	}
+	if class == "01" {
+		return nil // SQLWARNING: a warning, not a failure mode
+	}
+	errno, _ := signalErrno(items)
+	code, key := errno, ref.sqlstate
+	if code == 0 {
+		if class == "02" {
+			code = 1643
+		} else {
+			code = 1644
+		}
+	} else {
+		key = strconv.Itoa(errno)
+	}
+	v := Violation{Code: code, Constraint: key, SQLState: ref.sqlstate, Name: a.raises[key]}
+	if a.trig != nil {
+		v.Table, v.Trigger = a.trigTable.Name, a.trig.Name
+	}
+	a.raised = append(a.raised, v)
 	return nil
+}
+
+// signalErrno reads a SIGNAL/RESIGNAL's own `SET MYSQL_ERRNO = n` item, when there is one.
+func signalErrno(items mysqlast.List) (int, bool) {
+	for _, it := range items {
+		itn, ok := it.(*mysqlast.Node)
+		if !ok || str(itn.Arg("name")) != "CIN_MYSQL_ERRNO" {
+			continue
+		}
+		if n, ok := itn.Arg("expr").(*mysqlast.Node); ok && n.Class == "Item_int" {
+			if tok, ok := n.Arg("i").(mysqlast.Token); ok {
+				if i, err := strconv.Atoi(tok.Value); err == nil {
+					return i, true
+				}
+			}
+		}
+	}
+	return 0, false
 }
 
 // walkSet types SET's assignments: a local variable, NEW/OLD (a trigger's own rules,
@@ -710,6 +1019,16 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 			return err
 		}
 	}
+	// 1172 ("Result consisted of more than one row"): possible unless the query itself
+	// proves at most one row (x/cardinality's One argument, the same proof `LIMIT 1`
+	// satisfies); zero rows is NOT FOUND (1329, a warning, measured), never a failure.
+	if ok, _ := cardinality.AtMostOne(a.facts); !ok {
+		v := Violation{Code: code1172, Constraint: strconv.Itoa(code1172), SQLState: "42000"}
+		if a.trig != nil {
+			v.Table, v.Trigger = a.trigTable.Name, a.trig.Name
+		}
+		a.raised = append(a.raised, v)
+	}
 	a.appendStatement(br, n.Start)
 	return nil
 }
@@ -729,13 +1048,44 @@ func selectInto(n *mysqlast.Node) mysqlast.List {
 }
 
 // walkDML types an embedded INSERT/UPDATE/DELETE with its own fresh per-statement state,
-// and records its Facts among the body's Definitions (position -1, the way a view's
-// body's is).
+// records its Facts among the body's Definitions (position -1, the way a view's body's
+// is), and folds what it may violate -- including, recursively, what firing its own
+// table's triggers may raise (violations() already does, for any statement) -- into the
+// body's own raised failure modes. A trigger writing its own table is instead 1442
+// ("Can't update table ... because it is already used by statement which invoked this
+// stored function/trigger"), measured unconditionally true on mysqld 8.4 for every
+// (timing, event, own-write kind) combination: not a "may", so an Error like the server's
+// own CREATE-time refusals, not a Violation.
 func (a *analyzer) walkDML(n *mysqlast.Node, kind facts.StmtKind, br *BodyResult, run func(*mysqlast.Node) error) error {
 	a.resetStatement()
 	if err := run(n); err != nil {
 		return err
 	}
+	if a.trig != nil && a.write != nil {
+		if own, name := a.ownTableWrite(a.write); own {
+			return &Error{Message: fmt.Sprintf("Can't update table '%s' in stored function/trigger because it is already used by statement which invoked this stored function/trigger.", name), Code: 1442, Position: a.ph.Back(n.Start)}
+		}
+	}
+	for _, v := range a.violations() {
+		if v.SQLState == "" {
+			v.SQLState = constraintSQLState(v.Code)
+		}
+		a.raised = append(a.raised, v)
+	}
 	a.appendStatement(br, n.Start)
 	return nil
+}
+
+// ownTableWrite reports whether w writes the trigger's own table (directly, or as one of a
+// multi-table UPDATE/DELETE's further targets).
+func (a *analyzer) ownTableWrite(w *write) (bool, string) {
+	if w.table == a.trigTable {
+		return true, a.trigTable.Name
+	}
+	for _, m := range w.more {
+		if m.table == a.trigTable {
+			return true, a.trigTable.Name
+		}
+	}
+	return false, ""
 }
