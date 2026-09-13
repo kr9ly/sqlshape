@@ -88,7 +88,10 @@ func errorOf(err error) error {
 	return err
 }
 
-// describeViolation spells a possible violation the way the checker reports it.
+// describeViolation spells a possible violation the way the checker reports it. 1442 (a
+// trigger writing its own table) needs no case here: body.go's own-table check always
+// returns it as a hard *Error (errorOf, not a Violation this ever reaches), since it is
+// certain from the trigger's own definition alone, not a "may".
 func describeViolation(v analyze.Violation) string {
 	cols := strings.Join(v.Columns, ", ")
 	code := ", MySQL error " + strconv.Itoa(v.Code)
@@ -106,10 +109,17 @@ func describeViolation(v analyze.Violation) string {
 		return "NOT NULL on " + v.Table + "." + cols + code
 	case 3819:
 		return "CHECK " + v.Constraint + " on " + v.Table + " (" + cols + ")" + code
-	case 1442:
-		return "trigger " + v.Trigger + " on " + v.Table + " writes its own table" + code
 	case 1172:
-		return "SELECT ... INTO in " + v.Trigger + " may return more than one row" + code
+		// a 1172 always originates in a trigger's or a routine's own body (body.go's
+		// walkSelect: a plain top-level statement never reaches it), reported here either
+		// through the statement whose trigger it fires (v.Trigger) or a called routine
+		// (v.Function, calledRoutineViolations) -- a bug once left this blank ("SELECT ...
+		// INTO in  may return...") whenever it came from a routine rather than a trigger.
+		who := v.Trigger
+		if who == "" {
+			who = v.Function
+		}
+		return "SELECT ... INTO in " + who + " may return more than one row" + code
 	}
 	if v.Trigger != "" {
 		s := "raised by trigger " + v.Trigger + " on " + v.Table

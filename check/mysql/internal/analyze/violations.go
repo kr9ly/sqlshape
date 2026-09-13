@@ -165,6 +165,8 @@ func (a *analyzer) triggerFailureModes(w *write) []Violation {
 // in-progress marker: see body.go).
 func triggerViolations(s *schema.Schema, t *schema.Table, event string) []Violation {
 	if t == nil {
+		// defensive: every caller passes w.table or a moreTarget's table, both resolved
+		// (non-nil) *schema.Table values by the time a write is recorded.
 		return nil
 	}
 	var out []Violation

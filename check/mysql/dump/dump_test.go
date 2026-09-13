@@ -158,3 +158,31 @@ func TestViewOrder(t *testing.T) {
 		t.Errorf("%v", got)
 	}
 }
+
+// TestReadRoutinesAndTriggers_QueryError: a context already cancelled before the call makes
+// the listing query itself fail immediately (readRoutines' and readTriggers' own first
+// QueryContext error, as opposed to every other test here, which only exercises the success
+// path through Read/Canonical).
+func TestReadRoutinesAndTriggers_QueryError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	srv, err := mysqltest.Start(ctx, "-- sqlshape: mysql 8.4\nCREATE TABLE t (id INT PRIMARY KEY);\n")
+	if errors.Is(err, ErrNoServer) {
+		t.Skip("no mysqld on PATH (nix-shell -p mysql84)")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	cancelled, cancelNow := context.WithCancel(ctx)
+	cancelNow()
+
+	var b strings.Builder
+	if err := readRoutines(cancelled, srv.Conn(), &b); err == nil {
+		t.Error("readRoutines(cancelled context) = nil error, want one")
+	}
+	if err := readTriggers(cancelled, srv.Conn(), &b); err == nil {
+		t.Error("readTriggers(cancelled context) = nil error, want one")
+	}
+}

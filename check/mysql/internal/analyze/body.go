@@ -52,6 +52,9 @@ type BodyStatement struct {
 // schema.Routine.Definition), for BodyStatement.Line.
 func (a *analyzer) lineAt(pos int) int {
 	if pos < 0 || pos > len(a.text) {
+		// defensive: pos is always a.ph.Back of a parsed node's own Start, which Back
+		// only ever maps to -1 for a negative input (never produced here) or to an
+		// offset within a.text (the very text the node was parsed from).
 		return 0
 	}
 	return strings.Count(a.text[:pos], "\n") + 1
@@ -95,6 +98,8 @@ func (a *analyzer) popVars() {
 // declareVar adds a variable or parameter to the current (innermost) block.
 func (a *analyzer) declareVar(name string, t schema.Type) {
 	if a.vars == nil {
+		// defensive: analyzeRoutineBody and walkBlock both pushVars before anything can
+		// declare into a.vars; never observed nil here.
 		a.pushVars()
 	}
 	if a.vars.vars == nil {
@@ -106,6 +111,7 @@ func (a *analyzer) declareVar(name string, t schema.Type) {
 // declareCursor adds a cursor to the current block.
 func (a *analyzer) declareCursor(name string, cols []Column) {
 	if a.vars == nil {
+		// defensive: see declareVar's own note.
 		a.pushVars()
 	}
 	if a.vars.cursors == nil {
@@ -139,6 +145,7 @@ func (a *analyzer) lookupCursor(name string) (*cursorInfo, bool) {
 // declareCondition adds a DECLARE ... CONDITION FOR to the current block.
 func (a *analyzer) declareCondition(name string, ref condRef) {
 	if a.vars == nil {
+		// defensive: see declareVar's own note.
 		a.pushVars()
 	}
 	if a.vars.conds == nil {
@@ -158,28 +165,44 @@ func (a *analyzer) lookupCondition(name string) (condRef, bool) {
 }
 
 // classifyMysqlerr reads a sp_condition_value's own `_mysqlerr` field (mysqlast folds it to
-// a mysqlast.Number for a numeric literal, or a Go string for a SQLSTATE literal or one of
-// the sp_condition_value::WARNING / NOT_FOUND / EXCEPTION constants -- measured against the
-// generated shapes).
+// a mysqlast.Number for a numeric literal, a Go string for a SQLSTATE literal read through
+// field()'s Token.Value path, or a mysqlast.Const for the sp_condition_value::WARNING /
+// NOT_FOUND / EXCEPTION constants read through the generic ActNew {Text: ...} builder
+// (mysqlast.Builder.constant) -- measured against the generated shapes; a bug here (the
+// Const case was once missing) had HANDLER FOR SQLWARNING / NOT FOUND / SQLEXCEPTION all
+// silently resolve to the zero condRef (kind condSQLState, sqlstate ""), catching nothing a
+// real Violation (which always carries a non-empty SQLState) could ever match).
 func classifyMysqlerr(v mysqlast.Value) condRef {
 	switch x := v.(type) {
 	case int:
+		// defensive: ulong_num's own reduction (sp_cond's Args{Child:1}, no Field applied)
+		// carries the mysqlparse-level value straight through, which is mysqlast.Number,
+		// not a bare Go int; kept in case that ever changes.
 		return condRef{kind: condNumber, number: x}
 	case mysqlast.Number:
 		return condRef{kind: condNumber, number: int(x)}
 	case string:
-		switch x {
-		case "sp_condition_value::WARNING":
-			return condRef{kind: condWarning}
-		case "sp_condition_value::NOT_FOUND":
-			return condRef{kind: condNotFound}
-		case "sp_condition_value::EXCEPTION":
-			return condRef{kind: condException}
-		default:
-			return condRef{kind: condSQLState, sqlstate: strings.ToUpper(x)}
-		}
+		return classifyMysqlerrString(x)
+	case mysqlast.Const:
+		return classifyMysqlerrString(string(x))
 	}
+	// defensive: sp_condition_value's own _mysqlerr is always one of the four cases above.
 	return condRef{}
+}
+
+// classifyMysqlerrString is classifyMysqlerr's own work once the value is a plain string
+// (however it got there): one of the three keyword conditions, or a SQLSTATE literal.
+func classifyMysqlerrString(x string) condRef {
+	switch x {
+	case "sp_condition_value::WARNING":
+		return condRef{kind: condWarning}
+	case "sp_condition_value::NOT_FOUND":
+		return condRef{kind: condNotFound}
+	case "sp_condition_value::EXCEPTION":
+		return condRef{kind: condException}
+	default:
+		return condRef{kind: condSQLState, sqlstate: strings.ToUpper(x)}
+	}
 }
 
 // resolveCondValue resolves one condition value of a SIGNAL, a RESIGNAL or a HANDLER FOR
@@ -188,6 +211,8 @@ func classifyMysqlerr(v mysqlast.Value) condRef {
 func (a *analyzer) resolveCondValue(v mysqlast.Value) (condRef, bool) {
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
+		// defensive: every caller (a SIGNAL/RESIGNAL's own condition, a HANDLER FOR list's
+		// items) passes a sp_cond/sp_hcond value, always a *mysqlast.Node.
 		return condRef{}, false
 	}
 	switch n.Class {
@@ -196,6 +221,7 @@ func (a *analyzer) resolveCondValue(v mysqlast.Value) (condRef, bool) {
 	case "sp_condition_name":
 		return a.lookupCondition(str(n.Arg("name")))
 	}
+	// defensive: sp_cond/sp_hcond only ever build one of the two classes above.
 	return condRef{}, false
 }
 
@@ -264,15 +290,20 @@ func (a *analyzer) trigRowColumn(qualifier, field string, at int, write bool) (*
 // error instead (analyze.Error, the way Analyze's are).
 func AnalyzeTrigger(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
 	if c, ok := bodyCache.Load(tg); ok {
+		// a cycle (this trigger's own analysis, further up the call stack, reaches itself
+		// because its body writes a table whose trigger writes back to this one) is broken
+		// right here: LoadOrStore below already stored the in-progress placeholder before
+		// analyzeTriggerBody was entered, so a recursive call sees it now, empty
+		// (result/err unset until the outer call finishes) -- measured (TestAnalyzeTrigger_Cycle).
 		cc := c.(*bodyCached)
 		return cc.result, cc.err
 	}
 	c := &bodyCached{}
 	actual, loaded := bodyCache.LoadOrStore(tg, c)
 	if loaded {
-		// a cycle: this trigger's own analysis, further up the call stack, reaches itself
-		// (its body writes a table whose trigger writes back to this one). The in-progress
-		// placeholder has nothing yet; the outer call finishes and overwrites it once done.
+		// defensive: only a genuine data race (two goroutines calling AnalyzeTrigger on the
+		// same *schema.Trigger concurrently) reaches this; single-goroutine recursion (the
+		// cycle above) always finds the entry through the plain Load check first.
 		cc := actual.(*bodyCached)
 		return cc.result, cc.err
 	}
@@ -286,6 +317,9 @@ func AnalyzeTrigger(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
 func analyzeTriggerBody(s *schema.Schema, tg *schema.Trigger) (*BodyResult, error) {
 	t := s.Table(tg.Table)
 	if t == nil {
+		// defensive: schema.Load itself refuses a CREATE TRIGGER whose table it does not
+		// know (a Problem, not a loaded *schema.Trigger), so every *schema.Trigger
+		// AnalyzeTrigger is ever handed names a table the schema does have.
 		return nil, fmt.Errorf("analyze: trigger %s: its table %s is not in the schema", tg.Name, tg.Table)
 	}
 	_, ph := placeholder.Rewrite(tg.Definition)
@@ -335,12 +369,17 @@ func parseRaises(directives []string) map[string]string {
 // analysis.
 func AnalyzeRoutine(s *schema.Schema, r *schema.Routine) (*BodyResult, error) {
 	if c, ok := routineCache.Load(r); ok {
+		// a cycle (a routine that reaches its own AnalyzeRoutine again while its first
+		// call is still on the stack, e.g. an UPDATE calling itself in the SET value) is
+		// broken here the same way AnalyzeTrigger's own Load check is -- measured
+		// (TestAnalyzeRoutine_Cycle).
 		cc := c.(*bodyCached)
 		return cc.result, cc.err
 	}
 	c := &bodyCached{}
 	actual, loaded := routineCache.LoadOrStore(r, c)
 	if loaded {
+		// defensive: see AnalyzeTrigger's own note -- only a concurrent race reaches this.
 		cc := actual.(*bodyCached)
 		return cc.result, cc.err
 	}
@@ -435,10 +474,15 @@ func (a *analyzer) walkOne(sc scope, v mysqlast.Value, br *BodyResult) error {
 		if cmd, ok := x.Fields["sql_command"].(mysqlast.Const); ok {
 			return a.commitCheck(string(cmd), 0)
 		}
+		// defensive: every generic Struct a body statement folds to (COMMIT, XA START,
+		// and the like -- anything without a dedicated AST hook) carries its own
+		// sql_command; none observed without one.
 		return nil
 	case *mysqlast.Node:
 		return a.walkNode(sc, x, br)
 	}
+	// defensive: a body construct is always nil, a List, a Token (a bare cursor name), a
+	// *Struct or a *Node -- mysqlast never folds one to another concrete Value type here.
 	return nil
 }
 
@@ -446,6 +490,7 @@ func (a *analyzer) walkOne(sc scope, v mysqlast.Value, br *BodyResult) error {
 // (1324 "Undefined CURSOR" when it was never declared, measured on mysqld).
 func (a *analyzer) walkCursorToken(name string, at int) error {
 	if name == "" {
+		// defensive: OPEN/CLOSE's own grammar always names a cursor.
 		return nil
 	}
 	if _, ok := a.lookupCursor(name); !ok {
@@ -512,7 +557,7 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		for _, w := range flattenBinaryList(n.Args[1], "simple_when_clause_list") {
 			wn, _ := w.(*mysqlast.Node)
 			if wn == nil {
-				continue
+				continue // defensive: a simple_when_clause_list item is always a Node
 			}
 			if err := a.exprAt(wn.Args[0], "when"); err != nil {
 				return err
@@ -526,7 +571,7 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		for _, w := range flattenBinaryList(n.Args[0], "searched_when_clause_list") {
 			wn, _ := w.(*mysqlast.Node)
 			if wn == nil {
-				continue
+				continue // defensive: a searched_when_clause_list item is always a Node
 			}
 			if err := a.exprAt(wn.Args[0], "when"); err != nil {
 				return err
@@ -670,6 +715,8 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	case "sp_decl_var":
 		t, err := schema.TypeOf(n.Arg("type"))
 		if err != nil {
+			// defensive: sp_decl_var's own type shares CREATE TABLE's column-type grammar,
+			// every alternative of which schema.TypeOf recognizes.
 			return err
 		}
 		names, _ := n.Arg("names").(mysqlast.List)
@@ -684,6 +731,9 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		if ref, ok := a.resolveCondValue(n.Arg("value")); ok {
 			a.declareCondition(str(n.Arg("name")), ref)
 		}
+		// defensive when !ok: DECLARE ... CONDITION FOR's own value is always a bare
+		// sp_condition_value (sp_cond's grammar, not sp_condition_name), whose
+		// resolveCondValue case always answers ok.
 		return nil
 	case "sp_decl_handler":
 		return a.walkOne(sc, n.Arg("body"), br)
@@ -699,6 +749,7 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		a.declareCursor(str(n.Arg("name")), cols)
 		return nil
 	}
+	// defensive: walkNode only ever dispatches the four classes above to walkDecl.
 	return nil
 }
 
@@ -708,6 +759,9 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 func queryExprOf(v mysqlast.Value) mysqlast.Value {
 	n, ok := v.(*mysqlast.Node)
 	if !ok || n.Class != "PT_select_stmt" {
+		// defensive: a cursor's own query is always parsed as a select_stmt (a
+		// stand-alone SELECT, possibly a UNION, but the top production is always
+		// PT_select_stmt either way).
 		return v
 	}
 	return n.Arg("qe")
@@ -724,6 +778,8 @@ func (a *analyzer) appendStatement(br *BodyResult, pos int) {
 // BodyStatement (walkSelect's own PROCEDURE branch is the only caller that gives one).
 func (a *analyzer) appendStatementCols(br *BodyResult, pos int, cols []Column) {
 	if a.facts == nil {
+		// defensive: every caller (walkDecl's cursor branch, walkDML, walkSelect) sets
+		// a.facts itself just before appending.
 		return
 	}
 	a.finishFacts()
@@ -795,7 +851,7 @@ func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 	for _, it := range items {
 		itn, ok := it.(*mysqlast.Node)
 		if !ok {
-			continue
+			continue // defensive: opt_set_signal_information's own items are always Nodes
 		}
 		if err := a.exprAt(itn.Arg("expr"), "signal"); err != nil {
 			return err
@@ -866,12 +922,14 @@ func signalErrno(items mysqlast.List) (int, bool) {
 func (a *analyzer) walkSet(sc scope, n *mysqlast.Node) error {
 	list, ok := n.Arg("list").(*mysqlast.Node)
 	if !ok {
+		// defensive: PT_set's own "list" is always a
+		// PT_start_option_value_list_no_type Node.
 		return nil
 	}
 	for _, item := range flattenSetList(list) {
 		in, ok := item.(*mysqlast.Node)
 		if !ok {
-			continue
+			continue // defensive: flattenSetList's own head/value items are always Nodes
 		}
 		switch in.Class {
 		case "PT_set_variable":
@@ -914,7 +972,7 @@ func flattenSetList(list *mysqlast.Node) []mysqlast.Value {
 	for tail != nil {
 		tn, ok := tail.(*mysqlast.Node)
 		if !ok {
-			break
+			break // defensive: a non-empty tail is always a PT_option_value_list_head Node
 		}
 		out = append(out, tn.Arg("value"))
 		tail = tn.Arg("tail")
@@ -928,10 +986,13 @@ func flattenSetList(list *mysqlast.Node) []mysqlast.Value {
 func bipartite(v mysqlast.Value) (qual, name string) {
 	wrap, ok := v.(*mysqlast.Node)
 	if !ok || len(wrap.Args) == 0 {
+		// defensive: PT_set_variable's own "name" is always the `.name` field access
+		// this comment describes.
 		return "", ""
 	}
 	bp, ok := wrap.Args[0].(*mysqlast.Node)
 	if !ok || bp.Class != "Bipartite_name" || len(bp.Args) != 2 {
+		// defensive: the field access always wraps a Bipartite_name(qualifier, name).
 		return "", ""
 	}
 	return str(bp.Args[0]), str(bp.Args[1])
@@ -996,6 +1057,8 @@ func (a *analyzer) selectIntoTarget(v mysqlast.Value) (bool, error) {
 		}
 		return true, nil
 	}
+	// defensive: an INTO/FETCH target is always a bare name (the !ok branch above), a
+	// PT_select_var or a PT_select_sp_var.
 	return true, nil
 }
 
@@ -1046,10 +1109,13 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 func selectInto(n *mysqlast.Node) mysqlast.List {
 	qe, ok := n.Arg("qe").(*mysqlast.Node)
 	if !ok {
+		// defensive: PT_select_stmt's own "qe" is always its query expression Node.
 		return nil
 	}
 	body, ok := qe.Arg("body").(*mysqlast.Node)
 	if !ok || body.Class != "PT_query_specification" {
+		// a set operation (UNION and the like): its own top-level "qe" has no INTO of its
+		// own to report here (measured: TestSelectInto_UnionNoTopLevelInto).
 		return nil
 	}
 	l, _ := body.Arg("opt_into1").(mysqlast.List)

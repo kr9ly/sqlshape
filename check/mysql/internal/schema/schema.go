@@ -1178,6 +1178,7 @@ func (t *Table) renameColumnRefs(from, to string) {
 // trigger_follows_precedes_clause (a Struct), the body.
 func (s *Schema) createTrigger(n *mysqlast.Node, st mysqlparse.Statement, at func(mysqlast.Value) int) {
 	if len(n.Args) != 7 {
+		// defensive: trigger_tail's own grammar always builds all 7 fields.
 		s.problem(at(n), "CREATE TRIGGER: statement not understood")
 		return
 	}
@@ -1237,6 +1238,7 @@ func (s *Schema) dropTrigger(name string, ifExists bool, pos int) {
 // characteristics, body.
 func (s *Schema) createRoutine(n *mysqlast.Node, kind RoutineKind, st mysqlparse.Statement, at func(mysqlast.Value) int) {
 	if kind == Function && len(n.Args) != 7 || kind == Procedure && len(n.Args) != 5 {
+		// defensive: sp_tail's and sf_tail's own grammar always build every field.
 		s.problem(at(n), "CREATE %s: statement not understood", kind)
 		return
 	}
@@ -1267,7 +1269,7 @@ func (s *Schema) paramsOf(v mysqlast.Value, at func(mysqlast.Value) int) []Param
 	for _, p := range list(v) {
 		pn, ok := p.(*mysqlast.Node)
 		if !ok || pn.Class != "sp_param" {
-			continue
+			continue // defensive: a routine's own parameter list is always sp_param Nodes
 		}
 		out = append(out, Param{Mode: paramMode(str(pn.Arg("mode"))), Name: str(pn.Arg("name")), Type: s.typeOf(pn.Arg("type"), at)})
 	}
@@ -1291,7 +1293,7 @@ func (s *Schema) applyChistics(r *Routine, items []mysqlast.Value) {
 	for _, it := range items {
 		cn, ok := it.(*mysqlast.Node)
 		if !ok || cn.Class != "sp_chistic" {
-			continue
+			continue // defensive: a routine's own characteristics list is always sp_chistic Nodes
 		}
 		switch str(cn.Arg("kind")) {
 		case "DETERMINISTIC":
@@ -1332,6 +1334,8 @@ func spName(v mysqlast.Value) string {
 	if n, ok := v.(*mysqlast.Node); ok && n.Class == "sp_name" {
 		return str(n.Arg("name"))
 	}
+	// defensive: every caller passes a CREATE/DROP TRIGGER/PROCEDURE/FUNCTION's own
+	// sp_name, always this Node class.
 	return str(v)
 }
 

@@ -132,6 +132,8 @@ func readRoutines(ctx context.Context, db Querier, b *strings.Builder) error {
 	for rows.Next() {
 		var r routine
 		if err := rows.Scan(&r.name, &r.kind); err != nil {
+			// defensive: information_schema.ROUTINES' own two columns always scan into
+			// two strings; only a genuine connection failure reaches this in practice.
 			rows.Close()
 			return err
 		}
@@ -139,6 +141,8 @@ func readRoutines(ctx context.Context, db Querier, b *strings.Builder) error {
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		// defensive: a driver-level failure partway through the result set (a dropped
+		// connection); not deterministically reproducible without one.
 		return err
 	}
 	for _, r := range list {
@@ -151,6 +155,9 @@ func readRoutines(ctx context.Context, db Querier, b *strings.Builder) error {
 			q = "SHOW CREATE PROCEDURE `" + r.name + "`"
 		}
 		if err := db.QueryRowContext(ctx, q).Scan(&name, &sqlMode, &ddl, &cs, &cl, &dbCollation); err != nil {
+			// defensive: the routine was just listed by information_schema.ROUTINES; only
+			// a concurrent DROP between the two queries, or a connection failure, reaches
+			// this (not deterministically reproducible without one).
 			return fmt.Errorf("%s: %w", q, err)
 		}
 		b.WriteString(normalizeRoutine(ddl))
@@ -173,6 +180,7 @@ func readTriggers(ctx context.Context, db Querier, b *strings.Builder) error {
 	for rows.Next() {
 		var t trig
 		if err := rows.Scan(&t.name, &t.table, &t.timing, &t.event); err != nil {
+			// defensive: see readRoutines' own note.
 			rows.Close()
 			return err
 		}
@@ -180,6 +188,7 @@ func readTriggers(ctx context.Context, db Querier, b *strings.Builder) error {
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		// defensive: see readRoutines' own note.
 		return err
 	}
 	last := map[string]string{}
@@ -192,6 +201,8 @@ func readTriggers(ctx context.Context, db Querier, b *strings.Builder) error {
 		var name, sqlMode, ddl, cs, cl, dbCollation, created string
 		q := "SHOW CREATE TRIGGER `" + t.name + "`"
 		if err := db.QueryRowContext(ctx, q).Scan(&name, &sqlMode, &ddl, &cs, &cl, &dbCollation, &created); err != nil {
+			// defensive: see readRoutines' own note (the trigger was just listed by
+			// information_schema.TRIGGERS).
 			return fmt.Errorf("%s: %w", q, err)
 		}
 		b.WriteString(normalizeTrigger(ddl, follows))
@@ -243,6 +254,9 @@ func normalizeTrigger(ddl, follows string) string {
 	}
 	loc := forEachRow.FindStringIndex(ddl)
 	if loc == nil {
+		// defensive: SHOW CREATE TRIGGER's own text always has "FOR EACH ROW" (the only
+		// row-level trigger MySQL has); follows is only ever "" when there is nothing to
+		// insert anyway, but this guards a change in the server's own wording.
 		return ddl
 	}
 	return ddl[:loc[1]] + " FOLLOWS `" + strings.ReplaceAll(follows, "`", "``") + "`" + ddl[loc[1]:]

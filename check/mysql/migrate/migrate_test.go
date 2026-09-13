@@ -278,3 +278,41 @@ func TestParseIntents(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// TestSplit covers the package's own Split (mysqlparse.Split's own default sql_mode),
+// including a compound CREATE TRIGGER body as one statement.
+func TestSplit(t *testing.T) {
+	ddl := "CREATE TABLE t (id INT PRIMARY KEY);\n" +
+		"CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\n" +
+		"BEGIN\n" +
+		"  SET NEW.id = NEW.id;\n" +
+		"END;\n"
+	got := Split(ddl)
+	if len(got) != 2 {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0], "CREATE TABLE") {
+		t.Errorf("got %q", got[0])
+	}
+	if !strings.HasPrefix(got[1], "CREATE TRIGGER") || !strings.HasSuffix(got[1], "END") {
+		t.Errorf("got %q", got[1])
+	}
+}
+
+// TestSplitFor covers SplitFor, cutting under the schema's own declared sql_mode.
+func TestSplitFor(t *testing.T) {
+	s, err := schema.Load(`-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY);
+CREATE PROCEDURE p() BEGIN SELECT 1; END;
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := SplitFor("CREATE TABLE t (id INT PRIMARY KEY);\nCREATE PROCEDURE p() BEGIN SELECT 1; END;\n", s)
+	if len(got) != 2 {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[1], "CREATE PROCEDURE") || !strings.HasSuffix(got[1], "END") {
+		t.Errorf("got %q", got[1])
+	}
+}

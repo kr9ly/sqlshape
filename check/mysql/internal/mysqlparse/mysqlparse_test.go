@@ -315,3 +315,98 @@ func TestSplitCompoundNoBeginEnd(t *testing.T) {
 		}
 	}
 }
+
+// TestSplitCompoundTruncatedNoSemicolon: a compound CREATE whose body never reaches a ';'
+// at all (truncated mid-statement) keeps the whole remainder as one statement -- SplitMode's
+// own "ran off the end of the script" branch, the found-false side of its retry loop.
+func TestSplitCompoundTruncatedNoSemicolon(t *testing.T) {
+	script := "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nBEGIN\n  SET v = 1\n"
+	got := SplitMode(script, 0)
+	checkOffsets(t, script, got)
+	if len(got) != 1 {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].SQL, "CREATE TRIGGER") {
+		t.Errorf("got %q", got[0].SQL)
+	}
+}
+
+// TestSplitCompoundOneSemicolonNoEnd: a compound CREATE whose body has exactly one ';' (an
+// incomplete BEGIN with no END, and no further ';' to retry with) exercises the "extending
+// further also finds nothing" branch (as opposed to
+// TestSplitCompoundTruncatedNoSemicolon's own immediate found-false).
+func TestSplitCompoundOneSemicolonNoEnd(t *testing.T) {
+	script := "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nBEGIN\n  SET v = 1;\n"
+	got := SplitMode(script, 0)
+	checkOffsets(t, script, got)
+	if len(got) != 1 {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].SQL, "CREATE TRIGGER") {
+		t.Errorf("got %q", got[0].SQL)
+	}
+}
+
+// TestFindDelimiter_EscapedQuote covers findDelimiter's own backslash-escape handling
+// inside a quoted string (a ';' right after the escaped quote must stay inside the string).
+func TestFindDelimiter_EscapedQuote(t *testing.T) {
+	script := `SELECT 'a\'; b';SELECT 2;`
+	end, next, found := findDelimiter(script, 0, ";")
+	if !found {
+		t.Fatal("want found")
+	}
+	if script[:end] != `SELECT 'a\'; b'` {
+		t.Errorf("got %q", script[:end])
+	}
+	if script[next:] != "SELECT 2;" {
+		t.Errorf("got %q", script[next:])
+	}
+}
+
+// TestFindDelimiter_UnterminatedBlockComment covers findDelimiter's own unterminated `/*`
+// handling: the comment runs to the end of the script, so no ';' after it is ever found.
+func TestFindDelimiter_UnterminatedBlockComment(t *testing.T) {
+	script := "SELECT 1; /* unterminated"
+	end, next, found := findDelimiter(script, 10, ";")
+	if found {
+		t.Fatalf("want not found, got end=%d next=%d", end, next)
+	}
+	if end != len(script) || next != len(script) {
+		t.Errorf("got end=%d next=%d, want both %d", end, next, len(script))
+	}
+}
+
+// TestMatchDelimiterLine_NoSpaceAfterKeyword: "DELIMITER" with nothing (or no space)
+// following is not a DELIMITER command.
+func TestMatchDelimiterLine_NoSpaceAfterKeyword(t *testing.T) {
+	if _, _, ok := matchDelimiterLine("DELIMITER", 0); ok {
+		t.Error("want not ok (keyword alone, no token)")
+	}
+	if _, _, ok := matchDelimiterLine("DELIMITERX $$\n", 0); ok {
+		t.Error("want not ok (no space after the keyword)")
+	}
+}
+
+// TestMatchDelimiterLine_EmptyToken: "DELIMITER" followed only by trailing space (no token)
+// is not a DELIMITER command either.
+func TestMatchDelimiterLine_EmptyToken(t *testing.T) {
+	if _, _, ok := matchDelimiterLine("DELIMITER   \n", 0); ok {
+		t.Error("want not ok (no token after the spaces)")
+	}
+}
+
+// TestStripLeadingComments_LineCommentNoNewline: a `-- ` comment that runs to the end of
+// the text with no trailing newline strips to empty.
+func TestStripLeadingComments_LineCommentNoNewline(t *testing.T) {
+	if got := stripLeadingComments("-- just a comment, no newline"); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// TestStripLeadingComments_UnterminatedBlockComment: an unterminated `/*` also strips to
+// empty (nothing follows it that could be the statement proper).
+func TestStripLeadingComments_UnterminatedBlockComment(t *testing.T) {
+	if got := stripLeadingComments("/* unterminated"); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}

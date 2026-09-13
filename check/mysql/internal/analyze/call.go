@@ -86,6 +86,8 @@ func (a *analyzer) checkCalledRoutineOverlap() error {
 func spNameOf(v mysqlast.Value) (db, name string) {
 	n, ok := v.(*mysqlast.Node)
 	if !ok || n.Class != "sp_name" {
+		// defensive: the sp_name production (hooks_sp.go) is the only builder for
+		// PT_call's proc_name, so this is never actually reached.
 		return "", str(v)
 	}
 	return str(n.Arg("db")), str(n.Arg("name"))
@@ -104,6 +106,8 @@ func (a *analyzer) isCallVariableTarget(v mysqlast.Value) bool {
 	}
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
+		// defensive: every CALL argument the grammar builds is a *mysqlast.Node (an
+		// expression or a literal), never a bare Go value.
 		return false
 	}
 	switch n.Class {

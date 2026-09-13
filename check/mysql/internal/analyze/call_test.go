@@ -73,6 +73,18 @@ BEGIN
     SELECT a AS x, a * 2 AS y;
   END IF;
 END;
+
+-- two branches of the same column count but a different name in one position: still not
+-- decidable statically, resultColumnsOf's own per-column disagreement (as opposed to
+-- report_mismatched's disagreement in count).
+CREATE PROCEDURE report_mismatched_name(IN a INT)
+BEGIN
+  IF a > 0 THEN
+    SELECT a AS x;
+  ELSE
+    SELECT a AS y;
+  END IF;
+END;
 `
 
 func loadCallSchema(t *testing.T) *schema.Schema {
@@ -288,5 +300,154 @@ func TestCallStmtAloneDoesNotCollide(t *testing.T) {
 	s := loadCallSchema(t)
 	if _, err := Analyze(s, "CALL writes_widgets($1)"); err != nil {
 		t.Fatalf("got %v, want no error", err)
+	}
+}
+
+// TestCallStmtOutArgNotVariable_Identifier is 1414 through isCallVariableTarget's other
+// path: a bare identifier (not a `@var`, not a placeholder) resolves through lookupVar the
+// same way a routine body's own local variable would, but there is none in scope at a
+// top-level CALL (schema.Load bodies push their own vars only around a trigger's/routine's
+// own analysis), so it is rejected the same as any other non-variable expression.
+func TestCallStmtOutArgNotVariable_Identifier(t *testing.T) {
+	s := loadCallSchema(t)
+	_, err := Analyze(s, "CALL do_signal($1, v)")
+	ae, ok := err.(*Error)
+	if !ok || ae.Code != 1414 {
+		t.Fatalf("got %v, want a 1414 Error", err)
+	}
+}
+
+// TestNoteCalledRoutine_DedupesSameCallTwice: calling the same FUNCTION twice in one
+// statement folds its own SIGNAL into Violations once, not twice (noteCalledRoutine's own
+// doc: a.calledSeen).
+func TestNoteCalledRoutine_DedupesSameCallTwice(t *testing.T) {
+	s := loadCallSchema(t)
+	r, err := Analyze(s, "SELECT next_total($1) + next_total($2)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Violations) != 1 {
+		t.Fatalf("got %d violations, want 1 (the same routine called twice folds once): %+v", len(r.Violations), r.Violations)
+	}
+}
+
+// TestCheckCalledRoutineOverlap_UpdateWriteTarget: the invoking statement's own write
+// target (not merely something it reads, a.uses) also collides -- an UPDATE whose SET
+// value calls a function that writes the very table being updated is 1442, exercising
+// checkCalledRoutineOverlap's a.write.table branch (TestFunctionWritingReferencedTableIs1442
+// above only exercises the a.uses branch, through a SELECT).
+func TestCheckCalledRoutineOverlap_UpdateWriteTarget(t *testing.T) {
+	s := loadCallSchema(t)
+	_, err := Analyze(s, "UPDATE widgets SET v = bump_widget(v) WHERE id = $1")
+	ae, ok := err.(*Error)
+	if !ok || ae.Code != 1442 {
+		t.Fatalf("got %v, want a 1442 Error", err)
+	}
+}
+
+// TestCheckCalledRoutineOverlap_MultiTableWriteTarget: a multi-table UPDATE's second write
+// target (w.more, not w.table -- the first one assigned) also collides, when a called
+// function writes it.
+func TestCheckCalledRoutineOverlap_MultiTableWriteTarget(t *testing.T) {
+	s := loadCallSchema(t)
+	text := callSchema + `
+CREATE TABLE gadgets (
+  id INT NOT NULL PRIMARY KEY,
+  v INT NOT NULL
+);
+`
+	s2, err := schema.Load(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s2.Problems) > 0 {
+		t.Fatalf("schema problems: %v", s2.Problems)
+	}
+	_, err = Analyze(s2, "UPDATE gadgets g, widgets w SET g.v = $1, w.v = bump_widget(w.v) WHERE g.id = w.id")
+	ae, ok := err.(*Error)
+	if !ok || ae.Code != 1442 {
+		t.Fatalf("got %v, want a 1442 Error (bump_widget writes widgets, gadgets' second write target)", err)
+	}
+	_ = s // loadCallSchema's own schema is unused here; s2 carries the extra table
+}
+
+// TestCallStmtArgExprError: an IN argument's own expression can fail to type (here an
+// unknown FUNCTION call), and callStmt returns that error as-is (a.expr's own, not
+// wrapped or replaced).
+func TestCallStmtArgExprError(t *testing.T) {
+	s := loadCallSchema(t)
+	_, err := Analyze(s, "CALL do_signal(no_such_function(), @out)")
+	ae, ok := err.(*Error)
+	if !ok || ae.Code != 1305 {
+		t.Fatalf("got %v, want the argument expression's own 1305 Error", err)
+	}
+}
+
+// TestCallStmtBrokenBody: CALL of a procedure whose own body fails to analyze (here LEAVE
+// with no enclosing label, 1308) surfaces that error directly -- unlike
+// checkCalledRoutineOverlap's own best-effort skip (TestCheckCalledRoutineOverlap_BrokenBodySwallowsError),
+// callStmt itself needs the body's result columns, so it cannot proceed without one. This
+// procedure is not part of callSchema (loaded against a real mysqld by
+// call_violations_server_test.go), since the server itself refuses LEAVE with no matching
+// label at CREATE time -- schema.Load, which never runs a body through mysqld, tolerates it
+// as a Problem-free load, deferring the check to AnalyzeRoutine.
+func TestCallStmtBrokenBody(t *testing.T) {
+	text := `-- sqlshape: mysql 8.4
+CREATE PROCEDURE broken_proc(IN x INT)
+BEGIN
+  LEAVE nowhere;
+END;
+`
+	s, err := schema.Load(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) > 0 {
+		t.Fatalf("schema problems: %v", s.Problems)
+	}
+	_, err = Analyze(s, "CALL broken_proc($1)")
+	ae, ok := err.(*Error)
+	if !ok || ae.Code != 1308 {
+		t.Fatalf("got %v, want the body's own 1308 Error", err)
+	}
+}
+
+// TestCallStmtResultColumnsMismatchedNames: same column count in both branches, but a
+// different name in one position -- resultColumnsOf's own per-column disagreement, distinct
+// from TestCallStmtResultColumnsMismatchedShapes's count disagreement.
+func TestCallStmtResultColumnsMismatchedNames(t *testing.T) {
+	s := loadCallSchema(t)
+	_, err := Analyze(s, "CALL report_mismatched_name($1)")
+	ae, ok := err.(*Error)
+	if !ok || ae.Code != 0 {
+		t.Fatalf("got %v, want the checker's own Error (Code 0)", err)
+	}
+}
+
+// TestCheckCalledRoutineOverlap_BrokenBodySwallowsError: a called function whose own body
+// fails to analyze (a construct the server refuses at CREATE time, here an unterminated
+// FUNCTION with no RETURN) cannot be asked whether it writes an overlapping table --
+// checkCalledRoutineOverlap skips it (the body's own error is reported separately, through
+// dialect.Schema.Definitions, not duplicated here).
+func TestCheckCalledRoutineOverlap_BrokenBodySwallowsError(t *testing.T) {
+	text := `-- sqlshape: mysql 8.4
+CREATE TABLE widgets (
+  id INT NOT NULL PRIMARY KEY,
+  v INT NOT NULL
+);
+CREATE FUNCTION broken_fn(x INT) RETURNS INT
+BEGIN
+  DECLARE y INT DEFAULT 0;
+END;
+`
+	s, err := schema.Load(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) > 0 {
+		t.Fatalf("schema problems: %v", s.Problems)
+	}
+	if _, err := Analyze(s, "SELECT v, broken_fn(v) FROM widgets WHERE id = $1"); err != nil {
+		t.Fatalf("got %v, want no error (the broken body is skipped, not propagated as a 1442 false positive)", err)
 	}
 }
