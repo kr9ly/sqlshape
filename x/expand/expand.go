@@ -413,7 +413,7 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 			if err != nil {
 				return "", nil, false
 			}
-			return "if:" + p.String(), p, true
+			return "if:" + p.String() + fmt.Sprint(s.iter), p, true
 		})
 	case *parse.WithNode:
 		p, err := x.pipePath(v.Pipe, states[0], int(v.Pos))
@@ -432,7 +432,7 @@ func (x *expander) node(n parse.Node, states []*state) ([]*state, error) {
 			if err != nil {
 				return "", nil, false
 			}
-			return "with:" + p.String(), p, true
+			return "with:" + p.String() + fmt.Sprint(s.iter), p, true
 		})
 	case *parse.RangeNode:
 		return x.rangeNode(v, states)
@@ -538,10 +538,16 @@ func thenElse(then bool) string {
 }
 
 // rangeNode expands {{range}} as 0, 1 and 2 iterations. States that range over the same
-// resolved path as an earlier {{range}} in this expansion (state.decisions["range:<path>"])
-// are tied to that earlier occurrence's iteration count instead of being re-branched into
-// their own independent 0/1/2, for the same reason if/with ties repeated conditions: two
-// reads of one path always agree.
+// resolved path as an earlier {{range}} in this expansion, in the same range iteration
+// context (state.decisions["range:<path><iter>"], iter disambiguating an outer range's
+// current element the way param does for $n), are tied to that earlier occurrence's
+// iteration count instead of being re-branched into their own independent 0/1/2, for the
+// same reason if/with ties repeated conditions: two reads of one path in the same element
+// always agree. A path read again in a *different* element of an outer range (or an
+// enclosing {{if}}/{{with}} branch iterating separately) is not tied to it: each element
+// may hold a different value, so an {{if .Flag}} (or a nested {{range}}) inside
+// {{range .Items}} varies independently per element -- iter, part of the key, keeps that
+// distinct from the top-level tying of a path read twice outside any range.
 func (x *expander) rangeNode(r *parse.RangeNode, states []*state) ([]*state, error) {
 	type group struct {
 		path   Path
@@ -554,7 +560,7 @@ func (x *expander) rangeNode(r *parse.RangeNode, states []*state) ([]*state, err
 		if err != nil {
 			return nil, err
 		}
-		key := p.String()
+		key := p.String() + fmt.Sprint(s.iter)
 		g, ok := byKey[key]
 		if !ok {
 			g = &group{path: p}

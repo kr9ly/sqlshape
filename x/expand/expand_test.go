@@ -561,3 +561,39 @@ func TestGuardedTrueRangeNotGuarded(t *testing.T) {
 		}
 	}
 }
+
+// TestConditionInsideRangeVariesPerIteration: an {{if}} reading a path inside a
+// {{range}}'s body varies independently per element -- ties only apply within one
+// iteration, never across iterations, since each element may hold a different value.
+func TestConditionInsideRangeVariesPerIteration(t *testing.T) {
+	res, err := Expand(`{{range .Items}}{{if .Flag}}Y{{else}}N{{end}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range res.Expansions {
+		got = append(got, e.SQL)
+	}
+	sort.Strings(got)
+	// 0, 1 (Y or N) and 2 iterations (every YN combination), not just the diagonal
+	// (YY/NN) a same-decision-across-iterations bug would produce.
+	want := []string{"", "N", "NN", "NY", "Y", "YN", "YY"}
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("expansions = %v, want %v", got, want)
+	}
+}
+
+// TestConditionInsideRangeTiedWithinIteration: two reads of the same path within the same
+// range element still tie, exactly as they do outside any range.
+func TestConditionInsideRangeTiedWithinIteration(t *testing.T) {
+	res, err := Expand(`{{range .Items}}{{if .Flag}}a{{end}}{{if .Flag}}b{{end}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Expansions {
+		if strings.Count(e.SQL, "a") != strings.Count(e.SQL, "b") {
+			t.Errorf("within one element, the repeated .Flag disagreed with itself: %q", e.SQL)
+		}
+	}
+}
