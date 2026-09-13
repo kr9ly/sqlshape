@@ -83,9 +83,9 @@ INSERTそのものを消すと、そのテーブルは普通のテーブルに�
 
 MySQLでは両側をサーバ自身の描き方で読む。全部の表とビューに`SHOW CREATE TABLE` / `SHOW CREATE VIEW`をかけ、`schema.sql`を読むのと同じローダーで読む。比較されるのは`schema.sql`の書き方ではなくMySQLが保持している定義なので、`INT`と`int(11)`、`0`と書いた既定値と`'0'`で保持されたもの、サーバが名前を付けたキー（`orders_ibfk_1`、`orders_chk_1`）は差分にならない。目標側の正準形は、`-db`のサーバ上に一時データベース（`sqlshape_scratch_<乱数>`）を作って`schema.sql`を適用し、読み返してから落として得る。マイグレーションの対象そのもののサーバが、そのバージョンと設定（`-- sqlshape: server`）で正規化するということである。`-from`（テキスト同士、サーバ無し）では`PATH`の`mysqld`を使う。
 
-比較するのはオブジェクトごとに、表（エンジン・文字集合・照合・コメント）、列（型、サーバが綴った定義全体、位置。MySQLは列を並べ替えられるので、順序の違いは差分であり、計画は`MODIFY COLUMN ... AFTER`で直す）、キー、外部キー、CHECK制約、ビュー。比較しないのは、ローダーが読まないトリガ・ストアドプロシージャ・イベントと、MySQLのローダーがまだ知らないseed行。
+比較するのはオブジェクトごとに、表（エンジン・文字集合・照合・コメント）、列（型、サーバが綴った定義全体、位置。MySQLは列を並べ替えられるので、順序の違いは差分であり、計画は`MODIFY COLUMN ... AFTER`で直す）、キー、外部キー、CHECK制約、ビュー、そしてトリガとストアドプロシージャ・関数（`SHOW CREATE TRIGGER` / `SHOW CREATE PROCEDURE` / `SHOW CREATE FUNCTION`で読み戻し、DEFINERを落とした定義テキストで比較する）。比較しないのは、ローダーが読まない`EVENT`と、MySQLのローダーがまだ知らないseed行。
 
-計画はMySQL自身の定義を使う。新しい表は正準の`CREATE TABLE`、変わった列は目標の定義による`ALTER TABLE ... MODIFY COLUMN`、変わったキー・外部キー・CHECKは`DROP`と`ADD`、変わったビューは`CREATE OR REPLACE VIEW`。消える表は、それを参照する外部キーを先に落とす。`-- @migrate`の宣言は同じだが1点だけ違う。MySQLではENUMは列の型なので、`enum`は列を名指す（`-- @migrate enum orders.status: drop 'canceled' using 'cancelled'`）。計画は型を狭める前に行を更新する。
+計画はMySQL自身の定義を使う。新しい表は正準の`CREATE TABLE`、変わった列は目標の定義による`ALTER TABLE ... MODIFY COLUMN`、変わったキー・外部キー・CHECKは`DROP`と`ADD`、変わったビューは`CREATE OR REPLACE VIEW`。変わった、または消えるトリガ・プロシージャ・関数は`DROP`してから`CREATE`する（MySQLには`CREATE OR REPLACE TRIGGER`が無い）。トリガの`DROP`は表のDROPより前に出す（表ごと消えるトリガは`DROP TABLE`が黙って持っていくので対象外）。ルーチンの`CREATE`はビューより前、かつ表より前に出す（ビューが関数を呼ぶことがある）。トリガの`CREATE`はbackfillの後に出す。新しく足したトリガがマイグレーション自身の書き込みで発火しないためである。消える表は、それを参照する外部キーを先に落とす。`-- @migrate`の宣言は同じだが1点だけ違う。MySQLではENUMは列の型なので、`enum`は列を名指す（`-- @migrate enum orders.status: drop 'canceled' using 'cancelled'`）。計画は型を狭める前に行を更新する。
 
 `apply`はDDLを1文ずつ実行する。MySQLのDDLは暗黙にコミットされるのでスクリプトはトランザクションにならず、`-no-transaction`は効かない。ある文が失敗したら、`apply`はどの文かと、その前の何文が適用済みかを言う。その状態から`sqlshape diff`をかければ残りが出る。
 

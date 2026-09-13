@@ -61,7 +61,7 @@ func TestOrders(t *testing.T) {
 		t.Fatalf("totals: %+v %v", totals, err)
 	}
 	total, err := mysql.Get(ctx, db, CustomerOrderTotal, struct{ CustomerID uint64 }{alice.ID})
-	if err != nil || total.Total != "12.50" {
+	if err != nil || total.Total == nil || *total.Total != "12.50" {
 		t.Fatalf("customer_order_total: %+v %v", total, err)
 	}
 }

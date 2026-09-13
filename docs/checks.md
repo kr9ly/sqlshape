@@ -682,7 +682,7 @@ The names an unnamed constraint gets, and the keys of the failures no constraint
 trigger's error, a view's `WITH CHECK OPTION`), are each database's:
 [PostgreSQL's](postgres.md#constraint-names), [MySQL's](mysql.md#constraint-names-and-failure-modes).
 
-#### Name the errors a trigger raises (PostgreSQL)
+#### Name the errors a trigger raises
 
 The checker reads a PL/pgSQL trigger body, so a `RAISE EXCEPTION ... USING ERRCODE = 'P0401'`
 inside it already adds `P0401` to the failure modes (a `RAISE` without `ERRCODE` is `P0001`).
@@ -706,6 +706,30 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 
 The SQLSTATE joins the failure modes of the statements on the trigger's table for the events it
 fires on (here INSERT and UPDATE).
+
+MySQL reads a trigger body the same way, and its own `SIGNAL` takes the annotation's place:
+
+```sql
+-- schema.sql
+-- sqlshape: error 30001 = OrderTooLarge
+CREATE TRIGGER order_size BEFORE INSERT ON orders FOR EACH ROW
+BEGIN
+  IF NEW.total > 1000000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'order too large', MYSQL_ERRNO = 30001;
+  END IF;
+END;
+```
+
+```sql
+-- sqlshape: expect 30001, fk_orders_customer
+INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
+```
+
+The expect line and `mysql.Violates` still read the key MySQL gives the SIGNAL -- the decimal
+`MYSQL_ERRNO` when it sets one (`30001`), else the SQLSTATE (`45000`) -- not the annotation's name:
+the name only decorates the diagnostic (`raised by trigger order_size on orders as
+OrderTooLarge`). What the key is when the SIGNAL sets no `MYSQL_ERRNO`, and the numbers a `SELECT
+... INTO` and a trigger writing its own table carry, are [mysql.md's](mysql.md#triggers-and-stored-routines).
 
 #### PL/pgSQL statements that fail on their own (PostgreSQL)
 
@@ -741,6 +765,33 @@ SELECT place_order({{.CustomerID}}, {{.Note}})
 
 A NOT NULL the body blames on a parameter is traced to the call's argument. A `STRICT` function is
 not called with a NULL, so that argument's violation is dropped.
+
+MySQL calls a stored FUNCTION or a `CALL`ed PROCEDURE the same way: the body's SIGNALs, the
+constraints its own writes can violate and the triggers those writes fire reach the calling
+statement.
+
+```sql
+-- schema.sql
+-- sqlshape: error 30001 = OrderTooLarge
+CREATE FUNCTION place_order(cust_id BIGINT UNSIGNED, amount DECIMAL(10,2)) RETURNS BIGINT
+BEGIN
+  IF amount > 1000000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'order too large', MYSQL_ERRNO = 30001;
+  END IF;
+  INSERT INTO orders (customer_id, total) VALUES (cust_id, amount);
+  RETURN LAST_INSERT_ID();
+END;
+```
+
+```sql
+SELECT place_order({{.CustomerID}}, {{.Total}})
+--     ^ may violate 30001 (raised by function place_order() as OrderTooLarge, MySQL error 30001);
+--       add `-- sqlshape: expect 30001` to the template or make it impossible
+```
+
+What is MySQL's about it -- a wrong argument count (1318), a function writing a table its own
+caller reads or writes (1442, on every execution), `CALL`'s own `OUT` argument and result-column
+rules -- is [mysql.md's](mysql.md#triggers-and-stored-routines).
 
 ### Returning one row (`One`)
 
@@ -1385,6 +1436,12 @@ CREATE VIEW order_summary AS
 SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
 -- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
 ```
+
+A MySQL trigger or stored PROCEDURE/FUNCTION body is checked the same way, once per schema:
+`NEW`/`OLD`, `DECLARE`d variables and parameters, control flow, `SELECT ... INTO`, cursors,
+`CALL` and `SIGNAL`/`RESIGNAL` are all in scope; what the server itself refuses when the body is
+created is reported as a schema problem too. What is MySQL's about the body -- the constraint
+names and error numbers, the SIGNAL key rules -- is [mysql.md's](mysql.md#triggers-and-stored-routines).
 
 Row-level security policies are checked here too: a `CREATE POLICY` predicate must be boolean,
 contain no aggregates or window functions, and respect domain units. A policy on a table whose row

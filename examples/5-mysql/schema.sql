@@ -37,6 +37,6 @@ CREATE FUNCTION customer_order_total(cust_id BIGINT UNSIGNED) RETURNS DECIMAL(10
 READS SQL DATA
 BEGIN
   DECLARE result DECIMAL(10,2);
-  SELECT COALESCE(SUM(total), 0) INTO result FROM orders WHERE customer_id = cust_id;
+  SELECT SUM(total) INTO result FROM orders WHERE customer_id = cust_id;
   RETURN result;
 END;

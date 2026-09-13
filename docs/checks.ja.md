@@ -582,7 +582,7 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 
 失敗モードのキーは、データベースが制約に付ける名前か、NOT NULLなら`table.column`である。診断・expect行・実行時エラーで同じ文字列になる。名前を付けなかった制約に付く名前と、制約名を持たない失敗（トリガのエラー、ビューの`WITH CHECK OPTION`）のキーはデータベースごとに違う。[PostgreSQL](postgres.ja.md#制約の名前)、[MySQL](mysql.ja.md#制約名と失敗モード)。
 
-#### トリガーが送出するエラーには名前を付ける（PostgreSQL）
+#### トリガーが送出するエラーには名前を付ける
 
 検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。注釈はそのコードに名前を付けるためのもので、expect行と`Violates`でその名前を使えるようになる:
 
@@ -603,6 +603,26 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
 トリガーが付いているテーブルへの、トリガーが発火するイベント（この例ではINSERTとUPDATE）の失敗モードに、そのSQLSTATEが加わる。
+
+MySQLもトリガー本体を同じように読み、注釈の代わりになるのは自前の`SIGNAL`である:
+
+```sql
+-- schema.sql
+-- sqlshape: error 30001 = OrderTooLarge
+CREATE TRIGGER order_size BEFORE INSERT ON orders FOR EACH ROW
+BEGIN
+  IF NEW.total > 1000000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'order too large', MYSQL_ERRNO = 30001;
+  END IF;
+END;
+```
+
+```sql
+-- sqlshape: expect 30001, fk_orders_customer
+INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
+```
+
+expect行と`mysql.Violates`が読むのは、SIGNALにMySQL自身が付けるキー——`MYSQL_ERRNO`を設定していればその10進表記（`30001`）、無ければSQLSTATE（`45000`）——であって、注釈の名前ではない。名前は診断文の飾り（`raised by trigger order_size on orders as OrderTooLarge`）にしか使わない。`MYSQL_ERRNO`を設定しないときのキー、`SELECT ... INTO`とトリガーが自分の表に書く場合の番号は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
 
 #### RAISE無しで失敗するPL/pgSQL文（PostgreSQL）
 
@@ -626,6 +646,29 @@ SELECT place_order({{.CustomerID}}, {{.Note}})
 ```
 
 補足。本体でパラメータに由来するとわかったNOT NULLは、呼び出し側の引数まで辿られる。`STRICT`な関数はNULLでは呼ばれないので、その引数からの違反は候補から外れる。
+
+MySQLもストアドFUNCTIONの呼び出しと`CALL`されるPROCEDUREを同じに扱う。本体のSIGNAL、本体自身の書き込みが違反しうる制約、その書き込みが発火させるトリガーが、呼び出した文まで届く。
+
+```sql
+-- schema.sql
+-- sqlshape: error 30001 = OrderTooLarge
+CREATE FUNCTION place_order(cust_id BIGINT UNSIGNED, amount DECIMAL(10,2)) RETURNS BIGINT
+BEGIN
+  IF amount > 1000000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'order too large', MYSQL_ERRNO = 30001;
+  END IF;
+  INSERT INTO orders (customer_id, total) VALUES (cust_id, amount);
+  RETURN LAST_INSERT_ID();
+END;
+```
+
+```sql
+SELECT place_order({{.CustomerID}}, {{.Total}})
+--     ^ may violate 30001 (raised by function place_order() as OrderTooLarge, MySQL error 30001);
+--       add `-- sqlshape: expect 30001` to the template or make it impossible
+```
+
+MySQL固有のもの——引数の数が違う場合(1318)、呼び出し側自身が読むか書く表に関数自身が書く場合(1442、実行のたびに)、`CALL`のOUT引数と結果列の規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
 
 ### 1行だけ返す（`One`）
 
@@ -1101,6 +1144,8 @@ CREATE VIEW order_summary AS
 SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
 -- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
 ```
+
+MySQLのトリガやストアドPROCEDURE / FUNCTIONの本体も、スキーマごとに1回、同じように検査される。`NEW` / `OLD`、`DECLARE`した変数や引数、制御構造、`SELECT ... INTO`、カーソル、`CALL`、`SIGNAL` / `RESIGNAL`がスコープに入る。本体の作成時にサーバ自身が拒むものもスキーマの問題として報告される。本体についてMySQL固有のもの——制約名とエラー番号、SIGNALのキーの規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
 
 補足。行レベルセキュリティのポリシーもここで検査される。`CREATE POLICY`の条件式はboolean型で、集約やウィンドウ関数を含まず、ドメインの単位を守っていなければならない。行セキュリティを有効にしていないテーブルにポリシーがあれば報告する。ポリシーの条件を文の側で繰り返すことは要求しない。絞り込むのはデータベースの仕事である。
 

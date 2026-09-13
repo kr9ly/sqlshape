@@ -41,6 +41,7 @@ type Order struct {
 type NewCustomer struct{ Email, Name string }
 
 var CreateCustomer = sqlshape.Query[struct{}, NewCustomer](`
+-- sqlshape: expect customers_email_key
 	INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}})`)
 
 var CustomerByEmail = sqlshape.One[Customer, struct{ Email string }](`
@@ -52,7 +53,13 @@ type NewOrder struct {
 	Note       *string
 }
 
+// CreateOrder's failure modes reach past its own table: orders_before_insert (a BEFORE
+// INSERT trigger) SIGNALs 30001 when NEW.total is too large, named OrderTotalTooLarge by
+// the `-- sqlshape: error` line above the trigger, and its own INSERT INTO order_audit may
+// violate that table's NOT NULL columns -- both become failure modes of the statement that
+// fires the trigger, the way the trigger's own constraints do.
 var CreateOrder = sqlshape.Query[struct{}, NewOrder](`
+-- sqlshape: expect 30001, fk_orders_customer, orders_total_check, order_audit.customer_id, order_audit.total
 	INSERT INTO orders (customer_id, total, note) VALUES ({{.CustomerID}}, {{.Total}}, {{.Note}})`)
 
 type ListOrdersParams struct {
@@ -83,8 +90,10 @@ var OrderTotals = sqlshape.Query[struct {
 	  FROM orders GROUP BY customer_id ORDER BY customer_id`)
 
 // CustomerOrderTotal calls the schema's own stored FUNCTION: its result type comes from
-// RETURNS (always nullable, m6), and it has no failure mode of its own to expect (its body
-// is a single READS SQL DATA SELECT ... INTO of an aggregate, which is always exactly one
-// row, never SIGNALs).
-var CustomerOrderTotal = sqlshape.One[struct{ Total string }, struct{ CustomerID uint64 }](`
+// RETURNS, always nullable to the checker regardless of the declared type or the body
+// (there is no static proof otherwise, and here the body's own SUM is genuinely NULL for a
+// customer with no orders). The call has no failure mode of its own to expect: its body is
+// a single READS SQL DATA SELECT ... INTO of an aggregate without GROUP BY, which is always
+// exactly one row (never NOT FOUND, never SIGNALs).
+var CustomerOrderTotal = sqlshape.One[struct{ Total *string }, struct{ CustomerID uint64 }](`
 	SELECT customer_order_total({{.CustomerID}}) AS total`)

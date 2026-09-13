@@ -62,11 +62,59 @@ release it is a candidate for.
   `schema.sql`; the target is canonicalized in a scratch database on the `-db` server (dropped when
   done), or on a `mysqld` from `PATH` with `-from`. Compared: tables, columns (their position
   included, which the plan settles with `MODIFY COLUMN ... AFTER`), keys, foreign keys, checks and
-  views; not triggers, procedures or seeded rows. The plan emits MySQL's own definitions; `-- @migrate`
+  views; not seeded rows. The plan emits MySQL's own definitions; `-- @migrate`
   is the same grammar, with `enum` naming the ENUM column. `apply` runs statement by statement
   (MySQL's DDL commits implicitly) and reports the statement that failed. The MySQL analyzer now
   rejects an expression the server rejects in an INSERT's or UPDATE's value (`SET total = nope`,
   1054) instead of typing it as unknown.
+- MySQL: `CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION` (`DEFINER`, `IF NOT EXISTS`, the
+  characteristics), and `DROP` / `ALTER` of each, are read by the schema loader with no `DELIMITER`
+  needed (a compound body's own `;` is read as one statement; a mysql-client `DELIMITER x` line is
+  read too), the server's own CREATE-time refusals reported as problems (no such table 1146,
+  already exists 1359 / 1304, no such trigger or routine 1360 / 1305, no such `FOLLOWS` /
+  `PRECEDES` anchor 3011); `DROP TABLE` takes a table's triggers, `RENAME TABLE` moves them.
+  `-- sqlshape: error <key> = <Name>` above a trigger or routine names its failure mode, the way
+  it already does for PostgreSQL. Migrations read triggers and routines back with `SHOW CREATE
+  TRIGGER` / `PROCEDURE` / `FUNCTION` (`DEFINER` dropped; a trigger's `FOLLOWS` synthesized from
+  `information_schema` since `SHOW CREATE TRIGGER` never spells one), diff compares them by
+  definition text, and the plan replaces a changed one with `DROP` + `CREATE` (MySQL has no
+  `CREATE OR REPLACE TRIGGER`) in dependency order: a trigger's `DROP` before its table's, a
+  routine's `CREATE` before the views and tables, a trigger's `CREATE` after the backfills so it
+  does not fire on the migration's own writes.
+- MySQL: the checker reads trigger and stored routine bodies once per schema (cached, so a
+  routine called from several statements or firing several triggers analyzes once). `NEW.col` /
+  `OLD.col` type as the trigger's own table's columns (unknown column 1054, the wrong row for the
+  event or timing 1362 / 1363 -- a `NOT NULL` column's `NEW.col` can still be NULL in a BEFORE
+  trigger, measured); a `DECLARE`d variable or a routine's parameter shadows a column of the same
+  name. `IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`, labelled blocks with `LEAVE` / `ITERATE`,
+  `RETURN`, `SET`, `SELECT ... INTO`, cursors, `CALL`, `SIGNAL` / `RESIGNAL` and
+  `DECLARE ... HANDLER FOR` are walked, with the server's own CREATE-time refusals (1308, 1313,
+  1320, 1324, 1327, 1328, 1222, 1415, 1422) reported on the definition; a trigger writing its own
+  table is 1442 on every one of the 18 timing x event x write combinations (measured). A statement
+  on a table takes the SIGNALs of its triggers for its event (`REPLACE` fires the INSERT and
+  DELETE triggers, `ON DUPLICATE KEY UPDATE` the INSERT and UPDATE ones, measured), the constraints
+  the trigger's own writes may violate, and what those writes fire in turn (a cycle is cut). A
+  SIGNAL's key is its `MYSQL_ERRNO` in decimal when it sets one, else its SQLSTATE (SQLSTATE class
+  `01` a warning, an unhandled `02` 1643, anything else unhandled 1644); a named `CONDITION`
+  resolves to its value. A `DECLARE ... HANDLER FOR` absorbs the matching failure modes of its
+  block (`SQLEXCEPTION` everything but the `01` and `02` classes, `SQLWARNING` / `NOT FOUND` their
+  class, a SQLSTATE or number itself); `INSERT` / `UPDATE IGNORE` absorbs none of a trigger's
+  SIGNALs (measured). `SELECT ... INTO` carries 1172 unless the query is provably at most one row.
+  A call to a stored FUNCTION the catalog does not know resolves to the schema's (an unqualified
+  name that is also a native function is the native one, as on the server; `db.f` names the
+  routine), typed from `RETURNS` (always nullable), taking 1318 for a wrong argument count and
+  1305 for no such routine, and bringing the body's own failure modes to the calling statement; a
+  function that writes a table the statement already references is 1442 on every run (reading the
+  table is enough, measured). `CALL p(...)` analyzes `IN` / `INOUT` arguments by the parameters, an
+  `OUT` argument must be a variable (1414; a `?` is one), facts `Kind Call`, the result columns
+  from the body's own INTO-less `SELECT`s when they agree (none: no columns; several of different
+  shapes: the checker's own error), and the body's own failure modes. Cross-checked against a
+  running `mysqld`.
+- The MySQL runtime: a SIGNAL raised by a trigger or routine comes back as a `ConstraintError`
+  whose `Key` is the SQLSTATE when the server numbers it itself (1644, 1643), or the decimal
+  `MYSQL_ERRNO` when the SIGNAL set its own error number; `Violates(err, "45000")` /
+  `Violates(err, "30001")` read like the checker's own keys. A `01xxx` SIGNAL is a warning and the
+  statement succeeds.
 - The schema declares the server settings its judgments depend on, one per line next to the
   version: `-- sqlshape: server sql_mode = 'ANSI,STRICT_ALL_TABLES'`,
   `-- sqlshape: server lower_case_table_names = 1`. MySQL reads these two (any other variable, a

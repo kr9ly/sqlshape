@@ -100,6 +100,74 @@ single-row `INSERT` or `REPLACE` (its `ON DUPLICATE KEY UPDATE` included) reject
 with a warning, so no 1048 is listed for them. `mysql.Violates(err, key)` tests the run-time
 error by the same names.
 
+### Triggers and stored routines
+
+The loader reads `CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION` (`DEFINER`,
+`IF NOT EXISTS`, the characteristics) and `DROP` / `ALTER` (characteristics only) the way it
+reads a table: no `DELIMITER` is needed, a body's own `;` is read as part of the one compound
+statement it belongs to, and a mysql-client `DELIMITER x` line is read too. What the server
+itself refuses at CREATE time is a problem the same way an unknown table is: no such table
+(1146), the trigger or routine already exists (1359 / 1304), no such trigger or routine to
+`DROP` (1360 / 1305), no such trigger for `FOLLOWS` / `PRECEDES` to name (3011). `DROP TABLE`
+takes a table's triggers with it; `RENAME TABLE` moves them.
+
+The body is read once per schema, the way a PL/pgSQL function's is on PostgreSQL
+([checks.md](checks.md#name-the-errors-a-trigger-raises)):
+`NEW.col` / `OLD.col` type as the trigger's own table's columns (an unknown column is 1054;
+`OLD` in an INSERT trigger or `NEW` in a DELETE trigger is 1363; writing `OLD`, or writing
+`NEW` outside a BEFORE trigger, is 1362 -- a NOT NULL column's `NEW.col` can still be NULL in
+a BEFORE trigger, measured); a `DECLARE`d variable or a routine's own parameter shadows a
+column of the same name, as on the server. `IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`,
+labelled blocks with `LEAVE` / `ITERATE`, `RETURN`, `SET`, `SELECT ... INTO`, cursors
+(`DECLARE` / `OPEN` / `FETCH` / `CLOSE`), `CALL`, `SIGNAL` / `RESIGNAL` and
+`DECLARE ... HANDLER FOR` are walked. What the server itself refuses when the body is
+created: `LEAVE` / `ITERATE` with no matching label (1308), `RETURN` outside a FUNCTION
+(1313), a FUNCTION with no `RETURN` (1320), an undeclared cursor or variable or a `FETCH`
+column-count mismatch (1324 / 1327 / 1328), a mismatched `SELECT ... INTO` column count
+(1222), a trigger or function that returns a result set (1415), a `COMMIT` / `START
+TRANSACTION` / DDL statement inside one (1422). A trigger that writes its own table is 1442
+on every one of the 18 timing x event x write combinations (measured): always a failure,
+reported on the trigger's own definition rather than on a statement that fires it.
+
+A trigger's or routine's own writes bring their own failure modes into the body's: the
+schema's constraints, and what those writes' own triggers raise in turn (a cycle is cut). A
+`SIGNAL`'s key is its `MYSQL_ERRNO` as decimal text when it sets one, else its SQLSTATE (the
+same rule the [runtime](#the-runtime-databasesql) reads an error back by); SQLSTATE class
+`01` is a warning and no failure mode, an unhandled class `02` is 1643, anything else
+unhandled is 1644. A named `CONDITION` resolves to its value; a bare `RESIGNAL` re-raises
+whatever the innermost `HANDLER` is itself handling. `-- sqlshape: error <key> = <Name>`
+above a `CREATE TRIGGER` / `FUNCTION` / `PROCEDURE`, the same annotation
+[checks.md](checks.md#name-the-errors-a-trigger-raises) documents for PostgreSQL,
+names the key for the description only (`raised by trigger ... as <Name>`) -- the expect
+line and `mysql.Violates` still read the key itself (`30001`, not `<Name>`). A
+`DECLARE ... HANDLER FOR` absorbs the matching failure modes of its own block (`SQLEXCEPTION`
+everything but classes `01` and `02`, `SQLWARNING` / `NOT FOUND` their class, a SQLSTATE or
+number itself); `INSERT` / `UPDATE IGNORE` absorbs none of a trigger's SIGNALs (measured: the
+statement still fails). `SELECT ... INTO` carries 1172 unless the query is provably at most
+one row, the same proof `One` uses (a query with no row is NOT FOUND, a warning, never a
+failure).
+
+A statement on a table takes the failure modes of that table's triggers for its event:
+`INSERT` / `UPDATE` / `DELETE`; `REPLACE` fires the INSERT and DELETE triggers, `ON DUPLICATE
+KEY UPDATE` the INSERT and UPDATE ones (measured).
+
+A call to a FUNCTION the catalog does not know resolves to the schema's own (an unqualified
+name that is also a native function resolves to the native one, as on the server; `db.f`
+names the routine): a wrong argument count is 1318, no such routine 1305, the result types as
+the `RETURNS` declaration and is always nullable (a stored function's `RETURN` can produce
+NULL regardless of the declared type; there is no static proof otherwise), and the body's own
+failure modes (its SIGNALs, its writes' violations, what they fire) reach the calling
+statement. A function that writes a table the calling statement itself reads or writes is
+1442 on every execution (reading the table is enough, measured).
+
+`CALL p(...)` types an `IN` / `INOUT` argument by its parameter and requires an `OUT` /
+`INOUT` argument to be a variable (1414; a `?` counts as one); its own facts are `Kind Call`.
+Its result columns come from the body's own INTO-less `SELECT`s: none is no columns, one is
+those columns, several of the same shape agree on one list, several of different shapes is
+the checker's own error (not something mysqld itself refuses -- it only ever returns
+whichever result set the execution path taken produced, at run time). Its failure modes are
+the body's own.
+
 ### The `One` proof
 
 Proved from `PRIMARY KEY` and `UNIQUE` keys over whole columns, `LIMIT 1`, and an aggregate
@@ -172,9 +240,10 @@ runs, errors under the expect line's names) is in [runtime.md](runtime.md). What
 
 - The receive types are the driver's, as in the table above; a `DECIMAL` arrives as its text, so
   a money type of your own can wrap it.
-- A constraint violation comes back as a `*mysql.ConstraintError` whose `Key()` is the schema's
+- A constraint violation comes back as a `*mysql.ConstraintError` whose `Key` is the schema's
   name for it, as [above](#constraint-names-and-failure-modes); `mysql.Violates(err, key)` tests
-  for it.
+  for it. A trigger's or a routine's own SIGNAL comes back the same way, keyed the way
+  [above](#triggers-and-stored-routines) describes.
 - `ExecOne` judges `RowsAffected`, which MySQL counts as changed rows: an `UPDATE` to the values
   a row already has reports `ErrNoRows` unless the DSN sets `clientFoundRows=true`. For an
   `INSERT ... ON DUPLICATE KEY UPDATE` or a `REPLACE` the 0, 1 or 2 rows MySQL reports for the one

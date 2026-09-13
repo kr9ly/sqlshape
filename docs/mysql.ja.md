@@ -56,6 +56,20 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 失敗モードの名前はMySQLが制約に付ける名前そのものである。主キーは`PRIMARY`、`UNIQUE`キーはキーの名前、外部キーは`CONSTRAINT`名（無ければ`<table>_ibfk_<n>`）、`CHECK`は`CONSTRAINT`名（無ければ`<table>_chk_<n>`）、`NOT NULL`は`<table>.<column>`。エラー番号はMySQLのもの。キーは1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反しない）、外部キーは1452と1451（親側は`ON DELETE` / `ON UPDATE CASCADE`を追う）、`NOT NULL`は1048、`CHECK`は3819。`INSERT IGNORE`は何にも違反しない。`ON DUPLICATE KEY UPDATE`はINSERTのキー違反を吸収する。`REPLACE`はキーには違反せず、参照している外部キーには違反しうる（1451）。厳密モードでなければ、`NOT NULL`列への`NULL`を拒むのは1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけで、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、それらには1048を挙げない。`mysql.Violates(err, key)`は実行時のエラーを同じ名前で判定する。
 
+### トリガとストアドルーチン
+
+ローダーは`CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION`（`DEFINER`、`IF NOT EXISTS`、特性句込み）と`DROP` / `ALTER`（特性のみ）を、表と同じように読む。`DELIMITER`は要らない。本体の`;`は1つの複合文の内側として読まれ、mysqlクライアント互換の`DELIMITER x`行もそのまま読める。CREATE時にサーバ自身が拒むものは、未知の表と同じくProblemになる: 表が無い（1146）、トリガ・ルーチンが既にある（1359 / 1304）、DROPしようとしたトリガ・ルーチンが無い（1360 / 1305）、`FOLLOWS` / `PRECEDES`が指す先のトリガが無い（3011）。`DROP TABLE`は表のトリガを道連れにし、`RENAME TABLE`はトリガを付け替える。
+
+本体はスキーマごとに1回読む。PostgreSQLのPL/pgSQL関数本体の読み方と同じ位置づけである（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）。`NEW.col` / `OLD.col`はトリガ表の列として型付けする（無い列は1054。INSERTトリガでの`OLD`、DELETEトリガでの`NEW`は1363。`OLD`への代入、`NEW`へのBEFORE以外での代入は1362——NOT NULL列の`NEW.col`もBEFOREトリガの中ではNULLになりうる、測定済み）。`DECLARE`した変数やルーチンの引数は同名の列より優先して解決する、サーバと同じ規則である。`IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`、ラベル付きブロックと`LEAVE` / `ITERATE`、`RETURN`、`SET`、`SELECT ... INTO`、カーソル（`DECLARE` / `OPEN` / `FETCH` / `CLOSE`）、`CALL`、`SIGNAL` / `RESIGNAL`、`DECLARE ... HANDLER FOR`を歩く。本体の作成時にサーバ自身が拒むもの: 対応ラベルの無い`LEAVE` / `ITERATE`（1308）、FUNCTION以外での`RETURN`（1313）、`RETURN`の無いFUNCTION（1320）、未宣言のカーソルや変数、`FETCH`の列数不一致（1324 / 1327 / 1328）、`SELECT ... INTO`の列数不一致（1222）、結果集合を返すトリガ・関数（1415）、本体内の`COMMIT` / `START TRANSACTION` / DDL文（1422）。トリガが自分の表に書くのは、タイミング×イベント×書き込みの18通り全部で1442になる（測定済み）。常に失敗するので、発火する文にではなくトリガの定義に報告する。
+
+トリガ・ルーチンの本体自身の書き込みは、その書き込み自身の失敗モード（本文の制約、その書き込みが起こす自分自身のトリガの失敗モード、再帰は打ち切り）を本体の失敗モードに持ち込む。`SIGNAL`のキーは、番号を設定していれば`MYSQL_ERRNO`の10進表記、無ければSQLSTATE（[ランタイム](#ランタイム-databasesql)がエラーを読み戻すのと同じ規則）。SQLSTATEクラス`01`は警告で失敗モードにならず、未処理のクラス`02`は1643、それ以外の未処理は1644になる。名前付き`CONDITION`はその値に解決し、値の無い`RESIGNAL`は最も内側の`HANDLER`が処理中のものをそのまま再送する。`CREATE TRIGGER` / `FUNCTION` / `PROCEDURE`の上に書く`-- sqlshape: error <key> = <Name>`は、PostgreSQLの同じ注釈（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）と同じもので、名前は説明文の装飾だけに使われる（`raised by trigger ... as <Name>`）。expect行と`mysql.Violates`はキーそのもの（`<Name>`でなく`30001`）で判定する。`DECLARE ... HANDLER FOR`はそのブロック内の一致する失敗モードを吸収する（`SQLEXCEPTION`はクラス`01`と`02`以外の全部、`SQLWARNING` / `NOT FOUND`はそのクラス、SQLSTATEや番号そのものは一致するもの）。`INSERT` / `UPDATE IGNORE`はトリガのSIGNALを何も吸収しない（測定済み: 文はそれでも失敗する）。`SELECT ... INTO`は、`One`が使うのと同じ証明で多くとも1行と示せない限り1172を持つ（1行も無ければNOT FOUNDで警告、失敗にはならない）。
+
+表への文は、その表のトリガのその事象向けの失敗モードを引き継ぐ: INSERT / UPDATE / DELETE。`REPLACE`はINSERTとDELETEのトリガを、`ON DUPLICATE KEY UPDATE`はINSERTとUPDATEのトリガを発火させる（測定済み）。
+
+カタログに無い名前のFUNCTION呼び出しはスキーマのルーチンに解決する（組み込み関数と同名で未修飾なら組み込みが勝つ、サーバと同じ。`db.f`はルーチンを名指す）。引数の数が違えば1318、そのルーチンが無ければ1305、結果は`RETURNS`の型で常にNULL可（宣言した型に関わらず`RETURN`はNULLを返しうるので、そうでないという静的な証明は無い）。本体自身の失敗モード（SIGNAL、書き込みの違反、それが発火するもの）は呼び出した文へ持ち込まれる。呼び出し文が読むか書く表に関数自身が書く場合は、実行のたびに1442になる（表を読むだけでも十分、測定済み）。
+
+`CALL p(...)`はIN / INOUT引数をその引数宣言の型で型付けし、OUT / INOUT引数は変数でなければならない（1414。`?`も変数として数える）。文自身のfactsは`Kind Call`。結果列は本体自身のINTO無し`SELECT`から取る: 無ければ列無し、1つならその列、複数あって形が揃えば1つの列リストとして合意、形が割れていれば検査器自身のエラー（mysqld自身が拒むものではない——実行時にどの経路を通ったかでどちらかの結果集合を返すだけである）。失敗モードは本体自身のもの。
+
 ### `One`の証明
 
 `PRIMARY KEY`と列全体にかかる`UNIQUE`キー、`LIMIT 1`、`GROUP BY`の無い集約から証明する。MySQLには部分インデックスが無い。
@@ -104,7 +118,7 @@ res, err   := mysql.ExecOne(ctx, db, MarkPaid, p)               // One: 1行も�
 どのランタイムでも同じこと（行のマッピング、`One`、検査済みのSQLだけが走る保証、expect行の名前で返るエラー）は[runtime.ja.md](runtime.ja.md)にある。MySQL固有のもの:
 
 - 受け型はドライバのもので、上の表のとおり。`DECIMAL`はその文字列で届くので、自前のmoney型で包める。
-- 制約違反は`*mysql.ConstraintError`として返り、その`Key()`は[上](#制約名と失敗モード)のスキーマ上の名前である。`mysql.Violates(err, key)`で判定する。
+- 制約違反は`*mysql.ConstraintError`として返り、その`Key`は[上](#制約名と失敗モード)のスキーマ上の名前である。`mysql.Violates(err, key)`で判定する。トリガやルーチン自身の`SIGNAL`も同じように返り、キーは[上](#トリガとストアドルーチン)のとおりである。
 - `ExecOne`は`RowsAffected`で判定する。MySQLは変更のあった行を数えるので、既に同じ値の行へのUPDATEはDSNに`clientFoundRows=true`が無いと`ErrNoRows`になる。`INSERT ... ON DUPLICATE KEY UPDATE`と`REPLACE`がその1行について報告する0・1・2行は、どれも1行とみなす。
 - `Batch`、`Copy`、`MatView`は無い。
 - `mysql.Verify(ctx, db, schemaSQL)`は接続のセッションの`@@sql_mode`とサーバの`lower_case_table_names`を読み、スキーマの宣言（無ければサーバの既定値）と違えばエラーを返す。DSNの`sql_mode=...`、プールのセッション初期化、別の設定で立てたサーバは、検査器が判定に使わなかった規則で文を走らせることになる。プールを開いた直後に1回呼ぶ。
