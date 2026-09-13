@@ -176,3 +176,67 @@ func init() {
 func conditionName(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 	return &Node{Class: "sp_condition_name", Names: []string{"name"}, Args: []Value{field(kids[0], "str")}, Start: n.Start, End: n.End}, nil
 }
+
+// sp_chistic / sp_c_chistic / sp_suid: a stored routine's (or trigger's, though a trigger
+// carries none in the grammar) COMMENT / LANGUAGE / SQL DATA ACCESS / SQL SECURITY /
+// DETERMINISTIC characteristics. The generic fold has nothing to offer most of these
+// alternatives: their server action mutates Lex->sp_chistics in place rather than
+// building a Value the grammar's $$ carries, so the auto-derived shape is nil (a keyword
+// with no readable payload). Folded here into a uniform {kind, value} tag instead, and
+// sp_c_chistics/sp_a_chistics into a List of them (both %empty/repetition rules the server
+// itself only counts).
+func init() {
+	register("sp_chistic", "COMMENT_SYM TEXT_STRING_sys", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("COMMENT", kids[1]), nil
+	})
+	register("sp_chistic", "LANGUAGE_SYM SQL_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("LANGUAGE", Const("SQL")), nil
+	})
+	register("sp_chistic", "LANGUAGE_SYM ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("LANGUAGE", field(kids[1], "str")), nil
+	})
+	register("sp_chistic", "NO_SYM SQL_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("SQL_DATA_ACCESS", Const("NO_SQL")), nil
+	})
+	register("sp_chistic", "CONTAINS_SYM SQL_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("SQL_DATA_ACCESS", Const("CONTAINS_SQL")), nil
+	})
+	register("sp_chistic", "READS_SYM SQL_SYM DATA_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("SQL_DATA_ACCESS", Const("READS_SQL_DATA")), nil
+	})
+	register("sp_chistic", "MODIFIES_SYM SQL_SYM DATA_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("SQL_DATA_ACCESS", Const("MODIFIES_SQL_DATA")), nil
+	})
+	register("sp_chistic", "sp_suid", pass(1))
+	register("sp_suid", "SQL_SYM SECURITY_SYM DEFINER_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("SQL_SECURITY", Const("DEFINER")), nil
+	})
+	register("sp_suid", "SQL_SYM SECURITY_SYM INVOKER_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("SQL_SECURITY", Const("INVOKER")), nil
+	})
+	register("sp_c_chistic", "sp_chistic", pass(1))
+	register("sp_c_chistic", "DETERMINISTIC_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("DETERMINISTIC", Const("true")), nil
+	})
+	register("sp_c_chistic", "not DETERMINISTIC_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return chisticTag("DETERMINISTIC", Const("false")), nil
+	})
+	register("sp_c_chistics", "", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) { return List(nil), nil })
+	register("sp_c_chistics", "sp_c_chistics sp_c_chistic", appendTo(1, 2))
+}
+
+// chisticTag builds the {kind, value} tag a sp_chistic/sp_c_chistic alternative folds to.
+func chisticTag(kind string, value Value) Value {
+	return &Node{Class: "sp_chistic", Names: []string{"kind", "value"}, Args: []Value{Const(kind), value}}
+}
+
+// trigger_follows_precedes_clause: FOLLOWS/PRECEDES <trigger>, or none. The non-empty
+// alternative's own derived shape has no readable anchor_trigger_name (the action reads
+// $2.str/$2.length directly, a C++ expression parsegen keeps as literal text rather than a
+// value); folded here from ident_or_text's own value instead, keeping the same {Struct}
+// shape the %empty alternative already has.
+func init() {
+	register("trigger_follows_precedes_clause", "trigger_action_order ident_or_text", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Struct{Fields: map[string]Value{"ordering_clause": kids[0], "anchor_trigger_name": kids[1]}, Order: []string{"ordering_clause", "anchor_trigger_name"}}, nil
+	})
+}

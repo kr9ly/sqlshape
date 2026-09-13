@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -83,13 +84,24 @@ func (t Type) IsInteger() bool {
 	return false
 }
 
-// typeOf reads a PT_*_type node.
+// typeOf reads a PT_*_type node, recording a problem at v's position when TypeOf cannot.
 func (s *Schema) typeOf(v mysqlast.Value, at func(mysqlast.Value) int) Type {
+	t, err := TypeOf(v)
+	if err != nil {
+		s.problem(at(v), "%v", err)
+	}
+	return t
+}
+
+// TypeOf converts a PT_*_type value to a Type: what a column's definition, a routine
+// parameter's, a function's RETURNS, or (later) a DECLARE's all carry. Exported so that a
+// later stage (the trigger/routine body analyzer, for a DECLARE's local variable) can share
+// the same conversion column() uses, rather than reading the type shapes twice.
+func TypeOf(v mysqlast.Value) (Type, error) {
 	t := Type{Length: -1, Dec: -1}
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
-		s.problem(at(v), "type not understood: %s", mysqlast.Sprint(v))
-		return t
+		return t, fmt.Errorf("type not understood: %s", mysqlast.Sprint(v))
 	}
 	switch n.Class {
 	case "PT_numeric_type":
@@ -163,9 +175,9 @@ func (s *Schema) typeOf(v mysqlast.Value, at func(mysqlast.Value) int) Type {
 	case "PT_spacial_type":
 		t.Name = strings.ToLower(strings.TrimPrefix(str(n.Arg("geo_type")), "Field::GEOM_"))
 	default:
-		s.problem(at(n), "type %s not understood", n.Class)
+		return t, fmt.Errorf("type %s not understood", n.Class)
 	}
-	return t
+	return t, nil
 }
 
 // enumName lowers a server enum member (Int_type::INT, Char_type::VARCHAR, Numeric_type::DECIMAL, Time_type::DATETIME).

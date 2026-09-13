@@ -32,6 +32,8 @@ type Schema struct {
 	Settings Settings
 	Tables   []*Table
 	Views    []*View
+	Triggers []*Trigger
+	Routines []*Routine
 	Problems []Problem
 	// cur is the statement being applied, for the element texts (Column.Text ...)
 	cur string
@@ -209,6 +211,61 @@ type View struct {
 	Waived     map[string][]string
 }
 
+// Trigger is a CREATE TRIGGER.
+type Trigger struct {
+	Name  string
+	Table string // the trigger's table, in stored form (tableKey)
+	// Timing is BEFORE or AFTER; Event is INSERT, UPDATE or DELETE.
+	Timing string
+	Event  string
+	// OrderClause is FOLLOWS or PRECEDES, "" when the trigger declares neither; OrderTrigger
+	// is the anchor trigger's name it names, "" when OrderClause is "".
+	OrderClause  string
+	OrderTrigger string
+	Body         mysqlast.Value // the trigger's body statement (sp_block_content, or a single statement)
+	Definition   string         // the CREATE TRIGGER text
+	// Directives are the `-- sqlshape: ...` lines written above the CREATE (currently only
+	// `error <key> = <name>` is read here; a later stage parses it).
+	Directives []string
+}
+
+// RoutineKind is whether a Routine is a PROCEDURE or a FUNCTION: they are separate
+// namespaces (a schema may declare both p() and a PROCEDURE and a FUNCTION of that name).
+type RoutineKind byte
+
+const (
+	Procedure RoutineKind = iota + 1
+	Function
+)
+
+func (k RoutineKind) String() string {
+	return [...]string{"", "PROCEDURE", "FUNCTION"}[k]
+}
+
+// Param is one parameter of a stored routine.
+type Param struct {
+	Mode string // IN, OUT or INOUT (a stored function's parameters are all IN)
+	Name string
+	Type Type
+}
+
+// Routine is a CREATE PROCEDURE or CREATE FUNCTION.
+type Routine struct {
+	Name   string
+	Kind   RoutineKind
+	Params []Param
+	Returns Type // a stored function's RETURNS type; the zero Type for a procedure
+	// Deterministic, DataAccess and Security are the routine's characteristics as declared
+	// (CREATE's defaults when not given: not deterministic, CONTAINS SQL, SQL SECURITY
+	// DEFINER); ALTER PROCEDURE/FUNCTION does not change them (it has no schema effect here).
+	Deterministic bool
+	DataAccess    string // NO_SQL, CONTAINS_SQL, READS_SQL_DATA or MODIFIES_SQL_DATA
+	Security      string // DEFINER or INVOKER
+	Body          mysqlast.Value
+	Definition    string // the CREATE PROCEDURE/FUNCTION text
+	Directives    []string
+}
+
 // Table returns the table named name, or nil. Table and view names compare as the
 // declared lower_case_table_names says (case-sensitively at 0, the Linux default); column
 // and key names never mind case.
@@ -226,6 +283,40 @@ func (s *Schema) View(name string) *View {
 	for _, v := range s.Views {
 		if s.sameTable(v.Name, name) {
 			return v
+		}
+	}
+	return nil
+}
+
+// Trigger returns the trigger named name, or nil. Trigger names are not affected by
+// lower_case_table_names (that setting is a table/view naming convention only).
+func (s *Schema) Trigger(name string) *Trigger {
+	for _, t := range s.Triggers {
+		if strings.EqualFold(t.Name, name) {
+			return t
+		}
+	}
+	return nil
+}
+
+// Routine returns the procedure or function named name, or nil. PROCEDURE and FUNCTION are
+// separate namespaces in MySQL; when a schema declares both of the same name, the first one
+// declared wins here (dump/diff/migrate, not written yet, will need the kind to tell them
+// apart when that matters).
+func (s *Schema) Routine(name string) *Routine {
+	for _, r := range s.Routines {
+		if strings.EqualFold(r.Name, name) {
+			return r
+		}
+	}
+	return nil
+}
+
+// routine returns the routine of the given kind named name, or nil.
+func (s *Schema) routine(kind RoutineKind, name string) *Routine {
+	for _, r := range s.Routines {
+		if r.Kind == kind && strings.EqualFold(r.Name, name) {
+			return r
 		}
 	}
 	return nil
@@ -347,6 +438,13 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 		s.problem(st.Offset, "%v", err)
 		return
 	}
+	// DROP TRIGGER/PROCEDURE and ALTER PROCEDURE/FUNCTION have no NEW_PTN construction of
+	// their own in the server's grammar (the action fills LEX by hand); their generic fold
+	// is a by-value Struct (Lex's fields), not a Node.
+	if x, ok := v.(*mysqlast.Struct); ok {
+		s.applyStmt(x, st)
+		return
+	}
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
 		s.problem(st.Offset, "not a statement the schema loader reads: %s", mysqlast.Sprint(v))
@@ -366,6 +464,14 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 		s.createIndex(n, st, at)
 	case "Sql_cmd_create_view":
 		s.createView(n, st)
+	case "trigger_tail":
+		s.createTrigger(n, st, at)
+	case "sp_tail":
+		s.createRoutine(n, Procedure, st, at)
+	case "sf_tail":
+		s.createRoutine(n, Function, st, at)
+	case "drop_function_stmt":
+		s.dropRoutine(Function, spName(n.Arg("spname")), isTrue(n.Arg("if_exists")), at(n))
 	case "PT_alter_table_stmt":
 		s.alterTable(n, st, at)
 	case "PT_alter_table_standalone_stmt":
@@ -404,6 +510,23 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 			return
 		}
 		s.problem(st.Offset, "statement not applied to the schema: %s", n.Class)
+	}
+}
+
+// applyStmt folds a statement whose generic fold is a by-value Struct (Lex's fields), not a
+// Node: DROP TRIGGER, DROP PROCEDURE, ALTER PROCEDURE, ALTER FUNCTION.
+func (s *Schema) applyStmt(x *mysqlast.Struct, st mysqlparse.Statement) {
+	switch str(x.Fields["sql_command"]) {
+	case "SQLCOM_DROP_TRIGGER":
+		s.dropTrigger(spName(x.Fields["spname"]), isTrue(x.Fields["drop_if_exists"]), st.Offset)
+	case "SQLCOM_DROP_PROCEDURE":
+		s.dropRoutine(Procedure, spName(x.Fields["spname"]), isTrue(x.Fields["drop_if_exists"]), st.Offset)
+	case "SQLCOM_ALTER_PROCEDURE":
+		s.alterRoutine(Procedure, spName(x.Fields["spname"]), st.Offset)
+	case "SQLCOM_ALTER_FUNCTION":
+		s.alterRoutine(Function, spName(x.Fields["spname"]), st.Offset)
+	default:
+		s.problem(st.Offset, "statement not applied to the schema: %s", str(x.Fields["sql_command"]))
 	}
 }
 
@@ -754,10 +877,20 @@ func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
 	s.Views = append(s.Views, v)
 }
 
+// dropTable drops the table, and with it every trigger declared on it (a trigger has no
+// existence apart from its table on the server: DROP TABLE drops them silently, without a
+// DROP TRIGGER of their own).
 func (s *Schema) dropTable(name string) {
 	for i, t := range s.Tables {
 		if s.sameTable(t.Name, name) {
 			s.Tables = append(s.Tables[:i], s.Tables[i+1:]...)
+			var kept []*Trigger
+			for _, trg := range s.Triggers {
+				if !s.sameTable(trg.Table, t.Name) {
+					kept = append(kept, trg)
+				}
+			}
+			s.Triggers = kept
 			return
 		}
 	}
@@ -789,6 +922,11 @@ func (s *Schema) renameTables(n *mysqlast.Node, at func(mysqlast.Value) int) {
 		}
 		from, to := tableName(p.Args[0]), s.tableKey(tableName(p.Args[1]))
 		if t := s.Table(from); t != nil {
+			for _, trg := range s.Triggers {
+				if s.sameTable(trg.Table, t.Name) {
+					trg.Table = to
+				}
+			}
 			t.Name = to
 		} else if v := s.View(from); v != nil {
 			v.Name = to
@@ -1024,6 +1162,186 @@ func (t *Table) renameColumnRefs(from, to string) {
 			}
 		}
 	}
+}
+
+// --- TRIGGER / PROCEDURE / FUNCTION ----------------------------------------------------
+
+// createTrigger applies a CREATE TRIGGER (trigger_tail). Its args, in the grammar's order
+// once terminals drop out: if_not_exists, sp_name, trg_action_time, trg_event, table_ident,
+// trigger_follows_precedes_clause (a Struct), the body.
+func (s *Schema) createTrigger(n *mysqlast.Node, st mysqlparse.Statement, at func(mysqlast.Value) int) {
+	if len(n.Args) != 7 {
+		s.problem(at(n), "CREATE TRIGGER: statement not understood")
+		return
+	}
+	name := spName(n.Args[1])
+	if s.Trigger(name) != nil {
+		if isTrue(n.Args[0]) { // IF NOT EXISTS
+			return
+		}
+		s.problem(at(n), "CREATE TRIGGER %s: trigger already exists", name)
+		return
+	}
+	table := s.tableKey(tableName(n.Args[4]))
+	if s.Table(table) == nil {
+		s.problem(at(n), "CREATE TRIGGER %s: no such table: %s", name, table)
+		return
+	}
+	trg := &Trigger{
+		Name:       name,
+		Table:      table,
+		Timing:     strings.TrimPrefix(str(n.Args[2]), "TRG_ACTION_"),
+		Event:      strings.TrimPrefix(str(n.Args[3]), "TRG_EVENT_"),
+		Body:       n.Args[6],
+		Definition: st.SQL,
+	}
+	if ord, ok := n.Args[5].(*mysqlast.Struct); ok {
+		if oc := str(ord.Fields["ordering_clause"]); oc != "" && oc != "TRG_ORDER_NONE" {
+			trg.OrderClause = strings.TrimPrefix(oc, "TRG_ORDER_")
+			trg.OrderTrigger = str(ord.Fields["anchor_trigger_name"])
+			// the server rejects FOLLOWS/PRECEDES a trigger that does not exist (for that
+			// action time and event type) at CREATE TIME, 3011, measured against mysqld
+			if s.Trigger(trg.OrderTrigger) == nil {
+				s.problem(at(n), "CREATE TRIGGER %s: %s %s: no such trigger", name, trg.OrderClause, trg.OrderTrigger)
+				return
+			}
+		}
+	}
+	trg.Directives = s.spDirectives("trigger", name, st.SQL, st.Offset)
+	s.Triggers = append(s.Triggers, trg)
+}
+
+// dropTrigger applies a DROP TRIGGER.
+func (s *Schema) dropTrigger(name string, ifExists bool, pos int) {
+	for i, t := range s.Triggers {
+		if strings.EqualFold(t.Name, name) {
+			s.Triggers = append(s.Triggers[:i], s.Triggers[i+1:]...)
+			return
+		}
+	}
+	if !ifExists {
+		s.problem(pos, "DROP TRIGGER %s: no such trigger", name)
+	}
+}
+
+// createRoutine applies a CREATE PROCEDURE (sp_tail) or CREATE FUNCTION (sf_tail). sp_tail's
+// args are if_not_exists, sp_name, params, characteristics, body; sf_tail's are
+// if_not_exists, sp_name, params, returns type, opt_collate (on the return type, not kept),
+// characteristics, body.
+func (s *Schema) createRoutine(n *mysqlast.Node, kind RoutineKind, st mysqlparse.Statement, at func(mysqlast.Value) int) {
+	if kind == Function && len(n.Args) != 7 || kind == Procedure && len(n.Args) != 5 {
+		s.problem(at(n), "CREATE %s: statement not understood", kind)
+		return
+	}
+	name := spName(n.Args[1])
+	if s.routine(kind, name) != nil {
+		if isTrue(n.Args[0]) { // IF NOT EXISTS
+			return
+		}
+		s.problem(at(n), "CREATE %s %s: %s already exists", kind, name, strings.ToLower(kind.String()))
+		return
+	}
+	r := &Routine{Name: name, Kind: kind, Params: s.paramsOf(n.Args[2], at), Definition: st.SQL, DataAccess: "CONTAINS_SQL", Security: "DEFINER"}
+	if kind == Function {
+		r.Returns = s.typeOf(n.Args[3], at)
+		s.applyChistics(r, list(n.Args[5]))
+		r.Body = n.Args[6]
+	} else {
+		s.applyChistics(r, list(n.Args[3]))
+		r.Body = n.Args[4]
+	}
+	r.Directives = s.spDirectives(strings.ToLower(kind.String()), name, st.SQL, st.Offset)
+	s.Routines = append(s.Routines, r)
+}
+
+// paramsOf reads a routine's parameter list (a List of sp_param nodes).
+func (s *Schema) paramsOf(v mysqlast.Value, at func(mysqlast.Value) int) []Param {
+	var out []Param
+	for _, p := range list(v) {
+		pn, ok := p.(*mysqlast.Node)
+		if !ok || pn.Class != "sp_param" {
+			continue
+		}
+		out = append(out, Param{Mode: paramMode(str(pn.Arg("mode"))), Name: str(pn.Arg("name")), Type: s.typeOf(pn.Arg("type"), at)})
+	}
+	return out
+}
+
+func paramMode(s string) string {
+	switch s {
+	case "sp_variable::MODE_OUT":
+		return "OUT"
+	case "sp_variable::MODE_INOUT":
+		return "INOUT"
+	}
+	return "IN"
+}
+
+// applyChistics reads a routine's characteristics (a List of the {kind, value} tags
+// hooks_sp.go's sp_chistic hooks build): DETERMINISTIC, the SQL data access class, SQL
+// SECURITY. COMMENT and LANGUAGE carry no field on Routine (nothing reads them yet).
+func (s *Schema) applyChistics(r *Routine, items []mysqlast.Value) {
+	for _, it := range items {
+		cn, ok := it.(*mysqlast.Node)
+		if !ok || cn.Class != "sp_chistic" {
+			continue
+		}
+		switch str(cn.Arg("kind")) {
+		case "DETERMINISTIC":
+			r.Deterministic = str(cn.Arg("value")) == "true"
+		case "SQL_DATA_ACCESS":
+			r.DataAccess = str(cn.Arg("value"))
+		case "SQL_SECURITY":
+			r.Security = str(cn.Arg("value"))
+		}
+	}
+}
+
+// dropRoutine applies a DROP PROCEDURE / DROP FUNCTION.
+func (s *Schema) dropRoutine(kind RoutineKind, name string, ifExists bool, pos int) {
+	for i, r := range s.Routines {
+		if r.Kind == kind && strings.EqualFold(r.Name, name) {
+			s.Routines = append(s.Routines[:i], s.Routines[i+1:]...)
+			return
+		}
+	}
+	if !ifExists {
+		s.problem(pos, "DROP %s %s: no such %s", kind, name, strings.ToLower(kind.String()))
+	}
+}
+
+// alterRoutine applies an ALTER PROCEDURE / ALTER FUNCTION: MySQL's grammar only lets it
+// change characteristics (COMMENT, SQL SECURITY, ...), none of which Routine models, so it
+// has no schema effect beyond requiring the routine to exist.
+func (s *Schema) alterRoutine(kind RoutineKind, name string, pos int) {
+	if s.routine(kind, name) == nil {
+		s.problem(pos, "ALTER %s %s: no such %s", kind, name, strings.ToLower(kind.String()))
+	}
+}
+
+// spName is the unqualified name of a sp_name (the schema part is dropped, as tableName
+// drops a Table_ident's: sqlshape works within one database).
+func spName(v mysqlast.Value) string {
+	if n, ok := v.(*mysqlast.Node); ok && n.Class == "sp_name" {
+		return str(n.Arg("name"))
+	}
+	return str(v)
+}
+
+// spDirectives applies the directives written above a CREATE TRIGGER / PROCEDURE / FUNCTION.
+// Only `error <key> = <name>` is read here (kept verbatim; a later analysis stage parses
+// it and resolves <key> against the routine's/trigger's own failure modes); anything else is
+// a problem.
+func (s *Schema) spDirectives(kind, name, sql string, pos int) []string {
+	var out []string
+	for _, d := range leadingDirectives(sql) {
+		if strings.HasPrefix(strings.ToLower(d), "error ") {
+			out = append(out, d)
+			continue
+		}
+		s.problem(pos, "%s %s: unknown directive %q", kind, name, d)
+	}
+	return out
 }
 
 // --- values ----------------------------------------------------------------------------
