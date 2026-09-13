@@ -177,3 +177,13 @@ var ticketsByStatus = sqlshape.Query[uint64, struct{ S TicketStatus }](`SELECT i
 var TooManyWidgets = sqlshape.Error("40001") // want TooManyWidgets:`sqlshape.Error\(40001\)`
 
 var insertWidget = sqlshape.Query[struct{}, struct{ Qty int32 }]("-- sqlshape: expect TooManyWidgets\nINSERT INTO widgets (qty) VALUES ({{.Qty}})")
+
+// widget_count is declared `-- sqlshape: not null` in schema.sql, above its CREATE
+// FUNCTION: its call site types as a plain int64, no pointer needed.
+var widgetCount = sqlshape.Query[int64, struct{}](`SELECT widget_count()`)
+
+// the template's own `-- sqlshape: not null col` line overrides a nullable result column
+// (the SQL-side twin of the `col:",notnull"` tag), the same as on PostgreSQL.
+var notedOrder = sqlshape.Query[string, struct{ ID uint64 }]("-- sqlshape: not null note\nSELECT note FROM orders WHERE id = {{.ID}} AND note IS NOT NULL")
+
+var notedOrderTypo = sqlshape.Query[string, struct{ ID uint64 }]("-- sqlshape: not null nope\nSELECT note FROM orders WHERE id = {{.ID}}") // want `not null: the query has no result column "nope"` `column note is string but column "note" may be NULL \(use a pointer, or tag it .col:",notnull". if you know better\)`

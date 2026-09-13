@@ -255,6 +255,11 @@ type Routine struct {
 	Kind   RoutineKind
 	Params []Param
 	Returns Type // a stored function's RETURNS type; the zero Type for a procedure
+	// NotNull is the `-- sqlshape: not null` annotation above a CREATE FUNCTION: the
+	// function's result is never NULL, the same override postgres/schema.Function.NotNull
+	// documents for PostgreSQL (a stored function's RETURN can otherwise produce NULL
+	// regardless of the declared type, with no static proof otherwise).
+	NotNull bool
 	// Deterministic, DataAccess and Security are the routine's characteristics as declared
 	// (CREATE's defaults when not given: not deterministic, CONTAINS SQL, SQL SECURITY
 	// DEFINER); ALTER PROCEDURE/FUNCTION does not change them (it has no schema effect here).
@@ -1215,7 +1220,7 @@ func (s *Schema) createTrigger(n *mysqlast.Node, st mysqlparse.Statement, at fun
 			}
 		}
 	}
-	trg.Directives = s.spDirectives("trigger", name, st.SQL, st.Offset)
+	trg.Directives, _ = s.spDirectives("trigger", name, st.SQL, st.Offset)
 	s.Triggers = append(s.Triggers, trg)
 }
 
@@ -1259,7 +1264,7 @@ func (s *Schema) createRoutine(n *mysqlast.Node, kind RoutineKind, st mysqlparse
 		s.applyChistics(r, list(n.Args[3]))
 		r.Body = n.Args[4]
 	}
-	r.Directives = s.spDirectives(strings.ToLower(kind.String()), name, st.SQL, st.Offset)
+	r.Directives, r.NotNull = s.spDirectives(strings.ToLower(kind.String()), name, st.SQL, st.Offset)
 	s.Routines = append(s.Routines, r)
 }
 
@@ -1340,24 +1345,30 @@ func spName(v mysqlast.Value) string {
 }
 
 // spDirectives applies the directives written above a CREATE TRIGGER / PROCEDURE / FUNCTION.
-// Only `error <key> = <name>` is read here (kept verbatim; a later analysis stage parses
-// it and resolves <key> against the routine's/trigger's own failure modes); anything else is
-// a problem.
-func (s *Schema) spDirectives(kind, name, sql string, pos int) []string {
-	var out []string
+// `error <key> = <name>` is read here (kept verbatim; a later analysis stage parses it and
+// resolves <key> against the routine's/trigger's own failure modes). `not null` (the same
+// override postgres/schema.go's createFunction reads) is read too, but only above a
+// FUNCTION: a stored function alone has a single result to mark never-NULL, the same
+// reason docs/checks.md and docs/templates.md only document it there. Anything else is a
+// problem.
+func (s *Schema) spDirectives(kind, name, sql string, pos int) (out []string, notNull bool) {
 	for _, d := range leadingDirectives(sql) {
-		if strings.HasPrefix(strings.ToLower(d), "error ") {
+		norm := strings.Join(strings.Fields(strings.ToLower(d)), " ")
+		switch {
+		case strings.HasPrefix(strings.ToLower(d), "error "):
 			for _, r := range ParseRaises([]string{d}) {
 				if !validErrorName(r.Name) {
 					s.problem(pos, "%s %s: directive %q: %q is not a valid name (a Go identifier)", kind, name, d, r.Name)
 				}
 			}
 			out = append(out, d)
-			continue
+		case norm == "not null" && kind == "function":
+			notNull = true
+		default:
+			s.problem(pos, "%s %s: unknown directive %q", kind, name, d)
 		}
-		s.problem(pos, "%s %s: unknown directive %q", kind, name, d)
 	}
-	return out
+	return out, notNull
 }
 
 // --- values ----------------------------------------------------------------------------

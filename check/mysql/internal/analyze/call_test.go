@@ -26,6 +26,12 @@ BEGIN
   RETURN x + 1;
 END;
 
+-- sqlshape: not null
+CREATE FUNCTION next_total_strict(x DECIMAL(10,2)) RETURNS DECIMAL(10,2) DETERMINISTIC
+BEGIN
+  RETURN x + 1;
+END;
+
 CREATE FUNCTION bump_widget(x INT) RETURNS INT
 BEGIN
   UPDATE widgets SET v = x WHERE id = 1;
@@ -118,6 +124,21 @@ func TestStoredFunctionCallResolves(t *testing.T) {
 	}
 	if len(r.Violations) != 1 || r.Violations[0].Function != "next_total" {
 		t.Errorf("got %+v, want Function=next_total", r.Violations)
+	}
+}
+
+// TestStoredFunctionNotNullDirective: the same override postgres/schema.go's createFunction
+// reads (`-- sqlshape: not null` above a CREATE FUNCTION) makes a MySQL stored function's
+// call site non-nullable too, rather than the always-nullable default
+// TestStoredFunctionCallResolves exercises.
+func TestStoredFunctionNotNullDirective(t *testing.T) {
+	s := loadCallSchema(t)
+	r, err := Analyze(s, "SELECT next_total_strict($1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Columns) != 1 || !r.Columns[0].Known || r.Columns[0].Type.Name != "decimal" || r.Columns[0].Nullable {
+		t.Errorf("got columns %+v, want one known not-null decimal", r.Columns)
 	}
 }
 

@@ -45,3 +45,9 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'too many widgets', MYSQL_ERRNO = 40001;
   END IF;
 END;
+
+-- sqlshape: not null
+CREATE FUNCTION widget_count() RETURNS BIGINT
+BEGIN
+  RETURN (SELECT count(*) FROM widgets);
+END;

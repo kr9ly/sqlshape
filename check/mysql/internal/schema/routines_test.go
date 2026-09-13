@@ -217,6 +217,60 @@ DROP PROCEDURE p;
 	}
 }
 
+// TestFunctionNotNullDirective: `-- sqlshape: not null` above a CREATE FUNCTION is read,
+// the same override postgres/schema.go's createFunction accepts, and sets Routine.NotNull
+// rather than being rejected as an unknown directive.
+func TestFunctionNotNullDirective(t *testing.T) {
+	sql := `-- sqlshape: mysql 8.4
+-- sqlshape: not null
+CREATE FUNCTION f() RETURNS INT BEGIN RETURN 1; END;
+`
+	s, err := Load(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range s.Problems {
+		t.Errorf("problem: %s", p)
+	}
+	if len(s.Routines) != 1 || !s.Routines[0].NotNull {
+		t.Fatalf("routines: %+v", s.Routines)
+	}
+}
+
+// TestNotNullDirectiveOnProcedureIsProblem: `not null` names a function's own result, so a
+// PROCEDURE (which returns nothing) rejects it as an unknown directive, same as any other
+// directive it does not recognize.
+func TestNotNullDirectiveOnProcedureIsProblem(t *testing.T) {
+	sql := `-- sqlshape: mysql 8.4
+-- sqlshape: not null
+CREATE PROCEDURE p() BEGIN SELECT 1; END;
+`
+	s, err := Load(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) != 1 {
+		t.Errorf("want 1 problem for not null on a procedure, got %v", s.Problems)
+	}
+}
+
+// TestNotNullDirectiveOnTriggerIsProblem: a trigger has no result at all, so `not null`
+// above one is an unknown directive too.
+func TestNotNullDirectiveOnTriggerIsProblem(t *testing.T) {
+	sql := `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY);
+-- sqlshape: not null
+CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW SET @x = 1;
+`
+	s, err := Load(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) != 1 {
+		t.Errorf("want 1 problem for not null on a trigger, got %v", s.Problems)
+	}
+}
+
 func TestUnknownDirectiveOnTriggerIsProblem(t *testing.T) {
 	sql := `-- sqlshape: mysql 8.4
 CREATE TABLE t (id INT PRIMARY KEY);

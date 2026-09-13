@@ -503,12 +503,14 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 // got M" -- this checker's own message drops the db qualifier, the way its 1305 already
 // does), each argument is typed and, when it is a bare placeholder, takes the parameter's
 // own declared type (a stored function's parameters are always IN: schema.Param's own
-// doc). The result is Returns, always nullable (a stored function's RETURN can produce NULL
-// regardless of the declared type, and there is no static proof otherwise -- the same
-// reasoning a routine variable's own bodyVar.nullable always being true follows). The call
-// site is noted (noteCalledRoutine, call.go) for its own failure modes (violations(),
-// through calledRoutineViolations) and the table-overlap check (1442,
-// checkCalledRoutineOverlap).
+// doc). The result is Returns, nullable unless the function's own `-- sqlshape: not null`
+// directive says otherwise (r.NotNull, schema.go's spDirectives): a stored function's
+// RETURN can otherwise produce NULL regardless of the declared type, and there is no
+// static proof otherwise -- the same reasoning a routine variable's own bodyVar.nullable
+// always being true follows, and the same override postgres/analyze's function call typing
+// reads from schema.Function.NotNull. The call site is noted (noteCalledRoutine, call.go)
+// for its own failure modes (violations(), through calledRoutineViolations) and the
+// table-overlap check (1442, checkCalledRoutineOverlap).
 func (a *analyzer) storedFuncCall(sc scope, r *schema.Routine, args []mysqlast.Value, at int, where string) (typed, error) {
 	if len(args) != len(r.Params) {
 		return unknown, &Error{Message: fmt.Sprintf("Incorrect number of arguments for FUNCTION %s; expected %d, got %d", r.Name, len(r.Params), len(args)), Code: 1318, Position: a.ph.Back(at)}
@@ -522,7 +524,7 @@ func (a *analyzer) storedFuncCall(sc scope, r *schema.Routine, args []mysqlast.V
 		}
 	}
 	a.noteCalledRoutine(r, at)
-	return typed{typ: r.Returns, known: r.Returns.Name != "", nullable: true}, nil
+	return typed{typ: r.Returns, known: r.Returns.Name != "", nullable: !r.NotNull}, nil
 }
 
 // classType is what an Item class returns over typed arguments, from the catalog: the
