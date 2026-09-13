@@ -58,7 +58,15 @@ func directiveItems(text string, re *regexp.Regexp) (map[string]int, int) {
 }
 
 // possibleViolations filters an expansion's violations by what P can actually send:
-// a NOT NULL violation carried by a parameter is dropped when its Go type cannot be NULL.
+// a NOT NULL violation carried by a parameter is dropped when its Go type cannot be NULL,
+// or when the parameter's path was proven non-nil in this expansion by a plain
+// {{if .X}} / {{with .X}} whose then branch was taken to produce it (see
+// expand.Expansion.Guarded): a pointer read that way is guaranteed non-nil along this
+// expansion's lineage, whatever the pointer's zero-value nullability would otherwise say.
+// Only a bare pointer field gets this treatment -- a `{{if .X}}` is true exactly when X is
+// not the zero value, which for a pointer means non-nil, but for a nullable wrapper
+// (sql.Null*, pgtype.*) a struct is truthy the moment it's non-zero, which does not agree
+// with its own Valid flag, so those are left to their ordinary nullability.
 func (c *checker) possibleViolations(e *expand.Expansion, r *dialect.Result, pType types.Type) []dialect.Violation {
 	var out []dialect.Violation
 	for _, v := range r.Violations {
@@ -71,6 +79,11 @@ func (c *checker) possibleViolations(e *expand.Expansion, r *dialect.Result, pTy
 						switch gt.Underlying().(type) {
 						case *types.Slice, *types.Map:
 							nullable = true // a nil slice / map is sent as NULL
+						}
+						if nullable {
+							if _, isPtr := gt.(*types.Pointer); isPtr && e.Guarded(p.Path) {
+								nullable = false
+							}
 						}
 					}
 				}

@@ -6,6 +6,7 @@ package expand
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template/parse"
@@ -51,7 +52,37 @@ type Expansion struct {
 	Params []Param
 	// Branch names the control-flow choices that produced this expansion, e.g. "if@31:then range@114:x2".
 	Branch string
-	segs   []segment
+	// GuardedTrue lists the paths a plain {{if .X}} or {{with .X}} in this expansion
+	// decided true (the then branch was taken reading X itself, not a computed
+	// expression like `gt .X 0`). Reading X this way proves X was not the zero value at
+	// that point: for a pointer field, that means non-nil for the rest of the
+	// expansion's lineage. See Guarded.
+	GuardedTrue []Path
+	segs        []segment
+}
+
+// Guarded reports whether p is exactly one of e.GuardedTrue's paths. It is deliberately
+// not a prefix match: {{with .Order}} proves .Order itself non-nil, but says nothing
+// about .Order.ID's own nilness when ID is itself a pointer field -- that field can still
+// be its own nil regardless of Order's. Only a condition reading that exact path (e.g.
+// nested as {{if .ID}} inside the with) proves it.
+func (e *Expansion) Guarded(p Path) bool {
+	for _, g := range e.GuardedTrue {
+		if len(p) != len(g) {
+			continue
+		}
+		match := true
+		for i, el := range g {
+			if p[i] != el {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // segment maps a run of expanded bytes back to the template.
@@ -157,8 +188,18 @@ func newRootState() *state {
 
 func (x *expander) emit(out []*state) {
 	for _, st := range out {
+		var keys []string
+		for k := range st.guardedTrue {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var guarded []Path
+		for _, k := range keys {
+			guarded = append(guarded, st.guardedTrue[k])
+		}
 		x.res.Expansions = append(x.res.Expansions, Expansion{
-			SQL: st.sql.String(), Params: st.params, Branch: strings.TrimSpace(st.branch), segs: st.segs,
+			SQL: st.sql.String(), Params: st.params, Branch: strings.TrimSpace(st.branch),
+			GuardedTrue: guarded, segs: st.segs,
 		})
 	}
 }
@@ -264,6 +305,17 @@ type state struct {
 	// (the iteration count, 0/1/2). Set the first time a path is read, consulted (instead of
 	// branching again) on every later read of the same path in this lineage.
 	decisions map[string]int
+	// guardedTrue records, keyed by Path.String(), every path a plain {{if}}/{{with}} in
+	// this lineage has decided true (see Expansion.GuardedTrue).
+	guardedTrue map[string]Path
+}
+
+// guard records that p was read true by a plain if/with condition in this lineage.
+func (s *state) guard(p Path) {
+	if s.guardedTrue == nil {
+		s.guardedTrue = map[string]Path{}
+	}
+	s.guardedTrue[p.String()] = p
 }
 
 func (s *state) clone() *state {
@@ -283,6 +335,10 @@ func (s *state) clone() *state {
 	c.decisions = map[string]int{}
 	for k, v := range s.decisions {
 		c.decisions[k] = v
+	}
+	c.guardedTrue = map[string]Path{}
+	for k, v := range s.guardedTrue {
+		c.guardedTrue[k] = v
 	}
 	return c
 }
@@ -425,6 +481,7 @@ func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, w
 				// don't re-branch this state.
 				s.branch += fmt.Sprintf(" %s@%d:%s", kind, b.Pos, thenElse(d == 1))
 				if d == 1 {
+					s.guard(path)
 					if withDot {
 						s.dot = x.rebase(path, s)
 					}
@@ -439,6 +496,7 @@ func (x *expander) branches(b *parse.BranchNode, states []*state, kind string, w
 			c := s.clone()
 			if ok {
 				c.decisions[key] = 1
+				c.guard(path)
 			}
 			if withDot {
 				c.dot = x.rebase(path, s)

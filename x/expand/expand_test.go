@@ -489,3 +489,75 @@ func TestSparseTiesRepeatedCondition(t *testing.T) {
 		}
 	}
 }
+
+// TestGuardedTrueIf: a plain {{if .X}} that takes the then branch proves .X true (a
+// pointer non-nil) for the rest of that expansion's lineage; the else branch proves
+// nothing (X could be any falsy value, not "known false" in a way worth recording).
+func TestGuardedTrueIf(t *testing.T) {
+	res, err := Expand(`{{if .Status}}{{.Status}}{{else}}{{.Status}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var then, els *Expansion
+	for i := range res.Expansions {
+		e := &res.Expansions[i]
+		if strings.Contains(e.Branch, "if@5:then") {
+			then = e
+		} else {
+			els = e
+		}
+	}
+	if then == nil || els == nil {
+		t.Fatal("expected then and else expansions")
+	}
+	if !then.Guarded(Path{"Status"}) {
+		t.Errorf("then branch should guard .Status, GuardedTrue=%v", then.GuardedTrue)
+	}
+	if els.Guarded(Path{"Status"}) {
+		t.Errorf("else branch should not guard .Status")
+	}
+}
+
+// TestGuardedTrueWithNested: a {{with .Order}} that takes the then branch guards .Order
+// itself, but NOT a path nested under it (e.g. .Order.ID read as {{.ID}} inside the with,
+// which resolves to the absolute path .Order.ID): .Order being non-nil says nothing about
+// whether .Order.ID -- if ID is itself a pointer field -- is nil.
+func TestGuardedTrueWithNested(t *testing.T) {
+	res, err := Expand(`{{with .Order}}{{.ID}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var then *Expansion
+	for i := range res.Expansions {
+		if strings.Contains(res.Expansions[i].Branch, "with@7:then") {
+			then = &res.Expansions[i]
+		}
+	}
+	if then == nil {
+		t.Fatal("expected a then expansion")
+	}
+	if !then.Guarded(Path{"Order"}) {
+		t.Errorf(".Order should be guarded")
+	}
+	if then.Guarded(Path{"Order", "ID"}) {
+		t.Errorf(".Order.ID (nested under .Order, but not itself the guarded path) should not be guarded")
+	}
+	if then.Guarded(Path{"Other"}) {
+		t.Errorf("unrelated path should not be guarded")
+	}
+}
+
+// TestGuardedTrueRangeNotGuarded: a {{range}} does not add to GuardedTrue -- an element of
+// a ranged-over collection is one particular element, not the whole path proven non-nil.
+func TestGuardedTrueRangeNotGuarded(t *testing.T) {
+	res, err := Expand(`{{range .Tags}}{{.}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range res.Expansions {
+		e := &res.Expansions[i]
+		if e.Guarded(Path{"Tags"}) {
+			t.Errorf("range should not guard its path: %v", e.GuardedTrue)
+		}
+	}
+}
