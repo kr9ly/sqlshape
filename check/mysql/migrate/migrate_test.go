@@ -144,6 +144,30 @@ ALTER TABLE customers ADD COLUMN tier VARCHAR(10) NOT NULL DEFAULT '';
 		{name: "views", edit: `
 CREATE VIEW paid_orders AS SELECT id, customer_id, total FROM orders WHERE status = 'paid';
 `, want: []string{"CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `paid_orders`"}},
+		{name: "trigger body change", edit: `
+DROP TRIGGER orders_before_insert;
+CREATE TRIGGER orders_before_insert BEFORE INSERT ON orders FOR EACH ROW
+BEGIN
+  SET NEW.total = NEW.total * 1;
+END;
+`, want: []string{"DROP TRIGGER `orders_before_insert`", "CREATE TRIGGER `orders_before_insert` BEFORE INSERT ON `orders` FOR EACH ROW"}},
+		{name: "trigger drop", edit: `
+DROP TRIGGER orders_before_insert;
+`, want: []string{"DROP TRIGGER `orders_before_insert`"}},
+		{name: "function add", edit: `
+CREATE FUNCTION add_one(a INT) RETURNS INT DETERMINISTIC
+BEGIN
+  RETURN a + 1;
+END;
+`, want: []string{"CREATE FUNCTION `add_one`(a INT) RETURNS int"}},
+		{name: "function body change", edit: `
+DROP FUNCTION customer_order_total;
+CREATE FUNCTION customer_order_total(cust_id BIGINT UNSIGNED) RETURNS DECIMAL(10,2)
+READS SQL DATA
+BEGIN
+  RETURN 0;
+END;
+`, want: []string{"DROP FUNCTION `customer_order_total`", "CREATE FUNCTION `customer_order_total`"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -168,6 +192,32 @@ CREATE VIEW paid_orders AS SELECT id, customer_id, total FROM orders WHERE statu
 			plan(t, ctx, c.name+" (back)", from, back)
 		})
 	}
+}
+
+// A trigger's table renamed: the server keeps the trigger firing on the renamed table (its
+// SHOW CREATE TRIGGER text reads `ON` the new name, measured against mysqld), so the
+// trigger's definition text differs from the from side's even though nothing about the
+// trigger itself changed; the plan drops and recreates it (there is no ALTER TRIGGER), the
+// CREATE using the target's own (renamed) text.
+func TestPlanTriggerTableRenamed(t *testing.T) {
+	ctx := start(t)
+	baseSQL := example(t)
+	base := mustCanonical(t, ctx, baseSQL)
+	editSQL := baseSQL + "\n-- @migrate rename orders -> orders2\nRENAME TABLE orders TO orders2;\n"
+	to := mustCanonical(t, ctx, editSQL)
+	ddl := plan(t, ctx, "trigger table renamed", base, to)
+	joined := strings.Join(ddl, "\n")
+	for _, w := range []string{"DROP TRIGGER `orders_before_insert`", "RENAME TABLE `orders` TO `orders2`", "CREATE TRIGGER `orders_before_insert` BEFORE INSERT ON `orders2` FOR EACH ROW"} {
+		if !strings.Contains(joined, w) {
+			t.Errorf("DDL lacks %q:\n%s", w, joined)
+		}
+	}
+	// the way back
+	backSQL := "-- @migrate rename orders2 -> orders\n" + baseSQL
+	back := mustCanonical(t, ctx, backSQL)
+	back.intents, _ = ParseIntents(backSQL)
+	from := canonical{s: to.s, text: to.text}
+	plan(t, ctx, "trigger table renamed (back)", from, back)
 }
 
 // A view whose definition changes is replaced in place; one the target lacks is dropped.

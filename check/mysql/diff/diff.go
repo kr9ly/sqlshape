@@ -67,7 +67,10 @@ func (c Change) Retypes() bool {
 func Compare(a, b *schema.Schema) []Change {
 	d := &differ{}
 	d.tables(a, b)
+	d.routines(a, b, schema.Procedure, "procedure")
+	d.routines(a, b, schema.Function, "function")
 	d.views(a, b)
+	d.triggers(a, b)
 	return d.out
 }
 
@@ -154,6 +157,57 @@ func (d *differ) views(a, b *schema.Schema) {
 			d.add(Add, "view", name)
 		default:
 			d.props("view", name, ViewProps(f), ViewProps(t))
+		}
+	}
+}
+
+// routines compares the procedures or functions (kind picks which; MySQL keeps them in
+// separate namespaces, so a schema may have both a PROCEDURE and a FUNCTION of the same
+// name and they are compared independently).
+func (d *differ) routines(a, b *schema.Schema, kind schema.RoutineKind, label string) {
+	from, to := map[string]*schema.Routine{}, map[string]*schema.Routine{}
+	for _, r := range a.Routines {
+		if r.Kind == kind {
+			from[r.Name] = r
+		}
+	}
+	for _, r := range b.Routines {
+		if r.Kind == kind {
+			to[r.Name] = r
+		}
+	}
+	for _, name := range sortedKeys(from, to) {
+		f, inFrom := from[name]
+		t, inTo := to[name]
+		switch {
+		case inFrom && !inTo:
+			d.add(Drop, label, name)
+		case !inFrom && inTo:
+			d.add(Add, label, name)
+		default:
+			d.props(label, name, RoutineProps(f), RoutineProps(t))
+		}
+	}
+}
+
+func (d *differ) triggers(a, b *schema.Schema) {
+	from, to := map[string]*schema.Trigger{}, map[string]*schema.Trigger{}
+	for _, tr := range a.Triggers {
+		from[tr.Name] = tr
+	}
+	for _, tr := range b.Triggers {
+		to[tr.Name] = tr
+	}
+	for _, name := range sortedKeys(from, to) {
+		f, inFrom := from[name]
+		t, inTo := to[name]
+		switch {
+		case inFrom && !inTo:
+			d.add(Drop, "trigger", name)
+		case !inFrom && inTo:
+			d.add(Add, "trigger", name)
+		default:
+			d.props("trigger", name, TriggerProps(f), TriggerProps(t))
 		}
 	}
 }
@@ -325,6 +379,26 @@ func ViewProps(v *schema.View) map[string]string {
 	def := strings.TrimSpace(v.Definition)
 	def = strings.TrimPrefix(def, "CREATE ")
 	def = strings.TrimPrefix(def, "OR REPLACE ")
+	return map[string]string{"definition": def}
+}
+
+// RoutineProps are a procedure's or function's properties: its definition as the server
+// spells it (its parameters, RETURNS, characteristics and body). Two routines with the same
+// name in different kinds (a PROCEDURE and a FUNCTION) are never compared against each
+// other; Compare keeps them apart by kind.
+func RoutineProps(r *schema.Routine) map[string]string {
+	def := strings.TrimSpace(r.Definition)
+	def = strings.TrimPrefix(def, "CREATE ")
+	return map[string]string{"definition": def}
+}
+
+// TriggerProps are a trigger's properties: its definition as the server spells it (the
+// timing, event, table, FOLLOWS/PRECEDES ordering and body). A table rename changes the
+// `ON <table>` a trigger's definition names, so a trigger whose table was renamed compares
+// as changed even though its body did not.
+func TriggerProps(t *schema.Trigger) map[string]string {
+	def := strings.TrimSpace(t.Definition)
+	def = strings.TrimPrefix(def, "CREATE ")
 	return map[string]string{"definition": def}
 }
 

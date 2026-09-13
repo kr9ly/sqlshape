@@ -60,8 +60,13 @@ type Querier interface {
 }
 
 // Read renders the database db is connected to as DDL text: SET FOREIGN_KEY_CHECKS=0, the
-// tables in name order (their AUTO_INCREMENT counters left out), then the views in
-// dependency order (their DEFINER left out). The text is what Load parses.
+// tables in name order (their AUTO_INCREMENT counters left out), then the stored procedures
+// and functions in name order (a view may call a function, so routines come first), then
+// the views in dependency order, then the triggers (their DEFINER left out throughout).
+// Triggers on the same table, action time and event keep the order the server runs them in
+// (information_schema.TRIGGERS' ACTION_ORDER), reproduced as an explicit FOLLOWS clause
+// (SHOW CREATE TRIGGER's own text never has one, measured against mysqld: it always reads
+// back as if the trigger were declared alone). The text is what Load parses.
 func Read(ctx context.Context, db Querier) (string, error) {
 	rows, err := db.QueryContext(ctx, "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME")
 	if err != nil {
@@ -94,6 +99,9 @@ func Read(ctx context.Context, db Querier) (string, error) {
 		b.WriteString(normalizeTable(ddl))
 		b.WriteString(";\n")
 	}
+	if err := readRoutines(ctx, db, &b); err != nil {
+		return "", err
+	}
 	defs := map[string]string{}
 	for _, v := range views {
 		var name, ddl, cs, cl string
@@ -106,7 +114,91 @@ func Read(ctx context.Context, db Querier) (string, error) {
 		b.WriteString(defs[v])
 		b.WriteString(";\n")
 	}
+	if err := readTriggers(ctx, db, &b); err != nil {
+		return "", err
+	}
 	return b.String(), nil
+}
+
+// readRoutines renders every stored procedure and function of the database, in name (then
+// kind, so a PROCEDURE and a FUNCTION of the same name sort deterministically) order.
+func readRoutines(ctx context.Context, db Querier, b *strings.Builder) error {
+	rows, err := db.QueryContext(ctx, "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE() ORDER BY ROUTINE_NAME, ROUTINE_TYPE")
+	if err != nil {
+		return err
+	}
+	type routine struct{ name, kind string }
+	var list []routine
+	for rows.Next() {
+		var r routine
+		if err := rows.Scan(&r.name, &r.kind); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range list {
+		// SHOW CREATE PROCEDURE / FUNCTION both return (name, sql_mode, create text,
+		// character_set_client, collation_connection, Database Collation), measured
+		// against mysqld.
+		var name, sqlMode, ddl, cs, cl, dbCollation string
+		q := "SHOW CREATE FUNCTION `" + r.name + "`"
+		if r.kind == "PROCEDURE" {
+			q = "SHOW CREATE PROCEDURE `" + r.name + "`"
+		}
+		if err := db.QueryRowContext(ctx, q).Scan(&name, &sqlMode, &ddl, &cs, &cl, &dbCollation); err != nil {
+			return fmt.Errorf("%s: %w", q, err)
+		}
+		b.WriteString(normalizeRoutine(ddl))
+		b.WriteString(";\n")
+	}
+	return nil
+}
+
+// readTriggers renders every trigger of the database, grouped by its table, action time and
+// event in the server's own firing order (information_schema.TRIGGERS' ACTION_ORDER), a
+// FOLLOWS clause added to every trigger after the first of its group so the order survives a
+// reload.
+func readTriggers(ctx context.Context, db Querier, b *strings.Builder) error {
+	rows, err := db.QueryContext(ctx, "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION, ACTION_ORDER")
+	if err != nil {
+		return err
+	}
+	type trig struct{ name, table, timing, event string }
+	var list []trig
+	for rows.Next() {
+		var t trig
+		if err := rows.Scan(&t.name, &t.table, &t.timing, &t.event); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	last := map[string]string{}
+	for _, t := range list {
+		key := t.table + "|" + t.timing + "|" + t.event
+		follows := last[key]
+		// SHOW CREATE TRIGGER returns (name, sql_mode, SQL Original Statement,
+		// character_set_client, collation_connection, Database Collation, Created), one
+		// more column than SHOW CREATE PROCEDURE/FUNCTION, measured against mysqld.
+		var name, sqlMode, ddl, cs, cl, dbCollation, created string
+		q := "SHOW CREATE TRIGGER `" + t.name + "`"
+		if err := db.QueryRowContext(ctx, q).Scan(&name, &sqlMode, &ddl, &cs, &cl, &dbCollation, &created); err != nil {
+			return fmt.Errorf("%s: %w", q, err)
+		}
+		b.WriteString(normalizeTrigger(ddl, follows))
+		b.WriteString(";\n")
+		last[key] = t.name
+	}
+	return nil
 }
 
 var (
@@ -126,6 +218,35 @@ func normalizeTable(ddl string) string {
 // normalizeView drops the DEFINER, which names the user that created the view on that
 // server.
 func normalizeView(ddl string) string { return definer.ReplaceAllString(ddl, "") }
+
+// normalizeRoutine drops the DEFINER of a CREATE PROCEDURE / CREATE FUNCTION.
+func normalizeRoutine(ddl string) string { return dropTrailingSemicolon(definer.ReplaceAllString(ddl, "")) }
+
+var forEachRow = regexp.MustCompile(`FOR EACH ROW`)
+
+// dropTrailingSemicolon removes one trailing ';' (Read appends its own): a trigger or
+// routine whose body is a single simple statement, not a BEGIN ... END block, ends its SHOW
+// CREATE text with that statement's own ';' (measured against mysqld: a BEGIN ... END body
+// does not, its text ends at END), which would otherwise double up.
+func dropTrailingSemicolon(ddl string) string {
+	return strings.TrimSuffix(strings.TrimRight(ddl, " \t\r\n"), ";")
+}
+
+// normalizeTrigger drops the DEFINER, and inserts a FOLLOWS clause naming follows (the
+// trigger the server runs just before this one, for its table/action time/event) when
+// follows is not "": SHOW CREATE TRIGGER's own text never carries FOLLOWS/PRECEDES, so a
+// reload would otherwise put every trigger of a group last (measured against mysqld).
+func normalizeTrigger(ddl, follows string) string {
+	ddl = dropTrailingSemicolon(definer.ReplaceAllString(ddl, ""))
+	if follows == "" {
+		return ddl
+	}
+	loc := forEachRow.FindStringIndex(ddl)
+	if loc == nil {
+		return ddl
+	}
+	return ddl[:loc[1]] + " FOLLOWS `" + strings.ReplaceAll(follows, "`", "``") + "`" + ddl[loc[1]:]
+}
 
 // viewOrder sorts views so that a view comes after the views its text names.
 func viewOrder(views []string, defs map[string]string) []string {

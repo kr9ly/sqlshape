@@ -312,6 +312,13 @@ func (s *Schema) Routine(name string) *Routine {
 	return nil
 }
 
+// RoutineOf returns the procedure or function of the given kind named name, or nil: unlike
+// Routine, it does not guess between a PROCEDURE and a FUNCTION of the same name (dump /
+// diff / migrate need to tell them apart).
+func (s *Schema) RoutineOf(kind RoutineKind, name string) *Routine {
+	return s.routine(kind, name)
+}
+
 // routine returns the routine of the given kind named name, or nil.
 func (s *Schema) routine(kind RoutineKind, name string) *Routine {
 	for _, r := range s.Routines {

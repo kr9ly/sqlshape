@@ -149,7 +149,7 @@ func runApplyMySQL(ctx context.Context, schemaPath, text, db, ddl, pkgs string, 
 		return err
 	}
 	defer conn.Close()
-	stmts := mymigrate.Split(ddl)
+	stmts := mymigrate.SplitFor(ddl, tgt.s)
 	for i, stmt := range stmts {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("apply: statement %d of %d failed, the %d before it are applied (MySQL DDL commits implicitly; `sqlshape diff` from here gives the rest):\n  %s\n%v", i+1, len(stmts), i, stmt, err)

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 	"github.com/kr9ly/sqlshape/mysqltest/v2"
 )
 
@@ -46,6 +47,18 @@ func TestCanonical(t *testing.T) {
 		if c.Text == "" {
 			t.Errorf("column %s has no text", c.Name)
 		}
+	}
+	if s1.Trigger("orders_before_insert") == nil {
+		t.Error("trigger orders_before_insert not read back")
+	}
+	if s1.RoutineOf(schema.Function, "customer_order_total") == nil {
+		t.Error("function customer_order_total not read back")
+	}
+	if !strings.Contains(text1, "CREATE TRIGGER `orders_before_insert`") {
+		t.Errorf("trigger text missing:\n%s", text1)
+	}
+	if !strings.Contains(text1, "CREATE FUNCTION `customer_order_total`") {
+		t.Errorf("function text missing:\n%s", text1)
 	}
 	// fixpoint
 	_, text2, err := Local{}.Canonical(ctx, text1)
@@ -93,6 +106,48 @@ func TestHeader(t *testing.T) {
 	}
 	if Header("CREATE TABLE t (a INT);") != "-- sqlshape: mysql 8.4\n" {
 		t.Error("default header")
+	}
+}
+
+// Two triggers on the same table, action time and event: SHOW CREATE TRIGGER's own text
+// never carries FOLLOWS (measured against mysqld: it reads as if each trigger stood alone),
+// so Read must add it itself from information_schema.TRIGGERS' ACTION_ORDER for the second
+// trigger to run after the first on a reload, and canonicalizing that text again must keep
+// the same order (a fixpoint).
+func TestTriggerFollowsOrder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	schemaSQL := `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT);
+CREATE TRIGGER t_first BEFORE INSERT ON t FOR EACH ROW SET NEW.a = 1;
+CREATE TRIGGER t_second BEFORE INSERT ON t FOR EACH ROW FOLLOWS t_first SET NEW.b = 2;
+`
+	s1, text1, err := Local{}.Canonical(ctx, schemaSQL)
+	if errors.Is(err, ErrNoServer) {
+		t.Skip("no mysqld on PATH (nix-shell -p mysql84)")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s1.Problems) > 0 {
+		t.Fatalf("problems: %v", s1.Problems)
+	}
+	second := s1.Trigger("t_second")
+	if second == nil {
+		t.Fatal("t_second not read back")
+	}
+	if second.OrderClause != "FOLLOWS" || second.OrderTrigger != "t_first" {
+		t.Errorf("t_second: OrderClause=%q OrderTrigger=%q", second.OrderClause, second.OrderTrigger)
+	}
+	if !strings.Contains(text1, "FOLLOWS `t_first`") {
+		t.Errorf("no FOLLOWS clause in dumped text:\n%s", text1)
+	}
+	_, text2, err := Local{}.Canonical(ctx, text1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text2 != text1 {
+		t.Errorf("not a fixpoint:\n%s\n---\n%s", text1, text2)
 	}
 }
 

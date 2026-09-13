@@ -46,6 +46,12 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.alters()
 	p.adds()
 	p.backfills()
+	// triggers are created last, after the backfills: a newly added trigger should not
+	// fire on the migration's own backfill UPDATEs (measured against mysqld: a trigger
+	// created after a table's rows already exist does not run for those existing rows,
+	// only for statements from here on; PostgreSQL's planner keeps the same order for the
+	// same reason, see check/postgres/migrate).
+	p.addTriggers()
 	if len(p.problems) > 0 {
 		return p.out, errors.New(strings.Join(p.problems, "\n"))
 	}
@@ -150,6 +156,13 @@ func (p *planner) drops() {
 			gone = append(gone, f)
 		}
 	}
+	goneNames := map[string]bool{}
+	for _, f := range gone {
+		goneNames[f.Name] = true
+	}
+	// triggers that go or change, ahead of the table drops below: a trigger dropped along
+	// with its own table (DROP TABLE takes it silently) needs no DROP TRIGGER of its own.
+	p.dropTriggers(goneNames)
 	for _, f := range gone {
 		if !p.droppable[f.Name] {
 			p.problem("table %s is dropped, which no @migrate declares (`-- @migrate drop %s`, or a rename)", f.Name, f.Name)
@@ -176,6 +189,9 @@ func (p *planner) drops() {
 			p.emit("DROP VIEW %s;", q(v.Name))
 		}
 	}
+	// routines that go or change, after the view drops above (a view may call a function)
+	// and before the table drops below (their bodies may still name a table that goes).
+	p.dropRoutines()
 	for _, f := range gone {
 		p.emit("DROP TABLE %s;", q(f.Name))
 	}
@@ -238,6 +254,58 @@ func (p *planner) dropParts(f, t *schema.Table) {
 	}
 	for _, c := range goneCols {
 		p.emit("ALTER TABLE %s DROP COLUMN %s;", q(f.Name), q(c))
+	}
+}
+
+// dropTriggers drops every trigger that the target lacks or whose definition differs
+// (MySQL has no CREATE OR REPLACE TRIGGER: a changed trigger is a DROP and a CREATE, the
+// CREATE emitted by addTriggers). gone is the from tables the target no longer has: their
+// triggers go with them (DROP TABLE takes them silently) and are not dropped here.
+func (p *planner) dropTriggers(gone map[string]bool) {
+	for _, t := range p.from.Triggers {
+		if gone[t.Table] {
+			continue
+		}
+		tt := p.to.Trigger(t.Name)
+		if tt == nil || diff.TriggerProps(t)["definition"] != diff.TriggerProps(tt)["definition"] {
+			p.emit("DROP TRIGGER %s;", q(t.Name))
+		}
+	}
+}
+
+// dropRoutines drops every procedure/function that the target lacks or whose definition
+// differs (MySQL's CREATE PROCEDURE/FUNCTION has no OR REPLACE either).
+func (p *planner) dropRoutines() {
+	for _, r := range p.from.Routines {
+		tr := p.to.RoutineOf(r.Kind, r.Name)
+		if tr == nil || diff.RoutineProps(r)["definition"] != diff.RoutineProps(tr)["definition"] {
+			p.emit("DROP %s %s;", r.Kind, q(r.Name))
+		}
+	}
+}
+
+// addRoutines creates every procedure/function the from side lacks or whose definition
+// differs, from the target's own CREATE text.
+func (p *planner) addRoutines() {
+	for _, r := range p.to.Routines {
+		fr := p.from.RoutineOf(r.Kind, r.Name)
+		if fr != nil && diff.RoutineProps(fr)["definition"] == diff.RoutineProps(r)["definition"] {
+			continue
+		}
+		p.emit("%s;", strings.TrimSuffix(strings.TrimSpace(r.Definition), ";"))
+	}
+}
+
+// addTriggers creates every trigger the from side lacks or whose definition differs, from
+// the target's own CREATE text (which already carries the FOLLOWS clause dump.Read gives
+// it, so the target's firing order is reproduced).
+func (p *planner) addTriggers() {
+	for _, t := range p.to.Triggers {
+		ft := p.from.Trigger(t.Name)
+		if ft != nil && diff.TriggerProps(ft)["definition"] == diff.TriggerProps(t)["definition"] {
+			continue
+		}
+		p.emit("%s;", strings.TrimSuffix(strings.TrimSpace(t.Definition), ";"))
 	}
 }
 
@@ -422,6 +490,8 @@ func hasLabel(c *schema.Column, label string) bool {
 // --- adds ------------------------------------------------------------------------
 
 func (p *planner) adds() {
+	// routines ahead of everything else: a view (below) may call one.
+	p.addRoutines()
 	// new tables, parents before children
 	var fresh []*schema.Table
 	for _, t := range p.to.Tables {
@@ -697,6 +767,19 @@ func fkOrder(tables []*schema.Table) []*schema.Table {
 func Split(ddl string) []string {
 	var out []string
 	for _, st := range mysqlparse.Split(ddl) {
+		out = append(out, strings.TrimSpace(st.SQL))
+	}
+	return out
+}
+
+// SplitFor is Split under the sql_mode s declares: mysqlparse.Split already cuts a CREATE
+// TRIGGER / PROCEDURE / FUNCTION / EVENT body as one statement regardless of mode (mode
+// only matters to a candidate cut ambiguous enough that sql_mode decides whether it parses
+// as a complete statement on its own), but a plan should still be split under the schema
+// it targets rather than the parser's default.
+func SplitFor(ddl string, s *schema.Schema) []string {
+	var out []string
+	for _, st := range mysqlparse.SplitMode(ddl, s.Settings.ParseMode()) {
 		out = append(out, strings.TrimSpace(st.SQL))
 	}
 	return out
