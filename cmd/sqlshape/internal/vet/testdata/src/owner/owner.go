@@ -2,6 +2,9 @@ package owner
 
 import "github.com/kr9ly/sqlshape/v2"
 
+// OrderTooLarge names the trigger's P0401: the INSERT below may raise it.
+var OrderTooLarge = sqlshape.Error("P0401") // want OrderTooLarge:`sqlshape.Error\(P0401\)`
+
 // -require-columns=user_id: every statement on a table with user_id must pin it
 
 var pinned = sqlshape.Query[int64, struct{ U int64 }](`SELECT id FROM orders WHERE user_id = {{.U}} AND status = 'paid'`)

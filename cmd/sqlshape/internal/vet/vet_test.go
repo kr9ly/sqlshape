@@ -221,3 +221,16 @@ func TestQueryMarkers(t *testing.T) {
 	defer func() { markersOnce = sync.Once{} }()
 	analysistest.Run(t, td, Analyzer, "marker")
 }
+
+// TestErrorNames covers `-- sqlshape: error <code> = <Name>` ⇔ `var X =
+// sqlshape.Error(code)`: a correct declaration (by code, by Name, by both on the expect
+// line), a wrong identifier, an undeclared code, a declaration missing entirely for a
+// code an expect line names, and two declarations claiming the same code.
+func TestErrorNames(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "errname_schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("schema", "")
+	analysistest.Run(t, td, Analyzer, "errnameok", "errnamewrong", "errnameunknown", "errnamemissing", "errnamedup")
+}

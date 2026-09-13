@@ -615,6 +615,11 @@ func leadingComments(text string) string {
 
 var directiveLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[ \t]*$`)
 
+// validErrorName reports whether a `-- sqlshape: error` directive's name is a Go
+// identifier: what vet requires of the `var X = sqlshape.Error(code)` declaration it
+// must match.
+var validErrorName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString
+
 // versionLine is the `-- sqlshape: postgres <N>` declaration: the one directive that
 // belongs to the file rather than to the statement below it, read before anything is parsed.
 var versionLine = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*postgres[ \t]+(\S+)[ \t]*$`)
@@ -1773,7 +1778,12 @@ func (s *Schema) createFunction(st *pgparse.CreateFunctionStmt, loc int32) {
 				s.problem(loc, "function %s: directive %q: SQLSTATE must be 5 characters", name, d)
 				continue
 			}
-			fn.Raises = append(fn.Raises, RaisedError{Code: code, Name: strings.TrimSpace(errName)})
+			errName = strings.TrimSpace(errName)
+			if !validErrorName(errName) {
+				s.problem(loc, "function %s: directive %q: %q is not a valid name (a Go identifier)", name, d, errName)
+				continue
+			}
+			fn.Raises = append(fn.Raises, RaisedError{Code: code, Name: errName})
 		default:
 			s.problem(loc, "function %s: unknown directive %q", name, d)
 		}

@@ -32,3 +32,16 @@ CREATE TABLE tickets (
   status ENUM('open', 'closed') NOT NULL,
   CONSTRAINT fk_tickets_user FOREIGN KEY (user_id) REFERENCES users (id)
 );
+
+CREATE TABLE widgets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  qty INT NOT NULL
+);
+
+-- sqlshape: error 40001 = TooManyWidgets
+CREATE TRIGGER widgets_before_insert BEFORE INSERT ON widgets FOR EACH ROW
+BEGIN
+  IF NEW.qty > 100 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'too many widgets', MYSQL_ERRNO = 40001;
+  END IF;
+END;

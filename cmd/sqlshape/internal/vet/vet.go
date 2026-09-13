@@ -165,6 +165,16 @@ func loadSchema(path string) (*loadedSchema, error) {
 	// the schema's own statements (function bodies, policies, view bodies) are checked like
 	// the database does at CREATE time, and judged by the schema's own obligations
 	if sd := ls.schema(); sd != nil {
+		// the same code named twice under different Names is the schema's own
+		// inconsistency, whether or not any program ever declares a Go binding for it
+		seen := map[string]dialect.ErrorName{}
+		for _, e := range sd.Errors() {
+			if prev, dup := seen[e.Code]; dup && prev.Name != e.Name {
+				ls.problems = append(ls.problems, fmt.Sprintf("%s: `-- sqlshape: error %s = %s` disagrees with %s's `= %s` for the same code", e.Subject, e.Code, e.Name, prev.Subject, prev.Name))
+			} else if !dup {
+				seen[e.Code] = e
+			}
+		}
 		for _, d := range sd.Definitions() {
 			prefix := ""
 			if d.What != "" {
@@ -227,6 +237,17 @@ type checker struct {
 	owners map[*ast.CallExpr]string
 	// decls are the obligations in force: the schema's declarations plus the flags'
 	decls []obligation.Obligation
+	// errorDecls: this package's own `var X = sqlshape.Error(code)` declarations, by the
+	// var object (errornames.go).
+	errorDecls map[*types.Var]errorDecl
+	// expectPos is the first position an expect line in this package names a code or a
+	// Name at, for errornames.go's "no Go declaration" diagnostic to land on.
+	expectPos map[string]token.Pos
+	// possibleErrors are the named violations (Name != "") possible in some expansion of
+	// some call in this package, by code: what errornames.go requires a Go declaration for
+	// (a code the schema declares that no statement in this package can ever raise is not
+	// this package's business, the way an unused enum label is nobody's).
+	possibleErrors map[string]dialect.Violation
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -261,6 +282,7 @@ func run(pass *analysis.Pass) (any, error) {
 		c := &checker{pass: pass, bindings: map[*types.TypeName]*binding{}}
 		c.exportConstSets()
 		c.collectDeclaredTypes()
+		c.collectErrorDecls()
 		return index, nil
 	}
 	path, err := findSchema(pass)
@@ -277,6 +299,7 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, p := range ls.problems {
 		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
 	}
+	c.collectErrorDecls()
 	if c.sch == nil {
 		c.runDialect(calls, matviews)
 		return index, nil
@@ -315,6 +338,7 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 	}
 	c.finishBindings()
+	c.checkErrorDeclsCovered(calls[0].Pos())
 	return index, nil
 }
 

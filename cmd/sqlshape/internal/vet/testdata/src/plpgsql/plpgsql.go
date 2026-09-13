@@ -4,6 +4,9 @@ import "github.com/kr9ly/sqlshape/v2"
 
 type AccountID int64 // want AccountID:`bound k accounts.id`
 
+// Overdrawn names withdraw()'s own AC001.
+var Overdrawn = sqlshape.Error("AC001") // want Overdrawn:`sqlshape.Error\(AC001\)`
+
 type Move struct {
 	ID     AccountID
 	Amount int64

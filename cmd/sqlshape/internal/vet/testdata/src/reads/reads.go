@@ -2,6 +2,9 @@ package reads
 
 import "github.com/kr9ly/sqlshape/v2"
 
+// OrderTooLarge names the trigger's P0401: the writes below may raise it.
+var OrderTooLarge = sqlshape.Error("P0401") // want OrderTooLarge:`sqlshape.Error\(P0401\)`
+
 // -no-table-reads: reads go through views; tables are written, not read
 
 var viaView = sqlshape.Query[int64, struct{}](`SELECT id FROM order_summary`)

@@ -13,6 +13,9 @@ type OrderID int64 // want OrderID:`bound k orders.id`
 
 type UserID int64 // want UserID:`bound k users.id`
 
+// OrderTooLarge names the trigger's P0401: this package's INSERT below may raise it.
+var OrderTooLarge = sqlshape.Error("P0401") // want OrderTooLarge:`sqlshape.Error\(P0401\)`
+
 // advisory findings, reported only with -strict
 
 var plainEnumParam = sqlshape.Query[OrderID, struct{ S OrderStatus }](`SELECT id FROM orders WHERE status = {{.S}}`) // want `schema: materialized view order_stats has no unique index, so REFRESH MATERIALIZED VIEW CONCURRENTLY is not possible` `schema: orders.status is enum order_status: a seeded lookup table .* is easier to change` `no index on orders leads with any of \(status\): this predicate scans the whole table` `parameter .S is a non-pointer strict.OrderStatus: its zero value "" is not a label of enum order_status and fails at runtime \(SQLSTATE 22P02\) when unset`

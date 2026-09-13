@@ -108,6 +108,18 @@ func (a *Analyzer) relation(rel *schema.Relation) *dialect.Relation {
 	return r
 }
 
+// Errors lists the schema's own `-- sqlshape: error <code> = <Name>` declarations: every
+// function's Raises (a trigger function's own, and a plain function's, the same way).
+func (a *Analyzer) Errors() []dialect.ErrorName {
+	var out []dialect.ErrorName
+	for _, fn := range a.S.Functions {
+		for _, r := range fn.Raises {
+			out = append(out, dialect.ErrorName{Code: r.Code, Name: r.Name, Subject: "function " + fn.Name})
+		}
+	}
+	return out
+}
+
 // Definitions analyzes the schema's own statements once: function bodies (SQL and
 // PL/pgSQL, checked like PostgreSQL does at CREATE time), row-security policies (typed
 // like CREATE POLICY does), and view bodies (sqlshape's own findings are the view's).

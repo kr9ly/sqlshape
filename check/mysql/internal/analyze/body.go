@@ -317,20 +317,13 @@ func cachedAnalyzeTrigger(s *schema.Schema, tg *schema.Trigger) (*BodyResult, er
 }
 
 // parseRaises reads a trigger's/routine's `-- sqlshape: error <key> = <Name>` directives
-// (schema.go keeps them verbatim; this is the "later stage" that parses them) into a map
-// by key -- a MYSQL_ERRNO as decimal text, or a SQLSTATE.
+// (schema.ParseRaises; schema.go keeps them verbatim, validated, this is the "later
+// stage" that parses them) into a map by key -- a MYSQL_ERRNO as decimal text, or a
+// SQLSTATE.
 func parseRaises(directives []string) map[string]string {
 	out := map[string]string{}
-	for _, d := range directives {
-		if len(d) < 6 || !strings.EqualFold(d[:6], "error ") {
-			continue
-		}
-		rest := strings.TrimSpace(d[6:])
-		key, name, ok := strings.Cut(rest, "=")
-		if !ok {
-			continue
-		}
-		out[strings.TrimSpace(key)] = strings.TrimSpace(name)
+	for _, r := range schema.ParseRaises(directives) {
+		out[r.Code] = r.Name
 	}
 	return out
 }

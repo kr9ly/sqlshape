@@ -17,6 +17,42 @@ import (
 
 var directiveLine = regexp.MustCompile(`^[ \t]*--[ \t]*sqlshape:[ \t]*(.+?)[ \t]*$`)
 
+// RaisedError is a trigger's / routine's own `-- sqlshape: error <key> = <Name>`
+// directive, parsed: Code as written (a MYSQL_ERRNO in decimal, or a SQLSTATE), and its
+// application-side Name (a Go identifier the schema's author chose to name it: what a
+// program's `sqlshape.Error(Code)` declaration and an expect line may spell instead of
+// Code).
+type RaisedError struct {
+	Code string
+	Name string
+}
+
+// validErrorName reports whether a `-- sqlshape: error` directive's name is a Go
+// identifier: what vet requires of the `var X = sqlshape.Error(code)` declaration it
+// must match.
+var validErrorName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString
+
+// ParseRaises reads a trigger's/routine's own `error <key> = <Name>` directives (kept
+// verbatim in Directives by spDirectives, which already refused every other kind, and
+// validated the name there); this is the "later stage" that parses them, used both by the
+// body analyzer (to resolve a SIGNAL's key to its Name) and by the dialect (to list the
+// schema's Errors()).
+func ParseRaises(directives []string) []RaisedError {
+	var out []RaisedError
+	for _, d := range directives {
+		if len(d) < 6 || !strings.EqualFold(d[:6], "error ") {
+			continue
+		}
+		rest := strings.TrimSpace(d[6:])
+		key, name, ok := strings.Cut(rest, "=")
+		if !ok {
+			continue
+		}
+		out = append(out, RaisedError{Code: strings.TrimSpace(key), Name: strings.TrimSpace(name)})
+	}
+	return out
+}
+
 // leadingDirectives reads the directives among the comment lines in front of a statement
 // (the splitter keeps them with the statement); the file's version declaration and its
 // server settings are not one.

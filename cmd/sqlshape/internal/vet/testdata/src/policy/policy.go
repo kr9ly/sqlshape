@@ -5,6 +5,9 @@ import (
 	"github.com/kr9ly/sqlshape/postgres/v2"
 )
 
+// OrderTooLarge names the trigger's P0401: the UPDATE below may raise it.
+var OrderTooLarge = sqlshape.Error("P0401") // want OrderTooLarge:`sqlshape.Error\(P0401\)`
+
 // -no-tables: application code reads views and calls functions only
 
 var viaView = sqlshape.Query[int64, struct{}](`SELECT id FROM order_summary`)

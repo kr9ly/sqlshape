@@ -67,10 +67,14 @@ func (e *ConstraintError) Key() string {
 	return e.Table + "." + e.Column
 }
 
-// Violates reports whether err is a violation of the named constraint (or table.column NOT NULL).
-func Violates(err error, key string) bool {
+// Violates reports whether err is a violation of the named constraint (or table.column
+// NOT NULL). key is the constraint's name, a table.column, a raw SQLSTATE, or a
+// sqlshape.Failure a program declared with sqlshape.Error(code) for a `-- sqlshape:
+// error` annotation's code — Violates judges by the code either way, never by a
+// schema-declared Name (it does not read the schema).
+func Violates[K ~string](err error, key K) bool {
 	var ce *ConstraintError
-	return errors.As(err, &ce) && ce.Key() == key
+	return errors.As(err, &ce) && ce.Key() == string(key)
 }
 
 // wrapErr maps integrity-constraint errors (SQLSTATE class 23) and the custom SQLSTATEs
@@ -111,17 +115,27 @@ func isStaleResultTypeErr(err error) bool {
 
 var expectRe = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*expect[ \t]+(.+?)[ \t]*$`)
 
-// expects reports, for a template, whether its `-- sqlshape: expect` line names a SQLSTATE.
+// expects reports, for a template, whether its `-- sqlshape: expect` line has thought
+// about a custom SQLSTATE at all: an item spelling the code itself, or -- since the
+// runtime does not read schema.sql, so it cannot resolve a `-- sqlshape: error <code> =
+// <Name>` annotation's Name back to the code the checker matched it against statically --
+// any item at all, when the code itself is not one of them. A statement with no expect
+// line is left alone: nothing there thought about a custom SQLSTATE, so an unanticipated
+// one is not silently relabeled a declared failure.
 func expects(template string) func(code string) bool {
 	return func(code string) bool {
+		var any bool
 		for _, m := range expectRe.FindAllStringSubmatch(template, -1) {
 			for _, item := range strings.Split(m[1], ",") {
-				if strings.TrimSpace(item) == code {
-					return true
+				if item = strings.TrimSpace(item); item != "" {
+					any = true
+					if item == code {
+						return true
+					}
 				}
 			}
 		}
-		return false
+		return any
 	}
 }
 

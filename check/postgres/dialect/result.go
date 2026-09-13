@@ -71,7 +71,7 @@ func ResultOf(s *schema.Schema, r *analyze.Result) *dialect.Result {
 		out.Notes = append(out.Notes, dialect.Note{Message: n.Message, Position: pos(n.Position), Advisory: n.Advisory(), Param: int(n.Param)})
 	}
 	for _, v := range r.Violations {
-		out.Violations = append(out.Violations, dialect.Violation{Key: v.Key(), Code: "SQLSTATE " + v.Code, Table: v.Table, Columns: v.Columns, Constraint: v.Constraint, Detail: describeViolation(v), Param: int(v.Param)})
+		out.Violations = append(out.Violations, dialect.Violation{Key: v.Key(), Name: v.Name, Code: "SQLSTATE " + v.Code, Table: v.Table, Columns: v.Columns, Constraint: v.Constraint, Detail: describeViolation(v), Param: int(v.Param)})
 	}
 	for _, ref := range r.Relations {
 		name := ref.Name

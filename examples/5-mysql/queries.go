@@ -53,13 +53,19 @@ type NewOrder struct {
 	Note       *string
 }
 
+// OrderTotalTooLarge names the trigger's own 30001, from the `-- sqlshape: error` line
+// above it in schema.sql.
+var OrderTotalTooLarge = sqlshape.Error("30001")
+
 // CreateOrder's failure modes reach past its own table: orders_before_insert (a BEFORE
 // INSERT trigger) SIGNALs 30001 when NEW.total is too large, named OrderTotalTooLarge by
-// the `-- sqlshape: error` line above the trigger, and its own INSERT INTO order_audit may
-// violate that table's NOT NULL columns -- both become failure modes of the statement that
-// fires the trigger, the way the trigger's own constraints do.
+// the `-- sqlshape: error` line above the trigger -- the expect line below names it
+// OrderTotalTooLarge (it could just as well say 30001; the two are interchangeable) --
+// and its own INSERT INTO order_audit may violate that table's NOT NULL columns -- both
+// become failure modes of the statement that fires the trigger, the way the trigger's
+// own constraints do.
 var CreateOrder = sqlshape.Query[struct{}, NewOrder](`
--- sqlshape: expect 30001, fk_orders_customer, orders_total_check, order_audit.customer_id, order_audit.total
+-- sqlshape: expect OrderTotalTooLarge, fk_orders_customer, orders_total_check, order_audit.customer_id, order_audit.total
 	INSERT INTO orders (customer_id, total, note) VALUES ({{.CustomerID}}, {{.Total}}, {{.Note}})`)
 
 type ListOrdersParams struct {

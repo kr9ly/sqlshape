@@ -87,22 +87,59 @@ func (c *checker) possibleViolations(e *expand.Expansion, r *dialect.Result, pTy
 // checkExpectations reports the diff between the template's expect line and the
 // violations possible in any expansion (possible: key → violation, with the branch it
 // was first seen in).
+//
+// An expect line item satisfies a violation by matching either its Key (the SQLSTATE /
+// constraint the runtime's Violates judges by) or its Name (the `-- sqlshape: error
+// key = Name` annotation, when the violation carries one): the two are interchangeable
+// on the expect line, so a template may write whichever reads better, and a template
+// that writes both for the same violation (`expect P0401, OrderTooLarge`) has both
+// items satisfied by that one violation, neither left over as unmatched.
 func (c *checker) checkExpectations(lit literal, possible map[string]dialect.Violation, branch map[string]string, report func(token.Pos, string, ...any)) {
 	expected, at := expectations(lit.text)
+	if c.expectPos == nil {
+		c.expectPos = map[string]token.Pos{}
+	}
+	for k, off := range expected {
+		if _, ok := c.expectPos[k]; !ok {
+			c.expectPos[k] = lit.pos(off)
+		}
+	}
+	if c.possibleErrors == nil {
+		c.possibleErrors = map[string]dialect.Violation{}
+	}
+	for k, v := range possible {
+		if v.Name != "" {
+			c.possibleErrors[k] = v
+		}
+	}
+	satisfied := map[string]bool{}
 	var keys []string
-	for k := range possible {
-		if _, ok := expected[k]; !ok {
+	for k, v := range possible {
+		_, byKey := expected[k]
+		_, byName := expected[v.Name]
+		byName = byName && v.Name != ""
+		if byKey {
+			satisfied[k] = true
+		}
+		if byName {
+			satisfied[v.Name] = true
+		}
+		if !byKey && !byName {
 			keys = append(keys, k)
 		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		v := possible[k]
-		report(lit.pos(at), "may violate %s (%s); add `-- sqlshape: expect %s` to the template or make it impossible%s", k, v.Detail, k, branch[k])
+		suggest := k
+		if v.Name != "" {
+			suggest = v.Name
+		}
+		report(lit.pos(at), "may violate %s (%s); add `-- sqlshape: expect %s` to the template or make it impossible%s", k, v.Detail, suggest, branch[k])
 	}
 	keys = keys[:0]
 	for k := range expected {
-		if _, ok := possible[k]; !ok {
+		if !satisfied[k] {
 			keys = append(keys, k)
 		}
 	}

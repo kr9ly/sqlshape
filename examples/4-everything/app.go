@@ -34,9 +34,9 @@ func Reserve(ctx context.Context, db postgres.DB, t Tenanted, roomID RoomID, mem
 	}
 	id, err := postgres.Get(ctx, db, Book, NewBooking{Tenanted: t, RoomID: roomID, MemberID: memberID, Slot: slot, Attendees: attendees})
 	switch {
-	case postgres.Violates(err, "BK001"):
+	case postgres.Violates(err, SlotTaken):
 		return 0, fmt.Errorf("room %d is taken between %s and %s", roomID, from.Format(time.Kitchen), until.Format(time.Kitchen))
-	case postgres.Violates(err, "BK002"):
+	case postgres.Violates(err, OverCapacity):
 		return 0, fmt.Errorf("room %d cannot seat %d people", roomID, len(attendees))
 	case err != nil:
 		return 0, err

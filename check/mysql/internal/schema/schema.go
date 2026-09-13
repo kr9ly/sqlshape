@@ -1343,6 +1343,11 @@ func (s *Schema) spDirectives(kind, name, sql string, pos int) []string {
 	var out []string
 	for _, d := range leadingDirectives(sql) {
 		if strings.HasPrefix(strings.ToLower(d), "error ") {
+			for _, r := range ParseRaises([]string{d}) {
+				if !validErrorName(r.Name) {
+					s.problem(pos, "%s %s: directive %q: %q is not a valid name (a Go identifier)", kind, name, d, r.Name)
+				}
+			}
 			out = append(out, d)
 			continue
 		}

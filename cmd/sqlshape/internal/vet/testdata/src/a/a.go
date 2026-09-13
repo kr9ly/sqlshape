@@ -16,6 +16,9 @@ import (
 
 type OrderStatus string // want OrderStatus:`bound e order_status`
 
+// OrderTooLarge names the trigger's P0401: staleExpect and branchViolation below may raise it.
+var OrderTooLarge = sqlshape.Error("P0401") // want OrderTooLarge:`sqlshape.Error\(P0401\)`
+
 type OrderRow struct {
 	ID        int64
 	Status    OrderStatus
@@ -148,7 +151,7 @@ var escapedTemplate = sqlshape.Query[int64, struct{}]("SELECT id FROM users -- \
 var branchViolation = sqlshape.Query[struct{}, struct {
 	ID   int64
 	Note *string
-}](`UPDATE orders SET status = 'paid' {{if .Note}}, note = {{.Note}} {{end}} WHERE id = {{.ID}}`) // want `may violate P0401 \(raised by trigger orders_size on orders as OrderTooLarge, SQLSTATE P0401\)` "may violate orders_user_note_key \\(UNIQUE \\(user_id, note\\) on orders, SQLSTATE 23505\\); add `-- sqlshape: expect orders_user_note_key` to the template or make it impossible \\[if@\\d+:then\\]"
+}](`UPDATE orders SET status = 'paid' {{if .Note}}, note = {{.Note}} {{end}} WHERE id = {{.ID}}`) // want "may violate P0401 \\(raised by trigger orders_size on orders as OrderTooLarge, SQLSTATE P0401\\); add `-- sqlshape: expect OrderTooLarge` to the template or make it impossible" "may violate orders_user_note_key \\(UNIQUE \\(user_id, note\\) on orders, SQLSTATE 23505\\); add `-- sqlshape: expect orders_user_note_key` to the template or make it impossible \\[if@\\d+:then\\]"
 
 // nested rows: array_agg(row(...)) is positional, array_agg(t) / composite columns follow the type's column order
 type OrderBrief struct {

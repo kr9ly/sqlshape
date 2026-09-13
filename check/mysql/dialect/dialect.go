@@ -57,7 +57,7 @@ func (m *mysql) Analyze(sql string) (*dialect.Result, error) {
 		out.Columns = append(out.Columns, dialect.Column{Name: c.Name, Type: typeOf(c.Type, c.Known), Nullable: c.Nullable})
 	}
 	for _, v := range r.Violations {
-		out.Violations = append(out.Violations, dialect.Violation{Key: v.Key(), Code: "MySQL error " + strconv.Itoa(v.Code), Table: v.Table,
+		out.Violations = append(out.Violations, dialect.Violation{Key: v.Key(), Name: v.Name, Code: "MySQL error " + strconv.Itoa(v.Code), Table: v.Table,
 			Columns: v.Columns, Constraint: v.Constraint, Detail: describeViolation(v), Param: v.Param})
 	}
 	if r.Facts != nil {

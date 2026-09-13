@@ -151,6 +151,12 @@ type Note struct {
 // template's expect line names.
 type Violation struct {
 	Key        string // the name the expect line uses: the constraint's, or table.column for NOT NULL
+	// Name is the `-- sqlshape: error <key> = <Name>` annotation's name, "" when the
+	// violation carries none (every constraint but a trigger's / routine's raised
+	// SIGNAL). An expect line may name a violation by Key or by Name, whichever it
+	// spells; the runtime's Violates does not know the schema and still judges by the
+	// SQLSTATE / error number (Key), never by Name.
+	Name       string
 	Code       string // the database's error code (SQLSTATE 23505, MySQL 1062)
 	Table      string
 	Columns    []string
@@ -274,6 +280,20 @@ type Schema interface {
 	// Source describes a column of a relation the way a statement's Source would (its
 	// identity, its value set, its default); nil when the column does not exist.
 	Source(table, column string) *Source
+	// Errors lists the schema's own `-- sqlshape: error <code> = <Name>` declarations
+	// (one per trigger / routine / function that raises one), for vet to check every
+	// `sqlshape.Error(code)` declaration in the program against: the code must be one the
+	// schema actually declares, under the schema's own Name for it.
+	Errors() []ErrorName
+}
+
+// ErrorName is one `-- sqlshape: error <code> = <Name>` declaration read from the schema.
+type ErrorName struct {
+	Code string
+	Name string
+	// Subject is what declared it, for messages: "trigger orders_before_insert",
+	// "function check_order_size".
+	Subject string
 }
 
 // Schemaed is an Analyzer that also gives the checker its Schema.

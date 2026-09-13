@@ -171,3 +171,9 @@ const (
 )
 
 var ticketsByStatus = sqlshape.Query[uint64, struct{ S TicketStatus }](`SELECT id FROM tickets WHERE status = {{.S}}`) // want `TicketStatus has constant "reopened" which is not a label of value set of tickets.status \(CHECK\)`
+
+// Error names: the trigger's own SIGNAL, named TooManyWidgets by the `-- sqlshape:
+// error` line above it, is a Go name through sqlshape.Error, checked both ways.
+var TooManyWidgets = sqlshape.Error("40001") // want TooManyWidgets:`sqlshape.Error\(40001\)`
+
+var insertWidget = sqlshape.Query[struct{}, struct{ Qty int32 }]("-- sqlshape: expect TooManyWidgets\nINSERT INTO widgets (qty) VALUES ({{.Qty}})")

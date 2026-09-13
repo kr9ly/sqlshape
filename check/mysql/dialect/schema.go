@@ -106,6 +106,27 @@ func (m *mysql) viewResult(v *schema.View) *analyze.ViewResult {
 	return vr
 }
 
+// Errors lists the schema's own `-- sqlshape: error <code> = <Name>` declarations: every
+// trigger's and every routine's own.
+func (m *mysql) Errors() []dialect.ErrorName {
+	var out []dialect.ErrorName
+	for _, tg := range m.s.Triggers {
+		for _, r := range schema.ParseRaises(tg.Directives) {
+			out = append(out, dialect.ErrorName{Code: r.Code, Name: r.Name, Subject: "trigger " + tg.Name})
+		}
+	}
+	for _, r := range m.s.Routines {
+		what := "procedure " + r.Name
+		if r.Kind == schema.Function {
+			what = "function " + r.Name
+		}
+		for _, re := range schema.ParseRaises(r.Directives) {
+			out = append(out, dialect.ErrorName{Code: re.Code, Name: re.Name, Subject: what})
+		}
+	}
+	return out
+}
+
 // Definitions are the schema's own statements as the checker judges them: the view bodies,
 // and each trigger's / routine's body (its DML statements, one Definition per statement,
 // named the way check/postgres's own function bodies are -- "trigger x: line 3" -- so the

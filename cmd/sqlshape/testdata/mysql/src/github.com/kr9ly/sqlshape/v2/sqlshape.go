@@ -36,6 +36,13 @@ func One[R, P any](template string) Single[R, P] {
 	return Single[R, P]{stmt: Stmt[R, P]{Template: template}}
 }
 
+// Failure is a statement's failure mode as the program names it (see Error).
+type Failure string
+
+// Error declares a program's Go name for a schema's `-- sqlshape: error <code> = <Name>`
+// annotation.
+func Error(code string) Failure { return Failure(code) }
+
 // MatView is a handle on a materialized view.
 type MatView string
 

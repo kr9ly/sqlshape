@@ -27,7 +27,7 @@ func Checkout(ctx context.Context, db Beginner, customerID int64, shipping Yen, 
 
 	id, err := postgres.Get(ctx, tx, PlaceOrder, NewOrder{CustomerID: customerID, Shipping: shipping})
 	switch {
-	case postgres.Violates(err, "OS001"):
+	case postgres.Violates(err, TooManyOpenOrders):
 		return 0, fmt.Errorf("customer %d has too many open orders", customerID)
 	case postgres.Violates(err, "orders_customer_id_fkey"):
 		return 0, fmt.Errorf("customer %d does not exist", customerID)

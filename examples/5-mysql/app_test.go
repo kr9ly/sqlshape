@@ -42,6 +42,11 @@ func TestOrders(t *testing.T) {
 	if _, err := mysql.Exec(ctx, db, CreateOrder, NewOrder{CustomerID: 999, Total: "1.00"}); !mysql.Violates(err, "fk_orders_customer") {
 		t.Fatalf("unknown customer: %v", err)
 	}
+	// the trigger's own SIGNAL, named OrderTotalTooLarge: Violates judges by the code
+	// either way, so the Go name and the raw "30001" both work.
+	if _, err := mysql.Exec(ctx, db, CreateOrder, NewOrder{CustomerID: alice.ID, Total: "999999.00"}); !mysql.Violates(err, OrderTotalTooLarge) {
+		t.Fatalf("order total too large: %v", err)
+	}
 	orders, err := mysql.Collect(ctx, db, ListOrders, ListOrdersParams{CustomerID: alice.ID, Limit: 10})
 	if err != nil || len(orders) != 1 || orders[0].Status != Pending || orders[0].Total != "12.50" || orders[0].Note != nil {
 		t.Fatalf("orders: %+v %v", orders, err)
