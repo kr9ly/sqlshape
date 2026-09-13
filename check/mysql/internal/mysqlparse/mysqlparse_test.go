@@ -244,3 +244,74 @@ func TestSplit(t *testing.T) {
 		}
 	}
 }
+
+func checkOffsets(t *testing.T, script string, stmts []Statement) {
+	t.Helper()
+	for i, s := range stmts {
+		if s.Offset < 0 || s.Offset+len(s.SQL) > len(script) || script[s.Offset:s.Offset+len(s.SQL)] != s.SQL {
+			t.Errorf("%d: offset %d does not point at %q in script", i, s.Offset, s.SQL)
+		}
+	}
+}
+
+// TestSplitCompoundTrigger checks that a CREATE TRIGGER body with internal ';' (BEGIN ...
+// END, IF ... END IF) is cut as one statement, without a DELIMITER command.
+func TestSplitCompoundTrigger(t *testing.T) {
+	script := "CREATE TABLE t (a INT);\n" +
+		"CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\n" +
+		"BEGIN\n" +
+		"  DECLARE v INT DEFAULT 0;\n" +
+		"  IF NEW.a > 0 THEN\n" +
+		"    SET v = 1;\n" +
+		"  END IF;\n" +
+		"END;\n" +
+		"SELECT 1;\n"
+	got := SplitMode(script, 0)
+	checkOffsets(t, script, got)
+	if len(got) != 3 {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[1].SQL, "CREATE TRIGGER") || !strings.HasSuffix(got[1].SQL, "END") {
+		t.Errorf("trigger statement: %q", got[1].SQL)
+	}
+	if got[2].SQL != "SELECT 1" {
+		t.Errorf("trailing statement: %q", got[2].SQL)
+	}
+}
+
+// TestSplitDelimiter checks that a `DELIMITER` command switches the cut point and is itself
+// dropped, and that `DELIMITER ;` restores the default.
+func TestSplitDelimiter(t *testing.T) {
+	script := "DELIMITER $$\n" +
+		"CREATE FUNCTION f() RETURNS INT\n" +
+		"BEGIN\n" +
+		"  RETURN 1;\n" +
+		"END$$\n" +
+		"DELIMITER ;\n" +
+		"SELECT 2;\n"
+	got := SplitMode(script, 0)
+	checkOffsets(t, script, got)
+	if len(got) != 2 {
+		t.Fatalf("got %d statements: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].SQL, "CREATE FUNCTION") || !strings.HasSuffix(got[0].SQL, "END") {
+		t.Errorf("function statement: %q", got[0].SQL)
+	}
+	if got[1].SQL != "SELECT 2" {
+		t.Errorf("trailing statement: %q", got[1].SQL)
+	}
+}
+
+// TestSplitCompoundNoBeginEnd checks that a simple (non-BEGIN/END) trigger body, which ends
+// at its first ';', does not need the retry.
+func TestSplitCompoundNoBeginEnd(t *testing.T) {
+	script := "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW SET NEW.a = 1;\nSELECT 1;\n"
+	got := SplitMode(script, 0)
+	checkOffsets(t, script, got)
+	want := []string{"CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW SET NEW.a = 1", "SELECT 1"}
+	for i := range want {
+		if got[i].SQL != want[i] {
+			t.Errorf("%d: got %q want %q", i, got[i].SQL, want[i])
+		}
+	}
+}
