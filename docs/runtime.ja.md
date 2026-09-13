@@ -35,7 +35,7 @@ Goのenum型に`Known() bool`を実装しておくと（`Labelled`インター�
 
 ## エラー
 
-制約違反はランタイムの`*ConstraintError`として返る（`postgres.ConstraintError`は`*pgconn.PgError`を、`mysql.ConstraintError`はドライバのエラーを包む）。サーバが報告した内容を持ち、`Key()`はexpect行に書くのと同じ表記の名前を返す。データベースが制約に付ける名前、またはNOT NULLなら`table.column`である（[postgres.ja.md](postgres.ja.md#規則が使うもの)、[mysql.ja.md](mysql.ja.md#制約名と失敗モード)）。expect行で名指したSQLSTATE（PostgreSQLのトリガの`P0401`、または`-- sqlshape: error`で付けた名前）も同じように包まれる。
+制約違反はランタイムの`*ConstraintError`として返る（`postgres.ConstraintError`は`*pgconn.PgError`を、`mysql.ConstraintError`はドライバのエラーを包む）。サーバが報告した内容を持ち、`Key()`はexpect行に書くのと同じ表記の名前を返す。データベースが制約に付ける名前、またはNOT NULLなら`table.column`である（[postgres.ja.md](postgres.ja.md#規則が使うもの)、[mysql.ja.md](mysql.ja.md#制約名と失敗モード)）。expect行で名指したSQLSTATE（PostgreSQLのトリガの`P0401`、MySQLのSIGNAL自身のコード）も同じように包まれる。PostgreSQLはschema.sqlを読まないので`-- sqlshape: error`注釈のNameを検査器が突き合わせたコードに戻せず、expect行が何か書いてある文が受け取ったカスタムSQLSTATEはすべて包む——検査器がその文について予告済みと確認できたものだけに限らない。
 
 ```go
 _, err := postgres.First(ctx, db, CreateCustomer, p)
@@ -45,6 +45,8 @@ if postgres.Violates(err, "customers_email_key") {
 ```
 
 この名前は検査器が列挙したものと同じなので、コードが処理していない違反があれば、それはexpect行に書いてあるのに扱っていない違反である（[checks.ja.md](checks.ja.md#書き込みの失敗に備える)）。`ErrNoRows`はドライバのもの（`pgx.ErrNoRows`、`sql.ErrNoRows`）で、`IsNoRows(err)`で判定できる。
+
+`-- sqlshape: error <code> = <Name>`注釈のNameは、`sqlshape.Error(code)`でGoに写し取られる（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）。これは`sqlshape.Failure`——コードそのものを保持する`~string`——を返す。`Violates`は`Failure`も生の文字列も同じに扱い（`Violates[K ~string](err error, key K) bool`）、渡されたコードだけで判定する。スキーマを読まないので、Nameとたまたま同じ文字列との区別が付かず、両者を解決し合うこともない。`OrderTooLarge`が`sqlshape.Error("P0401")`なら、`Violates(err, OrderTooLarge)`と`Violates(err, "P0401")`はまったく同じ呼び出しである。
 
 ## 検査済みのSQLのみが実行できる
 

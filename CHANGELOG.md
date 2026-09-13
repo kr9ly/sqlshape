@@ -57,6 +57,21 @@ release it is a candidate for.
 
 ### Added
 
+- `sqlshape.Error(code)` mirrors a schema's `-- sqlshape: error <code> = <Name>` annotation (a
+  trigger's or routine's own raised failure mode) in Go: `var OrderTooLarge =
+  sqlshape.Error("30001")`. `go vet` checks it both ways -- the declaration's code must be one the
+  schema declares under that exact Name, no two declarations in a package may claim the same code,
+  and every named failure mode a package's statements can raise must have such a declaration
+  somewhere the checker can reach (a Fact carries the binding across packages, the way a declared
+  type's does). An expect line may spell the failure by its code or by the Name, whichever reads
+  better. `postgres.Violates` / `mysql.Violates` now take any `~string`, so a declared
+  `sqlshape.Failure` reads the same as the raw code always did; neither reads the schema, so they
+  judge only by the code the value holds, never by Name. The PostgreSQL runtime wraps a custom
+  SQLSTATE into `ConstraintError` for any statement with an expect line at all now (it cannot
+  resolve a Name back to the code the checker matched statically). `examples/3-database-api`,
+  `examples/4-everything` and `examples/5-mysql` declare their triggers' and functions' errors this
+  way and test `Violates` against a running server.
+
 - `sqlshape diff`, `apply` and `verify-schema` work on a MySQL schema. Both sides are read as the
   server's own `SHOW CREATE TABLE` / `SHOW CREATE VIEW`, parsed by the loader that reads
   `schema.sql`; the target is canonicalized in a scratch database on the `-db` server (dropped when

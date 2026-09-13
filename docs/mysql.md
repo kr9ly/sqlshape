@@ -137,9 +137,11 @@ same rule the [runtime](#the-runtime-databasesql) reads an error back by); SQLST
 unhandled is 1644. A named `CONDITION` resolves to its value; a bare `RESIGNAL` re-raises
 whatever the innermost `HANDLER` is itself handling. `-- sqlshape: error <key> = <Name>`
 above a `CREATE TRIGGER` / `FUNCTION` / `PROCEDURE`, the same annotation
-[checks.md](checks.md#name-the-errors-a-trigger-raises) documents for PostgreSQL,
-names the key for the description only (`raised by trigger ... as <Name>`) -- the expect
-line and `mysql.Violates` still read the key itself (`30001`, not `<Name>`). A
+[checks.md](checks.md#name-the-errors-a-trigger-raises) documents for PostgreSQL, gives
+`<key>` a Name a program mirrors with `sqlshape.Error(<key>)` and vet checks against the
+schema both ways; an expect line and `mysql.Violates` still judge by the key itself
+(`30001`, not `<Name>`) -- they may just as well spell it as `<Name>`, since a
+`sqlshape.Failure` from `sqlshape.Error("30001")` carries the code and nothing else. A
 `DECLARE ... HANDLER FOR` absorbs the matching failure modes of its own block (`SQLEXCEPTION`
 everything but classes `01` and `02`, `SQLWARNING` / `NOT FOUND` their class, a SQLSTATE or
 number itself); `INSERT` / `UPDATE IGNORE` absorbs none of a trigger's SIGNALs (measured: the

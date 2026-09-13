@@ -57,8 +57,11 @@ wrapping the `*pgconn.PgError`, `mysql.ConstraintError` wrapping the driver's er
 the server reported. Its `Key()` is the violation as the template's expect line spells it: the
 constraint's name as the database names it, or `table.column` for NOT NULL
 ([postgres.md](postgres.md#what-the-rules-use), [mysql.md](mysql.md#constraint-names-and-failure-modes)).
-A SQLSTATE the expect line names (a PostgreSQL trigger's `P0401`, or the name given to it with
-`-- sqlshape: error`) is wrapped the same way.
+A SQLSTATE the expect line names (a PostgreSQL trigger's `P0401`, or a MySQL SIGNAL's own
+code) is wrapped the same way; on PostgreSQL, since the runtime does not read schema.sql and so
+cannot resolve a `-- sqlshape: error` annotation's Name back to the code the checker matched it
+against, it wraps any custom SQLSTATE a statement with an expect line at all receives, not only
+one the checker is known to have predicted for it.
 
 ```go
 _, err := postgres.First(ctx, db, CreateCustomer, p)
@@ -70,6 +73,15 @@ if postgres.Violates(err, "customers_email_key") {
 The names are the ones the checker listed, so a violation the code does not handle is one the
 expect line announced ([checks.md](checks.md#preparing-for-a-write-to-fail)). `ErrNoRows` is the
 driver's (`pgx.ErrNoRows`, `sql.ErrNoRows`); `IsNoRows(err)` tests for it.
+
+A `-- sqlshape: error <code> = <Name>` annotation's Name is mirrored into Go with
+`sqlshape.Error(code)` ([checks.md](checks.md#name-the-errors-a-trigger-raises)), giving a
+`sqlshape.Failure` -- a `~string` holding the code itself. `Violates` takes a `Failure` or a
+plain string identically (`Violates[K ~string](err error, key K) bool`), judging only by the
+code it is given; it does not read the schema, so it cannot tell a Name from an arbitrary
+string that happens to equal it, and never resolves one to the other. `Violates(err,
+OrderTooLarge)` and `Violates(err, "P0401")` are exactly the same call once `OrderTooLarge` is
+`sqlshape.Error("P0401")`.
 
 ## Only checked SQL runs
 

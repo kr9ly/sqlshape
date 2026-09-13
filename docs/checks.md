@@ -685,8 +685,8 @@ trigger's error, a view's `WITH CHECK OPTION`), are each database's:
 #### Name the errors a trigger raises
 
 The checker reads a PL/pgSQL trigger body, so a `RAISE EXCEPTION ... USING ERRCODE = 'P0401'`
-inside it already adds `P0401` to the failure modes (a `RAISE` without `ERRCODE` is `P0001`).
-The annotation gives the code a name to use on expect lines and in `Violates`:
+inside it already adds `P0401` to the failure modes (a `RAISE` without `ERRCODE` is `P0001`). A
+`-- sqlshape: error <code> = <Name>` line above the trigger's function gives that code a name:
 
 ```sql
 -- schema.sql
@@ -699,6 +699,18 @@ END $$;
 CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
 
+`Name` must be a Go identifier: the program mirrors it with `sqlshape.Error`, and reads the
+failure back with it instead of the raw code:
+
+```go
+var OrderTooLarge = sqlshape.Error("P0401")
+
+if postgres.Violates(err, OrderTooLarge) { ... }
+```
+
+An expect line may spell the failure by the code or by the Name, whichever reads better --
+the two are interchangeable, and writing both leaves neither unmatched:
+
 ```sql
 -- sqlshape: expect OrderTooLarge, orders_customer_id_fkey
 INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
@@ -706,6 +718,39 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 
 The SQLSTATE joins the failure modes of the statements on the trigger's table for the events it
 fires on (here INSERT and UPDATE).
+
+`go vet` checks the `sqlshape.Error` declaration both ways: that its code is one the schema
+actually declares under that very Name, and that every named failure mode a package's
+statements can raise has such a declaration somewhere in the program (its own, or another
+package's that a reference reaches, the same reach a declared type's binding has).
+
+Rejected
+
+```go
+var Wrong = sqlshape.Error("P0401")
+// sqlshape: schema names function check_order_size's error P0401 "OrderTooLarge", not "Wrong"
+```
+
+```go
+var A = sqlshape.Error("P0401")
+var B = sqlshape.Error("P0401")
+// sqlshape: A and B both declare sqlshape.Error("P0401")
+```
+
+```go
+var Ghost = sqlshape.Error("P9999")
+// sqlshape: the schema declares no error "P9999"
+```
+
+```go
+// no var declares P0401 anywhere the checker can reach from this package, though a
+// statement's expect line names it
+// sqlshape: P0401 (raised by trigger order_size on orders as OrderTooLarge, SQLSTATE P0401)
+//           has no `var OrderTooLarge = sqlshape.Error("P0401")` declared in this program
+```
+
+Naming a code is optional: a schema with no `-- sqlshape: error` annotation is written and read
+entirely by its codes, on both the expect line and `Violates`.
 
 MySQL reads a trigger body the same way, and its own `SIGNAL` takes the annotation's place:
 
@@ -721,14 +766,15 @@ END;
 ```
 
 ```sql
--- sqlshape: expect 30001, fk_orders_customer
+-- sqlshape: expect OrderTooLarge, fk_orders_customer
 INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
-The expect line and `mysql.Violates` still read the key MySQL gives the SIGNAL -- the decimal
-`MYSQL_ERRNO` when it sets one (`30001`), else the SQLSTATE (`45000`) -- not the annotation's name:
-the name only decorates the diagnostic (`raised by trigger order_size on orders as
-OrderTooLarge`). What the key is when the SIGNAL sets no `MYSQL_ERRNO`, and the numbers a `SELECT
+The key the expect line and `mysql.Violates` judge by is the one MySQL gives the SIGNAL itself --
+the decimal `MYSQL_ERRNO` when it sets one (`30001`), else the SQLSTATE (`45000`) -- whether an
+item spells it as that code or as the annotation's Name: neither `Violates` nor the runtime reads
+the schema, so a `sqlshape.Failure` from `sqlshape.Error("30001")` still carries the code, and
+judges by it. What the key is when the SIGNAL sets no `MYSQL_ERRNO`, and the numbers a `SELECT
 ... INTO` and a trigger writing its own table carry, are [mysql.md's](mysql.md#triggers-and-stored-routines).
 
 #### PL/pgSQL statements that fail on their own (PostgreSQL)
@@ -786,7 +832,7 @@ END;
 ```sql
 SELECT place_order({{.CustomerID}}, {{.Total}})
 --     ^ may violate 30001 (raised by function place_order() as OrderTooLarge, MySQL error 30001);
---       add `-- sqlshape: expect 30001` to the template or make it impossible
+--       add `-- sqlshape: expect OrderTooLarge` to the template or make it impossible
 ```
 
 What is MySQL's about it -- a wrong argument count (1318), a function writing a table its own

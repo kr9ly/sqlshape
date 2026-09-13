@@ -584,7 +584,7 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 
 #### トリガーが送出するエラーには名前を付ける
 
-検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。注釈はそのコードに名前を付けるためのもので、expect行と`Violates`でその名前を使えるようになる:
+検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。トリガーの関数の上に書く`-- sqlshape: error <code> = <Name>`行は、そのコードに名前を付ける:
 
 ```sql
 -- schema.sql
@@ -597,12 +597,50 @@ END $$;
 CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
 
+`Name`はGoの識別子でなければならない。プログラム側は`sqlshape.Error`でそれを写し取り、生のコードの代わりにそれで失敗を読み戻す:
+
+```go
+var OrderTooLarge = sqlshape.Error("P0401")
+
+if postgres.Violates(err, OrderTooLarge) { ... }
+```
+
+expect行はその失敗をコードでもNameでも綴れる——読みやすい方を書けばよく、両方どちらも取り残されない:
+
 ```sql
 -- sqlshape: expect OrderTooLarge, orders_customer_id_fkey
 INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
 トリガーが付いているテーブルへの、トリガーが発火するイベント（この例ではINSERTとUPDATE）の失敗モードに、そのSQLSTATEが加わる。
+
+`go vet`は`sqlshape.Error`宣言を両方向で検査する。コードがスキーマの宣言どおりの、まさにそのNameのものであること、そしてパッケージの文が起こしうる名前付き失敗モードすべてに、プログラムのどこかに（自分自身か、参照が届く他パッケージの宣言か）そういう宣言があること——宣言済みの型の束縛が届く範囲と同じ範囲で判定する。
+
+NG
+
+```go
+var Wrong = sqlshape.Error("P0401")
+// sqlshape: schema names function check_order_size's error P0401 "OrderTooLarge", not "Wrong"
+```
+
+```go
+var A = sqlshape.Error("P0401")
+var B = sqlshape.Error("P0401")
+// sqlshape: A and B both declare sqlshape.Error("P0401")
+```
+
+```go
+var Ghost = sqlshape.Error("P9999")
+// sqlshape: the schema declares no error "P9999"
+```
+
+```go
+// このパッケージから検査器が届く範囲にP0401を宣言するvarが無い。文のexpect行はそれを名指している
+// sqlshape: P0401 (raised by trigger order_size on orders as OrderTooLarge, SQLSTATE P0401)
+//           has no `var OrderTooLarge = sqlshape.Error("P0401")` declared in this program
+```
+
+名前を付けるかどうかは任意である。`-- sqlshape: error`注釈の無いスキーマは、expect行も`Violates`もすべてコードだけで書けて読める。
 
 MySQLもトリガー本体を同じように読み、注釈の代わりになるのは自前の`SIGNAL`である:
 
@@ -618,11 +656,11 @@ END;
 ```
 
 ```sql
--- sqlshape: expect 30001, fk_orders_customer
+-- sqlshape: expect OrderTooLarge, fk_orders_customer
 INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
-expect行と`mysql.Violates`が読むのは、SIGNALにMySQL自身が付けるキー——`MYSQL_ERRNO`を設定していればその10進表記（`30001`）、無ければSQLSTATE（`45000`）——であって、注釈の名前ではない。名前は診断文の飾り（`raised by trigger order_size on orders as OrderTooLarge`）にしか使わない。`MYSQL_ERRNO`を設定しないときのキー、`SELECT ... INTO`とトリガーが自分の表に書く場合の番号は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
+expect行と`mysql.Violates`が判定に使うキーは、SIGNALにMySQL自身が付けるもの——`MYSQL_ERRNO`を設定していればその10進表記（`30001`）、無ければSQLSTATE（`45000`）——であることに変わりはない。項目をそのコードで綴っても注釈のNameで綴っても同じで、`Violates`もランタイムもスキーマを読まないので、`sqlshape.Error("30001")`から作った`sqlshape.Failure`もコードそのものを運んでおり、そのコードで判定される。`MYSQL_ERRNO`を設定しないときのキー、`SELECT ... INTO`とトリガーが自分の表に書く場合の番号は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
 
 #### RAISE無しで失敗するPL/pgSQL文（PostgreSQL）
 
@@ -665,7 +703,7 @@ END;
 ```sql
 SELECT place_order({{.CustomerID}}, {{.Total}})
 --     ^ may violate 30001 (raised by function place_order() as OrderTooLarge, MySQL error 30001);
---       add `-- sqlshape: expect 30001` to the template or make it impossible
+--       add `-- sqlshape: expect OrderTooLarge` to the template or make it impossible
 ```
 
 MySQL固有のもの——引数の数が違う場合(1318)、呼び出し側自身が読むか書く表に関数自身が書く場合(1442、実行のたびに)、`CALL`のOUT引数と結果列の規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
