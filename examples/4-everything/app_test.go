@@ -171,7 +171,7 @@ func TestEverything(t *testing.T) {
 		t.Fatalf("booked minutes: %v %d", err, m)
 	}
 
-	took := 40 * time.Millisecond
+	took := pgtype.Interval{Microseconds: (40 * time.Millisecond).Microseconds(), Valid: true}
 	if n, err := Track(ctx, pool, []Event{
 		{Tenanted: tenant, At: at(9), Kind: Booked, BookingID: &b1, ClientIP: &ip, Took: &took},
 		{Tenanted: tenant, At: at(10), Kind: Viewed},

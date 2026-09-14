@@ -185,7 +185,7 @@ func freezeView(s *schema.Schema, rel *schema.Relation) {
 
 // viewColumnOf builds one schema.ViewColumn from a resolved view output column.
 func viewColumnOf(a *analyzer, c rteCol) schema.ViewColumn {
-	vc := schema.ViewColumn{Name: c.name, Type: c.typ, Nullable: c.nullable}
+	vc := schema.ViewColumn{Name: c.name, Type: c.typ, Nullable: c.nullable, ElemNotNull: c.elemNotNull}
 	if cv := c.coll.asVar(); cv.strength == collImplicit {
 		vc.Collation = cv.name
 	}
@@ -240,6 +240,7 @@ func refreezeDependentNullability(s *schema.Schema, rel *schema.Relation) {
 				continue // defensive: names are supposed to stay fixed too
 			}
 			v.Frozen[i].Nullable = c.nullable
+			v.Frozen[i].ElemNotNull = c.elemNotNull
 		}
 	}
 }

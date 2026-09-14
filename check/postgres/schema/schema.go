@@ -87,9 +87,13 @@ func (p Problem) String() string { return fmt.Sprintf("@%d: %s", p.Location, p.M
 
 // ViewColumn is one frozen output column of a view (see Relation.Frozen).
 type ViewColumn struct {
-	Name      string
-	Type      TypeRef
-	Nullable  bool
+	Name     string
+	Type     TypeRef
+	Nullable bool
+	// ElemNotNull: for an array-typed column, the view's defining query proved the elements
+	// are never NULL (dialect.Type.ElemNotNull's meaning); refrozen with Nullable when a
+	// base table's NOT NULL changes, since the proof may rest on one.
+	ElemNotNull bool
 	Collation string // the column's collation name, "" for none / default
 	// SrcRel / Src: the base relation and column this output column is a plain reference
 	// to (writes through the view land there); nil for computed columns. Pointers, so a

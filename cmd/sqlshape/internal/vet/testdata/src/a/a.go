@@ -901,6 +901,11 @@ var elemNotNullAggScalar = sqlshape.Query[struct{ Ids []int64 }, struct{}](`SELE
 // array_agg of a nullable scalar column still carries the note.
 var elemNullableAggScalar = sqlshape.Query[struct{ Notes []string }, struct{}](`SELECT array_agg(note) AS notes FROM orders`) // want `field Notes: text\[\] may contain a NULL element even though the column is not NULL; \[\]string cannot receive one \(use \[\]\*string\)`
 
+// `col:",notnull"` asserts the elements too: the author knows no NULL is ever aggregated
+var elemTaggedNotNull = sqlshape.Query[struct {
+	Notes []string `col:",notnull"`
+}, struct{}](`SELECT array_agg(note) AS notes FROM orders`)
+
 // a literal ARRAY[...] whose elements are all not null.
 var elemNotNullLiteral = sqlshape.Query[struct{ Xs []int32 }, struct{}](`SELECT ARRAY[1, 2, 3] AS xs`)
 

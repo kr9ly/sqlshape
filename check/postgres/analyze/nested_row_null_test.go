@@ -172,3 +172,30 @@ func TestArrayElemNotNull(t *testing.T) {
 		})
 	}
 }
+
+// TestArrayElemNotNullThroughFrozenView: a view whose defining query proves its array
+// column's elements never NULL keeps the proof in its frozen column snapshot, so a query
+// over the view (the frozen path, not a fresh analysis of the body) reports ElemNotNull.
+func TestArrayElemNotNullThroughFrozenView(t *testing.T) {
+	s, err := Load(`
+CREATE TABLE rooms (id bigint PRIMARY KEY, name text NOT NULL);
+CREATE TABLE bookings (id bigint PRIMARY KEY, room_id bigint NOT NULL REFERENCES rooms (id), note text);
+CREATE TYPE slot AS (id bigint, note text);
+CREATE VIEW room_schedule AS
+SELECT r.id AS room_id, array_agg(row(b.id, b.note)::slot) FILTER (WHERE b.id IS NOT NULL) AS bookings, array_agg(b.note) AS notes
+  FROM rooms r LEFT JOIN bookings b ON b.room_id = r.id GROUP BY r.id;
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Analyze(s, "SELECT room_id, bookings, notes FROM room_schedule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Columns[1].ElemNotNull {
+		t.Error("bookings: array_agg of a row constructor through the view must keep ElemNotNull")
+	}
+	if r.Columns[2].ElemNotNull {
+		t.Error("notes: array_agg of a nullable column must not claim ElemNotNull")
+	}
+}

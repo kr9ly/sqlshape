@@ -1079,10 +1079,13 @@ func (c *checker) checkResult(callPos token.Pos, r *dialect.Result, rType types.
 		}
 		fname := fieldName[col.Name]
 		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fname)
-		f := c.fitPG(col.Type, fv.Type(), false)
 		if notnull[col.Name] {
+			// `col:",notnull"`: the author knows better than the analyzer -- about the
+			// value, and about an array's elements, which PostgreSQL never declares
 			col.Nullable = false
+			col.Type.ElemNotNull = true
 		}
+		f := c.fitPG(col.Type, fv.Type(), false)
 		c.reportFit(report, at, "field "+fname, col, fv.Type(), f, where)
 		if f.ok {
 			c.checkNested(col, fv.Type(), at, "field "+fname, report, where, false)

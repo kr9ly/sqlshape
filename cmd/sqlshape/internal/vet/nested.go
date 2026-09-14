@@ -71,10 +71,11 @@ func (c *checker) checkNested(col dialect.Column, gt types.Type, at token.Pos, w
 			continue
 		}
 		c.meet(fv.Type(), f.Type, f.Source, at, sub)
-		fit := c.fitPG(f.Type, fv.Type(), param)
 		if notnull[i] {
 			f.Nullable = false
+			f.Type.ElemNotNull = true // the elements too, see matchColumns
 		}
+		fit := c.fitPG(f.Type, fv.Type(), param)
 		c.reportFit(report, at, sub, f, fv.Type(), fit, where)
 		c.checkNested(f, fv.Type(), at, sub, report, where, param)
 	}

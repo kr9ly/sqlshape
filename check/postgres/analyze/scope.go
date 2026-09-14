@@ -531,11 +531,9 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pgparse.Alias, loc i
 				name: c.name, typ: c.typ, nullable: c.nullable, coll: c.coll.asVar(),
 				// PG's Describe reports the view itself as the source, never the base table
 				src: &Source{Table: rel.FullName(), Column: c.name, NotNull: false},
-				// a freshly analyzed view body's vc already carries elemNotNull (it went
-				// through the same selectStmt path as any other query); a frozen view's
-				// snapshot (schema.ViewColumn, see viewColumns below) has no such field and
-				// leaves this false -- "unknown" -- rather than tracking it live the way
-				// Nullable is refreshed on schema changes.
+				// a freshly analyzed view body's vc carries elemNotNull from selectStmt; a
+				// frozen view's snapshot carries schema.ViewColumn.ElemNotNull (viewColumns
+				// below), refrozen with Nullable when a base table's NOT NULL changes
 				elemNotNull: c.elemNotNull,
 			})
 		}
@@ -586,11 +584,10 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 			// whenever a base table's NOT NULL changes, matching how PG itself rechecks a
 			// view's underlying attnotnull on every query instead of freezing it.
 			//
-			// elemNotNull is left at its zero value (false, "unknown") here: schema.ViewColumn
-			// has no field for it and, unlike Nullable, nothing refreshes it live from the
-			// base tables, so a frozen view's array-typed column never claims proven-not-null
-			// elements even if its defining query would otherwise show it.
-			frozen[i] = rteCol{name: vc.Name, typ: vc.Type, nullable: vc.Nullable}
+			// ElemNotNull was proved by the defining query when the view was frozen, and is
+			// refrozen along with Nullable (refreezeDependentNullability) since the proof may
+			// rest on a base column's NOT NULL
+			frozen[i] = rteCol{name: vc.Name, typ: vc.Type, nullable: vc.Nullable, elemNotNull: vc.ElemNotNull}
 			if vc.Collation != "" {
 				frozen[i].coll = collation{strength: collImplicit, name: vc.Collation}
 			}

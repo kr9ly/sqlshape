@@ -118,7 +118,7 @@ type User struct {
 }
 ```
 
-補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。 `RETURNING`の`old.col`はINSERTの後、`new.col`はDELETEの後（PostgreSQL 18）、列の宣言に関わらずNULLになりうる。書き込みのその側には行が無い。
+補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ（配列のフィールドに付けると要素についても主張する）、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。 `RETURNING`の`old.col`はINSERTの後、`new.col`はDELETEの後（PostgreSQL 18）、列の宣言に関わらずNULLになりうる。書き込みのその側には行が無い。
 
 #### 一部の分岐だけが選ぶ列はNULLを受けられる型で受ける
 

@@ -146,8 +146,8 @@ still return NULL when there is nothing to report), and from a view's own WHERE 
 tracks its underlying column's NOT NULL live, the way PostgreSQL itself does: a later
 `ALTER TABLE ... DROP NOT NULL` on the base table reaches it too, even through a chain of views
 and past whatever the view's own WHERE clause does. If you know better than the checker, override
-it on the Go side with the `col:",notnull"` tag or on the SQL side with a
-`-- sqlshape: not null deleted_at` line in the template. For a function's result, put
+it on the Go side with the `col:",notnull"` tag (on an array field it asserts the elements too)
+or on the SQL side with a `-- sqlshape: not null deleted_at` line in the template. For a function's result, put
 `-- sqlshape: not null` above its `CREATE FUNCTION` in `schema.sql`. In a `RETURNING` list, `old.col` after an INSERT and `new.col` after a DELETE (PostgreSQL 18) may be NULL whatever the column declares: the row does not exist on that side of the write.
 
 #### A column only some branches select needs a field that can hold NULL

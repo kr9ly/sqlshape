@@ -27,12 +27,11 @@ release it is a candidate for.
   `(a, b)::T`, an inner-joined `NOT NULL` column, a whole-row reference), for a literal
   `ARRAY[...]` whose elements are all provably not NULL, and for `ARRAY(SELECT ...)` over a
   not-null single output column, propagating it through subqueries, CTEs, set operations and
-  freshly analyzed views (a frozen view's stored column snapshot has no such field yet and
-  stays "unknown"). A plain array column never qualifies, since PostgreSQL declares nothing
-  about a column's own elements.
+  views (a view's stored column snapshot carries it, `schema.ViewColumn.ElemNotNull`, refrozen
+  with the nullability). A plain array column never qualifies, since PostgreSQL declares nothing
+  about a column's own elements, so `col:",notnull"` on an array field asserts the elements too.
 
 ### Changed
-
 - `x/expand`: an `if` / `with` / `range` over a path an earlier control in the same lineage
   already decided (the same `{{if .Status}}` appearing twice, say, once in a column list and
   once in `VALUES`) now follows that decision instead of branching it again, in both the full

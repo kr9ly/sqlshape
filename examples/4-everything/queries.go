@@ -143,7 +143,7 @@ type Booking struct {
 	BookedBy  string
 	Slot      pgtype.Range[time.Time]
 	Minutes   Minutes
-	Attendees []string
+	Attendees []string `col:",notnull"` // text[] NOT NULL says nothing about the elements; the tag asserts none is NULL
 	Tags      map[string]*string
 	Note      *string
 	CreatedAt time.Time
@@ -311,7 +311,7 @@ type Event struct {
 	Kind      EventKind
 	BookingID *BookingID
 	ClientIP  *netip.Addr
-	Took      *time.Duration
+	Took      *pgtype.Interval // interval keeps months, days and microseconds apart; time.Duration would flatten them (the checker says so)
 }
 
 var AppendEvents = postgres.Copy[Event]("app.events", "tenant_id", "at", "kind", "booking_id", "client_ip", "took")
