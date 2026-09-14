@@ -121,13 +121,17 @@ func matchSpelling(spell string, dt dialect.Type, t types.Type, param bool, tr d
 		if ef.unknown {
 			return true, fit{}
 		}
-		// PostgreSQL never guarantees an array's elements are themselves not null: a
-		// column's own NOT NULL only forbids the array value as a whole from being NULL.
-		// A Go element type that cannot itself carry NULL (not already a pointer / nullable
-		// wrapper) is accepted by default with a standing note, and additionally flagged as
-		// a rejection under -strict (matchColumns/checkNested still run against it: the
-		// array is accepted, only the missing NULL-safety is being called out).
-		if ef.ok && !param && dt.Kind == dialect.Array && !ef.nullable {
+		// A dialect's own column type never guarantees an array's elements are themselves
+		// not null: PostgreSQL's own NOT NULL only forbids the array value as a whole from
+		// being NULL. A dialect that has proved the elements can never be NULL (dt.ElemNotNull,
+		// e.g. PostgreSQL's array_agg() of a value it knows is never NULL, a literal
+		// ARRAY[...] whose elements are all not NULL, an ARRAY(SELECT ...) over a not-null
+		// column) skips the note below entirely. Otherwise a Go element type that cannot
+		// itself carry NULL (not already a pointer / nullable wrapper) is accepted by
+		// default with a standing note, and additionally flagged as a rejection under
+		// -strict (matchColumns/checkNested still run against it: the array is accepted,
+		// only the missing NULL-safety is being called out).
+		if ef.ok && !param && dt.Kind == dialect.Array && !ef.nullable && !dt.ElemNotNull {
 			addArrayNullElemNotes(&ef, dt, t, et)
 		}
 		return ef.ok, ef

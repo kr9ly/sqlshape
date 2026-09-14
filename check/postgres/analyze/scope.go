@@ -19,6 +19,11 @@ type rteCol struct {
 	lit    bool     // a constant target column, see expr.lit
 	fields []rteCol // record shape, see expr.fields
 	coll   collation
+	// elemNotNull: for an array-typed column, the analyzer proved its elements are never
+	// NULL, see expr.elemNotNull for how it is computed and dialect.Type.ElemNotNull for
+	// where it surfaces in the contract. False (the zero value) is the default for
+	// everything else, including a plain table column of array type.
+	elemNotNull bool
 }
 
 // rte is a FROM item: a table / view / CTE / subquery / function, or a join of two.
@@ -526,6 +531,12 @@ func (a *analyzer) relationRTE(rel *schema.Relation, alias *pgparse.Alias, loc i
 				name: c.name, typ: c.typ, nullable: c.nullable, coll: c.coll.asVar(),
 				// PG's Describe reports the view itself as the source, never the base table
 				src: &Source{Table: rel.FullName(), Column: c.name, NotNull: false},
+				// a freshly analyzed view body's vc already carries elemNotNull (it went
+				// through the same selectStmt path as any other query); a frozen view's
+				// snapshot (schema.ViewColumn, see viewColumns below) has no such field and
+				// leaves this false -- "unknown" -- rather than tracking it live the way
+				// Nullable is refreshed on schema changes.
+				elemNotNull: c.elemNotNull,
 			})
 		}
 	}
@@ -574,6 +585,11 @@ func (a *analyzer) viewColumns(rel *schema.Relation) ([]rteCol, *Error) {
 			// NotNullHook (analyze.go's refreezeDependentNullability) rewrites it in place
 			// whenever a base table's NOT NULL changes, matching how PG itself rechecks a
 			// view's underlying attnotnull on every query instead of freezing it.
+			//
+			// elemNotNull is left at its zero value (false, "unknown") here: schema.ViewColumn
+			// has no field for it and, unlike Nullable, nothing refreshes it live from the
+			// base tables, so a frozen view's array-typed column never claims proven-not-null
+			// elements even if its defining query would otherwise show it.
 			frozen[i] = rteCol{name: vc.Name, typ: vc.Type, nullable: vc.Nullable}
 			if vc.Collation != "" {
 				frozen[i].coll = collation{strength: collImplicit, name: vc.Collation}

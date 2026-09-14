@@ -495,7 +495,7 @@ func (r *Result) String(types *schema.Types) string {
 
 // column converts a range-table column to a result column, describing record shapes.
 func (a *analyzer) column(c rteCol) Column {
-	col := Column{Name: c.name, Type: c.typ, Nullable: c.nullable, Source: c.src}
+	col := Column{Name: c.name, Type: c.typ, Nullable: c.nullable, ElemNotNull: c.elemNotNull, Source: c.src}
 	fields := c.fields
 	if len(fields) == 0 {
 		// a named composite (or an array of one): its declared columns

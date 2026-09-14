@@ -134,7 +134,7 @@ func (a *analyzer) selectStmt(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Er
 		if name == "" {
 			name = a.figureColname(t.Val)
 		}
-		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll})
+		cols = append(cols, rteCol{name: name, typ: e.typ, nullable: e.nullable, src: e.src, lit: isLit(e), fields: e.fields, coll: e.coll, elemNotNull: e.elemNotNull})
 		origins = append(origins, t.Val)
 	}
 	if whereErr != nil {
@@ -696,7 +696,7 @@ func (a *analyzer) setOp(sel *pgparse.SelectStmt, sc *scope) ([]rteCol, *Error) 
 		if err != nil {
 			return nil, err
 		}
-		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit, coll: a.resultColl(coll, t)}
+		out[i] = rteCol{name: l.name, typ: schema.TypeRef{OID: t, Typmod: typmod}, nullable: l.nullable || r.nullable, lit: l.lit && r.lit, coll: a.resultColl(coll, t), elemNotNull: l.elemNotNull && r.elemNotNull}
 	}
 	// ORDER BY on the whole set operation names output columns (or their numbers) only
 	for _, sn := range sel.SortClause {
@@ -780,7 +780,7 @@ func (a *analyzer) values(lists []*pgparse.Node, sc *scope) ([]rteCol, *Error) {
 					return nil, err
 				}
 				for _, c := range cols {
-					row = append(row, &expr{typ: c.typ, nullable: c.nullable, src: c.src, fields: c.fields, coll: c.coll.asVar(), node: it})
+					row = append(row, &expr{typ: c.typ, nullable: c.nullable, src: c.src, fields: c.fields, coll: c.coll.asVar(), node: it, elemNotNull: c.elemNotNull})
 				}
 				continue
 			}

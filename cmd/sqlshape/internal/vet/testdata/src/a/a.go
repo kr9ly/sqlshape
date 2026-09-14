@@ -153,7 +153,11 @@ var branchViolation = sqlshape.Query[struct{}, struct {
 	Note *string
 }](`UPDATE orders SET status = 'paid' {{if .Note}}, note = {{.Note}} {{end}} WHERE id = {{.ID}}`) // want "may violate P0401 \\(raised by trigger orders_size on orders as OrderTooLarge, SQLSTATE P0401\\); add `-- sqlshape: expect OrderTooLarge` to the template or make it impossible" "may violate orders_user_note_key \\(UNIQUE \\(user_id, note\\) on orders, SQLSTATE 23505\\); add `-- sqlshape: expect orders_user_note_key` to the template or make it impossible \\[if@\\d+:then\\]"
 
-// nested rows: array_agg(row(...)) is positional, array_agg(t) / composite columns follow the type's column order
+// nested rows: array_agg(row(...)) is positional, array_agg(t) / composite columns follow
+// the type's column order. array_agg(row(...))'s argument is a row constructor, never
+// NULL itself, so these carry no array-null-element note regardless of the row's own
+// fields' nullability (dialect.Type.ElemNotNull, see adv_typefit for the case that still
+// does: array_agg of a plain scalar column).
 type OrderBrief struct {
 	ID    int64
 	Total string
@@ -164,7 +168,7 @@ type UserOrders struct {
 	Orders []OrderBrief
 }
 
-var userOrders = sqlshape.Query[UserOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders: record\[\] may contain a NULL element even though the column is not NULL; \[\]a\.OrderBrief silently receives it as a zero-valued OrderBrief with no error \(use \[\]\*a\.OrderBrief\)`
+var userOrders = sqlshape.Query[UserOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`)
 
 type ShortBrief struct{ ID int64 }
 
@@ -173,7 +177,7 @@ type UserShortOrders struct {
 	Orders []ShortBrief
 }
 
-var badArity = sqlshape.Query[UserShortOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders: a.ShortBrief has 1 fields but the row type has 2 \("f1 bigint, f2 numeric\(12,2\)"\)` `field Orders: record\[\] may contain a NULL element even though the column is not NULL; \[\]a\.ShortBrief silently receives it as a zero-valued ShortBrief with no error \(use \[\]\*a\.ShortBrief\)`
+var badArity = sqlshape.Query[UserShortOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders: a.ShortBrief has 1 fields but the row type has 2 \("f1 bigint, f2 numeric\(12,2\)"\)`
 
 type BadBrief struct {
 	ID    int32
@@ -185,7 +189,7 @@ type UserBadOrders struct {
 	Orders []BadBrief
 }
 
-var badNestedType = sqlshape.Query[UserBadOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders.ID: bigint into int32` `field Orders: record\[\] may contain a NULL element even though the column is not NULL; \[\]a\.BadBrief silently receives it as a zero-valued BadBrief with no error \(use \[\]\*a\.BadBrief\)`
+var badNestedType = sqlshape.Query[UserBadOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders.ID: bigint into int32`
 
 type Money struct {
 	Currency string
@@ -319,9 +323,9 @@ type UserNotedOrders struct {
 	Orders []BriefWithNote
 }
 
-var embeddedNested = sqlshape.Query[UserNotedOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total, o.note)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders: record\[\] may contain a NULL element even though the column is not NULL; \[\]a\.BriefWithNote silently receives it as a zero-valued BriefWithNote with no error \(use \[\]\*a\.BriefWithNote\)`
+var embeddedNested = sqlshape.Query[UserNotedOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.total, o.note)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`)
 
-var embeddedNestedBad = sqlshape.Query[UserNotedOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.note, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders.OrderBase.Total is string but column "f2" may be NULL` `field Orders: record\[\] may contain a NULL element even though the column is not NULL; \[\]a\.BriefWithNote silently receives it as a zero-valued BriefWithNote with no error \(use \[\]\*a\.BriefWithNote\)`
+var embeddedNestedBad = sqlshape.Query[UserNotedOrders, struct{}](`SELECT u.id, array_agg(row(o.id, o.note, o.total)) AS orders FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.id`) // want `field Orders.OrderBase.Total is string but column "f2" may be NULL`
 
 // promoted fields of P resolve in the template, as text/template does
 type ByID struct{ ID int64 }
@@ -883,3 +887,28 @@ type PricesPgtypeField struct {
 }
 
 var nestedPgtypeElem = sqlshape.Query[PricesPgtypeField, struct{}](`SELECT array_agg(price) AS prices FROM orders`)
+
+// dialect.Type.ElemNotNull: the analyzer proves some array shapes can never hold a NULL
+// element, and the checker skips the note (and the -strict rejection) for those; a plain
+// array column and array_agg of a value that can be NULL still carry it (see
+// TestNestedRowConstructorNeverNullButArrayAggPassesScalarNullsThrough in
+// check/postgres/analyze for the measured PostgreSQL facts these forms rely on).
+
+// array_agg(row(...)) already covered above (userOrders etc.); array_agg of a NOT NULL
+// scalar column is provably not-null the same way.
+var elemNotNullAggScalar = sqlshape.Query[struct{ Ids []int64 }, struct{}](`SELECT array_agg(id) AS ids FROM orders`)
+
+// array_agg of a nullable scalar column still carries the note.
+var elemNullableAggScalar = sqlshape.Query[struct{ Notes []string }, struct{}](`SELECT array_agg(note) AS notes FROM orders`) // want `field Notes: text\[\] may contain a NULL element even though the column is not NULL; \[\]string cannot receive one \(use \[\]\*string\)`
+
+// a literal ARRAY[...] whose elements are all not null.
+var elemNotNullLiteral = sqlshape.Query[struct{ Xs []int32 }, struct{}](`SELECT ARRAY[1, 2, 3] AS xs`)
+
+// a literal ARRAY[...] with a NULL element still carries the note.
+var elemNullableLiteral = sqlshape.Query[struct{ Xs []int32 }, struct{}](`SELECT ARRAY[1, NULL, 3] AS xs`) // want `field Xs: integer\[\] may contain a NULL element even though the column is not NULL; \[\]int32 cannot receive one \(use \[\]\*int32\)`
+
+// ARRAY(SELECT ...) over a NOT NULL column.
+var elemNotNullSubquery = sqlshape.Query[struct{ Ids []int64 }, struct{}](`SELECT ARRAY(SELECT id FROM orders) AS ids`)
+
+// ARRAY(SELECT ...) over a nullable column still carries the note.
+var elemNullableSubquery = sqlshape.Query[struct{ Notes []string }, struct{}](`SELECT ARRAY(SELECT note FROM orders) AS notes`) // want `field Notes: text\[\] may contain a NULL element even though the column is not NULL; \[\]string cannot receive one \(use \[\]\*string\)`

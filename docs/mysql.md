@@ -109,14 +109,17 @@ statement it belongs to, and a mysql-client `DELIMITER x` line is read too. What
 itself refuses at CREATE time is a problem the same way an unknown table is: no such table
 (1146), the trigger or routine already exists (1359 / 1304), no such trigger or routine to
 `DROP` (1360 / 1305), no such trigger for `FOLLOWS` / `PRECEDES` to name (3011). `DROP TABLE`
-takes a table's triggers with it; `RENAME TABLE` moves them.
+takes a table's triggers with it; `RENAME TABLE` moves them. `CREATE EVENT` is a problem of
+the schema: nothing a statement of the program runs reaches an event, and the migration
+commands do not read events back from a server, so keep events out of schema.sql.
 
 The body is read once per schema, the way a PL/pgSQL function's is on PostgreSQL
 ([checks.md](checks.md#name-the-errors-a-trigger-raises)):
 `NEW.col` / `OLD.col` type as the trigger's own table's columns (an unknown column is 1054;
 `OLD` in an INSERT trigger or `NEW` in a DELETE trigger is 1363; writing `OLD`, or writing
 `NEW` outside a BEFORE trigger, is 1362 -- a NOT NULL column's `NEW.col` can still be NULL in
-a BEFORE trigger, measured); a `DECLARE`d variable or a routine's own parameter shadows a
+a BEFORE trigger, and is as declared in an AFTER one: the server's own NOT NULL check runs
+between the two, measured); a `DECLARE`d variable or a routine's own parameter shadows a
 column of the same name, as on the server. `IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`,
 labelled blocks with `LEAVE` / `ITERATE`, `RETURN`, `SET`, `SELECT ... INTO`, cursors
 (`DECLARE` / `OPEN` / `FETCH` / `CLOSE`), `CALL`, `SIGNAL` / `RESIGNAL` and
@@ -160,7 +163,16 @@ the `RETURNS` declaration and is always nullable (a stored function's `RETURN` c
 NULL regardless of the declared type; there is no static proof otherwise), and the body's own
 failure modes (its SIGNALs, its writes' violations, what they fire) reach the calling
 statement. A function that writes a table the calling statement itself reads or writes is
-1442 on every execution (reading the table is enough, measured). `-- sqlshape: not null`
+1442 on every execution (reading the table is enough, measured; so is naming it in `FROM`
+without reading a column). The writes count through nested calls (a function that `CALL`s
+a procedure writing t, or `RETURN`s another function that does, collides the same way), and
+inside a body each statement is the invoking one: `UPDATE t SET v = f(v)` with f writing t is
+1442 when the routine is `CALL`ed, `SELECT COUNT(*) INTO n FROM t; SET @x = f(1)` as two
+statements is not, and a trigger's own table collides with every statement of its body (a
+trigger on `other` running `SET @y = g(1)` with g writing `other` is 1442; a table the
+firing statement merely reads is not the trigger's, measured). A `CALL` inside a body is
+resolved the way a top-level one is (1305 / 1318 / 1414), and the callee's failure modes and
+writes become the body's. `-- sqlshape: not null`
 above a `CREATE FUNCTION` declares the function never returns NULL, the same directive
 [checks.md](checks.md#a-column-that-may-be-null-needs-a-field-that-can-hold-null) documents
 for PostgreSQL; a call then types as NOT NULL instead. A PROCEDURE or a TRIGGER still refuses

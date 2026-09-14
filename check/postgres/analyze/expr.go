@@ -30,6 +30,13 @@ type expr struct {
 	fields []rteCol
 	// coll is the collation and its derivation, see collation.go
 	coll collation
+	// elemNotNull: the expression is an array whose elements the analyzer proved can
+	// never be NULL -- array_agg() of a value known not-null (a row constructor is never
+	// NULL itself, an inner-joined NOT NULL column stays not-null; an outer-joined side
+	// does not), a literal ARRAY[...] whose elements are all not-null, or
+	// ARRAY(SELECT ...) over a not-null single output column. Everything else (a plain
+	// column read, a function call, ...) leaves this false -- "unknown", not "nullable".
+	elemNotNull bool
 }
 
 func unknownRef() schema.TypeRef         { return schema.TypeRef{OID: catalog.Unknown, Typmod: -1} }
@@ -321,6 +328,12 @@ func (a *analyzer) analyzeExpr(n *pgparse.Node, sc *scope) (*expr, *Error) {
 		if err != nil {
 			return nil, err
 		}
+		elemNotNull := true
+		for _, e := range es {
+			if e.nullable {
+				elemNotNull = false
+			}
+		}
 		written := false
 		for _, el := range v.AArrayExpr.Elements {
 			if el.GetAArrayExpr() != nil {
@@ -328,13 +341,13 @@ func (a *analyzer) analyzeExpr(n *pgparse.Node, sc *scope) (*expr, *Error) {
 			}
 		}
 		if et := a.typ(t.OID); et != nil && et.IsArray() && (written || a.s.Types.ArrayOf(t.OID) == 0) {
-			return &expr{typ: ref(t.OID), node: n, coll: coll}, nil
+			return &expr{typ: ref(t.OID), node: n, coll: coll, elemNotNull: elemNotNull}, nil
 		}
 		arr := a.s.Types.ArrayOf(t.OID)
 		if arr == 0 {
 			return nil, errAt(codeUndefinedObject, v.AArrayExpr.Location, "could not find array type for data type %s", a.s.Types.Format(t))
 		}
-		return &expr{typ: ref(arr), node: n, coll: coll}, nil
+		return &expr{typ: ref(arr), node: n, coll: coll, elemNotNull: elemNotNull}, nil
 	case *pgparse.Node_RowExpr:
 		args, err := a.analyzeList(v.RowExpr.Args, sc)
 		if err != nil {
@@ -670,7 +683,7 @@ func (a *analyzer) columnRef(c *pgparse.ColumnRef, sc *scope) (*expr, *Error) {
 		}
 	}
 	a.noteVarScope(a.lastResolvedScope)
-	e := &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields, coll: rc.coll.asVar()}
+	e := &expr{typ: rc.typ, nullable: rc.nullable, src: rc.src, node: nodeOf(c), fields: rc.fields, coll: rc.coll.asVar(), elemNotNull: rc.elemNotNull}
 	if e.coll.strength == collNone && a.collatable(rc.typ.OID) {
 		e.coll = collation{strength: collImplicit, loc: c.Location}
 	}
@@ -724,7 +737,7 @@ func (a *analyzer) typeCastValue(tc *pgparse.TypeCast, sc *scope) (*expr, *Error
 					}
 					nullable = nullable || el.nullable
 				}
-				return &expr{typ: target, nullable: nullable, node: nodeOf(tc)}, nil
+				return &expr{typ: target, nullable: nullable, node: nodeOf(tc), elemNotNull: !nullable}, nil
 			}
 		}
 	}
@@ -1396,7 +1409,14 @@ func (a *analyzer) funcCall(f *pgparse.FuncCall, sc *scope) (*expr, *Error) {
 			}
 		}
 	}
-	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields, coll: a.resultColl(coll, res)}, nil
+	// array_agg(x): the array's own elements are exactly the argument's values, so when
+	// the argument itself can never be NULL (a row constructor, an inner-joined NOT NULL
+	// column, a whole-row reference to a table row that exists), neither can any element
+	// -- unlike the array value as a whole, which PostgreSQL never guarantees NOT NULL
+	// even when the aggregated column is. DISTINCT / ORDER BY / FILTER change which
+	// values are kept, never whether a kept one can be NULL.
+	elemNotNull := name == "array_agg" && c.fn != nil && c.fn.Kind == 'a' && len(args) == 1 && !args[0].nullable
+	return &expr{typ: ref(res), nullable: nullable, node: self, fields: fields, coll: a.resultColl(coll, res), elemNotNull: elemNotNull}, nil
 }
 
 func (a *analyzer) caseExpr(c *pgparse.CaseExpr, sc *scope) (*expr, *Error) {
@@ -1488,14 +1508,17 @@ func (a *analyzer) subLink(s *pgparse.SubLink, sc *scope) (*expr, *Error) {
 		// get_promoted_array_type: the element's array type when it has one (int2vector
 		// has int2vector[]), else the element itself when it is already an array
 		// (ARRAY(SELECT int[] ...) is an int[], not int[][])
+		// ARRAY(SELECT ...): its elements are exactly the subquery's rows for that one
+		// column, so when the column itself is never NULL, neither is any element.
+		elemNotNull := !cols[0].nullable
 		arr := a.s.Types.ArrayOf(cols[0].typ.OID)
 		if arr == 0 {
 			if ct := a.typ(a.baseType(cols[0].typ.OID)); ct != nil && ct.IsArray() {
-				return &expr{typ: ref(ct.OID), nullable: false, node: self}, nil
+				return &expr{typ: ref(ct.OID), nullable: false, node: self, elemNotNull: elemNotNull}, nil
 			}
 			return nil, errAt(codeUndefinedObject, s.Location, "could not find array type for data type %s", a.s.Types.Format(cols[0].typ))
 		}
-		return &expr{typ: ref(arr), nullable: false, node: self}, nil
+		return &expr{typ: ref(arr), nullable: false, node: self, elemNotNull: elemNotNull}, nil
 	case pgparse.SubLinkType_ANY_SUBLINK, pgparse.SubLinkType_ALL_SUBLINK:
 		name := "="
 		if len(s.OperName) > 0 {

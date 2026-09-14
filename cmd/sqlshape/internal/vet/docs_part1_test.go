@@ -279,11 +279,11 @@ var Q = sqlshape.Query[Order, struct{}](`+backtick(oneLineSQL(sql.body))+`)
 //     against row column i for every i, so both "Qty is at position 1, row column 1 is
 //     sku" and "Sku is at position 2, row column 2 is qty" fire.
 //  2. docs' Passes example receives a composite array_agg column with a plain
-//     (non-pointer) struct slice, []Item, and still carries the standing "may contain a
-//     NULL element ... use []*Item" note: PostgreSQL never guarantees an array's elements
-//     are themselves non-NULL even when the column holding the array is NOT NULL, and the
-//     contract has no way yet to say the row constructor that built each element here is
-//     itself provably non-NULL (see NOTES.local.md).
+//     (non-pointer) struct slice, []Item, and carries no "may contain a NULL element"
+//     note: array_agg's own argument here, (i.sku, i.qty)::order_item, is a row
+//     constructor, never NULL itself regardless of its fields' own nullability, and
+//     dialect.Type.ElemNotNull now lets the checker say so (unlike a plain scalar
+//     array_agg, which still carries the note -- see docs/postgres.md's `T[]` row).
 // ---------------------------------------------------------------------------------------
 
 func TestDocsP1NestedRows(t *testing.T) {
@@ -330,19 +330,13 @@ var Q = sqlshape.Query[Order, struct{}](`+backtick(oneLineSQL(sql.body))+`)
 			copyRuntime(t, td)
 
 			setSchema(t, absPath(t, "testdata/docsex_p1_nested_schema.sql"))
-			nullElemNote := "field Items: order_item[] may contain a NULL element even though the column is not NULL; []Item silently receives it as a zero-valued Item with no error (use []*Item)"
 			assertDiagnostics(t, td, []string{"docsex_p1_nested_ng"}, []string{
 				docLine(t, ngGo.body, "is at position 1"),
 				// real behaviour, not docs' own words: the same swap also misplaces
 				// Sku (see the mismatch note above).
 				`field Items.Sku is at position 2 but the row type's column 2 is "qty" (fields are scanned in order)`,
-				nullElemNote,
 			})
-			assertDiagnostics(t, td, []string{"docsex_p1_nested_ok"}, []string{
-				// the array-element note remains until the contract can say an array's
-				// elements are provably non-NULL (see the mismatch note above)
-				nullElemNote,
-			})
+			assertDiagnostics(t, td, []string{"docsex_p1_nested_ok"}, nil)
 		})
 	}
 }

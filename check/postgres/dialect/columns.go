@@ -23,6 +23,7 @@ func ColumnOf(s *schema.Schema, c analyze.Column) dialect.Column {
 		return out
 	}
 	out.Type = TypeOf(s, c.Type)
+	out.Type.ElemNotNull = c.ElemNotNull
 	if len(c.Fields) > 0 {
 		fields := make([]dialect.Column, 0, len(c.Fields))
 		for _, f := range c.Fields {

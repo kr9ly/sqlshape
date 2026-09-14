@@ -454,12 +454,19 @@ func funcCallParts(n *mysqlast.Node) (string, []mysqlast.Value) {
 // call types a function of the native registry, or -- when no native function has that
 // name -- a schema-declared FUNCTION (storedFuncCall): measured on mysqld 8.4, an
 // unqualified call always reaches a native function of the same name first (a schema is
-// free to declare a FUNCTION named like a builtin; it is only reachable qualified,
-// `db.name(...)`, which this milestone's db-agnostic resolution cannot tell apart from an
-// unqualified one -- a corner this checker does not resolve, the native function always
-// wins here too).
+// free to declare a FUNCTION named like a builtin, `abs` say; `SELECT abs(-1)` is still
+// 1), and a qualified call, `db.name(...)`, only ever names a stored function (measured:
+// `SELECT db.abs(-1)` runs the schema's own, and `db.nope(1)` is 1305 "FUNCTION db.nope
+// does not exist", never a native function). The db itself is not compared, the way a
+// table's qualifier is not (sqlshape loads a single schema).
 func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error) {
 	name, args := funcCallParts(n)
+	if n.Class == "PTI_function_call_generic_2d" && str(n.Arg("db")) != "" {
+		if r := a.s.RoutineOf(schema.Function, name); r != nil {
+			return a.storedFuncCall(sc, r, args, n.Start, where)
+		}
+		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
+	}
 	f := catalog.Lookup(name)
 	if f == nil {
 		if r := a.s.RoutineOf(schema.Function, name); r != nil {

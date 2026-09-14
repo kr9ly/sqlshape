@@ -478,6 +478,12 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 		s.createView(n, st)
 	case "trigger_tail":
 		s.createTrigger(n, st, at)
+	case "event_tail":
+		// an event runs on the server's own schedule; no statement of the program reaches
+		// it, so there is nothing of it the checker would read -- and the migration
+		// commands do not read events back from a server either, so a declared one would
+		// be silently unmanaged: say so rather than accept it
+		s.problem(at(n), "CREATE EVENT %s: sqlshape does not read events (nothing a statement of the program runs reaches one, and diff / apply do not manage them); keep it out of schema.sql", spName(n.Arg("name")))
 	case "sp_tail":
 		s.createRoutine(n, Procedure, st, at)
 	case "sf_tail":

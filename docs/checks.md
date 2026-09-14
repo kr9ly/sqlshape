@@ -248,10 +248,10 @@ type Item struct {
 ```
 
 (PostgreSQL never guarantees an array's own elements are non-NULL, even when the column holding
-the array is NOT NULL. `order_item`'s row constructor here is never NULL itself, but the checker
-does not yet have a way to say that of the array's elements, so this Passes example still carries
-a standing note: `field Items: order_item[] may contain a NULL element even though the column is
-not NULL; []Item silently receives it as a zero-valued Item with no error (use []*Item)`.)
+the array is NOT NULL, and the checker still carries a standing note for that in general (see
+`T[]` in [PostgreSQL types](postgres.md)). Here the checker proves it anyway: `order_item`'s row
+constructor is never NULL itself, whatever its own fields' nullability, so `array_agg((i.sku,
+i.qty)::order_item)` carries no such note and this Passes example is accepted with none.)
 
 #### A single-column statement can be received by a scalar
 

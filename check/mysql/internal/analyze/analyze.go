@@ -180,6 +180,15 @@ type analyzer struct {
 	// reads or writes).
 	calledRoutines []calledRoutine
 	calledSeen     map[*schema.Routine]bool
+	// refRels are the tables and views the statement names (target(), a view's own
+	// underlying tables included as its body is typed), lower-cased: what a called
+	// routine's write collides with (1442) even where no column of them is read, as in
+	// `SELECT f(1) FROM t` (measured: 1442 when f writes t).
+	refRels map[string]bool
+	// bodyResult is the BodyResult the trigger's or routine's body walk is filling, nil
+	// for a top-level statement: exprAt hands the routines a body expression calls to it
+	// (finishCalls).
+	bodyResult *BodyResult
 
 	// The rest is body.go's: a trigger's or routine's body walk (nil outside it). trig /
 	// trigTable are set for a trigger's body (NEW / OLD resolve against trigTable, and the
@@ -978,6 +987,10 @@ func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, er
 		}
 	}
 	if rel == nil {
+		if a.refRels == nil {
+			a.refRels = map[string]bool{}
+		}
+		a.refRels[strings.ToLower(name)] = true
 		if t := a.s.Table(name); t != nil {
 			rel = &relation{alias: t.Name, table: t}
 		} else if v := a.s.View(name); v != nil {

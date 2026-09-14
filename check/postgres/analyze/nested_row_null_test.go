@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,14 @@ CREATE TYPE order_item AS (sku text, qty integer);
 			t.Errorf("field %s: nullable, want not-null (order_items.%s is NOT NULL and (i.sku, i.qty)::order_item does not lose that)", f.Name, f.Name)
 		}
 	}
+	// array_agg's own argument here is (i.sku, i.qty)::order_item: a row constructor,
+	// never NULL itself regardless of its fields' own nullability -- see
+	// TestNestedRowConstructorNeverNullButArrayAggPassesScalarNullsThrough below for the
+	// measured PostgreSQL fact this relies on. items.ElemNotNull lets the contract (and so
+	// the checker's -strict rejection / standing note) say so.
+	if !items.ElemNotNull {
+		t.Errorf("items: ElemNotNull = false, want true (array_agg's argument is a row constructor, never NULL itself)")
+	}
 }
 
 // TestNestedRowConstructorNeverNullButArrayAggPassesScalarNullsThrough measures two real
@@ -66,11 +75,10 @@ CREATE TYPE order_item AS (sku text, qty integer);
 // So array_agg(scalar) and array_agg(row(...)) are not the same hazard: the first can
 // really put a NULL element in the array (vet's blanket "may contain a NULL element"
 // note is earning its keep there); the second cannot, by construction -- the note is a
-// false positive for it. (Suppressing the note in that case needs a fact threaded
-// through the dialect-neutral contract -- x/dialect's Type has no per-array-element
-// nullability field yet, and cmd/sqlshape/internal/vet/gofit.go's addArrayNullElemNotes
-// gate has no way to ask for one; both are outside check/postgres. This test documents
-// the PostgreSQL fact the contract change would rely on.)
+// false positive for it. dialect.Type.ElemNotNull (see rteCol.elemNotNull / expr.elemNotNull
+// in this package, and TestArrayElemNotNull below) threads that fact through the
+// dialect-neutral contract so cmd/sqlshape/internal/vet/gofit.go's addArrayNullElemNotes
+// gate can skip the note for this shape while still giving it for array_agg(scalar).
 func TestNestedRowConstructorNeverNullButArrayAggPassesScalarNullsThrough(t *testing.T) {
 	schemaSQL := `
 CREATE TABLE orders (
@@ -119,5 +127,48 @@ CREATE TABLE order_items (
 	}
 	if strings.Contains(rowArrayText, "NULL") {
 		t.Errorf("array_agg((sku, qty)) = %s: contains a bare NULL, but a row constructor should never itself be NULL", rowArrayText)
+	}
+}
+
+// TestArrayElemNotNull covers dialect.Type.ElemNotNull's every source against the shared
+// testdata/schema.sql: array_agg() of a value known not-null vs. one that is not, a
+// literal ARRAY[...], ARRAY(SELECT ...), a set operation over two arms, and the default
+// (false, "unknown") for a plain array column.
+func TestArrayElemNotNull(t *testing.T) {
+	schemaSQL, err := os.ReadFile("testdata/schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(string(schemaSQL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{"array_agg of a NOT NULL column", "SELECT array_agg(id) FROM orders", true},
+		{"array_agg of a nullable column", "SELECT array_agg(note) FROM orders", false},
+		{"array_agg of a row constructor", "SELECT array_agg(row(id, total)) FROM orders", true},
+		{"array_agg of a whole-row reference", "SELECT array_agg(o) FROM orders o", true},
+		{"a plain array column", "SELECT matrix FROM orders", false},
+		{"ARRAY[...] with every element not null", "SELECT ARRAY[1, 2, 3]", true},
+		{"ARRAY[...] with a NULL element", "SELECT ARRAY[1, NULL, 3]", false},
+		{"ARRAY(SELECT ...) over a NOT NULL column", "SELECT ARRAY(SELECT id FROM orders)", true},
+		{"ARRAY(SELECT ...) over a nullable column", "SELECT ARRAY(SELECT note FROM orders)", false},
+		{"UNION of two proven arms", "SELECT ARRAY[1, 2] UNION SELECT ARRAY[3, 4]", true},
+		{"UNION where one arm is not proven", "SELECT ARRAY[1, 2] UNION SELECT ARRAY[NULL, 4]", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, aerr := Analyze(s, c.sql)
+			if aerr != nil {
+				t.Fatalf("analyze %q: %v", c.sql, aerr)
+			}
+			if got := r.Columns[0].ElemNotNull; got != c.want {
+				t.Errorf("%s:\n  %s\nElemNotNull = %v, want %v", c.name, c.sql, got, c.want)
+			}
+		})
 	}
 }

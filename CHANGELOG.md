@@ -19,6 +19,15 @@ release it is a candidate for.
   hold NULL", "Fix a unique key by equality", "Bulk loading with COPY", and "Name the errors a
   trigger raises" (both dialects) so far, in both languages -- not the full set of fences yet (see
   NOTES.local.md and the package doc for what is not wired up and why).
+- `x/dialect.Type` gained `ElemNotNull`: a dialect that can prove an array's elements are
+  never NULL sets it (false, the default, means "unknown", not "may be NULL"). PostgreSQL
+  sets it for `array_agg(x)` where `x` is itself never NULL (a row constructor such as
+  `(a, b)::T`, an inner-joined `NOT NULL` column, a whole-row reference), for a literal
+  `ARRAY[...]` whose elements are all provably not NULL, and for `ARRAY(SELECT ...)` over a
+  not-null single output column, propagating it through subqueries, CTEs, set operations and
+  freshly analyzed views (a frozen view's stored column snapshot has no such field yet and
+  stays "unknown"). A plain array column never qualifies, since PostgreSQL declares nothing
+  about a column's own elements.
 
 ### Changed
 
@@ -36,7 +45,12 @@ release it is a candidate for.
   PostgreSQL: `array_agg((i.sku, i.qty)::order_item)` into `[]Item` keeps each nested row
   field's own nullability through the cast to a named composite type, instead of discarding it
   (a row constructor is never NULL; `array_agg` of a scalar does pass a NULL element through,
-  unaffected). A parameter compared against a domain column carries the domain (PostgreSQL
+  unaffected). Building on that: the checker's standing "may contain a NULL element" note
+  (and its `-strict` rejection) on an array result no longer fires when `dialect.Type.ElemNotNull`
+  says the elements are provably not NULL, so `array_agg((i.sku, i.qty)::order_item)` into
+  `[]Item` is now accepted with no note at all, while `array_agg` of a plain nullable column,
+  a literal `ARRAY[...]` with a `NULL` element, and an ordinary array column keep the note (and
+  the `-strict` rejection) unchanged. A parameter compared against a domain column carries the domain (PostgreSQL
   resolves the placeholder to the base type, so `Param.Type` is taken from the compared
   column), so `-strict`'s "carries domain `yen` as a plain `int64`" advice reaches parameters
   too, and a mismatch names the domain (`SQL expects email`).
@@ -188,6 +202,21 @@ release it is a candidate for.
   routine no longer carries 1172 and the same query passes `One`. Which aggregates are the
   block's own is the group check's answer (a subquery's aggregate over its own columns leaves the
   outer query one row per input row, as before).
+- MySQL: a qualified function call, `db.f(...)`, names the schema's own FUNCTION even when a
+  native function has the same name (an unqualified `abs(-1)` is still the native one, `db.abs(-1)`
+  the schema's, `db.nope(1)` 1305; measured), where it used to type as the native function. The
+  1442 overlap check now also counts a table the statement names in `FROM` without reading a
+  column of it, follows writes through nested calls (a function that `CALL`s a procedure writing
+  t, or `RETURN`s a function that does), runs per statement inside a trigger's or routine's body
+  (`UPDATE t SET v = f(v)` with f writing t is 1442 when the routine is `CALL`ed; two separate
+  statements are not), and counts a trigger's own table against every statement of its body (a
+  trigger calling a function that writes the trigger's table is 1442, as a direct write already
+  was); a `CALL` inside a body is resolved like a top-level one (1305 / 1318 / 1414) and the
+  callee's failure modes and writes become the body's. All measured against mysqld 8.4
+  (`TestNestedCallsServer`). An AFTER trigger's `NEW.col` following the column's declared
+  nullability is now measured rather than inferred. `CREATE EVENT` in a schema is reported as
+  a problem in words (sqlshape does not read events; diff / apply do not manage them) instead of
+  "statement not applied to the schema: event_tail".
 
 ## [2.0.0] - 2026-09-10
 

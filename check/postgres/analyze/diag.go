@@ -75,6 +75,10 @@ type Column struct {
 	Type schema.TypeRef
 	// Nullable is the analyzer's own inference (NOT NULL constraints, join shape, expression rules).
 	Nullable bool
+	// ElemNotNull: for an array-typed column, the analyzer proved its elements can never
+	// be NULL (see rteCol.elemNotNull / expr.elemNotNull for how). False otherwise,
+	// including for a plain array column, which PostgreSQL never declares this about.
+	ElemNotNull bool
 	// Source mirrors what PG's Describe reports (stops at views), for oracle parity.
 	Source *Source
 	// Fields describes a record / composite column (or an array of them): the columns of

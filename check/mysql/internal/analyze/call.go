@@ -42,11 +42,28 @@ func (a *analyzer) noteCalledRoutine(r *schema.Routine, pos int) {
 // table (the ordinary case: constants, placeholders, `@vars`) never collides through the
 // PROCEDURE it runs alone, matching the measurement (`CALL p3(7)`, p3's body writing t,
 // raised nothing: the statement itself never mentions t).
+//
+// Inside a body the same rule holds per embedded statement (measured: a procedure whose
+// `UPDATE t SET v = writer(v)` calls a function writing t is 1442 when CALLed, while
+// `SELECT COUNT(*) INTO n FROM t; SET @x = writer(1)` as two statements is not), and a
+// trigger's own table counts as referenced by every statement of its body, since the
+// statement that fired the trigger is on that table (measured: a trigger on `other`
+// whose body runs `SET @y = writer_other(1)` is 1442; the same trigger on t fired by
+// `INSERT INTO t SELECT ... FROM other` is not -- only the trigger's table collides).
+// The writes a routine reaches through its own nested calls count as its (WriteTables
+// is transitive, body.go's finishCalls; measured: `SELECT f(1) FROM t` is 1442 both when
+// f CALLs a procedure writing t and when f RETURNs a function writing t).
 func (a *analyzer) checkCalledRoutineOverlap() error {
 	if len(a.calledRoutines) == 0 {
 		return nil
 	}
 	refTables := map[string]bool{}
+	if a.trig != nil {
+		refTables[strings.ToLower(a.trigTable.Name)] = true
+	}
+	for name := range a.refRels {
+		refTables[name] = true
+	}
 	for _, u := range a.uses {
 		if u.Table != "" {
 			refTables[strings.ToLower(u.Table)] = true

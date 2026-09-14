@@ -190,6 +190,15 @@ type Type struct {
 	// Elem is an array's element type or a range's subtype; Base a domain's base type.
 	Elem *Type
 	Base *Type
+	// ElemNotNull: for an Array, the analyzer proved the elements are never NULL (an
+	// array_agg() of a value it knows is never NULL, a literal ARRAY[...] whose elements
+	// are all not NULL, an ARRAY(SELECT ...) whose single output column is not NULL).
+	// False is the dialect's default and means "unknown", not "elements may be NULL": a
+	// dialect that cannot prove it leaves this false, and the checker's standing note
+	// about a possible NULL element still applies. PostgreSQL never declares an array
+	// column's own elements NOT NULL (only the array value as a whole), so this is always
+	// false for a plain column of array type.
+	ElemNotNull bool
 	// Fields are a composite type's columns.
 	Fields []Column
 	// Labels are an enum's labels, in order.

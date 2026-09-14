@@ -211,7 +211,7 @@ type Item struct {
 }
 ```
 
-（PostgreSQLは、配列を保持する列自体がNOT NULLでも、配列の要素自体が非NULLであることは保証しない。ここでの`order_item`の行コンストラクタ自体は決してNULLにならないが、検査器はまだ配列の要素についてそれを言う手段を持たないので、このOK例にも常設の注記が付く: `field Items: order_item[] may contain a NULL element even though the column is not NULL; []Item silently receives it as a zero-valued Item with no error (use []*Item)`。）
+（PostgreSQLは、配列を保持する列自体がNOT NULLでも、配列の要素自体が非NULLであることは保証せず、検査器も一般には常設の注記を出す（[PostgreSQLの型](postgres.ja.md)の`T[]`の行を参照）。ここでは検査器がそれを証明できる: `order_item`の行コンストラクタは、自分自身のフィールドの非NULL性とは関係なく決してNULLにならないので、`array_agg((i.sku, i.qty)::order_item)`は注記を持たず、このOK例は注記なしで通る。）
 
 #### 1列だけ返すSQLはスカラーで受けられる
 

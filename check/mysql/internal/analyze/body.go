@@ -28,9 +28,10 @@ type BodyResult struct {
 	// concern for CALL and function-call sites), only computed correctly for it to use.
 	Violations []Violation
 	// WriteTables are the tables this body's own embedded INSERT/UPDATE/DELETE write to,
-	// named once each (walkDML): what a call site invoking this routine may collide with
-	// (1442, call.go's checkCalledRoutineOverlap) when the invoking statement itself
-	// references (reads or writes) the same table.
+	// and the ones the routines it calls (a function in an expression, a CALL) write in
+	// turn, named once each (walkDML, finishCalls): what a call site invoking this routine
+	// may collide with (1442, call.go's checkCalledRoutineOverlap) when the invoking
+	// statement itself references (reads or writes) the same table.
 	WriteTables []string
 }
 
@@ -250,8 +251,11 @@ func (a *analyzer) resolveHandlerConditions(v mysqlast.Value) []condRef {
 //   - NEW.col reads NULL-able in a BEFORE INSERT/UPDATE trigger regardless of the column's
 //     own NOT NULL (measured: the server's own NOT NULL check has not run yet at that
 //     point); an AFTER trigger's NEW.col, and OLD.col at any timing, follow the column's
-//     declared nullability (the row already exists as stored -- inferred, not measured
-//     directly, since a NOT NULL column cannot hold NULL once committed).
+//     declared nullability (measured: an AFTER INSERT trigger on a table with an
+//     AUTO_INCREMENT key, a NOT NULL DEFAULT column and a plain NOT NULL column sees none
+//     of them NULL for an INSERT naming only the last, and an INSERT of an explicit NULL
+//     into a NOT NULL column is 1048 before any AFTER trigger runs -- the server's NOT
+//     NULL check sits between the BEFORE and the AFTER triggers).
 func (a *analyzer) trigRowColumn(qualifier, field string, at int, write bool) (*schema.Column, bool, error) {
 	tg := a.trig
 	row := strings.ToUpper(qualifier)
@@ -325,6 +329,7 @@ func analyzeTriggerBody(s *schema.Schema, tg *schema.Trigger) (*BodyResult, erro
 	_, ph := placeholder.Rewrite(tg.Definition)
 	a := &analyzer{s: s, text: tg.Definition, ph: ph, trig: tg, trigTable: t, raises: parseRaises(tg.Directives)}
 	br := &BodyResult{}
+	a.bodyResult = br
 	if err := a.walkOne(scope{}, tg.Body, br); err != nil {
 		return nil, err
 	}
@@ -399,6 +404,7 @@ func analyzeRoutineBody(s *schema.Schema, r *schema.Routine) (*BodyResult, error
 		a.declareVar(p.Name, p.Type)
 	}
 	br := &BodyResult{}
+	a.bodyResult = br
 	err := a.walkOne(scope{}, r.Body, br)
 	a.popVars()
 	if err != nil {
@@ -432,6 +438,51 @@ func (a *analyzer) resetStatement() {
 	a.paramSrc = nil
 	a.depth = 0
 	a.setOp = 0
+	a.refRels = nil
+	a.resetCalls()
+}
+
+// resetCalls forgets the routines the statement just walked called: each body statement
+// is its own invoking statement for the 1442 overlap check and folds in its own callees'
+// failure modes (finishCalls), so a callee of an earlier statement must not count again.
+func (a *analyzer) resetCalls() {
+	a.calledRoutines = nil
+	a.calledSeen = nil
+}
+
+// finishCalls is what the routines a body statement called mean to the body, once the
+// statement is walked: 1442 when one of them writes a table this statement references
+// (or the trigger's own table, see checkCalledRoutineOverlap) -- an Error, the collision
+// being certain from the bodies alone; their writes become the body's own (WriteTables is
+// transitive, so a call site further out collides with what a nested call writes, as the
+// server's prelocking does); and, unless the statement's violations() already did it
+// (walkDML), their failure modes become the body's raised ones.
+func (a *analyzer) finishCalls(br *BodyResult, foldViolations bool) error {
+	if len(a.calledRoutines) == 0 {
+		return nil
+	}
+	defer a.resetCalls() // folded once: a statement typed in several pieces (exprAt) does not fold twice
+	if err := a.checkCalledRoutineOverlap(); err != nil {
+		return err
+	}
+	for _, cr := range a.calledRoutines {
+		cbr, err := AnalyzeRoutine(a.s, cr.r)
+		if err != nil || cbr == nil {
+			continue
+		}
+		for _, wt := range cbr.WriteTables {
+			br.WriteTables = appendTableName(br.WriteTables, wt)
+		}
+	}
+	if foldViolations {
+		for _, v := range a.calledRoutineViolations() {
+			if v.SQLState == "" {
+				v.SQLState = constraintSQLState(v.Code)
+			}
+			a.raised = append(a.raised, v)
+		}
+	}
+	return nil
 }
 
 // finishFacts is the post-processing Analyze does for a top-level statement (sorting the
@@ -450,8 +501,16 @@ func (a *analyzer) exprAt(v mysqlast.Value, where string) error {
 	if v == nil {
 		return nil
 	}
-	_, err := a.expr(scope{}, v, where)
-	return err
+	if _, err := a.expr(scope{}, v, where); err != nil {
+		return err
+	}
+	if a.bodyResult != nil {
+		// a function the expression calls: its writes and failure modes are the body's,
+		// and it collides with the trigger's own table, or with a table a subquery of the
+		// expression names (finishCalls)
+		return a.finishCalls(a.bodyResult, true)
+	}
+	return nil
 }
 
 // walkOne dispatches one body construct: a statement, a control-flow node, a list of
@@ -592,7 +651,7 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	case "PT_set":
 		return a.walkSet(sc, n)
 	case "PT_call":
-		return a.walkCall(n)
+		return a.walkCall(n, br)
 	case "sp_proc_stmt_fetch":
 		return a.walkFetch(n)
 	case "PT_select_stmt":
@@ -926,6 +985,7 @@ func (a *analyzer) walkSet(sc scope, n *mysqlast.Node) error {
 		// PT_start_option_value_list_no_type Node.
 		return nil
 	}
+	a.resetStatement() // its own invoking statement: an earlier statement's tables are not this one's
 	for _, item := range flattenSetList(list) {
 		in, ok := item.(*mysqlast.Node)
 		if !ok {
@@ -1000,14 +1060,33 @@ func bipartite(v mysqlast.Value) (qual, name string) {
 
 // walkCall types CALL's arguments (m4's scope: walked and typed, not validated against the
 // called routine's parameters, and its result is not modeled -- m6's concern).
-func (a *analyzer) walkCall(n *mysqlast.Node) error {
+func (a *analyzer) walkCall(n *mysqlast.Node, br *BodyResult) error {
+	a.resetStatement() // its own invoking statement: an earlier statement's tables are not this one's
+	_, name := spNameOf(n.Arg("proc_name"))
+	r := a.s.RoutineOf(schema.Procedure, name)
+	if r == nil {
+		// the server binds a body's CALL late (CREATE accepts it), but the schema is
+		// whole here, so the 1305 every execution would raise is certain
+		return &Error{Message: fmt.Sprintf("PROCEDURE %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
+	}
 	args, _ := n.Arg("opt_expr_list").(mysqlast.List)
-	for _, arg := range args {
+	if len(args) != len(r.Params) {
+		return &Error{Message: fmt.Sprintf("Incorrect number of arguments for PROCEDURE %s; expected %d, got %d", r.Name, len(r.Params), len(args)), Code: 1318, Position: a.ph.Back(n.Start)}
+	}
+	for i, arg := range args {
+		p := r.Params[i]
+		if (p.Mode == "OUT" || p.Mode == "INOUT") && !a.isCallVariableTarget(arg) {
+			return &Error{Message: fmt.Sprintf("OUT or INOUT argument %d for routine %s is not a variable", i+1, r.Name), Code: 1414, Position: a.ph.Back(n.Start)}
+		}
 		if err := a.exprAt(arg, "call"); err != nil {
 			return err
 		}
 	}
-	return nil
+	a.noteCalledRoutine(r, n.Start)
+	// the callee's writes and failure modes are this body's (transitively, finishCalls);
+	// a CALL's own arguments reference no table, so it collides only with a trigger's own
+	// table (measured: `CALL p3(7)` alone never collides with what p3 writes)
+	return a.finishCalls(br, true)
 }
 
 // walkFetch is FETCH cur INTO vars: the cursor must be declared (1324, walkCursorToken's
@@ -1080,6 +1159,9 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 		if a.routine != nil && a.routine.Kind == schema.Function {
 			return &Error{Message: "Not allowed to return a result set from a function", Code: 1415, Position: a.ph.Back(n.Start)}
 		}
+		if err := a.finishCalls(br, true); err != nil {
+			return err
+		}
 		a.appendStatementCols(br, n.Start, a.columns)
 		return nil
 	}
@@ -1100,6 +1182,9 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 			v.Table, v.Trigger = a.trigTable.Name, a.trig.Name
 		}
 		a.raised = append(a.raised, v)
+	}
+	if err := a.finishCalls(br, true); err != nil {
+		return err
 	}
 	a.appendStatement(br, n.Start)
 	return nil
@@ -1150,6 +1235,9 @@ func (a *analyzer) walkDML(n *mysqlast.Node, kind facts.StmtKind, br *BodyResult
 				br.WriteTables = appendTableName(br.WriteTables, m.table.Name)
 			}
 		}
+	}
+	if err := a.finishCalls(br, false); err != nil {
+		return err
 	}
 	for _, v := range a.violations() {
 		if v.SQLState == "" {
