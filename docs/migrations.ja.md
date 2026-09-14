@@ -90,8 +90,9 @@ MySQLでは両側をサーバ自身の描き方で読む。全部の表とビュ
 - キー、外部キー、CHECK制約
 - ビュー
 - トリガとストアドプロシージャ・関数: `SHOW CREATE TRIGGER` / `SHOW CREATE PROCEDURE` / `SHOW CREATE FUNCTION`で読み戻し、DEFINERを落とした定義テキストで比較する
+- イベント: スケジュール、`STARTS` / `ENDS`、`ON COMPLETION`、状態、コメント、本体を`SHOW CREATE EVENT`で読み戻して比較する。`schema.sql`がサーバに任せた時刻——省いた`STARTS`、式で書いた`STARTS`（`CURRENT_TIMESTAMP + INTERVAL 1 DAY`）、式の`AT`——はイベント作成時に埋まる（`SHOW CREATE EVENT`は作成時刻のリテラルとして読み戻す、測定済み）ので比較しない。リテラルで書いた時刻は書いたとおりに比較する
 
-比較しないのは、ローダーが読まない`EVENT`と、MySQLのローダーがまだ知らないseed行。
+比較しないのは、MySQLのローダーがまだ知らないseed行。`ON COMPLETION PRESERVE`の無い一回限りのイベント（`AT ...`）は実行後にサーバが消すので、`verify-schema`はそれ以降「無い」と報告する。これはイベント自身の定義であって、ドリフトではない。
 
 計画はMySQL自身の定義を使う。
 
@@ -102,6 +103,7 @@ MySQLでは両側をサーバ自身の描き方で読む。全部の表とビュ
 | 変わったキー・外部キー・CHECK | `DROP`と`ADD` |
 | 変わったビュー | `CREATE OR REPLACE VIEW` |
 | 変わった、または消えるトリガ・プロシージャ・関数 | `DROP`してから`CREATE`（MySQLには`CREATE OR REPLACE TRIGGER`が無い） |
+| 変わった、または消えるイベント | `DROP EVENT`してから`CREATE EVENT`。目標のテキストそのまま（`STARTS`を省いていれば、新しいイベントはマイグレーションを実行した時刻から始まる） |
 
 順序は、マイグレーション自身の手順が互いにつまずかないように決める。
 

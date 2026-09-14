@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kr9ly/sqlshape/mysqltest/v2"
 )
@@ -31,6 +32,7 @@ func TestMySQLDiffApplyVerify(t *testing.T) {
 ALTER TABLE customers ADD COLUMN nickname VARCHAR(50) DEFAULT 'anon';
 CREATE TABLE order_kinds (code VARCHAR(20) PRIMARY KEY, label VARCHAR(50) NOT NULL);
 CREATE VIEW paid_orders AS SELECT id, total FROM orders WHERE status = 'paid';
+CREATE EVENT sweep_audit ON SCHEDULE EVERY 1 DAY DO DELETE FROM order_audit WHERE created_at < NOW() - INTERVAL 90 DAY;
 `
 	if err := os.WriteFile(schemaPath, []byte(edit), 0o644); err != nil {
 		t.Fatal(err)
@@ -38,7 +40,7 @@ CREATE VIEW paid_orders AS SELECT id, total FROM orders WHERE status = 'paid';
 	dsn := db.DSN()
 
 	code, out, errs := run(t, "diff", "-db", dsn, "-schema", schemaPath)
-	if code != 0 || !strings.Contains(out, "ADD COLUMN `nickname`") || !strings.Contains(out, "CREATE TABLE `order_kinds`") || !strings.Contains(out, "VIEW `paid_orders`") {
+	if code != 0 || !strings.Contains(out, "ADD COLUMN `nickname`") || !strings.Contains(out, "CREATE TABLE `order_kinds`") || !strings.Contains(out, "VIEW `paid_orders`") || !strings.Contains(out, "CREATE EVENT `sweep_audit` ON SCHEDULE EVERY 1 DAY STARTS '") {
 		t.Fatalf("diff: code %d\n%s%s", code, out, errs)
 	}
 	ddlPath := filepath.Join(dir, "up.sql")
@@ -57,6 +59,9 @@ CREATE VIEW paid_orders AS SELECT id, total FROM orders WHERE status = 'paid';
 	if code, out, errs := run(t, "apply", "-db", dsn, "-schema", schemaPath, ddlPath); code != 0 || !strings.Contains(out, "applied") {
 		t.Fatalf("apply: code %d\n%s%s", code, out, errs)
 	}
+	// the event's STARTS was left to the server: the live one carries the apply's second,
+	// the target canonicalized now carries this second -- no drift between them
+	time.Sleep(1100 * time.Millisecond)
 	if code, out, errs := run(t, "verify-schema", "-db", dsn, "-schema", schemaPath); code != 0 || !strings.Contains(out, "ok:") {
 		t.Fatalf("verify-schema after apply: code %d\n%s%s", code, out, errs)
 	}
@@ -68,7 +73,7 @@ CREATE VIEW paid_orders AS SELECT id, total FROM orders WHERE status = 'paid';
 	if err := os.WriteFile(schemaPath, []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, errs := run(t, "diff", "-db", dsn, "-schema", schemaPath); code != 1 || !strings.Contains(errs, "column customers.nickname is dropped, which no @migrate declares") || !strings.Contains(out, "DROP COLUMN `nickname`") {
+	if code, out, errs := run(t, "diff", "-db", dsn, "-schema", schemaPath); code != 1 || !strings.Contains(errs, "column customers.nickname is dropped, which no @migrate declares") || !strings.Contains(out, "DROP COLUMN `nickname`") || !strings.Contains(out, "DROP EVENT `sweep_audit`") {
 		t.Fatalf("diff back: code %d\n%s%s", code, out, errs)
 	}
 	// -from compares two schema texts without a database

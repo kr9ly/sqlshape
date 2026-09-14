@@ -158,10 +158,17 @@ Compared, object by object:
 - views;
 - triggers, stored procedures and functions: by their definition text, read back from
   `SHOW CREATE TRIGGER` / `SHOW CREATE PROCEDURE` / `SHOW CREATE FUNCTION` with the `DEFINER`
-  dropped.
+  dropped;
+- events: schedule, `STARTS` / `ENDS`, `ON COMPLETION`, status, comment and body, read back
+  from `SHOW CREATE EVENT`. A time `schema.sql` leaves to the server -- a `STARTS` it omits or
+  writes as an expression (`CURRENT_TIMESTAMP + INTERVAL 1 DAY`), an `AT` expression -- is
+  filled in when the event is created (`SHOW CREATE EVENT` reads it back as the literal time
+  of creation, measured), so it is not compared; a literal time is compared as written.
 
-Not compared: `EVENT`, which the loader does not read, and seeded rows, which the MySQL loader
-does not know yet.
+Not compared: seeded rows, which the MySQL loader does not know yet. A one-time event
+(`AT ...`) without `ON COMPLETION PRESERVE` is dropped by the server once it has run, so
+`verify-schema` reports it missing from then on: that is the event's own definition, not
+drift.
 
 The plan uses MySQL's own definitions:
 
@@ -172,6 +179,7 @@ The plan uses MySQL's own definitions:
 | a changed key, foreign key or check | a `DROP` and an `ADD` |
 | a changed view | `CREATE OR REPLACE VIEW` |
 | a changed or removed trigger, procedure or function | a `DROP` and a `CREATE` (MySQL has no `CREATE OR REPLACE TRIGGER`) |
+| a changed or removed event | a `DROP EVENT` and a `CREATE EVENT`, the target's own text (a `STARTS` it omits starts the new event when the migration runs) |
 
 The order keeps the migration's own steps from tripping over each other:
 

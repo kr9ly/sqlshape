@@ -34,6 +34,7 @@ type Schema struct {
 	Views    []*View
 	Triggers []*Trigger
 	Routines []*Routine
+	Events   []*Event
 	Problems []Problem
 	// cur is the statement being applied, for the element texts (Column.Text ...)
 	cur string
@@ -211,6 +212,34 @@ type View struct {
 	Waived     map[string][]string
 }
 
+// Event is a CREATE EVENT: a body the server runs on its own schedule. Nothing a program's
+// statement runs reaches it, so its body is read the way a routine's is (analyze.AnalyzeEvent)
+// for the schema's own sake -- an event whose body names a table the schema does not have is
+// accepted by the server at CREATE time and fails at every run -- and its definition is what
+// diff / apply manage.
+type Event struct {
+	Name string
+	// At is a one-time event's `AT <expr>`; Every a recurring one's `EVERY <n> <unit>`
+	// ("1 DAY"); Starts / Ends the recurring event's bounds, "" when not written. Each is
+	// the expression's own text.
+	At, Every, Starts, Ends string
+	// AtLiteral / StartsLiteral / EndsLiteral: the time was written as a string literal,
+	// a value the server stores as written. An expression (`CURRENT_TIMESTAMP`, `NOW() +
+	// INTERVAL 1 DAY`) and an omitted STARTS (the server fills in the creation time,
+	// measured) are evaluated when the event is created, so the time SHOW CREATE EVENT
+	// reads back is an accident of when: the canonical form of such an event carries a time
+	// that means nothing to compare (dump marks it from the source text; diff skips it).
+	AtLiteral, StartsLiteral, EndsLiteral bool
+	// Completion is PRESERVE or NOT PRESERVE (the default); Status ENABLE (the default),
+	// DISABLE or DISABLE ON REPLICA.
+	Completion string
+	Status     string
+	Comment    string
+	Body       mysqlast.Value // the DO body (sp_block_content, or a single statement)
+	BodyText   string         // the body's own text, for comparison
+	Definition string         // the CREATE EVENT text
+}
+
 // Trigger is a CREATE TRIGGER.
 type Trigger struct {
 	Name  string
@@ -299,6 +328,17 @@ func (s *Schema) Trigger(name string) *Trigger {
 	for _, t := range s.Triggers {
 		if strings.EqualFold(t.Name, name) {
 			return t
+		}
+	}
+	return nil
+}
+
+// Event returns the event named name, or nil. Event names are not affected by
+// lower_case_table_names either.
+func (s *Schema) Event(name string) *Event {
+	for _, e := range s.Events {
+		if strings.EqualFold(e.Name, name) {
+			return e
 		}
 	}
 	return nil
@@ -479,11 +519,12 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 	case "trigger_tail":
 		s.createTrigger(n, st, at)
 	case "event_tail":
-		// an event runs on the server's own schedule; no statement of the program reaches
-		// it, so there is nothing of it the checker would read -- and the migration
-		// commands do not read events back from a server either, so a declared one would
-		// be silently unmanaged: say so rather than accept it
-		s.problem(at(n), "CREATE EVENT %s: sqlshape does not read events (nothing a statement of the program runs reaches one, and diff / apply do not manage them); keep it out of schema.sql", spName(n.Arg("name")))
+		s.createEvent(n, st, at)
+	case "alter_event_stmt":
+		// ALTER EVENT can change anything about an event, its name and body included; the
+		// canonical form never contains one, and schema.sql is the definition, not a
+		// history: write the CREATE EVENT as it should end up
+		s.problem(at(n), "ALTER EVENT %s: write the CREATE EVENT as it should end up instead", spName(n.Args[1]))
 	case "sp_tail":
 		s.createRoutine(n, Procedure, st, at)
 	case "sf_tail":
@@ -537,6 +578,8 @@ func (s *Schema) applyStmt(x *mysqlast.Struct, st mysqlparse.Statement) {
 	switch str(x.Fields["sql_command"]) {
 	case "SQLCOM_DROP_TRIGGER":
 		s.dropTrigger(spName(x.Fields["spname"]), isTrue(x.Fields["drop_if_exists"]), st.Offset)
+	case "SQLCOM_DROP_EVENT":
+		s.dropEvent(spName(x.Fields["spname"]), isTrue(x.Fields["drop_if_exists"]), st.Offset)
 	case "SQLCOM_DROP_PROCEDURE":
 		s.dropRoutine(Procedure, spName(x.Fields["spname"]), isTrue(x.Fields["drop_if_exists"]), st.Offset)
 	case "SQLCOM_ALTER_PROCEDURE":
@@ -1228,6 +1271,76 @@ func (s *Schema) createTrigger(n *mysqlast.Node, st mysqlparse.Statement, at fun
 	}
 	trg.Directives, _ = s.spDirectives("trigger", name, st.SQL, st.Offset)
 	s.Triggers = append(s.Triggers, trg)
+}
+
+// createEvent applies a CREATE EVENT (event_tail: if_not_exists, sp_name, ev_schedule,
+// on_completion, status, comment, body). The server checks nothing of the body at CREATE
+// time (measured: a DELETE from a table that does not exist is accepted, and fails at every
+// run), only a RETURN (1313); the body's own reading is analyze.AnalyzeEvent's.
+func (s *Schema) createEvent(n *mysqlast.Node, st mysqlparse.Statement, at func(mysqlast.Value) int) {
+	if len(n.Args) != 7 {
+		// defensive: event_tail's own grammar always builds all 7 fields.
+		s.problem(at(n), "CREATE EVENT: statement not understood")
+		return
+	}
+	name := spName(n.Args[1])
+	if s.Event(name) != nil {
+		if isTrue(n.Args[0]) { // IF NOT EXISTS
+			return
+		}
+		s.problem(at(n), "CREATE EVENT %s: event already exists", name)
+		return
+	}
+	e := &Event{Name: name, Completion: "NOT PRESERVE", Status: "ENABLE", Body: n.Args[6], Definition: st.SQL}
+	text := func(v mysqlast.Value) string {
+		if x, ok := v.(*mysqlast.Node); ok && x.End > x.Start && x.End <= len(st.SQL) {
+			return strings.TrimSpace(st.SQL[x.Start:x.End])
+		}
+		return str(v)
+	}
+	literal := func(v mysqlast.Value) bool {
+		x, ok := v.(*mysqlast.Node)
+		return ok && strings.HasPrefix(x.Class, "PTI_text_literal")
+	}
+	if sch, ok := n.Args[2].(*mysqlast.Node); ok && sch.Class == "ev_schedule" {
+		if v := sch.Arg("at"); v != nil {
+			e.At, e.AtLiteral = text(v), literal(v)
+		}
+		if v := sch.Arg("every"); v != nil {
+			e.Every = text(v) + " " + strings.TrimPrefix(str(sch.Arg("interval")), "INTERVAL_")
+		}
+		if v := sch.Arg("starts"); v != nil {
+			e.Starts, e.StartsLiteral = text(v), literal(v)
+		}
+		if v := sch.Arg("ends"); v != nil {
+			e.Ends, e.EndsLiteral = text(v), literal(v)
+		}
+	}
+	if c := str(n.Args[3]); c != "" && c != "0" {
+		e.Completion = c
+	}
+	if st := str(n.Args[4]); st != "" && st != "0" {
+		e.Status = st
+	}
+	if c := str(n.Args[5]); c != "0" {
+		e.Comment = c
+	}
+	e.BodyText = text(n.Args[6])
+	s.Events = append(s.Events, e)
+}
+
+// dropEvent applies a DROP EVENT (1539 "Unknown event" on the server when it does not
+// exist, measured).
+func (s *Schema) dropEvent(name string, ifExists bool, pos int) {
+	for i, e := range s.Events {
+		if strings.EqualFold(e.Name, name) {
+			s.Events = append(s.Events[:i], s.Events[i+1:]...)
+			return
+		}
+	}
+	if !ifExists {
+		s.problem(pos, "DROP EVENT %s: no such event", name)
+	}
 }
 
 // dropTrigger applies a DROP TRIGGER.

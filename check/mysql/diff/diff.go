@@ -71,6 +71,7 @@ func Compare(a, b *schema.Schema) []Change {
 	d.routines(a, b, schema.Function, "function")
 	d.views(a, b)
 	d.triggers(a, b)
+	d.events(a, b)
 	return d.out
 }
 
@@ -210,6 +211,81 @@ func (d *differ) triggers(a, b *schema.Schema) {
 			d.props("trigger", name, TriggerProps(f), TriggerProps(t))
 		}
 	}
+}
+
+func (d *differ) events(a, b *schema.Schema) {
+	from, to := map[string]*schema.Event{}, map[string]*schema.Event{}
+	for _, e := range a.Events {
+		from[e.Name] = e
+	}
+	for _, e := range b.Events {
+		to[e.Name] = e
+	}
+	for _, name := range sortedKeys(from, to) {
+		f, inFrom := from[name]
+		t, inTo := to[name]
+		switch {
+		case inFrom && !inTo:
+			d.add(Drop, "event", name)
+		case !inFrom && inTo:
+			d.add(Add, "event", name)
+		default:
+			fp, tp := eventProps(f, t)
+			d.props("event", name, fp, tp)
+		}
+	}
+}
+
+// EventProps are an event's properties: its schedule, the times bounding it, its
+// completion, status and comment, and its body text. A time the target did not fix (an
+// omitted or computed STARTS / AT / ENDS, Event.*Literal false) is left out on both sides:
+// the server filled it in when each side's event was created, and two creation times
+// never agree.
+func EventProps(e *schema.Event) map[string]string {
+	schedule := e.Every
+	if e.At != "" {
+		schedule = "AT"
+	} else {
+		schedule = "EVERY " + schedule
+	}
+	return map[string]string{
+		"schedule":      schedule,
+		"at":            e.At,
+		"starts":        e.Starts,
+		"ends":          e.Ends,
+		"on completion": e.Completion,
+		"status":        e.Status,
+		"comment":       e.Comment,
+		"body":          e.BodyText,
+	}
+}
+
+// eventProps is EventProps of both sides, the times the target does not fix removed from
+// each.
+func eventProps(from, to *schema.Event) (map[string]string, map[string]string) {
+	fp, tp := EventProps(from), EventProps(to)
+	for _, u := range []struct {
+		key string
+		lit bool
+	}{{"at", to.AtLiteral}, {"starts", to.StartsLiteral}, {"ends", to.EndsLiteral}} {
+		if !u.lit {
+			delete(fp, u.key)
+			delete(tp, u.key)
+		}
+	}
+	return fp, tp
+}
+
+// EventChanged reports whether the event as from has it differs from the target's to, by
+// the same comparison Compare makes (the times to does not fix left out).
+func EventChanged(from, to *schema.Event) bool {
+	fp, tp := eventProps(from, to)
+	for _, k := range sortedKeys(fp, tp) {
+		if fp[k] != tp[k] {
+			return true
+		}
+	}
+	return false
 }
 
 // TableProps are a table's own properties: the table options.

@@ -81,7 +81,9 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 ### トリガとストアドルーチン
 
-ローダーは`CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION`（`DEFINER`、`IF NOT EXISTS`、特性句込み）と`DROP` / `ALTER`（特性のみ）を、表と同じように読む。`DELIMITER`は要らない。本体の`;`は1つの複合文の内側として読まれ、mysqlクライアント互換の`DELIMITER x`行もそのまま読める。CREATE時にサーバ自身が拒むものは、未知の表と同じくProblemになる: 表が無い（1146）、トリガ・ルーチンが既にある（1359 / 1304）、DROPしようとしたトリガ・ルーチンが無い（1360 / 1305）、`FOLLOWS` / `PRECEDES`が指す先のトリガが無い（3011）。`DROP TABLE`は表のトリガを道連れにし、`RENAME TABLE`はトリガを付け替える。`CREATE EVENT`はスキーマのproblemになる。プログラムの文が実行するものはイベントに届かないし、マイグレーションのコマンドもサーバからイベントを読み戻さないので、schema.sqlには置かない。
+ローダーは`CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION`（`DEFINER`、`IF NOT EXISTS`、特性句込み）と`DROP` / `ALTER`（特性のみ）を、表と同じように読む。`DELIMITER`は要らない。本体の`;`は1つの複合文の内側として読まれ、mysqlクライアント互換の`DELIMITER x`行もそのまま読める。CREATE時にサーバ自身が拒むものは、未知の表と同じくProblemになる: 表が無い（1146）、トリガ・ルーチンが既にある（1359 / 1304）、DROPしようとしたトリガ・ルーチンが無い（1360 / 1305）、`FOLLOWS` / `PRECEDES`が指す先のトリガが無い（3011）。`DROP TABLE`は表のトリガを道連れにし、`RENAME TABLE`はトリガを付け替える。
+
+`CREATE EVENT`も同じように読む（2つのスケジュール形、`STARTS` / `ENDS`、`ON COMPLETION`、`ENABLE` / `DISABLE`、`COMMENT`）。`DROP EVENT`も読む。`ALTER EVENT`はproblemになる（最終形の`CREATE EVENT`を書く）。プログラムの文が実行するものはイベントに届かないので、本体を読むのはスキーマ自身のためである。サーバは`CREATE`時に本体を何も検査しない（無い表への`DELETE`も受け付け、実行のたびに失敗する。測定済み）。検査器はそれをスキーマのproblemとして報告し、本体の各文はルーチンと同じように義務の判定にかける。イベントの中の`RETURN`は1313。マイグレーションのコマンドはイベントを管理する（[migrations.ja.md](migrations.ja.md#mysql)）。
 
 本体はスキーマごとに1回読む。PostgreSQLのPL/pgSQL関数本体の読み方と同じ位置づけである（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）。`IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`、ラベル付きブロックと`LEAVE` / `ITERATE`、`RETURN`、`SET`、`SELECT ... INTO`、カーソル（`DECLARE` / `OPEN` / `FETCH` / `CLOSE`）、`CALL`、`SIGNAL` / `RESIGNAL`、`DECLARE ... HANDLER FOR`を歩く。名前はサーバと同じ規則で解決する。
 

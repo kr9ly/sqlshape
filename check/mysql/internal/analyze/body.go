@@ -396,6 +396,41 @@ func AnalyzeRoutine(s *schema.Schema, r *schema.Routine) (*BodyResult, error) {
 // routineCache is AnalyzeRoutine's own cache (bodyCache's counterpart): see AnalyzeTrigger.
 var routineCache sync.Map // map[*schema.Routine]*bodyCached
 
+// AnalyzeEvent types an event's DO body against s, the way AnalyzeRoutine types a
+// procedure's: no parameters, no NEW / OLD, a `RETURN` is 1313 (the server's own CREATE-time
+// refusal, measured). Nothing a program runs reaches an event, so its Violations are computed
+// but consumed by no call site; its Statements' facts are what dialect.Definitions judges
+// (obligations), and an Error is the schema's own problem -- the server accepts a body
+// naming a table that does not exist and fails it at every run (measured), the checker
+// reports it once, here.
+func AnalyzeEvent(s *schema.Schema, e *schema.Event) (*BodyResult, error) {
+	if c, ok := eventCache.Load(e); ok {
+		cc := c.(*bodyCached)
+		return cc.result, cc.err
+	}
+	c := &bodyCached{}
+	actual, loaded := eventCache.LoadOrStore(e, c)
+	if loaded {
+		// defensive: see AnalyzeTrigger's own note -- only a concurrent race reaches this.
+		cc := actual.(*bodyCached)
+		return cc.result, cc.err
+	}
+	_, ph := placeholder.Rewrite(e.Definition)
+	a := &analyzer{s: s, text: e.Definition, ph: ph}
+	br := &BodyResult{}
+	a.bodyResult = br
+	if err := a.walkOne(scope{}, e.Body, br); err != nil {
+		c.err = err
+		return nil, err
+	}
+	br.Violations = dedupe(a.raised)
+	c.result = br
+	return br, nil
+}
+
+// eventCache is AnalyzeEvent's own cache: see AnalyzeTrigger.
+var eventCache sync.Map // map[*schema.Event]*bodyCached
+
 func analyzeRoutineBody(s *schema.Schema, r *schema.Routine) (*BodyResult, error) {
 	_, ph := placeholder.Rewrite(r.Definition)
 	a := &analyzer{s: s, text: r.Definition, ph: ph, routine: r, raises: parseRaises(r.Directives)}

@@ -154,6 +154,10 @@ func (m *mysql) Definitions() []dialect.Definition {
 		br, err := analyze.AnalyzeRoutine(m.s, r)
 		out = append(out, bodyDefinitions(what, br, err)...)
 	}
+	for _, e := range m.s.Events {
+		br, err := analyze.AnalyzeEvent(m.s, e)
+		out = append(out, bodyDefinitions("event "+e.Name, br, err)...)
+	}
 	return out
 }
 

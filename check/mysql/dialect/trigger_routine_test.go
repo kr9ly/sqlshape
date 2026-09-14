@@ -212,3 +212,43 @@ func TestErrorOf(t *testing.T) {
 		t.Errorf("got a *dialect.Error, want the analyzer's own plain error passed through unchanged: %v", err)
 	}
 }
+
+// TestDefinitions_EventBodies covers Definitions()'s event path: an event's body statements
+// are judged like a routine's ("event <name>: line N"), and a body naming a table the schema
+// does not have surfaces as one Definition carrying Err (the server accepts such an event at
+// CREATE time and fails it at every run, measured).
+func TestDefinitions_EventBodies(t *testing.T) {
+	an, err := load(`-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL PRIMARY KEY, v INT NOT NULL);
+CREATE EVENT sweep ON SCHEDULE EVERY 1 DAY DO BEGIN
+  DELETE FROM t WHERE id < 0;
+  UPDATE t SET v = v + 1 WHERE id = 1;
+END;
+CREATE EVENT broken ON SCHEDULE EVERY 1 DAY DO DELETE FROM nope WHERE id < 0;
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := an.(*mysql)
+	if p := m.Problems(); len(p) > 0 {
+		t.Fatalf("schema problems: %v", p)
+	}
+	var whats []string
+	var brokenErr string
+	for _, d := range m.Definitions() {
+		whats = append(whats, d.What)
+		if strings.HasPrefix(d.What, "event sweep") && d.Facts == nil {
+			t.Errorf("%s: want Facts", d.What)
+		}
+		if d.What == "event broken" {
+			brokenErr = d.Err
+		}
+	}
+	joined := strings.Join(whats, "\n")
+	if strings.Count(joined, "event sweep: line") != 2 {
+		t.Errorf("want both statements of sweep:\n%s", joined)
+	}
+	if !strings.Contains(brokenErr, "nope") || !strings.Contains(brokenErr, "1146") {
+		t.Errorf("event broken: want an Err naming the missing table (1146), got %q", brokenErr)
+	}
+}

@@ -117,7 +117,71 @@ func Read(ctx context.Context, db Querier) (string, error) {
 	if err := readTriggers(ctx, db, &b); err != nil {
 		return "", err
 	}
+	if err := readEvents(ctx, db, &b); err != nil {
+		return "", err
+	}
 	return b.String(), nil
+}
+
+// readEvents renders every event of the database in name order, last: an event's body is
+// bound late (the server checks nothing of it at CREATE time), so nothing depends on its
+// position. SHOW CREATE EVENT spells the schedule out in full: a STARTS the source omitted
+// or wrote as an expression comes back as the literal time the server computed when the
+// event was created (measured), which pinEvents marks for diff to skip.
+func readEvents(ctx context.Context, db Querier, b *strings.Builder) error {
+	rows, err := db.QueryContext(ctx, "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE() ORDER BY EVENT_NAME")
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			// defensive: see readRoutines' own note.
+			rows.Close()
+			return err
+		}
+		names = append(names, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		// defensive: see readRoutines' own note.
+		return err
+	}
+	for _, name := range names {
+		// SHOW CREATE EVENT returns (Event, sql_mode, time_zone, Create Event,
+		// character_set_client, collation_connection, Database Collation), measured.
+		var ev, sqlMode, tz, ddl, cs, cl, dbCollation string
+		q := "SHOW CREATE EVENT `" + name + "`"
+		if err := db.QueryRowContext(ctx, q).Scan(&ev, &sqlMode, &tz, &ddl, &cs, &cl, &dbCollation); err != nil {
+			// defensive: see readRoutines' own note (the event was just listed).
+			return fmt.Errorf("%s: %w", q, err)
+		}
+		b.WriteString(normalizeRoutine(ddl))
+		b.WriteString(";\n")
+	}
+	return nil
+}
+
+// pinEvents carries the source text's own knowledge of each event's schedule into its
+// canonical form: whether AT / STARTS / ENDS were written as literal times. The canonical
+// text (SHOW CREATE EVENT's) always spells them as literals, so on its own it cannot tell a
+// time the schema fixed from one the server filled in at creation; the source can. An event
+// the source does not have (it cannot happen: the canonical form came from the source) stays
+// as read, every time literal.
+func pinEvents(canon *schema.Schema, source string) {
+	if len(canon.Events) == 0 {
+		return
+	}
+	src, err := schema.Load(source)
+	if err != nil {
+		return
+	}
+	for _, e := range canon.Events {
+		if se := src.Event(e.Name); se != nil {
+			e.AtLiteral, e.StartsLiteral, e.EndsLiteral = se.AtLiteral, se.StartsLiteral, se.EndsLiteral
+		}
+	}
 }
 
 // readRoutines renders every stored procedure and function of the database, in name (then
@@ -231,7 +295,9 @@ func normalizeTable(ddl string) string {
 func normalizeView(ddl string) string { return definer.ReplaceAllString(ddl, "") }
 
 // normalizeRoutine drops the DEFINER of a CREATE PROCEDURE / CREATE FUNCTION.
-func normalizeRoutine(ddl string) string { return dropTrailingSemicolon(definer.ReplaceAllString(ddl, "")) }
+func normalizeRoutine(ddl string) string {
+	return dropTrailingSemicolon(definer.ReplaceAllString(ddl, ""))
+}
 
 var forEachRow = regexp.MustCompile(`FOR EACH ROW`)
 
@@ -454,6 +520,7 @@ func canonicalOn(ctx context.Context, db *sql.DB, schemaSQL, header string) (*sc
 	if err != nil {
 		return nil, "", fmt.Errorf("load canonical: %w", err)
 	}
+	pinEvents(s, schemaSQL)
 	return s, text, nil
 }
 
@@ -480,6 +547,7 @@ func (Local) Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, s
 	if err != nil {
 		return nil, "", fmt.Errorf("load canonical: %w", err)
 	}
+	pinEvents(s, schemaSQL)
 	return s, text, nil
 }
 

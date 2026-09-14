@@ -52,6 +52,8 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	// only for statements from here on; PostgreSQL's planner keeps the same order for the
 	// same reason, see check/postgres/migrate).
 	p.addTriggers()
+	// events last of all: nothing depends on an event, and an event's body is bound late
+	p.addEvents()
 	if len(p.problems) > 0 {
 		return p.out, errors.New(strings.Join(p.problems, "\n"))
 	}
@@ -163,6 +165,7 @@ func (p *planner) drops() {
 	// triggers that go or change, ahead of the table drops below: a trigger dropped along
 	// with its own table (DROP TABLE takes it silently) needs no DROP TRIGGER of its own.
 	p.dropTriggers(goneNames)
+	p.dropEvents()
 	for _, f := range gone {
 		if !p.droppable[f.Name] {
 			p.problem("table %s is dropped, which no @migrate declares (`-- @migrate drop %s`, or a rename)", f.Name, f.Name)
@@ -306,6 +309,31 @@ func (p *planner) addTriggers() {
 			continue
 		}
 		p.emit("%s;", strings.TrimSuffix(strings.TrimSpace(t.Definition), ";"))
+	}
+}
+
+// dropEvents drops every event the target lacks or whose definition differs (MySQL has no
+// CREATE OR REPLACE EVENT: a changed event is a DROP and a CREATE, the CREATE emitted by
+// addEvents). A time the target leaves to the server (an omitted STARTS) is not a
+// difference (diff.EventChanged).
+func (p *planner) dropEvents() {
+	for _, e := range p.from.Events {
+		te := p.to.Event(e.Name)
+		if te == nil || diff.EventChanged(e, te) {
+			p.emit("DROP EVENT %s;", q(e.Name))
+		}
+	}
+}
+
+// addEvents creates every event the from side lacks or whose definition differs, from the
+// target's own CREATE text.
+func (p *planner) addEvents() {
+	for _, e := range p.to.Events {
+		fe := p.from.Event(e.Name)
+		if fe != nil && !diff.EventChanged(fe, e) {
+			continue
+		}
+		p.emit("%s;", strings.TrimSuffix(strings.TrimSpace(e.Definition), ";"))
 	}
 }
 

@@ -120,9 +120,16 @@ statement it belongs to, and a mysql-client `DELIMITER x` line is read too. What
 itself refuses at CREATE time is a problem the same way an unknown table is: no such table
 (1146), the trigger or routine already exists (1359 / 1304), no such trigger or routine to
 `DROP` (1360 / 1305), no such trigger for `FOLLOWS` / `PRECEDES` to name (3011). `DROP TABLE`
-takes a table's triggers with it; `RENAME TABLE` moves them. `CREATE EVENT` is a problem of
-the schema: nothing a statement of the program runs reaches an event, and the migration
-commands do not read events back from a server, so keep events out of schema.sql.
+takes a table's triggers with it; `RENAME TABLE` moves them.
+
+`CREATE EVENT` is read the same way (both schedule forms, `STARTS` / `ENDS`, `ON COMPLETION`,
+`ENABLE` / `DISABLE`, `COMMENT`), and `DROP EVENT`; `ALTER EVENT` is a problem (write the
+`CREATE EVENT` as it should end up). Nothing a statement of the program runs reaches an event,
+so its body is read for the schema's own sake: the server checks nothing of it at `CREATE`
+time (a `DELETE` from a table that does not exist is accepted and fails at every run,
+measured), the checker reports it as a schema problem, and the body's own statements are
+judged for the obligations like a routine's. A `RETURN` in an event is 1313. The migration
+commands manage events ([migrations.md](migrations.md#mysql)).
 
 The body is read once per schema, the way a PL/pgSQL function's is on PostgreSQL
 ([checks.md](checks.md#name-the-errors-a-trigger-raises)). `IF` / `CASE` / `LOOP` / `WHILE` /
