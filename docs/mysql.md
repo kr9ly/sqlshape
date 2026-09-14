@@ -123,8 +123,9 @@ itself refuses at CREATE time is a problem the same way an unknown table is: no 
 takes a table's triggers with it; `RENAME TABLE` moves them.
 
 `CREATE EVENT` is read the same way (both schedule forms, `STARTS` / `ENDS`, `ON COMPLETION`,
-`ENABLE` / `DISABLE`, `COMMENT`), and `DROP EVENT`; `ALTER EVENT` is a problem (write the
-`CREATE EVENT` as it should end up). Nothing a statement of the program runs reaches an event,
+`ENABLE` / `DISABLE`, `COMMENT`), and `ALTER EVENT` (each clause written replaces that part
+of the event, a new schedule the whole schedule, `RENAME TO` the name) and `DROP EVENT` are
+applied. Nothing a statement of the program runs reaches an event,
 so its body is read for the schema's own sake: the server checks nothing of it at `CREATE`
 time (a `DELETE` from a table that does not exist is accepted and fails at every run,
 measured), the checker reports it as a schema problem, and the body's own statements are

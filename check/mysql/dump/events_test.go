@@ -59,3 +59,37 @@ CREATE EVENT once ON SCHEDULE AT '2030-01-01 00:00:00' DO INSERT INTO t VALUES (
 		t.Errorf("not a fixpoint:\n%s\n---\n%s", text, text2)
 	}
 }
+
+// TestCanonicalAlterEvent: a schema that CREATEs an event and ALTERs it canonicalizes to the
+// altered event (the server's own SHOW CREATE EVENT of the result), the source text's
+// knowledge of which times it fixed following the event through its rename.
+func TestCanonicalAlterEvent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	src := `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL PRIMARY KEY, v INT NOT NULL);
+CREATE EVENT e ON SCHEDULE EVERY 1 HOUR STARTS '2030-01-01 00:00:00' ON COMPLETION PRESERVE DISABLE COMMENT 'c' DO DELETE FROM t WHERE id < 0;
+ALTER EVENT e ON SCHEDULE EVERY 2 DAY RENAME TO f ENABLE COMMENT 'd';
+ALTER EVENT f DO UPDATE t SET v = v + 1 WHERE id = 1;
+`
+	s, text, err := Local{}.Canonical(ctx, src)
+	if errors.Is(err, ErrNoServer) {
+		t.Skip("no mysqld on PATH (nix-shell -p mysql84)")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) > 0 {
+		t.Fatalf("problems: %v", s.Problems)
+	}
+	if s.Event("e") != nil || len(s.Events) != 1 {
+		t.Fatalf("events: %d\n%s", len(s.Events), text)
+	}
+	f := s.Event("f")
+	if f.Every != "2 DAY" || f.Completion != "PRESERVE" || f.Status != "ENABLE" || f.Comment != "d" || f.BodyText != "UPDATE t SET v = v + 1 WHERE id = 1" {
+		t.Errorf("altered event read back: %+v\n%s", f, text)
+	}
+	if f.Starts == "" || f.StartsLiteral {
+		t.Errorf("the new schedule wrote no STARTS, so the server's is not fixed: %+v", f)
+	}
+}

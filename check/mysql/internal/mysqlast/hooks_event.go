@@ -38,3 +38,23 @@ func init() {
 	// opt_ev_comment: the string literal alone.
 	register("opt_ev_comment", "COMMENT_SYM TEXT_STRING_sys", pass(2))
 }
+
+// ALTER EVENT: alter_event_stmt is ActDefault (Node alter_event_stmt(definer, sp_name,
+// schedule_completion, rename_to, status, comment, body)); its own children below carry
+// only a "1" in the grammar's shapes, so they are folded here to the data they hold.
+func init() {
+	// ev_alter_on_schedule_completion -> Node ev_alter_schedule{schedule, completion}, the
+	// one not written nil; the empty alternative stays the grammar's "0".
+	register("ev_alter_on_schedule_completion", "ON_SYM SCHEDULE_SYM ev_schedule_time", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "ev_alter_schedule", Names: []string{"schedule", "completion"}, Args: []Value{kids[2], nil}, Start: n.Start, End: n.End}, nil
+	})
+	register("ev_alter_on_schedule_completion", "ev_on_completion", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "ev_alter_schedule", Names: []string{"schedule", "completion"}, Args: []Value{nil, kids[0]}, Start: n.Start, End: n.End}, nil
+	})
+	register("ev_alter_on_schedule_completion", "ON_SYM SCHEDULE_SYM ev_schedule_time ev_on_completion", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "ev_alter_schedule", Names: []string{"schedule", "completion"}, Args: []Value{kids[2], kids[3]}, Start: n.Start, End: n.End}, nil
+	})
+	// opt_ev_rename_to: the new sp_name alone; opt_ev_sql_stmt: the new body alone.
+	register("opt_ev_rename_to", "RENAME TO_SYM sp_name", pass(3))
+	register("opt_ev_sql_stmt", "DO_SYM ev_sql_stmt", pass(2))
+}

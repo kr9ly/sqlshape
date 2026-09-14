@@ -59,7 +59,9 @@ DROP EVENT IF EXISTS gone;
 CREATE TABLE t (id INT NOT NULL PRIMARY KEY);
 CREATE EVENT e1 ON SCHEDULE EVERY 1 DAY DO DELETE FROM t;
 CREATE EVENT e1 ON SCHEDULE EVERY 1 DAY DO DELETE FROM t;
-ALTER EVENT e1 ON SCHEDULE EVERY 2 DAY;
+CREATE EVENT e2 ON SCHEDULE EVERY 1 DAY DO DELETE FROM t;
+ALTER EVENT e1 RENAME TO e2;
+ALTER EVENT nope ON SCHEDULE EVERY 2 DAY;
 DROP EVENT nope;
 `)
 	if err != nil {
@@ -70,9 +72,46 @@ DROP EVENT nope;
 		msgs = append(msgs, p.Message)
 	}
 	got := strings.Join(msgs, "\n")
-	for _, want := range []string{"CREATE EVENT e1: event already exists", "ALTER EVENT e1: write the CREATE EVENT as it should end up instead", "DROP EVENT nope: no such event"} {
+	for _, want := range []string{"CREATE EVENT e1: event already exists", "ALTER EVENT e1 RENAME TO e2: event already exists", "ALTER EVENT nope: no such event", "DROP EVENT nope: no such event"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("problems lack %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestAlterEvent: each ALTER EVENT clause replaces that part of the event and the rest
+// stays; a new schedule replaces the whole schedule (STARTS included); RENAME TO renames.
+func TestAlterEvent(t *testing.T) {
+	s, err := Load(`-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL PRIMARY KEY, v INT NOT NULL);
+CREATE EVENT e ON SCHEDULE EVERY 1 HOUR STARTS '2030-01-01 00:00:00' ON COMPLETION PRESERVE DISABLE COMMENT 'c' DO DELETE FROM t WHERE id < 0;
+ALTER EVENT e ON SCHEDULE EVERY 2 DAY;
+ALTER EVENT e ENABLE COMMENT 'd';
+ALTER EVENT e DO UPDATE t SET v = v + 1 WHERE id = 1;
+ALTER EVENT e ON COMPLETION NOT PRESERVE RENAME TO f;
+CREATE EVENT once ON SCHEDULE EVERY 1 DAY DO DELETE FROM t;
+ALTER EVENT once ON SCHEDULE AT '2030-01-01 00:00:00' ON COMPLETION PRESERVE;
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) > 0 {
+		t.Fatalf("problems: %v", s.Problems)
+	}
+	if s.Event("e") != nil {
+		t.Error("RENAME TO left the old name")
+	}
+	f := s.Event("f")
+	if f == nil {
+		t.Fatal("renamed event not found")
+	}
+	if f.Every != "2 DAY" || f.Starts != "" || f.StartsLiteral || f.Completion != "NOT PRESERVE" || f.Status != "ENABLE" || f.Comment != "d" || f.BodyText != "UPDATE t SET v = v + 1 WHERE id = 1" {
+		t.Errorf("f: %+v", f)
+	}
+	if f.Body == nil {
+		t.Error("f: the new body was not kept")
+	}
+	if o := s.Event("once"); o.At != "'2030-01-01 00:00:00'" || !o.AtLiteral || o.Every != "" || o.Completion != "PRESERVE" {
+		t.Errorf("once: %+v", o)
 	}
 }

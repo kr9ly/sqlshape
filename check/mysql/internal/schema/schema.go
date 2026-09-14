@@ -521,10 +521,7 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 	case "event_tail":
 		s.createEvent(n, st, at)
 	case "alter_event_stmt":
-		// ALTER EVENT can change anything about an event, its name and body included; the
-		// canonical form never contains one, and schema.sql is the definition, not a
-		// history: write the CREATE EVENT as it should end up
-		s.problem(at(n), "ALTER EVENT %s: write the CREATE EVENT as it should end up instead", spName(n.Args[1]))
+		s.alterEvent(n, st, at)
 	case "sp_tail":
 		s.createRoutine(n, Procedure, st, at)
 	case "sf_tail":
@@ -1291,42 +1288,110 @@ func (s *Schema) createEvent(n *mysqlast.Node, st mysqlparse.Statement, at func(
 		s.problem(at(n), "CREATE EVENT %s: event already exists", name)
 		return
 	}
-	e := &Event{Name: name, Completion: "NOT PRESERVE", Status: "ENABLE", Body: n.Args[6], Definition: st.SQL}
-	text := func(v mysqlast.Value) string {
-		if x, ok := v.(*mysqlast.Node); ok && x.End > x.Start && x.End <= len(st.SQL) {
-			return strings.TrimSpace(st.SQL[x.Start:x.End])
-		}
-		return str(v)
+	e := &Event{Name: name, Completion: "NOT PRESERVE", Status: "ENABLE", Definition: st.SQL}
+	e.setSchedule(n.Args[2], st.SQL)
+	e.setOptions(n.Args[3], n.Args[4], n.Args[5])
+	e.setBody(n.Args[6], st.SQL)
+	s.Events = append(s.Events, e)
+}
+
+// alterEvent applies an ALTER EVENT (alter_event_stmt: definer, sp_name, schedule and/or
+// completion, RENAME TO, status, comment, DO body): each clause written replaces that part
+// of the event, the rest stays (measured: SHOW CREATE EVENT after `ALTER EVENT e ON SCHEDULE
+// EVERY 2 DAY` keeps the STARTS, completion, status and body as they were). The Definition
+// stays the CREATE's text: the canonical form, which diff and apply read, comes from the
+// server's own SHOW CREATE EVENT of the altered event.
+func (s *Schema) alterEvent(n *mysqlast.Node, st mysqlparse.Statement, at func(mysqlast.Value) int) {
+	if len(n.Args) != 7 {
+		// defensive: alter_event_stmt's own grammar always builds all 7 fields.
+		s.problem(at(n), "ALTER EVENT: statement not understood")
+		return
 	}
-	literal := func(v mysqlast.Value) bool {
-		x, ok := v.(*mysqlast.Node)
-		return ok && strings.HasPrefix(x.Class, "PTI_text_literal")
+	name := spName(n.Args[1])
+	e := s.Event(name)
+	if e == nil {
+		s.problem(at(n), "ALTER EVENT %s: no such event", name)
+		return
 	}
-	if sch, ok := n.Args[2].(*mysqlast.Node); ok && sch.Class == "ev_schedule" {
-		if v := sch.Arg("at"); v != nil {
-			e.At, e.AtLiteral = text(v), literal(v)
+	if sc, ok := n.Args[2].(*mysqlast.Node); ok && sc.Class == "ev_alter_schedule" {
+		if sch := sc.Arg("schedule"); sch != nil {
+			e.At, e.Every, e.Starts, e.Ends = "", "", "", ""
+			e.AtLiteral, e.StartsLiteral, e.EndsLiteral = false, false, false
+			e.setSchedule(sch, st.SQL)
 		}
-		if v := sch.Arg("every"); v != nil {
-			e.Every = text(v) + " " + strings.TrimPrefix(str(sch.Arg("interval")), "INTERVAL_")
-		}
-		if v := sch.Arg("starts"); v != nil {
-			e.Starts, e.StartsLiteral = text(v), literal(v)
-		}
-		if v := sch.Arg("ends"); v != nil {
-			e.Ends, e.EndsLiteral = text(v), literal(v)
+		if c := str(sc.Arg("completion")); c != "" {
+			e.Completion = c
 		}
 	}
-	if c := str(n.Args[3]); c != "" && c != "0" {
+	if newName := spName(n.Args[3]); newName != "" && newName != "0" {
+		if s.Event(newName) != nil && !strings.EqualFold(newName, name) {
+			s.problem(at(n), "ALTER EVENT %s RENAME TO %s: event already exists", name, newName)
+			return
+		}
+		e.Name = newName
+	}
+	var comment mysqlast.Value = mysqlast.Const("0")
+	if str(n.Args[5]) != "0" {
+		comment = n.Args[5]
+	}
+	e.setOptions(mysqlast.Const("0"), n.Args[4], comment)
+	if str(n.Args[6]) != "0" && n.Args[6] != nil {
+		e.setBody(n.Args[6], st.SQL)
+	}
+}
+
+// exprText is the text of an expression node in sql, trimmed (str(v) for a non-node).
+func exprText(v mysqlast.Value, sql string) string {
+	if x, ok := v.(*mysqlast.Node); ok && x.End > x.Start && x.End <= len(sql) {
+		return strings.TrimSpace(sql[x.Start:x.End])
+	}
+	return str(v)
+}
+
+// isLiteral reports a string literal expression (a time the server stores as written).
+func isLiteral(v mysqlast.Value) bool {
+	x, ok := v.(*mysqlast.Node)
+	return ok && strings.HasPrefix(x.Class, "PTI_text_literal")
+}
+
+// setSchedule reads an ev_schedule node into e.
+func (e *Event) setSchedule(v mysqlast.Value, sql string) {
+	sch, ok := v.(*mysqlast.Node)
+	if !ok || sch.Class != "ev_schedule" {
+		return
+	}
+	if v := sch.Arg("at"); v != nil {
+		e.At, e.AtLiteral = exprText(v, sql), isLiteral(v)
+	}
+	if v := sch.Arg("every"); v != nil {
+		e.Every = exprText(v, sql) + " " + strings.TrimPrefix(str(sch.Arg("interval")), "INTERVAL_")
+	}
+	if v := sch.Arg("starts"); v != nil {
+		e.Starts, e.StartsLiteral = exprText(v, sql), isLiteral(v)
+	}
+	if v := sch.Arg("ends"); v != nil {
+		e.Ends, e.EndsLiteral = exprText(v, sql), isLiteral(v)
+	}
+}
+
+// setOptions reads the completion, status and comment values (each "0" or "" when not
+// written, which leaves e's as it is).
+func (e *Event) setOptions(completion, status, comment mysqlast.Value) {
+	if c := str(completion); c != "" && c != "0" {
 		e.Completion = c
 	}
-	if st := str(n.Args[4]); st != "" && st != "0" {
+	if st := str(status); st != "" && st != "0" {
 		e.Status = st
 	}
-	if c := str(n.Args[5]); c != "0" {
+	if c := str(comment); c != "0" {
 		e.Comment = c
 	}
-	e.BodyText = text(n.Args[6])
-	s.Events = append(s.Events, e)
+}
+
+// setBody reads the DO body.
+func (e *Event) setBody(v mysqlast.Value, sql string) {
+	e.Body = v
+	e.BodyText = exprText(v, sql)
 }
 
 // dropEvent applies a DROP EVENT (1539 "Unknown event" on the server when it does not

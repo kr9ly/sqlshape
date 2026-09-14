@@ -203,8 +203,8 @@ release it is a candidate for.
   block's own is the group check's answer (a subquery's aggregate over its own columns leaves the
   outer query one row per input row, as before).
 - MySQL: `CREATE EVENT` is read (both schedule forms, `STARTS` / `ENDS`, `ON COMPLETION`, the
-  status, `COMMENT`) and `DROP EVENT` applied; `ALTER EVENT` is a problem of the schema (write the
-  final `CREATE EVENT`). An event's body is analyzed like a routine's: a table it names that the
+  status, `COMMENT`), `ALTER EVENT` (each clause replacing its part, `RENAME TO` included) and
+  `DROP EVENT` are applied. An event's body is analyzed like a routine's: a table it names that the
   schema does not have is a schema problem (the server accepts it at CREATE time and fails at every
   run, measured), its statements are judged for the obligations, a `RETURN` is 1313. `diff` /
   `apply` / `verify-schema` manage events: read back through `SHOW CREATE EVENT`, compared by
