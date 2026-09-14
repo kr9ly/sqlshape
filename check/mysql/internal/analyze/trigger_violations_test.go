@@ -61,6 +61,13 @@ BEGIN
   SELECT t;
 END;
 
+CREATE PROCEDURE sum_total(IN cid BIGINT UNSIGNED)
+BEGIN
+  DECLARE t DECIMAL(10,2);
+  SELECT COALESCE(SUM(total), 0) INTO t FROM orders WHERE customer_id = cid;
+  SELECT t;
+END;
+
 CREATE PROCEDURE insert_absorbed(IN v DECIMAL(10,2))
 BEGIN
   DECLARE CONTINUE HANDLER FOR 1062
@@ -168,6 +175,15 @@ func TestSelectIntoCardinality(t *testing.T) {
 	}
 	if got := violationKeys(br.Violations); got != "" {
 		t.Errorf("find_total_by_note (LIMIT 1): got %s, want no violations", got)
+	}
+	// an aggregate without GROUP BY is one row even wrapped in a function: SUM over no
+	// rows is one NULL row, so COALESCE has something to read and INTO is never NOT FOUND
+	br, err = AnalyzeRoutine(s, s.RoutineOf(schema.Procedure, "sum_total"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := violationKeys(br.Violations); got != "" {
+		t.Errorf("sum_total (COALESCE(SUM(...)) without GROUP BY): got %s, want no violations", got)
 	}
 }
 

@@ -182,6 +182,12 @@ release it is a candidate for.
   declaration. `x/sqlmode` holds MySQL's sql_mode names and bits.
 - `mysqltest.Start` fails as soon as `mysqld` exits (an option it rejects) instead of waiting a
   minute, and quotes the `[ERROR]` lines of its log.
+- MySQL: an aggregate without `GROUP BY` proves one row wherever the aggregate sits in the
+  select list or `HAVING` (`COALESCE(SUM(total), 0)`, `COUNT(*) + 1`, `MAX(id)` alike), not only
+  when every select item is a bare aggregate call, so a `SELECT COALESCE(SUM(x), 0) INTO v` in a
+  routine no longer carries 1172 and the same query passes `One`. Which aggregates are the
+  block's own is the group check's answer (a subquery's aggregate over its own columns leaves the
+  outer query one row per input row, as before).
 
 ## [2.0.0] - 2026-09-10
 

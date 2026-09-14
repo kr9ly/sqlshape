@@ -156,6 +156,11 @@ func TestChildren(t *testing.T) {
 		{"SELECT id FROM users GROUP BY id WITH ROLLUP", "table users, grouping sets; "},
 		{"SELECT name, count(*) FROM users GROUP BY 1", "table users, group name; "},
 		{"SELECT count(*) FROM users", "table users, single; "},
+		{"SELECT COALESCE(SUM(total), 0) FROM orders", "table orders, single; "},                                        // the aggregate wrapped in a function is still the block's, one row
+		{"SELECT COUNT(*) + 1 AS n, MAX(id) FROM users", "table users, single; "},                                       // an expression over aggregates, and a bare one
+		{"SELECT COUNT(*) FROM users HAVING MAX(id) > 1", "table users, single; "},                                      // HAVING's aggregate too (zero or one row)
+		{"SELECT (SELECT COUNT(*) FROM orders) AS n FROM users", "table users; [orders]"},                               // the subquery owns its aggregate: one row per user
+		{"SELECT (SELECT COUNT(o.id) FROM orders o WHERE o.user_id = u.id) AS n FROM users u", "table users; [orders]"}, // still the subquery's: its own column
 		{"SELECT id FROM users WHERE id = (SELECT MAX(user_id) FROM orders)", "table users; [orders]"},
 		{"SELECT id FROM users UNION SELECT user_id FROM orders WHERE id = 1", "UNION may combine rows; [users] [orders]"},
 		{"UPDATE users SET name = $1 WHERE id IN (SELECT user_id FROM orders)", "table users; "},

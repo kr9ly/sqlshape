@@ -177,7 +177,8 @@ the body's own.
 ### The `One` proof
 
 Proved from `PRIMARY KEY` and `UNIQUE` keys over whole columns, `LIMIT 1`, and an aggregate
-without `GROUP BY`; MySQL has no partial indexes.
+without `GROUP BY` (wherever it sits: `COALESCE(SUM(total), 0)` is one row as much as `SUM(total)`;
+an aggregate a subquery owns is the subquery's); MySQL has no partial indexes.
 
 ### Grouping
 

@@ -76,7 +76,8 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 
 // shape writes down what a SELECT block says about its own row count: its GROUP BY
 // expressions (each a leaf column, a known value, or an expression; ROLLUP is one row per
-// set), or an aggregate-only select list without GROUP BY (one row).
+// set). An aggregate without GROUP BY makes the block one row too, but which aggregates
+// are the block's own is groupCheck's to say, so querySpecification sets Single after it.
 func (a *analyzer) shape(sc *scope, fs *facts.Scope, body *mysqlast.Node) {
 	if body.Class != "PT_query_specification" {
 		return
@@ -84,9 +85,6 @@ func (a *analyzer) shape(sc *scope, fs *facts.Scope, body *mysqlast.Node) {
 	items, _ := body.Arg("item_list").(mysqlast.List)
 	g, ok := body.Arg("opt_group_clause").(*mysqlast.Node)
 	if !ok {
-		if len(items) > 0 && a.allAggregates(items) {
-			fs.Single = true
-		}
 		return
 	}
 	fs.Groups = []facts.Term{}
@@ -786,25 +784,6 @@ func limitOne(v mysqlast.Value) bool {
 		return intOr(ln.Arg("str"), -1) <= 1 && intOr(ln.Arg("str"), -1) >= 0
 	}
 	return false
-}
-
-// allAggregates reports a select list made only of aggregate calls (over the whole input,
-// without GROUP BY, that is one row).
-func (a *analyzer) allAggregates(items mysqlast.Value) bool {
-	list, _ := items.(mysqlast.List)
-	if len(list) == 0 {
-		return false
-	}
-	for _, it := range list {
-		n, ok := it.(*mysqlast.Node)
-		if !ok || n.Class != "PTI_expr_with_alias" {
-			return false
-		}
-		if !isAggregate(n.Arg("expr")) {
-			return false
-		}
-	}
-	return true
 }
 
 // containsAggregate reports an aggregate or window function anywhere in v.

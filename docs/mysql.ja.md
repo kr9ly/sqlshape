@@ -72,7 +72,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 ### `One`の証明
 
-`PRIMARY KEY`と列全体にかかる`UNIQUE`キー、`LIMIT 1`、`GROUP BY`の無い集約から証明する。MySQLには部分インデックスが無い。
+`PRIMARY KEY`と列全体にかかる`UNIQUE`キー、`LIMIT 1`、`GROUP BY`の無い集約から証明する。集約はどこに置かれていてもよい（`COALESCE(SUM(total), 0)`も`SUM(total)`と同じく1行。サブクエリが自分の列だけで集約するものはそのサブクエリのもの）。MySQLには部分インデックスが無い。
 
 ### グループ化
 

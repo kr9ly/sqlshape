@@ -238,6 +238,13 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 	if err := a.groupCheck(&sc, body); err != nil {
 		return nil, nil, err
 	}
+	if sc.info != nil && sc.info.aggregated && !sc.info.explicit {
+		// an aggregate of the block in its select list or HAVING without GROUP BY groups
+		// the whole input into one row, whatever the aggregate sits inside (COUNT(*),
+		// COALESCE(SUM(total), 0), MAX(id) + 1 alike); an aggregate a subquery owns
+		// (its own columns only) does not count, as groupCheck's ownership says
+		sc.facts.Single = true
+	}
 	if sc.info != nil && sc.info.rollup {
 		// the super-aggregate rows of ROLLUP hold NULL in every non-aggregated column
 		k := 0
@@ -264,7 +271,7 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 	// contracts are judged on
 	if a.depth == 0 && a.setOp == 0 && a.facts != nil && a.facts.Kind == facts.Select && a.facts.Top == nil {
 		a.facts.Top = sc.facts
-		if body.Arg("opt_group_clause") == nil && len(cols) > 0 && a.allAggregates(body.Arg("item_list")) {
+		if sc.facts.Single {
 			a.facts.AtMostOne = true // an aggregate over the whole input is one row
 		}
 	}
