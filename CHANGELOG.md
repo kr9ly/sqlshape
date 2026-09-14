@@ -8,6 +8,8 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-14
+
 ### Added
 
 - `cmd/sqlshape/internal/vet` gained `docs_test.go`: a harness that reads the go/sql fences out of
@@ -224,11 +226,7 @@ release it is a candidate for.
   was); a `CALL` inside a body is resolved like a top-level one (1305 / 1318 / 1414) and the
   callee's failure modes and writes become the body's. All measured against mysqld 8.4
   (`TestNestedCallsServer`). An AFTER trigger's `NEW.col` following the column's declared
-  nullability is now measured rather than inferred. `CREATE EVENT` in a schema is reported as
-  a problem in words (sqlshape does not read events; diff / apply do not manage them) instead of
-  "statement not applied to the schema: event_tail".
-
-## [2.0.0] - 2026-09-10
+  nullability is now measured rather than inferred.
 
 ### Changed
 
