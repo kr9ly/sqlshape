@@ -10,8 +10,9 @@ go 1.26.1
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/kr9ly/sqlshape/check/postgres/v2 v2.0.0-rc.1
-	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.1
+	github.com/kr9ly/sqlshape/check/postgres/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/postgres/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.2
 )
 
 require (

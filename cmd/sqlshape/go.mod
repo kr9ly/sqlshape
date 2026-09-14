@@ -11,14 +11,17 @@ go 1.26.1
 // the require with the first tag.
 
 require (
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/kr9ly/sqlshape/check/mysql/v2 v2.0.0-rc.1
-	github.com/kr9ly/sqlshape/check/postgres/v2 v2.0.0-rc.1
-	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.1
+	github.com/kr9ly/sqlshape/check/mysql/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/check/postgres/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/mysqltest/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.2
 	golang.org/x/tools v0.49.0
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/fergusstrange/embedded-postgres v1.34.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

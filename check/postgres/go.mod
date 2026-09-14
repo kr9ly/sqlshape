@@ -11,7 +11,7 @@ go 1.26.1
 require (
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.1
+	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.2
 	github.com/tetratelabs/wazero v1.12.0
 	google.golang.org/protobuf v1.36.12
 )
