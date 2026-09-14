@@ -148,26 +148,43 @@ differences. The target's canonical form comes from applying `schema.sql` to a s
 very server the migration targets, version and settings (`-- sqlshape: server`) included; with
 `-from` (two texts, no server) it comes from a `mysqld` on `PATH`.
 
-Compared, object by object: tables (engine, charset, collation, comment), columns (type, the
-whole definition as the server spells it, and their position: MySQL can reorder columns, so an
-order difference is a change the plan settles with `MODIFY COLUMN ... AFTER`), keys, foreign
-keys, check constraints, views, and triggers and stored procedures and functions (compared by
-their definition text, read back from `SHOW CREATE TRIGGER` / `SHOW CREATE PROCEDURE` / `SHOW
-CREATE FUNCTION` with the `DEFINER` dropped). Not compared: `EVENT`, which the loader does not
-read, and seeded rows, which the MySQL loader does not know yet.
+Compared, object by object:
 
-The plan uses MySQL's own definitions: a new table is the canonical `CREATE TABLE`, a changed
-column an `ALTER TABLE ... MODIFY COLUMN` with the target's definition, a changed key, foreign key
-or check a `DROP` and an `ADD`, a changed view a `CREATE OR REPLACE VIEW`. A changed or removed
-trigger or procedure or function is a `DROP` and a `CREATE` (MySQL has no `CREATE OR REPLACE
-TRIGGER`): a trigger's `DROP` comes before the table drops (not a trigger going with a table that
-is itself dropped, which `DROP TABLE` takes silently), a routine's `CREATE` before the views (a
-view may call a function) and before the tables, and a trigger's `CREATE` after the backfills, so
-a newly added trigger does not fire on the migration's own writes. A table that goes has
-the foreign keys referencing it dropped first. The `-- @migrate` declarations are the same, with
-one difference: an ENUM is a column type on MySQL, so `enum` names the column
-(`-- @migrate enum orders.status: drop 'canceled' using 'cancelled'`), and the plan updates the
-rows before it narrows the type.
+- tables: engine, charset, collation, comment;
+- columns: type, the whole definition as the server spells it, and their position (MySQL can
+  reorder columns, so an order difference is a change the plan settles with
+  `MODIFY COLUMN ... AFTER`);
+- keys, foreign keys, check constraints;
+- views;
+- triggers, stored procedures and functions: by their definition text, read back from
+  `SHOW CREATE TRIGGER` / `SHOW CREATE PROCEDURE` / `SHOW CREATE FUNCTION` with the `DEFINER`
+  dropped.
+
+Not compared: `EVENT`, which the loader does not read, and seeded rows, which the MySQL loader
+does not know yet.
+
+The plan uses MySQL's own definitions:
+
+| change | DDL |
+|---|---|
+| a new table | the canonical `CREATE TABLE` |
+| a changed column | `ALTER TABLE ... MODIFY COLUMN` with the target's definition |
+| a changed key, foreign key or check | a `DROP` and an `ADD` |
+| a changed view | `CREATE OR REPLACE VIEW` |
+| a changed or removed trigger, procedure or function | a `DROP` and a `CREATE` (MySQL has no `CREATE OR REPLACE TRIGGER`) |
+
+The order keeps the migration's own steps from tripping over each other:
+
+1. a trigger's `DROP` comes before the table drops (a trigger going with a table that is itself
+   dropped is not listed: `DROP TABLE` takes it silently);
+2. a table that goes has the foreign keys referencing it dropped first;
+3. a routine's `CREATE` comes before the views (a view may call a function) and before the tables;
+4. a trigger's `CREATE` comes after the backfills, so a newly added trigger does not fire on the
+   migration's own writes.
+
+The `-- @migrate` declarations are the same, with one difference: an ENUM is a column type on
+MySQL, so `enum` names the column (`-- @migrate enum orders.status: drop 'canceled' using
+'cancelled'`), and the plan updates the rows before it narrows the type.
 
 `apply` runs the DDL statement by statement: MySQL's DDL commits implicitly, so a script is not a
 transaction and `-no-transaction` has no effect. When a statement fails, `apply` says which one

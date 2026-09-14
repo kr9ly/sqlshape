@@ -26,12 +26,15 @@ per line, so the checker and the production connection agree on it
 ([checks.md](checks.md#the-schema-names-the-servers-settings-server)). MySQL reads two:
 
 - `sql_mode`: the names in any case, comma-separated, the empty string, and the combination modes
-  `ANSI` and `TRADITIONAL`, expanded as the server expands them. The parser takes the lexer bits
-  (`ANSI_QUOTES`, `PIPES_AS_CONCAT`, `IGNORE_SPACE`, `NO_BACKSLASH_ESCAPES`, `HIGH_NOT_PRECEDENCE`,
-  `REAL_AS_FLOAT`); `ONLY_FULL_GROUP_BY` turns the group check on and off; strict mode
-  (`STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`) decides whether a string function is nullable
-  and whether a `NULL` into a `NOT NULL` column is a failure mode; `NO_UNSIGNED_SUBTRACTION`
-  signs a difference. The rest act at run time only and are accepted as written.
+  `ANSI` and `TRADITIONAL`, expanded as the server expands them. The modes that change a judgment:
+  - the lexer bits (`ANSI_QUOTES`, `PIPES_AS_CONCAT`, `IGNORE_SPACE`, `NO_BACKSLASH_ESCAPES`,
+    `HIGH_NOT_PRECEDENCE`, `REAL_AS_FLOAT`): how the parser reads the text;
+  - `ONLY_FULL_GROUP_BY`: the group check on or off;
+  - strict mode (`STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`): whether a string function is
+    nullable, and whether a `NULL` into a `NOT NULL` column is a failure mode;
+  - `NO_UNSIGNED_SUBTRACTION`: the difference of unsigned operands is signed.
+
+  The rest act at run time only and are accepted as written.
 - `lower_case_table_names`: 0 compares table and view names case-sensitively (the Linux
   default), 1 stores them lower-cased, 2 keeps the spelling and compares without case.
 
@@ -87,18 +90,26 @@ There is no `// sqlshape: type` binding on MySQL: it has no named types to bind 
 
 ### Constraint names and failure modes
 
-A failure mode is named as MySQL names the constraint: `PRIMARY` for the primary key, the key's
-name for a `UNIQUE` key, the `CONSTRAINT` name for a foreign key or `<table>_ibfk_<n>` when it
-has none, the `CONSTRAINT` name for a `CHECK` or `<table>_chk_<n>`, `<table>.<column>` for
-`NOT NULL`. The error numbers are MySQL's: 1062 for a key (a key the server numbers itself, or
-one a NULL leaves alone, cannot be violated), 1452 and 1451 for a foreign key (the parent side
-following `ON DELETE` / `ON UPDATE CASCADE`), 1048 for `NOT NULL`, 3819 for `CHECK`. `INSERT
-IGNORE` violates nothing; `ON DUPLICATE KEY UPDATE` absorbs the insert's key violations; `REPLACE`
-violates no key and may violate a referencing foreign key (1451). Without strict mode only a
-single-row `INSERT` or `REPLACE` (its `ON DUPLICATE KEY UPDATE` included) rejects a `NULL` for a
-`NOT NULL` column; more rows, `INSERT ... SELECT` and `UPDATE` store the type's implicit default
-with a warning, so no 1048 is listed for them. `mysql.Violates(err, key)` tests the run-time
-error by the same names.
+A failure mode is named as MySQL names the constraint, and numbered as MySQL numbers the error:
+
+| constraint | name | error |
+|---|---|---|
+| primary key | `PRIMARY` | 1062 |
+| `UNIQUE` key | the key's name | 1062 (a key the server numbers itself, or one a NULL leaves alone, cannot be violated) |
+| foreign key | the `CONSTRAINT` name, or `<table>_ibfk_<n>` when it has none | 1452 on the child side, 1451 on the parent side (following `ON DELETE` / `ON UPDATE CASCADE`) |
+| `CHECK` | the `CONSTRAINT` name, or `<table>_chk_<n>` | 3819 |
+| `NOT NULL` | `<table>.<column>` | 1048 |
+
+What a statement's own form does to the list:
+
+- `INSERT IGNORE` violates nothing;
+- `ON DUPLICATE KEY UPDATE` absorbs the insert's key violations;
+- `REPLACE` violates no key and may violate a referencing foreign key (1451);
+- without strict mode only a single-row `INSERT` or `REPLACE` (its `ON DUPLICATE KEY UPDATE`
+  included) rejects a `NULL` for a `NOT NULL` column; more rows, `INSERT ... SELECT` and `UPDATE`
+  store the type's implicit default with a warning, so no 1048 is listed for them.
+
+`mysql.Violates(err, key)` tests the run-time error by the same names.
 
 ### Triggers and stored routines
 
@@ -114,23 +125,30 @@ the schema: nothing a statement of the program runs reaches an event, and the mi
 commands do not read events back from a server, so keep events out of schema.sql.
 
 The body is read once per schema, the way a PL/pgSQL function's is on PostgreSQL
-([checks.md](checks.md#name-the-errors-a-trigger-raises)):
-`NEW.col` / `OLD.col` type as the trigger's own table's columns (an unknown column is 1054;
-`OLD` in an INSERT trigger or `NEW` in a DELETE trigger is 1363; writing `OLD`, or writing
-`NEW` outside a BEFORE trigger, is 1362 -- a NOT NULL column's `NEW.col` can still be NULL in
-a BEFORE trigger, and is as declared in an AFTER one: the server's own NOT NULL check runs
-between the two, measured); a `DECLARE`d variable or a routine's own parameter shadows a
-column of the same name, as on the server. `IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`,
-labelled blocks with `LEAVE` / `ITERATE`, `RETURN`, `SET`, `SELECT ... INTO`, cursors
+([checks.md](checks.md#name-the-errors-a-trigger-raises)). `IF` / `CASE` / `LOOP` / `WHILE` /
+`REPEAT`, labelled blocks with `LEAVE` / `ITERATE`, `RETURN`, `SET`, `SELECT ... INTO`, cursors
 (`DECLARE` / `OPEN` / `FETCH` / `CLOSE`), `CALL`, `SIGNAL` / `RESIGNAL` and
-`DECLARE ... HANDLER FOR` are walked. What the server itself refuses when the body is
-created: `LEAVE` / `ITERATE` with no matching label (1308), `RETURN` outside a FUNCTION
-(1313), a FUNCTION with no `RETURN` (1320), an undeclared cursor or variable or a `FETCH`
-column-count mismatch (1324 / 1327 / 1328), a mismatched `SELECT ... INTO` column count
-(1222), a trigger or function that returns a result set (1415), a `COMMIT` / `START
-TRANSACTION` / DDL statement inside one (1422). A trigger that writes its own table is 1442
-on every one of the 18 timing x event x write combinations (measured): always a failure,
-reported on the trigger's own definition rather than on a statement that fires it.
+`DECLARE ... HANDLER FOR` are walked. Names resolve as on the server:
+
+- `NEW.col` / `OLD.col` type as the trigger's own table's columns; an unknown column is 1054;
+- `OLD` in an INSERT trigger, or `NEW` in a DELETE trigger, is 1363;
+- writing `OLD`, or writing `NEW` outside a BEFORE trigger, is 1362;
+- a NOT NULL column's `NEW.col` can still be NULL in a BEFORE trigger and is as declared in an
+  AFTER one: the server's own NOT NULL check runs between the two (measured);
+- a `DECLARE`d variable or a routine's own parameter shadows a column of the same name.
+
+What the server itself refuses when the body is created is an error here too:
+
+| construct | error |
+|---|---|
+| `LEAVE` / `ITERATE` with no matching label | 1308 |
+| `RETURN` outside a FUNCTION | 1313 |
+| a FUNCTION with no `RETURN` | 1320 |
+| an undeclared cursor or variable, a `FETCH` column-count mismatch | 1324 / 1327 / 1328 |
+| a mismatched `SELECT ... INTO` column count | 1222 |
+| a trigger or function that returns a result set | 1415 |
+| `COMMIT` / `START TRANSACTION` / a DDL statement inside a body | 1422 |
+| a trigger that writes its own table | 1442, on every one of the 18 timing x event x write combinations (measured): always a failure, reported on the trigger's own definition rather than on a statement that fires it |
 
 A trigger's or routine's own writes bring their own failure modes into the body's: the
 schema's constraints, and what those writes' own triggers raise in turn (a cycle is cut). A
@@ -198,14 +216,23 @@ MySQL runs the checks of `sql_mode` `ONLY_FULL_GROUP_BY`, and so does the checke
 server's numbers: in a grouped or aggregated query every select-list, `HAVING`, `ORDER BY` and
 window `PARTITION BY` / `ORDER BY` expression is a `GROUP BY` expression, an aggregate, or made of
 columns functionally dependent on the group columns (1055; 1140 without `GROUP BY`). The
-dependencies the server recognizes are the ones the checker recognizes: a table's columns once
-its `PRIMARY` or `UNIQUE` key is known (a nullable key column only where a conjunct rejects its
-NULL), `col = col` and `col = literal` in `WHERE` and inner joins, an outer join's `ON` into its
-nullable side, and a derived table's or view's body through its outputs; `ROLLUP` allows the group
-expressions only. A column named outside an aggregate in `HAVING` must be a select-list column or
-alias or a `GROUP BY` column (1054); with `DISTINCT` an `ORDER BY` expression not in the select
-list may read only select-list columns (3065); an aggregate in the `ORDER BY` of a query that
-aggregates nowhere else (3029) or of a set operation (3028) is rejected.
+dependencies the server recognizes are the ones the checker recognizes:
+
+- a table's columns once its `PRIMARY` or `UNIQUE` key is known (a nullable key column only
+  where a conjunct rejects its NULL);
+- `col = col` and `col = literal` in `WHERE` and inner joins;
+- an outer join's `ON`, into its nullable side;
+- a derived table's or view's body, through its outputs;
+- under `ROLLUP`, the group expressions only.
+
+The neighbouring checks come with it:
+
+| rule | error |
+|---|---|
+| a column named outside an aggregate in `HAVING` must be a select-list column or alias, or a `GROUP BY` column | 1054 |
+| with `DISTINCT`, an `ORDER BY` expression not in the select list may read only select-list columns | 3065 |
+| an aggregate in the `ORDER BY` of a query that aggregates nowhere else | 3029 |
+| an aggregate in the `ORDER BY` of a set operation | 3028 |
 
 ```sql
 SELECT email, count(*) FROM users GROUP BY name

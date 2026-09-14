@@ -17,7 +17,13 @@ CREATE TABLE ...
 
 文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である（[checks.ja.md](checks.ja.md#スキーマはサーバの設定を名乗るserver)）。MySQLが読むのは2つ:
 
-- `sql_mode`。カンマ区切りの名前（大文字小文字は問わない）、空文字列、組み合わせモードの`ANSI`と`TRADITIONAL`。組み合わせはサーバと同じに展開する。パーサは字句解析のビット（`ANSI_QUOTES`、`PIPES_AS_CONCAT`、`IGNORE_SPACE`、`NO_BACKSLASH_ESCAPES`、`HIGH_NOT_PRECEDENCE`、`REAL_AS_FLOAT`）を読む。`ONLY_FULL_GROUP_BY`はグループ検査の有無を決める。厳密モード（`STRICT_TRANS_TABLES`か`STRICT_ALL_TABLES`）は文字列関数がNULL可になるかと、`NOT NULL`列への`NULL`が失敗モードになるかを決める。`NO_UNSIGNED_SUBTRACTION`は減算を符号付きにする。残りは実行時にしか効かないので、そのまま受け付ける。
+- `sql_mode`。カンマ区切りの名前（大文字小文字は問わない）、空文字列、組み合わせモードの`ANSI`と`TRADITIONAL`。組み合わせはサーバと同じに展開する。判定を変えるモードは次のとおり。
+  - 字句解析のビット（`ANSI_QUOTES`、`PIPES_AS_CONCAT`、`IGNORE_SPACE`、`NO_BACKSLASH_ESCAPES`、`HIGH_NOT_PRECEDENCE`、`REAL_AS_FLOAT`）: パーサがテキストをどう読むか
+  - `ONLY_FULL_GROUP_BY`: グループ検査の有無
+  - 厳密モード（`STRICT_TRANS_TABLES`か`STRICT_ALL_TABLES`）: 文字列関数がNULL可になるか、`NOT NULL`列への`NULL`が失敗モードになるか
+  - `NO_UNSIGNED_SUBTRACTION`: 符号なし同士の減算が符号付きになる
+
+  残りは実行時にしか効かないので、そのまま受け付ける。
 - `lower_case_table_names`。0は表名とビュー名を大文字小文字で区別する（Linuxの既定）、1は小文字にして持つ、2は綴りを保って区別せずに照合する。
 
 宣言が無ければ、Linuxで初期化したままの8.4を仮定する。既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`である。
@@ -54,13 +60,49 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 ### 制約名と失敗モード
 
-失敗モードの名前はMySQLが制約に付ける名前そのものである。主キーは`PRIMARY`、`UNIQUE`キーはキーの名前、外部キーは`CONSTRAINT`名（無ければ`<table>_ibfk_<n>`）、`CHECK`は`CONSTRAINT`名（無ければ`<table>_chk_<n>`）、`NOT NULL`は`<table>.<column>`。エラー番号はMySQLのもの。キーは1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反しない）、外部キーは1452と1451（親側は`ON DELETE` / `ON UPDATE CASCADE`を追う）、`NOT NULL`は1048、`CHECK`は3819。`INSERT IGNORE`は何にも違反しない。`ON DUPLICATE KEY UPDATE`はINSERTのキー違反を吸収する。`REPLACE`はキーには違反せず、参照している外部キーには違反しうる（1451）。厳密モードでなければ、`NOT NULL`列への`NULL`を拒むのは1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけで、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、それらには1048を挙げない。`mysql.Violates(err, key)`は実行時のエラーを同じ名前で判定する。
+失敗モードの名前はMySQLが制約に付ける名前そのもので、番号はMySQLのエラー番号である。
+
+| 制約 | 名前 | エラー |
+|---|---|---|
+| 主キー | `PRIMARY` | 1062 |
+| `UNIQUE`キー | キーの名前 | 1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反しない） |
+| 外部キー | `CONSTRAINT`名。無ければ`<table>_ibfk_<n>` | 子側は1452、親側は1451（`ON DELETE` / `ON UPDATE CASCADE`を追う） |
+| `CHECK` | `CONSTRAINT`名。無ければ`<table>_chk_<n>` | 3819 |
+| `NOT NULL` | `<table>.<column>` | 1048 |
+
+文の形が一覧を変える。
+
+- `INSERT IGNORE`は何にも違反しない
+- `ON DUPLICATE KEY UPDATE`はINSERTのキー違反を吸収する
+- `REPLACE`はキーには違反せず、参照している外部キーには違反しうる（1451）
+- 厳密モードでなければ、`NOT NULL`列への`NULL`を拒むのは1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけで、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、それらには1048を挙げない
+
+`mysql.Violates(err, key)`は実行時のエラーを同じ名前で判定する。
 
 ### トリガとストアドルーチン
 
 ローダーは`CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION`（`DEFINER`、`IF NOT EXISTS`、特性句込み）と`DROP` / `ALTER`（特性のみ）を、表と同じように読む。`DELIMITER`は要らない。本体の`;`は1つの複合文の内側として読まれ、mysqlクライアント互換の`DELIMITER x`行もそのまま読める。CREATE時にサーバ自身が拒むものは、未知の表と同じくProblemになる: 表が無い（1146）、トリガ・ルーチンが既にある（1359 / 1304）、DROPしようとしたトリガ・ルーチンが無い（1360 / 1305）、`FOLLOWS` / `PRECEDES`が指す先のトリガが無い（3011）。`DROP TABLE`は表のトリガを道連れにし、`RENAME TABLE`はトリガを付け替える。`CREATE EVENT`はスキーマのproblemになる。プログラムの文が実行するものはイベントに届かないし、マイグレーションのコマンドもサーバからイベントを読み戻さないので、schema.sqlには置かない。
 
-本体はスキーマごとに1回読む。PostgreSQLのPL/pgSQL関数本体の読み方と同じ位置づけである（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）。`NEW.col` / `OLD.col`はトリガ表の列として型付けする（無い列は1054。INSERTトリガでの`OLD`、DELETEトリガでの`NEW`は1363。`OLD`への代入、`NEW`へのBEFORE以外での代入は1362——NOT NULL列の`NEW.col`もBEFOREトリガの中ではNULLになりうる。AFTERトリガでは宣言どおりで、サーバ自身のNOT NULL検査は両者の間で走る、測定済み）。`DECLARE`した変数やルーチンの引数は同名の列より優先して解決する、サーバと同じ規則である。`IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`、ラベル付きブロックと`LEAVE` / `ITERATE`、`RETURN`、`SET`、`SELECT ... INTO`、カーソル（`DECLARE` / `OPEN` / `FETCH` / `CLOSE`）、`CALL`、`SIGNAL` / `RESIGNAL`、`DECLARE ... HANDLER FOR`を歩く。本体の作成時にサーバ自身が拒むもの: 対応ラベルの無い`LEAVE` / `ITERATE`（1308）、FUNCTION以外での`RETURN`（1313）、`RETURN`の無いFUNCTION（1320）、未宣言のカーソルや変数、`FETCH`の列数不一致（1324 / 1327 / 1328）、`SELECT ... INTO`の列数不一致（1222）、結果集合を返すトリガ・関数（1415）、本体内の`COMMIT` / `START TRANSACTION` / DDL文（1422）。トリガが自分の表に書くのは、タイミング×イベント×書き込みの18通り全部で1442になる（測定済み）。常に失敗するので、発火する文にではなくトリガの定義に報告する。
+本体はスキーマごとに1回読む。PostgreSQLのPL/pgSQL関数本体の読み方と同じ位置づけである（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）。`IF` / `CASE` / `LOOP` / `WHILE` / `REPEAT`、ラベル付きブロックと`LEAVE` / `ITERATE`、`RETURN`、`SET`、`SELECT ... INTO`、カーソル（`DECLARE` / `OPEN` / `FETCH` / `CLOSE`）、`CALL`、`SIGNAL` / `RESIGNAL`、`DECLARE ... HANDLER FOR`を歩く。名前はサーバと同じ規則で解決する。
+
+- `NEW.col` / `OLD.col`はトリガ表の列として型付けする。無い列は1054
+- INSERTトリガでの`OLD`、DELETEトリガでの`NEW`は1363
+- `OLD`への代入、`NEW`へのBEFORE以外での代入は1362
+- NOT NULL列の`NEW.col`もBEFOREトリガの中ではNULLになりうる。AFTERトリガでは宣言どおりで、サーバ自身のNOT NULL検査は両者の間で走る（測定済み）
+- `DECLARE`した変数やルーチンの引数は同名の列より優先して解決する
+
+本体の作成時にサーバ自身が拒むものは、ここでもエラーになる。
+
+| 構文 | エラー |
+|---|---|
+| 対応ラベルの無い`LEAVE` / `ITERATE` | 1308 |
+| FUNCTION以外での`RETURN` | 1313 |
+| `RETURN`の無いFUNCTION | 1320 |
+| 未宣言のカーソルや変数、`FETCH`の列数不一致 | 1324 / 1327 / 1328 |
+| `SELECT ... INTO`の列数不一致 | 1222 |
+| 結果集合を返すトリガ・関数 | 1415 |
+| 本体内の`COMMIT` / `START TRANSACTION` / DDL文 | 1422 |
+| トリガが自分の表に書く | 1442。タイミング×イベント×書き込みの18通り全部で（測定済み）。常に失敗するので、発火する文にではなくトリガの定義に報告する |
 
 トリガ・ルーチンの本体自身の書き込みは、その書き込み自身の失敗モード（本文の制約、その書き込みが起こす自分自身のトリガの失敗モード、再帰は打ち切り）を本体の失敗モードに持ち込む。`SIGNAL`のキーは、番号を設定していれば`MYSQL_ERRNO`の10進表記、無ければSQLSTATE（[ランタイム](#ランタイム-databasesql)がエラーを読み戻すのと同じ規則）。SQLSTATEクラス`01`は警告で失敗モードにならず、未処理のクラス`02`は1643、それ以外の未処理は1644になる。名前付き`CONDITION`はその値に解決し、値の無い`RESIGNAL`は最も内側の`HANDLER`が処理中のものをそのまま再送する。`CREATE TRIGGER` / `FUNCTION` / `PROCEDURE`の上に書く`-- sqlshape: error <key> = <Name>`は、PostgreSQLの同じ注釈（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）と同じもので、`<key>`にNameを与え、プログラムはそれを`sqlshape.Error(<key>)`で写し取り、vetがスキーマと両方向に照合する。expect行と`mysql.Violates`が判定に使うのは相変わらずキーそのもの（`<Name>`でなく`30001`）だが、`<Name>`で綴っても同じことになる——`sqlshape.Error("30001")`から作った`sqlshape.Failure`はそのコードだけを運んでいるので。`DECLARE ... HANDLER FOR`はそのブロック内の一致する失敗モードを吸収する（`SQLEXCEPTION`はクラス`01`と`02`以外の全部、`SQLWARNING` / `NOT FOUND`はそのクラス、SQLSTATEや番号そのものは一致するもの）。`INSERT` / `UPDATE IGNORE`はトリガのSIGNALを何も吸収しない（測定済み: 文はそれでも失敗する）。`SELECT ... INTO`は、`One`が使うのと同じ証明で多くとも1行と示せない限り1172を持つ（1行も無ければNOT FOUNDで警告、失敗にはならない）。
 
@@ -76,7 +118,22 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 ### グループ化
 
-MySQLは`sql_mode`の`ONLY_FULL_GROUP_BY`の検査を行い、検査器も同じ番号で同じ検査を行う。グループ化または集約する問い合わせでは、SELECTリスト、`HAVING`、`ORDER BY`、ウィンドウの`PARTITION BY` / `ORDER BY`の各式が、`GROUP BY`の式か、集約か、グループ列に関数従属する列だけからできていなければならない（1055。`GROUP BY`が無ければ1140）。サーバが認める従属は検査器が認める従属と同じである。`PRIMARY`か`UNIQUE`キーが既知になった表の全列（NULL可のキー列は、その NULL を退ける条件があるときだけ）、`WHERE`と内部結合の`col = col`と`col = リテラル`、外部結合の`ON`がNULL可側に与えるもの、派生表やビューの本体を出力列を通して。`ROLLUP`はグループ式そのものしか認めない。`HAVING`で集約の外に書く列はSELECTリストの列か別名か`GROUP BY`の列でなければならない（1054）。`DISTINCT`があるとき、SELECTリストに無い`ORDER BY`の式が読めるのはSELECTリストの列だけ（3065）。他で集約していない問い合わせの`ORDER BY`の集約（3029）と集合演算の`ORDER BY`の集約（3028）は拒む。
+MySQLは`sql_mode`の`ONLY_FULL_GROUP_BY`の検査を行い、検査器も同じ番号で同じ検査を行う。グループ化または集約する問い合わせでは、SELECTリスト、`HAVING`、`ORDER BY`、ウィンドウの`PARTITION BY` / `ORDER BY`の各式が、`GROUP BY`の式か、集約か、グループ列に関数従属する列だけからできていなければならない（1055。`GROUP BY`が無ければ1140）。サーバが認める従属は検査器が認める従属と同じである。
+
+- `PRIMARY`か`UNIQUE`キーが既知になった表の全列（NULL可のキー列は、そのNULLを退ける条件があるときだけ）
+- `WHERE`と内部結合の`col = col`と`col = リテラル`
+- 外部結合の`ON`がNULL可側に与えるもの
+- 派生表やビューの本体が出力列を通して与えるもの
+- `ROLLUP`の下ではグループ式そのものだけ
+
+隣り合う検査も一緒に行う。
+
+| 規則 | エラー |
+|---|---|
+| `HAVING`で集約の外に書く列はSELECTリストの列か別名か`GROUP BY`の列でなければならない | 1054 |
+| `DISTINCT`があるとき、SELECTリストに無い`ORDER BY`の式が読めるのはSELECTリストの列だけ | 3065 |
+| 他で集約していない問い合わせの`ORDER BY`の集約 | 3029 |
+| 集合演算の`ORDER BY`の集約 | 3028 |
 
 ```sql
 SELECT email, count(*) FROM users GROUP BY name

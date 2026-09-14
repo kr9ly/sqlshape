@@ -10,19 +10,16 @@ string constant.
 
 ## What can be written
 
-Values. `{{.Field}}`, `{{.Outer.Inner}}`, `{{.}}`, and `{{$x}}` inside a `range`. Each becomes a
-parameter in the SQL; a value is never spliced in as text. Function calls, method calls and
-pipelines are not allowed in value position.
-
-Branches. `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`, `{{with}}`, `{{range}}`. There is no
-`{{switch}}`; write `{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`.
-
-Conditions. The builtins `not`, `and`, `or`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `len`, `index`,
-string and number constants, and field references. A nil pointer, an empty slice or map, zero and
-the empty string are false, as in `text/template`.
-
-Not available. `{{define}}` / `{{template}}` (concatenate Go constants instead, see below), custom
-functions, variables other than the range element.
+- Values: `{{.Field}}`, `{{.Outer.Inner}}`, `{{.}}`, and `{{$x}}` inside a `range`. Each becomes
+  a parameter in the SQL; a value is never spliced in as text. Function calls, method calls and
+  pipelines are not allowed in value position.
+- Branches: `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`, `{{with}}`, `{{range}}`. There is
+  no `{{switch}}`; write `{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`.
+- Conditions: the builtins `not`, `and`, `or`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `len`,
+  `index`, string and number constants, and field references. A nil pointer, an empty slice or
+  map, zero and the empty string are false, as in `text/template`.
+- Not available: `{{define}}` / `{{template}}` (concatenate Go constants instead, see below),
+  custom functions, variables other than the range element.
 
 ```sql
 SELECT o.id, o.total, o.created_at

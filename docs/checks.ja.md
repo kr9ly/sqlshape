@@ -744,7 +744,19 @@ var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email FROM users WHERE email = {{.Email}}`)
 ```
 
-補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。`col = NULL`は何も固定しない（決して真にならない）。`col IS NOT DISTINCT FROM v`は、列が`NOT NULL`で`v`が既知かつ`NULL`でなければ固定する。要素1個の`col = ANY(ARRAY[v])`は`col = v`と同じ。列へのキャスト（`GROUP BY status::text`）は透かして見る。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`DEFERRABLE`と宣言したキーも同様——一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。時制キー（`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`、PostgreSQL 18）は、スカラー列が等値で固定され、範囲列が既知の値と等しいか、要素型の既知の点を含む（`valid_at @> {{.Day}}::date`）ときに固定される。同じ`id`の行どうしは範囲が重ならないので、1つの点を含む行は多くても1つである。既知側が範囲だと足りない（空の範囲はどの範囲にも含まれる）。重なり（`&&`）でも足りない。
+補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。何が固定になるかは次のとおり。
+
+- `col = NULL`は何も固定しない（決して真にならない）
+- `col IS NOT DISTINCT FROM v`は、列が`NOT NULL`で`v`が既知かつ`NULL`でなければ固定する
+- 要素1個の`col = ANY(ARRAY[v])`は`col = v`と同じ
+- 列へのキャスト（`GROUP BY status::text`）は透かして見る
+- 等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する
+
+キーに関わらずそれ自体で1行以下と見なすもの: `GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`。
+
+決して1行以下にならないもの: `FULL JOIN`と、`DEFERRABLE`と宣言したキー。一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。
+
+時制キー（`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`、PostgreSQL 18）は、スカラー列が等値で固定され、範囲列が既知の値と等しいか、要素型の既知の点を含む（`valid_at @> {{.Day}}::date`）ときに固定される。同じ`id`の行どうしは範囲が重ならないので、1つの点を含む行は多くても1つである。既知側が範囲だと足りない（空の範囲はどの範囲にも含まれる）。重なり（`&&`）でも足りない。
 
 #### すべての分岐で証明できなければならない
 

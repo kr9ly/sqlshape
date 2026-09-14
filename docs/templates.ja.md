@@ -6,13 +6,10 @@ SQLはGoの`text/template`のサブセットで書く。入力はパラメータ
 
 ## 使える構文
 
-値。`{{.Field}}`、`{{.Outer.Inner}}`、`{{.}}`、`range`の中の`{{$x}}`。それぞれがSQLの中ではパラメータになり、値が文字列として埋め込まれることはない。関数呼び出し、メソッド呼び出し、パイプラインは値の位置では使えない。
-
-分岐。`{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`、`{{with}}`、`{{range}}`。`{{switch}}`は無いので`{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`と書く。
-
-条件式。組み込みの`not`、`and`、`or`、`eq`、`ne`、`lt`、`le`、`gt`、`ge`、`len`、`index`と、文字列・数値の定数、フィールド参照。nilポインタ、空のスライスやマップ、0、空文字列は`text/template`と同じく偽。
-
-使えないもの。`{{define}}` / `{{template}}`（代わりにGoの定数を連結する。後述）、独自関数、rangeの要素以外の変数。
+- 値: `{{.Field}}`、`{{.Outer.Inner}}`、`{{.}}`、`range`の中の`{{$x}}`。それぞれがSQLの中ではパラメータになり、値が文字列として埋め込まれることはない。関数呼び出し、メソッド呼び出し、パイプラインは値の位置では使えない
+- 分岐: `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`、`{{with}}`、`{{range}}`。`{{switch}}`は無いので`{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`と書く
+- 条件式: 組み込みの`not`、`and`、`or`、`eq`、`ne`、`lt`、`le`、`gt`、`ge`、`len`、`index`と、文字列・数値の定数、フィールド参照。nilポインタ、空のスライスやマップ、0、空文字列は`text/template`と同じく偽
+- 使えないもの: `{{define}}` / `{{template}}`（代わりにGoの定数を連結する。後述）、独自関数、rangeの要素以外の変数
 
 ```sql
 SELECT o.id, o.total, o.created_at
