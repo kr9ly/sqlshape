@@ -86,6 +86,7 @@ type planner struct {
 	droppedFKs  map[string]bool // "table.fk" already dropped ahead of a table that goes
 	earlyKeys   map[string]bool // "table.key" (target names) already added by dropKeysOf
 	earlyMods   map[string]bool // "table.column" (target names) already MODIFYed by renames
+	backfilled  map[int]bool    // indexes into backfillsOf already emitted ahead of their statement
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -201,18 +202,45 @@ func (p *planner) drops() {
 	for _, f := range gone {
 		p.emit("DROP TABLE %s;", q(f.Name))
 	}
-	// parts of tables that stay: columns (with what depends on them), keys, foreign keys,
-	// checks that the target no longer has
+	// parts of tables that stay: first every table's foreign keys that go (one may rest on
+	// a key of another table dropped just below -- Error 1553 "Cannot drop index: needed
+	// in a foreign key constraint" when that table's keys went first, measured), then each
+	// table's keys, checks and columns
+	kept := map[*schema.Table][]*schema.ForeignKey{}
 	for _, t := range p.to.Tables {
-		f, _ := p.pair(t)
-		if f == nil {
-			continue
+		if f, _ := p.pair(t); f != nil {
+			kept[t] = p.dropForeignKeys(f, t)
 		}
-		p.dropParts(f, t)
+	}
+	for _, t := range p.to.Tables {
+		if f, _ := p.pair(t); f != nil {
+			p.dropParts(f, t, kept[t])
+		}
 	}
 }
 
-func (p *planner) dropParts(f, t *schema.Table) {
+// dropForeignKeys drops the foreign keys of a table that stays which the target lacks, or
+// that a dropped / changed column takes with them; it returns the ones that stay.
+func (p *planner) dropForeignKeys(f, t *schema.Table) []*schema.ForeignKey {
+	goneCols := goneColumns(p, f, t)
+	tfks := foreignKeysByName(t)
+	var keptFKs []*schema.ForeignKey
+	for _, fk := range f.ForeignKeys {
+		name := f.ForeignKeyName(fk)
+		if p.droppedFKs[f.Name+"."+name] {
+			continue
+		}
+		tf, ok := tfks[name]
+		if !ok || !sameProps(diff.ForeignKeyProps(p.renamedFK(f, fk)), diff.ForeignKeyProps(tf)) || touches(fk.Columns, goneCols) {
+			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(f.Name), q(name))
+		} else {
+			keptFKs = append(keptFKs, fk)
+		}
+	}
+	return keptFKs
+}
+
+func (p *planner) dropParts(f, t *schema.Table, keptFKs []*schema.ForeignKey) {
 	tcols := map[string]bool{}
 	for _, c := range t.Columns {
 		tcols[c.Name] = true
@@ -226,21 +254,6 @@ func (p *planner) dropParts(f, t *schema.Table) {
 			if !p.droppable[f.Name+"."+c.Name] {
 				p.problem("column %s.%s is dropped, which no @migrate declares (`-- @migrate drop %s.%s`, or a rename)", f.Name, c.Name, f.Name, c.Name)
 			}
-		}
-	}
-	// foreign keys the target lacks, or that a dropped / changed column takes with them
-	tfks := foreignKeysByName(t)
-	var keptFKs []*schema.ForeignKey
-	for _, fk := range f.ForeignKeys {
-		name := f.ForeignKeyName(fk)
-		if p.droppedFKs[f.Name+"."+name] {
-			continue
-		}
-		tf, ok := tfks[name]
-		if !ok || !sameProps(diff.ForeignKeyProps(p.renamedFK(f, fk)), diff.ForeignKeyProps(tf)) || touches(fk.Columns, goneCols) {
-			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(f.Name), q(name))
-		} else {
-			keptFKs = append(keptFKs, fk)
 		}
 	}
 	tkeys := keysByName(t)
@@ -657,6 +670,11 @@ func (p *planner) alterTable(f, t *schema.Table) {
 		if diff.Definition(fc.Text, fc.Name) == diff.Definition(c.Text, c.Name) || p.earlyMods[t.Name+"."+c.Name] {
 			continue // the position, if it differs, is settled once every column exists (reorder)
 		}
+		if !fc.NotNull && c.NotNull {
+			// a column turning NOT NULL under rows holding NULL: its declared backfill runs
+			// first (Error 1138 "Invalid use of NULL value" on the MODIFY otherwise, measured)
+			p.backfill(t.Name, c.Name)
+		}
 		p.emit("ALTER TABLE %s MODIFY COLUMN %s;", q(t.Name), c.Text)
 	}
 }
@@ -813,6 +831,7 @@ func (p *planner) addParts(f, t *schema.Table) {
 	for i, c := range t.Columns {
 		targetIndex[c.Name] = i
 	}
+	fkeys := keysByName(f)
 	for _, c := range newCols {
 		clause := "ADD COLUMN " + c.Text
 		if positioned {
@@ -822,9 +841,27 @@ func (p *planner) addParts(f, t *schema.Table) {
 				clause += " AFTER " + q(t.Columns[i-1].Name)
 			}
 		}
+		if c.AutoIncrement {
+			// a new AUTO_INCREMENT column must be a key by the end of the statement that
+			// creates it (Error 1075 otherwise, measured): the target's key leading with it
+			// rides along, and the key loop below skips it
+			for _, k := range t.Keys {
+				if len(k.Parts) > 0 && strings.EqualFold(k.Parts[0].Column, c.Name) && !p.earlyKeys[t.Name+"."+keyName(k)] {
+					clause += ", ADD " + keyText(k)
+					if p.earlyKeys == nil {
+						p.earlyKeys = map[string]bool{}
+					}
+					p.earlyKeys[t.Name+"."+keyName(k)] = true
+					break
+				}
+			}
+		}
 		p.emit("ALTER TABLE %s %s;", q(t.Name), clause)
+		// a new column's declared backfill right after it exists: the rows MySQL filled
+		// with the implicit default must hold their real values before a key or a foreign
+		// key over the column goes on (Error 1452 on the ADD CONSTRAINT otherwise, measured)
+		p.backfill(t.Name, c.Name)
 	}
-	fkeys := keysByName(f)
 	for _, k := range t.Keys {
 		if p.earlyKeys[t.Name+"."+keyName(k)] {
 			continue // dropKeysOf already added this one, folded into its own DROP
@@ -1026,12 +1063,35 @@ func qlist(names []string) string {
 
 // --- backfills -------------------------------------------------------------------
 
+// backfill emits the declared backfills of one target column now, ahead of the statement
+// that needs the rows filled; backfills() at the end emits whatever is left.
+func (p *planner) backfill(table, col string) {
+	for i, in := range p.backfillsOf {
+		if in.Table == table && in.Column == col && !p.backfilled[i] {
+			p.emitBackfill(in)
+			if p.backfilled == nil {
+				p.backfilled = map[int]bool{}
+			}
+			p.backfilled[i] = true
+		}
+	}
+}
+
 func (p *planner) backfills() {
-	for _, in := range p.backfillsOf {
+	for i, in := range p.backfillsOf {
+		if p.backfilled[i] {
+			continue
+		}
+		p.emitBackfill(in)
+	}
+}
+
+func (p *planner) emitBackfill(in Intent) {
+	{
 		t := p.to.Table(in.Table)
 		if t == nil || t.Column(in.Column) == nil {
 			p.problem("line %d: backfill %s.%s: no such column in the target schema", in.Line, in.Table, in.Column)
-			continue
+			return
 		}
 		sql := fmt.Sprintf("UPDATE %s SET %s = %s", q(in.Table), q(in.Column), in.Expr)
 		if in.Where != "" {

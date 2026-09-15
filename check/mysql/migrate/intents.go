@@ -128,7 +128,27 @@ func (p *planner) readIntents(list []Intent) {
 	p.tableRename = map[string]string{}
 	p.colRename = map[string]map[string]string{}
 	p.droppable = map[string]bool{}
+	// table renames first, whatever line they are on: a column rename's right side names
+	// the table as it will be, which only the table's own declaration explains
+	isTableRename := func(in Intent) bool {
+		if in.Kind != Rename {
+			return false
+		}
+		_, _, col := splitColumn(in.From)
+		return !col
+	}
+	ordered := make([]Intent, 0, len(list))
 	for _, in := range list {
+		if isTableRename(in) {
+			ordered = append(ordered, in)
+		}
+	}
+	for _, in := range list {
+		if !isTableRename(in) {
+			ordered = append(ordered, in)
+		}
+	}
+	for _, in := range ordered {
 		switch in.Kind {
 		case Rename:
 			ft, fc, fcol := splitColumn(in.From)

@@ -631,6 +631,21 @@ func (s *Schema) createTable(n *mysqlast.Node, st mysqlparse.Statement, at func(
 	s.Tables = append(s.Tables, t)
 }
 
+// closeVersionComment extends [start, end) over the ` */` that closes a versioned comment
+// the span opened: SHOW CREATE TABLE writes `/*!80023 INVISIBLE */` and the parser reads
+// the comment's body as code, so a node's span ends before the closing `*/` (measured: a
+// MODIFY COLUMN from such a text is a syntax error).
+func closeVersionComment(sql string, start, end int) int {
+	text := sql[start:end]
+	if strings.Count(text, "/*") <= strings.Count(text, "*/") {
+		return end
+	}
+	if i := strings.Index(sql[end:], "*/"); i >= 0 {
+		return end + i + 2
+	}
+	return end
+}
+
 // tableElement applies one element of a CREATE TABLE body or an ADD of ALTER TABLE.
 func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Value) int) {
 	n, ok := el.(*mysqlast.Node)
@@ -640,7 +655,7 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 	}
 	text := ""
 	if n.Start >= 0 && n.End <= len(s.cur) && n.Start < n.End {
-		text = s.cur[n.Start:n.End]
+		text = s.cur[n.Start:closeVersionComment(s.cur, n.Start, n.End)]
 	}
 	switch n.Class {
 	case "PT_column_def":

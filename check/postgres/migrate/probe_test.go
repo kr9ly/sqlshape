@@ -39,6 +39,7 @@ var (
 // ---- the model --------------------------------------------------------------------------
 
 type pSchema struct {
+	domains  []*pDomain
 	enums    []*pEnum
 	tables   []*pTable
 	views    []*pView
@@ -46,6 +47,7 @@ type pSchema struct {
 	funcs    []*pFunc
 	intents  []string
 	seq      int
+	mutating bool // set on a clone: the tables that exist are the source's, and hold rows
 }
 
 type pEnum struct {
@@ -53,9 +55,16 @@ type pEnum struct {
 	labels []string
 }
 
+// pDomain is a domain over integer, CHECK (VALUE > 0) or, once changed, (VALUE >= 0).
+type pDomain struct {
+	name string
+	ge   bool
+}
+
 type pTable struct {
+	schema  string // public or app
 	name    string
-	orig    string // the source schema's name for the table (a declaration's left side)
+	orig    string // the source schema's qualified name for the table (a declaration's left side)
 	cols    []*pCol
 	keys    []*pKey
 	fks     []*pFK
@@ -70,6 +79,7 @@ type pCol struct {
 	def      string
 	pk       bool
 	identity bool
+	serial   bool   // bigserial: a sequence and a nextval default
 	gen      string // the column this generated (STORED) column reads
 	fresh    bool   // added by a mutation: not in the source, so its drop needs no declaration
 }
@@ -82,9 +92,9 @@ type pKey struct {
 
 type pFK struct {
 	name     string
-	col      string
+	cols     []string
 	refTable string
-	refCol   string
+	refCols  []string
 	onDelete string
 }
 
@@ -97,6 +107,7 @@ type pView struct {
 	name  string
 	table string
 	cols  []string
+	mat   bool // a materialized view
 }
 
 type pTrigger struct {
@@ -118,11 +129,15 @@ func (s *pSchema) next(prefix string) string {
 
 func (s *pSchema) clone() *pSchema {
 	c := &pSchema{seq: s.seq}
+	for _, d := range s.domains {
+		nd := *d
+		c.domains = append(c.domains, &nd)
+	}
 	for _, e := range s.enums {
 		c.enums = append(c.enums, &pEnum{name: e.name, labels: append([]string(nil), e.labels...)})
 	}
 	for _, t := range s.tables {
-		nt := &pTable{name: t.name, orig: t.orig, comment: t.comment}
+		nt := &pTable{schema: t.schema, name: t.name, orig: t.orig, comment: t.comment}
 		for _, col := range t.cols {
 			nc := *col
 			nt.cols = append(nt.cols, &nc)
@@ -134,6 +149,8 @@ func (s *pSchema) clone() *pSchema {
 		}
 		for _, fk := range t.fks {
 			nfk := *fk
+			nfk.cols = append([]string(nil), fk.cols...)
+			nfk.refCols = append([]string(nil), fk.refCols...)
 			nt.fks = append(nt.fks, &nfk)
 		}
 		for _, ck := range t.checks {
@@ -167,6 +184,20 @@ func (s *pSchema) table(name string) *pTable {
 	return nil
 }
 
+// full is the table's qualified name as a declaration writes it.
+func (t *pTable) full() string { return t.schema + "." + t.name }
+
+// ref is the table's qualified name as DDL writes it.
+func (t *pTable) ref() string { return qi(t.schema) + "." + qi(t.name) }
+
+// qref is the DDL spelling of the table named name.
+func (s *pSchema) qref(name string) string {
+	if t := s.table(name); t != nil {
+		return t.ref()
+	}
+	return qi(name)
+}
+
 func (s *pSchema) enum(name string) *pEnum {
 	for _, e := range s.enums {
 		if e.name == name {
@@ -196,7 +227,7 @@ func (t *pTable) pk() *pCol {
 
 func (t *pTable) inFK(col string) bool {
 	for _, fk := range t.fks {
-		if fk.col == col {
+		if indexOf(fk.cols, col) >= 0 {
 			return true
 		}
 	}
@@ -205,14 +236,14 @@ func (t *pTable) inFK(col string) bool {
 
 // ---- the type vocabulary ----------------------------------------------------------------
 
-var probeTypes = []string{"integer", "bigint", "smallint", "text", "varchar(50)", "numeric(10,2)", "double precision", "timestamptz", "date", "boolean", "jsonb", "enum"}
+var probeTypes = []string{"integer", "bigint", "smallint", "text", "varchar(50)", "numeric(10,2)", "double precision", "timestamptz", "date", "boolean", "jsonb", "enum", "domain"}
 
 func isNumeric(typ string) bool {
 	switch typ {
 	case "integer", "bigint", "smallint", "numeric(10,2)", "numeric(14,2)", "double precision":
 		return true
 	}
-	return false
+	return strings.HasPrefix(typ, "num") // a domain over integer
 }
 
 func isInteger(typ string) bool { return typ == "integer" || typ == "bigint" || typ == "smallint" }
@@ -220,9 +251,9 @@ func isInteger(typ string) bool { return typ == "integer" || typ == "bigint" || 
 func (s *pSchema) defaultFor(c *pCol) string {
 	switch c.typ {
 	case "integer", "bigint", "smallint", "double precision":
-		return "0"
+		return "1"
 	case "numeric(10,2)", "numeric(14,2)":
-		return "0.00"
+		return "1.00"
 	case "text":
 		return "'x'"
 	case "varchar(50)", "varchar(100)":
@@ -238,6 +269,9 @@ func (s *pSchema) defaultFor(c *pCol) string {
 	}
 	if e := s.enum(c.typ); e != nil {
 		return "'" + e.labels[0] + "'"
+	}
+	if strings.HasPrefix(c.typ, "num") {
+		return "1"
 	}
 	return ""
 }
@@ -270,7 +304,11 @@ func qilist(names []string) string {
 
 func (c *pCol) render() string {
 	var b strings.Builder
-	b.WriteString(qi(c.name) + " " + c.typ)
+	typ := c.typ
+	if c.serial {
+		typ = "bigserial"
+	}
+	b.WriteString(qi(c.name) + " " + typ)
 	if c.gen != "" {
 		b.WriteString(" GENERATED ALWAYS AS (" + qi(c.gen) + " + 1) STORED")
 		return b.String()
@@ -286,7 +324,7 @@ func (c *pCol) render() string {
 	return b.String()
 }
 
-func (t *pTable) render() string {
+func (t *pTable) render(s *pSchema) string {
 	var parts []string
 	for _, c := range t.cols {
 		parts = append(parts, "  "+c.render())
@@ -300,7 +338,7 @@ func (t *pTable) render() string {
 		}
 	}
 	for _, fk := range t.fks {
-		s := "  CONSTRAINT " + qi(fk.name) + " FOREIGN KEY (" + qi(fk.col) + ") REFERENCES " + qi(fk.refTable) + " (" + qi(fk.refCol) + ")"
+		s := "  CONSTRAINT " + qi(fk.name) + " FOREIGN KEY (" + qilist(fk.cols) + ") REFERENCES " + s.qref(fk.refTable) + " (" + qilist(fk.refCols) + ")"
 		if fk.onDelete != "" {
 			s += " ON DELETE " + fk.onDelete
 		}
@@ -315,14 +353,14 @@ func (t *pTable) render() string {
 		parts = append(parts, "  CONSTRAINT "+qi(ck.name)+" CHECK "+expr)
 	}
 	var b strings.Builder
-	b.WriteString("CREATE TABLE " + qi(t.name) + " (\n" + strings.Join(parts, ",\n") + "\n);\n")
+	b.WriteString("CREATE TABLE " + t.ref() + " (\n" + strings.Join(parts, ",\n") + "\n);\n")
 	for _, k := range t.keys {
 		if !k.unique {
-			b.WriteString("CREATE INDEX " + qi(k.name) + " ON " + qi(t.name) + " (" + qilist(k.cols) + ");\n")
+			b.WriteString("CREATE INDEX " + qi(k.name) + " ON " + t.ref() + " (" + qilist(k.cols) + ");\n")
 		}
 	}
 	if t.comment != "" {
-		b.WriteString("COMMENT ON TABLE " + qi(t.name) + " IS '" + t.comment + "';\n")
+		b.WriteString("COMMENT ON TABLE " + t.ref() + " IS '" + t.comment + "';\n")
 	}
 	return b.String()
 }
@@ -332,6 +370,19 @@ func (s *pSchema) render() string {
 	for _, in := range s.intents {
 		b.WriteString(in + "\n")
 	}
+	for _, t := range s.tables {
+		if t.schema != "public" {
+			b.WriteString("CREATE SCHEMA " + qi(t.schema) + ";\n")
+			break
+		}
+	}
+	for _, d := range s.domains {
+		op := ">"
+		if d.ge {
+			op = ">="
+		}
+		b.WriteString("CREATE DOMAIN " + qi(d.name) + " AS integer CHECK (VALUE " + op + " 0);\n")
+	}
 	for _, e := range s.enums {
 		quoted := make([]string, len(e.labels))
 		for i, l := range e.labels {
@@ -340,10 +391,14 @@ func (s *pSchema) render() string {
 		b.WriteString("CREATE TYPE " + qi(e.name) + " AS ENUM (" + strings.Join(quoted, ", ") + ");\n")
 	}
 	for _, t := range s.tables {
-		b.WriteString(t.render())
+		b.WriteString(t.render(s))
 	}
 	for _, v := range s.views {
-		b.WriteString("CREATE VIEW " + qi(v.name) + " AS SELECT " + qilist(v.cols) + " FROM " + qi(v.table) + ";\n")
+		kind := "VIEW"
+		if v.mat {
+			kind = "MATERIALIZED VIEW"
+		}
+		b.WriteString("CREATE " + kind + " " + qi(v.name) + " AS SELECT " + qilist(v.cols) + " FROM " + s.qref(v.table) + ";\n")
 	}
 	for _, f := range s.funcs {
 		fmt.Fprintf(&b, "CREATE FUNCTION %s(a integer) RETURNS integer LANGUAGE sql IMMUTABLE RETURN a + %d;\n", qi(f.name), f.n)
@@ -351,9 +406,85 @@ func (s *pSchema) render() string {
 	for _, tr := range s.triggers {
 		fmt.Fprintf(&b, "CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.%s := coalesce(NEW.%s, 0) + %d; RETURN NEW; END $$;\n",
 			qi(tr.name+"_fn"), qi(tr.col), qi(tr.col), tr.n)
-		fmt.Fprintf(&b, "CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION %s();\n", qi(tr.name), qi(tr.table), qi(tr.name+"_fn"))
+		fmt.Fprintf(&b, "CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION %s();\n", qi(tr.name), s.qref(tr.table), qi(tr.name+"_fn"))
 	}
 	return b.String()
+}
+
+// rows renders three rows per table, parents first: integer columns carry the row number
+// (distinct, positive, a valid reference to a parent's id), a nullable column is NULL in the
+// third row, an identity id is set explicitly (BY DEFAULT allows it) so children can
+// reference it, generated columns are left to the server.
+func (s *pSchema) rows() string {
+	var b strings.Builder
+	for _, t := range s.tables {
+		var names []string
+		var cols []*pCol
+		for _, c := range t.cols {
+			if c.gen == "" {
+				names = append(names, qi(c.name))
+				cols = append(cols, c)
+			}
+		}
+		var rows []string
+		for i := 1; i <= 3; i++ {
+			var vals []string
+			for _, c := range cols {
+				if i == 3 && !c.notNull && !c.pk {
+					vals = append(vals, "NULL")
+					continue
+				}
+				vals = append(vals, s.value(c, i))
+			}
+			rows = append(rows, "("+strings.Join(vals, ", ")+")")
+		}
+		fmt.Fprintf(&b, "INSERT INTO %s (%s) VALUES %s;\n", t.ref(), strings.Join(names, ", "), strings.Join(rows, ", "))
+	}
+	return b.String()
+}
+
+func (s *pSchema) value(c *pCol, i int) string {
+	switch c.typ {
+	case "integer", "bigint", "smallint", "double precision", "numeric(10,2)", "numeric(14,2)":
+		return fmt.Sprint(i)
+	case "text", "varchar(50)", "varchar(100)":
+		return fmt.Sprintf("'v%d'", i)
+	case "timestamptz":
+		return fmt.Sprintf("'2024-01-%02d 00:00:00+00'", i)
+	case "date":
+		return fmt.Sprintf("'2024-01-%02d'", i)
+	case "boolean":
+		return fmt.Sprint(i%2 == 1)
+	case "jsonb":
+		return fmt.Sprintf(`'{"i": %d}'`, i)
+	}
+	if e := s.enum(c.typ); e != nil {
+		return "'" + e.labels[(i-1)%len(e.labels)] + "'"
+	}
+	if strings.HasPrefix(c.typ, "num") {
+		return fmt.Sprint(i)
+	}
+	return "NULL"
+}
+
+// fill is the literal a backfill gives a column that turns NOT NULL under existing rows.
+func (s *pSchema) fill(c *pCol) string {
+	switch {
+	case isNumeric(c.typ):
+		return "9"
+	case c.typ == "boolean":
+		return "true"
+	case c.typ == "jsonb":
+		return "'{}'"
+	case c.typ == "timestamptz":
+		return "'2024-02-01 00:00:00+00'"
+	case c.typ == "date":
+		return "'2024-02-01'"
+	}
+	if e := s.enum(c.typ); e != nil {
+		return "'" + e.labels[0] + "'"
+	}
+	return "'fill'"
 }
 
 // ---- generating -------------------------------------------------------------------------
@@ -362,6 +493,12 @@ func pick[T any](r *rand.Rand, list []T) T { return list[r.Intn(len(list))] }
 
 func (s *pSchema) newCol(r *rand.Rand) *pCol {
 	c := &pCol{name: s.next("c"), typ: pick(r, probeTypes)}
+	if c.typ == "domain" {
+		if len(s.domains) == 0 || r.Intn(3) == 0 {
+			s.domains = append(s.domains, &pDomain{name: s.next("num")})
+		}
+		c.typ = pick(r, s.domains).name
+	}
 	if c.typ == "enum" {
 		if len(s.enums) == 0 || r.Intn(3) == 0 {
 			e := &pEnum{name: s.next("e"), labels: []string{"a", "b", "c"}[:2+r.Intn(2)]}
@@ -387,9 +524,15 @@ func (t *pTable) numericCols() []*pCol {
 }
 
 func (s *pSchema) newTable(r *rand.Rand) *pTable {
-	t := &pTable{name: s.next("t")}
-	t.orig = t.name
-	id := &pCol{name: "id", typ: pick(r, []string{"integer", "bigint"}), notNull: true, pk: true, identity: r.Intn(2) == 0}
+	t := &pTable{name: s.next("t"), schema: pick(r, []string{"public", "public", "app"})}
+	t.orig = t.full()
+	id := &pCol{name: "id", typ: pick(r, []string{"integer", "bigint"}), notNull: true, pk: true}
+	switch r.Intn(3) {
+	case 0:
+		id.identity = true
+	case 1:
+		id.typ, id.serial = "bigint", true
+	}
 	t.cols = append(t.cols, id)
 	n := 2 + r.Intn(4)
 	for i := 0; i < n; i++ {
@@ -407,7 +550,11 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 		s.addCheck(r, t)
 	}
 	if len(s.tables) > 0 && r.Intn(2) == 0 {
-		s.addFK(r, t, pick(r, s.tables))
+		if r.Intn(4) == 0 {
+			s.addCompositeFK(r, t, pick(r, s.tables))
+		} else {
+			s.addFK(r, t, pick(r, s.tables))
+		}
 	}
 	if r.Intn(4) == 0 {
 		t.comment = "about " + t.name
@@ -416,9 +563,12 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 }
 
 func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
+	unique := r.Intn(2) == 0
 	var cands []string
 	for _, c := range t.cols {
-		if c.typ != "jsonb" && !c.pk {
+		// three rows: a boolean or an enum column repeats a value, so no unique key over it
+		// (a column a mutation added holds one default in every row: no unique key over it)
+		if c.typ != "jsonb" && !c.pk && !(unique && (c.typ == "boolean" || s.enum(c.typ) != nil || c.fresh)) {
 			cands = append(cands, c.name)
 		}
 	}
@@ -430,7 +580,7 @@ func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
 	if len(cands) > 1 && r.Intn(2) == 0 {
 		n = 2
 	}
-	t.keys = append(t.keys, &pKey{name: s.next("k"), unique: r.Intn(2) == 0, cols: cands[:n]})
+	t.keys = append(t.keys, &pKey{name: s.next("k"), unique: unique, cols: cands[:n]})
 	return true
 }
 
@@ -455,12 +605,38 @@ func (s *pSchema) addFK(r *rand.Rand, t, parent *pTable) bool {
 	ppk := parent.pk()
 	c := &pCol{name: s.next("r"), typ: ppk.typ, notNull: r.Intn(2) == 0}
 	t.cols = append(t.cols, c)
-	fk := &pFK{name: s.next("fk"), col: c.name, refTable: parent.name, refCol: ppk.name,
+	fk := &pFK{name: s.next("fk"), cols: []string{c.name}, refTable: parent.name, refCols: []string{ppk.name},
 		onDelete: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT"})}
 	if fk.onDelete == "SET NULL" {
 		c.notNull = false
 	}
 	t.fks = append(t.fks, fk)
+	return true
+}
+
+// addCompositeFK gives t two new columns referencing a two-column UNIQUE key that parent
+// gains over two new NOT NULL integer columns of its own (rows carry the row number in
+// every integer column, so every (i, i) pair exists in the parent).
+func (s *pSchema) addCompositeFK(r *rand.Rand, t, parent *pTable) bool {
+	if parent == t {
+		return false
+	}
+	a := &pCol{name: s.next("a"), typ: "integer", notNull: true, def: "0"}
+	b := &pCol{name: s.next("b"), typ: "integer", notNull: true, def: "0"}
+	parent.cols = append(parent.cols, a, b)
+	if s.mutating {
+		// the parent holds rows: the new key columns need distinct values (the key's)
+		a.fresh, b.fresh = true, true
+		pk := parent.pk().name
+		s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s", parent.full(), a.name, qi(pk)),
+			fmt.Sprintf("-- @migrate backfill %s.%s = %s", parent.full(), b.name, qi(pk)))
+	}
+	parent.keys = append(parent.keys, &pKey{name: s.next("k"), unique: true, cols: []string{a.name, b.name}})
+	ra := &pCol{name: s.next("r"), typ: "integer", fresh: s.mutating}
+	rb := &pCol{name: s.next("r"), typ: "integer", fresh: s.mutating}
+	t.cols = append(t.cols, ra, rb)
+	t.fks = append(t.fks, &pFK{name: s.next("fk"), cols: []string{ra.name, rb.name}, refTable: parent.name, refCols: []string{a.name, b.name},
+		onDelete: pick(r, []string{"", "CASCADE", "SET NULL"})})
 	return true
 }
 
@@ -475,13 +651,19 @@ func (s *pSchema) addView(r *rand.Rand) bool {
 	if len(cols) == 0 {
 		cols = []string{t.cols[0].name}
 	}
-	s.views = append(s.views, &pView{name: s.next("v"), table: t.name, cols: cols})
+	s.views = append(s.views, &pView{name: s.next("v"), table: t.name, cols: cols, mat: r.Intn(3) == 0})
 	return true
 }
 
 func (s *pSchema) addTrigger(r *rand.Rand) bool {
 	t := pick(r, s.tables)
-	src := t.numericCols()
+	var src []*pCol
+	for _, c := range t.numericCols() {
+		// the body adds to the column: not a reference, not a key, not a referenced column
+		if !t.inFK(c.name) && !c.pk && len(referencedBy(s, t, c.name)) == 0 {
+			src = append(src, c)
+		}
+	}
 	if len(src) == 0 {
 		return false
 	}
@@ -517,7 +699,7 @@ type mutation struct {
 func (t *pTable) plainCols(touched map[string]bool) []*pCol {
 	var out []*pCol
 	for _, c := range t.cols {
-		if !c.pk && c.gen == "" && !touched[t.name+"."+c.name] {
+		if !c.pk && c.gen == "" && !c.fresh && !touched[t.name+"."+c.name] {
 			out = append(out, c)
 		}
 	}
@@ -538,7 +720,7 @@ func referencedBy(s *pSchema, t *pTable, col string) []*pFK {
 	var out []*pFK
 	for _, other := range s.tables {
 		for _, fk := range other.fks {
-			if fk.refTable == t.name && fk.refCol == col {
+			if fk.refTable == t.name && indexOf(fk.refCols, col) >= 0 {
 				out = append(out, fk)
 			}
 		}
@@ -593,7 +775,7 @@ func detach(s *pSchema, t *pTable, col string) {
 	t.checks = checks
 	var fks []*pFK
 	for _, fk := range t.fks {
-		if fk.col != col {
+		if indexOf(fk.cols, col) < 0 {
 			fks = append(fks, fk)
 		}
 	}
@@ -650,8 +832,8 @@ func renameRefs(s *pSchema, t *pTable, from, to string) {
 		}
 	}
 	for _, fk := range t.fks {
-		if fk.col == from {
-			fk.col = to
+		if i := indexOf(fk.cols, from); i >= 0 {
+			fk.cols[i] = to
 		}
 	}
 	for _, c := range t.cols {
@@ -660,7 +842,7 @@ func renameRefs(s *pSchema, t *pTable, from, to string) {
 		}
 	}
 	for _, fk := range referencedBy(s, t, from) {
-		fk.refCol = to
+		fk.refCols[indexOf(fk.refCols, from)] = to
 	}
 	for _, v := range s.views {
 		if v.table == t.name {
@@ -759,6 +941,11 @@ var mutations = []mutation{
 		}
 		t := pick(r, cands)
 		c := pick(r, t.plainCols(touched))
+		for _, g := range t.cols {
+			if g.gen == c.name && touched[t.name+"."+g.name] {
+				return false // the generated column reading it was moved by another step already
+			}
+		}
 		for _, fk := range referencedBy(s, t, c.name) {
 			owner := s.table(fkOwner(s, fk))
 			var fks []*pFK
@@ -806,7 +993,13 @@ var mutations = []mutation{
 		}
 		c := pick(r, cands)
 		to := c.name + "_new"
-		s.intents = append(s.intents, "-- @migrate rename "+t.orig+"."+c.name+" -> "+t.name+"."+to)
+		s.intents = append(s.intents, "-- @migrate rename "+t.orig+"."+c.name+" -> "+t.full()+"."+to)
+		// a backfill expression written earlier names the column as the target spells it
+		for i, in := range s.intents {
+			if strings.HasPrefix(in, "-- @migrate backfill "+t.full()+".") {
+				s.intents[i] = strings.ReplaceAll(in, " = "+qi(c.name), " = "+qi(to))
+			}
+		}
 		renameRefs(s, t, c.name, to)
 		touched[t.name+"."+c.name], touched[t.name+"."+to] = true, true
 		c.name = to
@@ -820,7 +1013,7 @@ var mutations = []mutation{
 		t := pick(r, ts)
 		var cands []*pCol
 		for _, c := range t.cols {
-			if widen(c.typ) != "" && c.gen == "" && !c.identity && !touched[t.name+"."+c.name] {
+			if widen(c.typ) != "" && c.gen == "" && !c.identity && !c.serial && !touched[t.name+"."+c.name] {
 				cands = append(cands, c)
 			}
 		}
@@ -834,7 +1027,7 @@ var mutations = []mutation{
 		}
 		for _, fk := range referencedBy(s, t, c.name) {
 			child := s.table(fkOwner(s, fk))
-			cc := child.col(fk.col)
+			cc := child.col(fk.cols[indexOf(fk.refCols, c.name)])
 			if touched[child.name+"."+cc.name] {
 				return false
 			}
@@ -859,11 +1052,11 @@ var mutations = []mutation{
 			return false
 		}
 		c := pick(r, cands)
-		if c.identity {
+		if c.identity || c.serial {
 			return false
 		}
 		for _, fk := range t.fks {
-			if fk.col == c.name && fk.onDelete == "SET NULL" {
+			if indexOf(fk.cols, c.name) >= 0 && fk.onDelete == "SET NULL" {
 				return false
 			}
 		}
@@ -872,6 +1065,13 @@ var mutations = []mutation{
 			c.def = s.defaultFor(c)
 		} else {
 			c.def = ""
+		}
+		if c.notNull {
+			f := s.fill(c)
+			if t.inFK(c.name) {
+				f = "1" // a parent every table has
+			}
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s where %s is null", t.full(), c.name, f, qi(c.name)))
 		}
 		touched[t.name+"."+c.name] = true
 		return true
@@ -888,7 +1088,7 @@ var mutations = []mutation{
 			if len(t.keys) > 0 {
 				i := r.Intn(len(t.keys))
 				// a unique constraint a foreign key references stays
-				if t.keys[i].unique && len(t.keys[i].cols) == 1 && len(referencedBy(s, t, t.keys[i].cols[0])) > 0 {
+				if t.keys[i].unique && len(referencedBy(s, t, t.keys[i].cols[0])) > 0 {
 					return false
 				}
 				t.keys = append(t.keys[:i], t.keys[i+1:]...)
@@ -914,11 +1114,14 @@ var mutations = []mutation{
 			return false
 		}
 		c := pick(r, cands)
+		if !c.notNull {
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = 9 where %s is null", t.full(), c.name, qi(c.name)))
+		}
 		c.pk, c.notNull, c.def = true, true, ""
 		old.pk = false
 		if len(referencedBy(s, t, old.name)) > 0 {
 			t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{old.name}})
-		} else if !old.identity && r.Intn(2) == 0 {
+		} else if !old.identity && !old.serial && r.Intn(2) == 0 {
 			old.notNull = false
 		}
 		touched[t.name+"."+old.name], touched[t.name+"."+c.name] = true, true
@@ -936,6 +1139,10 @@ var mutations = []mutation{
 		}
 		c := &pCol{name: s.next("c"), typ: pick(r, []string{"integer", "bigint"}), notNull: true, pk: true, identity: r.Intn(2) == 0}
 		insertCol(r, t, c)
+		if !c.identity {
+			// the rows need distinct values before the key goes on: the old key's
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s", t.full(), c.name, qi(old.name)))
+		}
 		old.pk = false
 		if len(referencedBy(s, t, old.name)) > 0 {
 			t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{old.name}})
@@ -959,7 +1166,38 @@ var mutations = []mutation{
 		if !s.addFK(r, t, parent) {
 			return false
 		}
-		touched[t.name+"."+t.cols[len(t.cols)-1].name] = true
+		c := t.cols[len(t.cols)-1]
+		if c.notNull {
+			// existing rows need a parent before the column turns NOT NULL
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = 1", t.full(), c.name))
+		}
+		touched[t.name+"."+c.name] = true
+		return true
+	}},
+	{"add composite foreign key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) < 2 {
+			return false
+		}
+		i, j := r.Intn(len(ts)), r.Intn(len(ts))
+		if i == j {
+			return false
+		}
+		if i < j {
+			i, j = j, i
+		}
+		t, parent := ts[i], ts[j]
+		if !s.addCompositeFK(r, t, parent) {
+			return false
+		}
+		for _, c := range parent.cols[len(parent.cols)-2:] {
+			c.fresh = true
+			touched[parent.name+"."+c.name] = true
+		}
+		for _, c := range t.cols[len(t.cols)-2:] {
+			c.fresh = true
+			touched[t.name+"."+c.name] = true
+		}
 		return true
 	}},
 	{"drop foreign key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
@@ -1018,9 +1256,11 @@ var mutations = []mutation{
 		}
 		t := pick(r, ts)
 		to := t.name + "_new"
-		s.intents = append(s.intents, "-- @migrate rename "+t.orig+" -> "+to)
+		s.intents = append(s.intents, "-- @migrate rename "+t.orig+" -> "+t.schema+"."+to)
 		for i, in := range s.intents {
-			s.intents[i] = strings.ReplaceAll(in, " -> "+t.name+".", " -> "+to+".")
+			in = strings.ReplaceAll(in, " -> "+t.full()+".", " -> "+t.schema+"."+to+".")
+			in = strings.ReplaceAll(in, "backfill "+t.full()+".", "backfill "+t.schema+"."+to+".")
+			s.intents[i] = in
 		}
 		for _, other := range s.tables {
 			for _, fk := range other.fks {
@@ -1042,6 +1282,16 @@ var mutations = []mutation{
 		touched[t.name], touched[to] = true, true
 		t.name = to
 		return true
+	}},
+	{"change domain check", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, d := range s.domains {
+			if !touched["domain:"+d.name] {
+				d.ge = !d.ge
+				touched["domain:"+d.name] = true
+				return true
+			}
+		}
+		return false
 	}},
 	{"add enum label", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
 		for _, e := range s.enums {
@@ -1162,6 +1412,7 @@ type step struct {
 
 func mutate(src *pSchema, recipe []step) (*pSchema, []string) {
 	s := src.clone()
+	s.mutating = true
 	touched := map[string]bool{}
 	var applied []string
 	for _, st := range recipe {
@@ -1211,8 +1462,14 @@ func judge(ctx context.Context, src, target *pSchema, applied []string) verdict 
 		v.kind, v.detail = "plan refused", err.Error()
 		return v
 	}
-	got, _, err := server.Canonical(ctx, aText+"\nRESET search_path;\n"+strings.Join(ddl, "\n"), b)
+	// the source database holds rows: what apply runs against is never empty
+	loaded := aText + "\nRESET search_path;\n" + src.rows()
+	got, _, err := server.Canonical(ctx, loaded+"\n"+strings.Join(ddl, "\n"), b)
 	if err != nil {
+		if _, _, rerr := server.Canonical(ctx, loaded, a); rerr != nil {
+			v.kind, v.detail = "generator (rows)", rerr.Error()+"\n"+src.rows()
+			return v
+		}
 		v.kind, v.detail = "server refused the DDL", err.Error()
 		return v
 	}
@@ -1243,7 +1500,7 @@ func TestMigrateProbe(t *testing.T) {
 	var findings []verdict
 	for i := 0; i < *probeN; i++ {
 		src := generate(r)
-		n := 1 + r.Intn(3)
+		n := 1 + r.Intn(5)
 		var recipe []step
 		for j := 0; j < n; j++ {
 			recipe = append(recipe, step{m: r.Intn(len(mutations)), seed: r.Int63()})
@@ -1263,7 +1520,7 @@ func TestMigrateProbe(t *testing.T) {
 		if strings.HasPrefix(v.kind, "generator") {
 			counts[v.kind]++
 			if counts[v.kind] <= 3 {
-				t.Logf("%s (pair %d): %s\n%s", v.kind, i, v.detail, v.bSQL)
+				t.Logf("%s (pair %d, %s): %s\n%s", v.kind, i, strings.Join(applied, "; "), v.detail, v.aSQL)
 			}
 			continue
 		}

@@ -197,3 +197,56 @@ CREATE TABLE u (id integer PRIMARY KEY, b integer);
 `)
 	roundTrip(t, from, to, "-- @migrate rename u.b -> t.a\n-- @migrate rename u -> t", false)
 }
+
+// A comment on a table that is renamed is the same comment under the new name; one the
+// target no longer declares is removed under the new name (measured: it stayed before).
+func TestProbeCommentFollowsRename(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a integer);
+COMMENT ON TABLE t IS 'about t';
+COMMENT ON COLUMN t.a IS 'a';
+`)
+	t.Run("kept", func(t *testing.T) {
+		to := mustCanonical(t, `
+-- @migrate rename t -> u
+CREATE TABLE u (id integer PRIMARY KEY, a integer);
+COMMENT ON TABLE u IS 'about t';
+COMMENT ON COLUMN u.a IS 'a';
+`)
+		plan, err := Plan(from.s, to.s, to.intents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range plan {
+			if strings.HasPrefix(s, "COMMENT ON") {
+				t.Errorf("an unchanged comment on a renamed table is not re-issued: %s", s)
+			}
+		}
+		roundTrip(t, from, to, "-- @migrate rename u -> t", false)
+	})
+	t.Run("dropped", func(t *testing.T) {
+		to := mustCanonical(t, `
+-- @migrate rename t -> u
+CREATE TABLE u (id integer PRIMARY KEY, a integer);
+`)
+		roundTrip(t, from, to, "-- @migrate rename u -> t", false)
+	})
+}
+
+// A serial column's sequence keeps its name when its table or column is renamed, while the
+// target (a fresh CREATE) names it after the new names: the plan renames the sequence too
+// (the SET DEFAULT nextval('<new>_seq') it emits is 42P01 otherwise, measured). An
+// identity column's sequence is the server's own and is left alone.
+func TestProbeSerialSequenceFollowsRename(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `CREATE TABLE t (id bigserial PRIMARY KEY, n bigserial, a integer);`)
+	t.Run("table", func(t *testing.T) {
+		to := mustCanonical(t, "-- @migrate rename t -> u\nCREATE TABLE u (id bigserial PRIMARY KEY, n bigserial, a integer);")
+		roundTrip(t, from, to, "-- @migrate rename u -> t", false)
+	})
+	t.Run("column", func(t *testing.T) {
+		to := mustCanonical(t, "-- @migrate rename t.n -> t.m\nCREATE TABLE t (id bigserial PRIMARY KEY, m bigserial, a integer);")
+		roundTrip(t, from, to, "-- @migrate rename t.m -> t.n", false)
+	})
+}

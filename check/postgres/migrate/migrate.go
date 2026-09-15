@@ -1087,17 +1087,23 @@ func (p *planner) adds() {
 			p.emit("%s", pol.Definition)
 		}
 	}
-	// comments
+	// comments, the from side's keys spelled as the target names them (a comment on a
+	// renamed table is still the same comment; one the target drops is removed under the
+	// new name -- measured: the plan left it in place before)
+	fromComments := map[string]string{}
+	for k, v := range p.from.Comments {
+		fromComments[p.commentKeyTo(k)] = v
+	}
 	for _, k := range sortedKeys(p.to.Comments) {
 		v := p.to.Comments[k]
-		if fv, ok := p.from.Comments[k]; ok && fv == v {
+		if fv, ok := fromComments[k]; ok && fv == v {
 			continue
 		}
 		if t := commentText(p.to, k, v); t != "" {
 			p.emit("%s", t)
 		}
 	}
-	for _, k := range sortedKeys(p.from.Comments) {
+	for _, k := range sortedKeys(fromComments) {
 		if _, ok := p.to.Comments[k]; ok {
 			continue
 		}
@@ -1105,6 +1111,33 @@ func (p *planner) adds() {
 			p.emit("%s", t)
 		}
 	}
+}
+
+// commentKeyTo is a from-side comment key ("schema.rel" or "schema.rel.column") with the
+// declared renames applied.
+func (p *planner) commentKeyTo(k string) string {
+	rel := commentRelation(k)
+	if p.from.Relation(splitRel(rel)) == nil {
+		return k
+	}
+	to := p.toName(rel)
+	if rel == k {
+		return to
+	}
+	col := k[len(rel)+1:]
+	if m := p.in.colTo[rel]; m != nil {
+		if c, ok := m[col]; ok {
+			col = c
+		}
+	}
+	return to + "." + col
+}
+
+func splitRel(full string) (string, string) {
+	if i := strings.Index(full, "."); i > 0 {
+		return full[:i], full[i+1:]
+	}
+	return "public", full
 }
 
 // rowSecurity emits the ENABLE / DISABLE / FORCE / NO FORCE ROW LEVEL SECURITY a

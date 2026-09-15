@@ -69,6 +69,22 @@ release it is a candidate for.
   NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
   or TRIGGER still refuses the directive (neither returns a value for it to describe).
 
+- Both migrate probes now run against tables holding rows (three per table, distinct positive
+  integers, a NULL in the third row of every nullable column), with up to five mutations per pair,
+  composite foreign keys, and the rest of each dialect's vocabulary: PostgreSQL's domains, a second
+  schema, bigserial ids and materialized views; MySQL's events, column collations, INVISIBLE
+  columns, ON UPDATE CURRENT_TIMESTAMP and prefix keys. Every mutation that needs rows filled
+  declares its `-- @migrate backfill`. What that found and fixed: MySQL runs a column's declared
+  backfill before the MODIFY that makes it NOT NULL (1138) and a new column's before the keys and
+  foreign keys over it (1452); a new AUTO_INCREMENT column gets its key in the same ADD COLUMN
+  (1075); every table's foreign keys are dropped before any table's keys (1553); a column SHOW
+  CREATE TABLE writes with a versioned comment (`/*!80023 INVISIBLE */`) keeps the comment's
+  closing in its definition text, so MODIFY COLUMN from it parses. PostgreSQL: a comment on a
+  renamed table is the same comment, and one the target drops is removed under the new name; a
+  serial column's sequence is renamed along with its table or column, since the target names it
+  after the new names (42P01 on the plan's SET DEFAULT nextval otherwise); `-- @migrate rename`
+  of a table is read before the column renames on both dialects.
+
 - PostgreSQL migrations have the same oracle: `check/postgres/migrate`'s `TestMigrateProbe`
   generates schemas from the planner's vocabulary (column types, an ENUM type, identity and
   generated columns, unique constraints and indexes, foreign keys, CHECKs, comments, views,

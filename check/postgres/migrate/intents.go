@@ -349,6 +349,50 @@ func (p *planner) renames() {
 			p.emit("ALTER %s %s RENAME COLUMN %s TO %s", relWord(f), qrel(t), q(from), q(cols[from]))
 		}
 	}
+	// a serial column's sequence keeps its name when its table or column is renamed, while
+	// the target (a fresh CREATE) names it after the new names: rename it too (measured:
+	// the plan's SET DEFAULT nextval('<new>_seq') is 42P01 otherwise)
+	fromRels, toRels := p.rels(p.from), p.rels(p.to)
+	for _, name := range sortedKeys(fromRels) {
+		seq := fromRels[name]
+		if seq.Kind != schema.Sequence || seq.OwnedBy == "" {
+			continue
+		}
+		// OwnedBy is always schema-qualified; relation names (FullName, relTo, colTo) drop
+		// "public." -- ownerRelation gives the latter form
+		owner, col := ownerRelation(seq.OwnedBy), ownerColumn(seq.OwnedBy)
+		if fr := fromRels[owner]; fr == nil || fr.Column(col) == nil || fr.Column(col).Identity != 0 {
+			continue // an identity column's sequence is the server's own; nothing names it
+		}
+		toOwner, toCol := p.toName(owner), col
+		if m := p.in.colTo[owner]; m != nil {
+			if c, ok := m[col]; ok {
+				toCol = c
+			}
+		}
+		if toOwner == owner && toCol == col {
+			continue
+		}
+		wantOwned := toOwner + "." + toCol
+		if !strings.Contains(toOwner, ".") {
+			wantOwned = "public." + wantOwned
+		}
+		for _, tn := range sortedKeys(toRels) {
+			ts := toRels[tn]
+			if ts.Kind != schema.Sequence || ts.OwnedBy != wantOwned {
+				continue
+			}
+			cur := qrel(seq)
+			if ts.Schema != seq.Schema {
+				p.emit("ALTER SEQUENCE %s SET SCHEMA %s", cur, q(ts.Schema))
+				cur = q(ts.Schema) + "." + q(seq.Name)
+			}
+			if ts.Name != seq.Name {
+				p.emit("ALTER SEQUENCE %s RENAME TO %s", cur, q(ts.Name))
+			}
+			break
+		}
+	}
 }
 
 // --- backfills -----------------------------------------------------------------------

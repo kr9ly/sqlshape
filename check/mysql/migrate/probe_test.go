@@ -51,8 +51,10 @@ type pSchema struct {
 	views    []*pView
 	triggers []*pTrigger
 	funcs    []*pFunc
+	events   []*pEvent
 	intents  []string // `-- @migrate` lines the mutations declared (target side only)
 	seq      int      // name counter
+	mutating bool     // set on a clone: the tables that exist are the source's, and hold rows
 }
 
 type pTable struct {
@@ -76,20 +78,26 @@ type pCol struct {
 	auto    bool
 	gen     string // the column this generated column reads ("" for a plain column)
 	stored  bool
-	fresh   bool // added by a mutation: not in the source, so its drop needs no declaration
+	// collate: a varchar / text column declared COLLATE utf8mb4_bin; invisible: INVISIBLE;
+	// onUpdate: a datetime(6) column with ON UPDATE CURRENT_TIMESTAMP(6)
+	collate   bool
+	invisible bool
+	onUpdate  bool
+	fresh     bool // added by a mutation: not in the source, so its drop needs no declaration
 }
 
 type pKey struct {
 	name   string
 	unique bool
 	cols   []string
+	prefix []int // one per column: a prefix length, 0 for the whole column
 }
 
 type pFK struct {
 	name     string
-	col      string
+	cols     []string
 	refTable string
-	refCol   string
+	refCols  []string
 	onDelete string
 }
 
@@ -116,6 +124,12 @@ type pFunc struct {
 	n    int
 }
 
+// pEvent is a CREATE EVENT with a schedule of n hours and a body that sets a user variable.
+type pEvent struct {
+	name string
+	n    int
+}
+
 func (s *pSchema) next(prefix string) string {
 	s.seq++
 	return fmt.Sprintf("%s%d", prefix, s.seq)
@@ -133,10 +147,13 @@ func (s *pSchema) clone() *pSchema {
 		for _, k := range t.keys {
 			nk := *k
 			nk.cols = append([]string(nil), k.cols...)
+			nk.prefix = append([]int(nil), k.prefix...)
 			nt.keys = append(nt.keys, &nk)
 		}
 		for _, fk := range t.fks {
 			nfk := *fk
+			nfk.cols = append([]string(nil), fk.cols...)
+			nfk.refCols = append([]string(nil), fk.refCols...)
 			nt.fks = append(nt.fks, &nfk)
 		}
 		for _, ck := range t.checks {
@@ -157,6 +174,10 @@ func (s *pSchema) clone() *pSchema {
 	for _, f := range s.funcs {
 		nf := *f
 		c.funcs = append(c.funcs, &nf)
+	}
+	for _, e := range s.events {
+		ne := *e
+		c.events = append(c.events, &ne)
 	}
 	return c
 }
@@ -182,7 +203,7 @@ func (t *pTable) col(name string) *pCol {
 // inFK: a CHECK may not read a column a foreign key's referential action writes (Error 3823).
 func (t *pTable) inFK(col string) bool {
 	for _, fk := range t.fks {
-		if fk.col == col {
+		if indexOf(fk.cols, col) >= 0 {
 			return true
 		}
 	}
@@ -221,11 +242,11 @@ func keyable(typ string) bool { return typ != "text" && typ != "json" }
 func defaultFor(c *pCol) string {
 	switch {
 	case isInteger(c.typ):
-		return "'0'"
+		return "'1'"
 	case strings.HasPrefix(c.typ, "decimal"):
-		return "'0.00'"
+		return "'1.00'"
 	case c.typ == "double":
-		return "'0'"
+		return "'1'"
 	case strings.HasPrefix(c.typ, "varchar"):
 		return "'x'"
 	case c.typ == "datetime(6)":
@@ -270,6 +291,9 @@ func (c *pCol) typeText() string {
 func (c *pCol) render() string {
 	var b strings.Builder
 	b.WriteString(q(c.name) + " " + c.typeText())
+	if c.collate {
+		b.WriteString(" COLLATE utf8mb4_bin")
+	}
 	if c.gen != "" {
 		b.WriteString(" GENERATED ALWAYS AS ((" + q(c.gen) + " + 1))")
 		if c.stored {
@@ -287,7 +311,25 @@ func (c *pCol) render() string {
 	} else if c.def != "" {
 		b.WriteString(" DEFAULT " + c.def)
 	}
+	if c.onUpdate {
+		b.WriteString(" ON UPDATE CURRENT_TIMESTAMP(6)")
+	}
+	if c.invisible {
+		b.WriteString(" INVISIBLE")
+	}
 	return b.String()
+}
+
+// keyCols renders a key's column list with its prefix lengths.
+func (k *pKey) keyCols() string {
+	parts := make([]string, len(k.cols))
+	for i, c := range k.cols {
+		parts[i] = q(c)
+		if i < len(k.prefix) && k.prefix[i] > 0 {
+			parts[i] += fmt.Sprintf("(%d)", k.prefix[i])
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 func (t *pTable) render() string {
@@ -303,10 +345,10 @@ func (t *pTable) render() string {
 		if k.unique {
 			kind = "UNIQUE KEY"
 		}
-		parts = append(parts, "  "+kind+" "+q(k.name)+" ("+qlist(k.cols)+")")
+		parts = append(parts, "  "+kind+" "+q(k.name)+" ("+k.keyCols()+")")
 	}
 	for _, fk := range t.fks {
-		s := "  CONSTRAINT " + q(fk.name) + " FOREIGN KEY (" + q(fk.col) + ") REFERENCES " + q(fk.refTable) + " (" + q(fk.refCol) + ")"
+		s := "  CONSTRAINT " + q(fk.name) + " FOREIGN KEY (" + qlist(fk.cols) + ") REFERENCES " + q(fk.refTable) + " (" + qlist(fk.refCols) + ")"
 		if fk.onDelete != "" {
 			s += " ON DELETE " + fk.onDelete
 		}
@@ -351,7 +393,78 @@ func (s *pSchema) render() string {
 		fmt.Fprintf(&b, "CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW SET NEW.%s = COALESCE(NEW.%s, 0) + %d;\n",
 			q(tr.name), q(tr.table), q(tr.col), q(tr.col), tr.n)
 	}
+	for _, e := range s.events {
+		fmt.Fprintf(&b, "CREATE EVENT %s ON SCHEDULE EVERY %d HOUR DO SET @probe = %d;\n", q(e.name), e.n, e.n)
+	}
 	return b.String()
+}
+
+// rows renders three rows per table, parents first (the tables are declared in that order):
+// integer columns carry the row number (distinct, positive, a valid reference to a parent's
+// id), a nullable column is NULL in the third row, an AUTO_INCREMENT id is set explicitly so
+// children can reference it, generated columns are left to the server.
+func (s *pSchema) rows() string {
+	var b strings.Builder
+	for _, t := range s.tables {
+		var names []string
+		var cols []*pCol
+		for _, c := range t.cols {
+			if c.gen == "" {
+				names = append(names, q(c.name))
+				cols = append(cols, c)
+			}
+		}
+		var rows []string
+		for i := 1; i <= 3; i++ {
+			var vals []string
+			for _, c := range cols {
+				if i == 3 && !c.notNull && !c.pk {
+					vals = append(vals, "NULL")
+					continue
+				}
+				vals = append(vals, value(c, i))
+			}
+			rows = append(rows, "("+strings.Join(vals, ", ")+")")
+		}
+		fmt.Fprintf(&b, "INSERT INTO %s (%s) VALUES %s;\n", q(t.name), strings.Join(names, ", "), strings.Join(rows, ", "))
+	}
+	return b.String()
+}
+
+// value is row i's value for column c.
+func value(c *pCol, i int) string {
+	switch {
+	case isInteger(c.typ), c.typ == "double", strings.HasPrefix(c.typ, "decimal"):
+		return fmt.Sprint(i)
+	case strings.HasPrefix(c.typ, "varchar"), c.typ == "text":
+		return fmt.Sprintf("'v%d'", i)
+	case c.typ == "datetime(6)":
+		return fmt.Sprintf("'2024-01-%02d 00:00:00'", i)
+	case c.typ == "date":
+		return fmt.Sprintf("'2024-01-%02d'", i)
+	case c.typ == "enum":
+		return "'" + c.labels[(i-1)%len(c.labels)] + "'"
+	case c.typ == "json":
+		return fmt.Sprintf(`'{"i": %d}'`, i)
+	}
+	return "NULL"
+}
+
+// fill is the literal a backfill gives a column that turns NOT NULL under existing rows.
+func fill(c *pCol) string {
+	switch {
+	case isNumeric(c.typ):
+		return "9"
+	case c.typ == "enum":
+		return "'" + c.labels[0] + "'"
+	case c.typ == "json":
+		return "'{}'"
+	case c.typ == "datetime(6)":
+		return "'2024-02-01 00:00:00'"
+	case c.typ == "date":
+		return "'2024-02-01'"
+	}
+	return "'fill'"
 }
 
 // ---- generating a source schema -------------------------------------------------------
@@ -367,15 +480,25 @@ func (s *pSchema) newCol(r *rand.Rand) *pCol {
 	if c.notNull || r.Intn(3) == 0 {
 		c.def = defaultFor(c)
 	}
+	if (c.typ == "text" || strings.HasPrefix(c.typ, "varchar")) && r.Intn(4) == 0 {
+		c.collate = true
+	}
+	if c.typ == "datetime(6)" && c.def != "" && r.Intn(2) == 0 {
+		c.onUpdate = true
+	}
+	if r.Intn(8) == 0 {
+		c.invisible = true
+	}
 	return c
 }
 
-// numericCols: the plain (not generated, not AUTO_INCREMENT) numeric columns a generated
-// column or a trigger body may read.
+// numericCols: the plain (not generated, not AUTO_INCREMENT, not a foreign key's -- MySQL
+// refuses a generated column over a referencing column with a referential action, 1215)
+// numeric columns a generated column or a trigger body may read.
 func (t *pTable) numericCols() []*pCol {
 	var out []*pCol
 	for _, c := range t.cols {
-		if isNumeric(c.typ) && c.gen == "" && !c.auto {
+		if isNumeric(c.typ) && c.gen == "" && !c.auto && !t.inFK(c.name) {
 			out = append(out, c)
 		}
 	}
@@ -404,7 +527,11 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 		s.addCheck(r, t)
 	}
 	if len(s.tables) > 0 && r.Intn(2) == 0 {
-		s.addFK(r, t, pick(r, s.tables))
+		if r.Intn(4) == 0 {
+			s.addCompositeFK(r, t, pick(r, s.tables))
+		} else {
+			s.addFK(r, t, pick(r, s.tables))
+		}
 	}
 	if r.Intn(4) == 0 {
 		t.comment = "about " + t.name
@@ -416,9 +543,13 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 }
 
 func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
+	unique := r.Intn(2) == 0
 	var cands []string
 	for _, c := range t.cols {
-		if keyable(c.typ) && !c.pk && (c.gen == "" || c.stored) {
+		// (a column a mutation added holds one default in every row: no unique key over it;
+		// a text column takes a prefix length below, a json column no key at all)
+		// (an ON UPDATE timestamp is one value in every row a backfill touches: no unique key)
+		if c.typ != "json" && !c.pk && (c.gen == "" || c.stored) && !(unique && (c.typ == "enum" || c.fresh || c.onUpdate)) {
 			cands = append(cands, c.name)
 		}
 	}
@@ -430,7 +561,14 @@ func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
 	if len(cands) > 1 && r.Intn(2) == 0 {
 		n = 2
 	}
-	t.keys = append(t.keys, &pKey{name: s.next("k"), unique: r.Intn(2) == 0, cols: cands[:n]})
+	k := &pKey{name: s.next("k"), unique: unique, cols: cands[:n], prefix: make([]int, n)}
+	for i, name := range k.cols {
+		c := t.col(name)
+		if c.typ == "text" || (strings.HasPrefix(c.typ, "varchar") && r.Intn(3) == 0) {
+			k.prefix[i] = 10
+		}
+	}
+	t.keys = append(t.keys, k)
 	return true
 }
 
@@ -456,11 +594,37 @@ func (s *pSchema) addFK(r *rand.Rand, t, parent *pTable) bool {
 	ppk := parent.pk()
 	c := &pCol{name: s.next("r"), typ: ppk.typ, notNull: r.Intn(2) == 0}
 	t.cols = append(t.cols, c)
-	t.fks = append(t.fks, &pFK{name: s.next("fk"), col: c.name, refTable: parent.name, refCol: ppk.name,
+	t.fks = append(t.fks, &pFK{name: s.next("fk"), cols: []string{c.name}, refTable: parent.name, refCols: []string{ppk.name},
 		onDelete: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT"})})
 	if t.fks[len(t.fks)-1].onDelete == "SET NULL" {
 		c.notNull = false
 	}
+	return true
+}
+
+// addCompositeFK gives t two new columns referencing a two-column UNIQUE key that parent
+// gains over two new NOT NULL integer columns of its own (rows carry the row number in
+// every integer column, so every (i, i) pair exists in the parent).
+func (s *pSchema) addCompositeFK(r *rand.Rand, t, parent *pTable) bool {
+	if parent == t {
+		return false
+	}
+	a := &pCol{name: s.next("a"), typ: "int", notNull: true, def: "0"}
+	b := &pCol{name: s.next("b"), typ: "int", notNull: true, def: "0"}
+	parent.cols = append(parent.cols, a, b)
+	if s.mutating {
+		// the parent holds rows: the new key columns need distinct values (the key's)
+		a.fresh, b.fresh = true, true
+		pk := parent.pk().name
+		s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s", parent.name, a.name, q(pk)),
+			fmt.Sprintf("-- @migrate backfill %s.%s = %s", parent.name, b.name, q(pk)))
+	}
+	parent.keys = append(parent.keys, &pKey{name: s.next("k"), unique: true, cols: []string{a.name, b.name}})
+	ra := &pCol{name: s.next("r"), typ: "int", fresh: s.mutating}
+	rb := &pCol{name: s.next("r"), typ: "int", fresh: s.mutating}
+	t.cols = append(t.cols, ra, rb)
+	t.fks = append(t.fks, &pFK{name: s.next("fk"), cols: []string{ra.name, rb.name}, refTable: parent.name, refCols: []string{a.name, b.name},
+		onDelete: pick(r, []string{"", "CASCADE", "SET NULL"})})
 	return true
 }
 
@@ -481,7 +645,13 @@ func (s *pSchema) addView(r *rand.Rand) bool {
 
 func (s *pSchema) addTrigger(r *rand.Rand) bool {
 	t := pick(r, s.tables)
-	src := t.numericCols()
+	var src []*pCol
+	for _, c := range t.numericCols() {
+		// the body adds to the column: not a reference, not a key, not a referenced column
+		if !t.inFK(c.name) && !c.pk && len(referencedBy(s, t, c.name)) == 0 {
+			src = append(src, c)
+		}
+	}
 	if len(src) == 0 {
 		return false
 	}
@@ -504,6 +674,9 @@ func generate(r *rand.Rand) *pSchema {
 	if r.Intn(3) == 0 {
 		s.funcs = append(s.funcs, &pFunc{name: s.next("f"), n: 1 + r.Intn(9)})
 	}
+	if r.Intn(3) == 0 {
+		s.events = append(s.events, &pEvent{name: s.next("ev"), n: 1 + r.Intn(9)})
+	}
 	return s
 }
 
@@ -522,7 +695,7 @@ type mutation struct {
 func (t *pTable) plainCols(touched map[string]bool) []*pCol {
 	var out []*pCol
 	for _, c := range t.cols {
-		if !c.pk && c.gen == "" && !touched[t.name+"."+c.name] {
+		if !c.pk && c.gen == "" && !c.fresh && !touched[t.name+"."+c.name] {
 			out = append(out, c)
 		}
 	}
@@ -544,7 +717,7 @@ func referencedBy(s *pSchema, t *pTable, col string) []*pFK {
 	var out []*pFK
 	for _, other := range s.tables {
 		for _, fk := range other.fks {
-			if fk.refTable == t.name && fk.refCol == col {
+			if fk.refTable == t.name && indexOf(fk.refCols, col) >= 0 {
 				out = append(out, fk)
 			}
 		}
@@ -572,7 +745,7 @@ func detach(s *pSchema, t *pTable, col string) {
 	t.checks = checks
 	var fks []*pFK
 	for _, fk := range t.fks {
-		if fk.col != col {
+		if indexOf(fk.cols, col) < 0 {
 			fks = append(fks, fk)
 		}
 	}
@@ -630,8 +803,8 @@ func renameRefs(s *pSchema, t *pTable, from, to string) {
 		}
 	}
 	for _, fk := range t.fks {
-		if fk.col == from {
-			fk.col = to
+		if i := indexOf(fk.cols, from); i >= 0 {
+			fk.cols[i] = to
 		}
 	}
 	for _, c := range t.cols {
@@ -640,7 +813,7 @@ func renameRefs(s *pSchema, t *pTable, from, to string) {
 		}
 	}
 	for _, fk := range referencedBy(s, t, from) {
-		fk.refCol = to
+		fk.refCols[indexOf(fk.refCols, from)] = to
 	}
 	for _, v := range s.views {
 		if v.table == t.name {
@@ -738,6 +911,11 @@ var mutations = []mutation{
 		}
 		t := pick(r, cands)
 		c := pick(r, t.plainCols(touched))
+		for _, g := range t.cols {
+			if g.gen == c.name && touched[t.name+"."+g.name] {
+				return false // the generated column reading it was moved by another step already
+			}
+		}
 		for _, fk := range referencedBy(s, t, c.name) {
 			owner := s.table(fkOwner(s, fk))
 			var fks []*pFK
@@ -786,6 +964,12 @@ var mutations = []mutation{
 		c := pick(r, cands)
 		to := c.name + "_new"
 		s.intents = append(s.intents, "-- @migrate rename "+t.orig+"."+c.name+" -> "+t.name+"."+to)
+		// a backfill expression written earlier names the column as the target spells it
+		for i, in := range s.intents {
+			if strings.HasPrefix(in, "-- @migrate backfill "+t.name+".") {
+				s.intents[i] = strings.ReplaceAll(in, " = "+q(c.name), " = "+q(to))
+			}
+		}
 		renameRefs(s, t, c.name, to)
 		touched[t.name+"."+c.name], touched[t.name+"."+to] = true, true
 		c.name = to
@@ -811,15 +995,13 @@ var mutations = []mutation{
 		if c.auto && !isInteger(w) {
 			return false
 		}
-		for _, fk := range t.fks {
-			if fk.col == c.name {
-				return false // a referencing column follows its parent's key (widened below)
-			}
+		if t.inFK(c.name) {
+			return false // a referencing column follows its parent's key (widened below)
 		}
 		// a referenced key and every column referencing it widen together
 		for _, fk := range referencedBy(s, t, c.name) {
 			child := s.table(fkOwner(s, fk))
-			cc := child.col(fk.col)
+			cc := child.col(fk.cols[indexOf(fk.refCols, c.name)])
 			if touched[child.name+"."+cc.name] {
 				return false
 			}
@@ -865,7 +1047,7 @@ var mutations = []mutation{
 		}
 		c := pick(r, cands)
 		for _, fk := range t.fks {
-			if fk.col == c.name && fk.onDelete == "SET NULL" {
+			if indexOf(fk.cols, c.name) >= 0 && fk.onDelete == "SET NULL" {
 				return false
 			}
 		}
@@ -874,6 +1056,13 @@ var mutations = []mutation{
 			c.def = defaultFor(c)
 		} else {
 			c.def = ""
+		}
+		if c.notNull {
+			f := fill(c)
+			if t.inFK(c.name) {
+				f = "1" // a parent every table has
+			}
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s where %s is null", t.name, c.name, f, q(c.name)))
 		}
 		touched[t.name+"."+c.name] = true
 		return true
@@ -896,7 +1085,7 @@ var mutations = []mutation{
 					return false
 				}
 				for _, fk := range t.fks {
-					if lead == fk.col {
+					if lead == fk.cols[0] {
 						return false
 					}
 				}
@@ -923,10 +1112,11 @@ var mutations = []mutation{
 			return false
 		}
 		c := pick(r, cands)
-		for _, fk := range t.fks {
-			if fk.col == c.name {
-				return false
-			}
+		if t.inFK(c.name) {
+			return false
+		}
+		if !c.notNull {
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = 9 where %s is null", t.name, c.name, q(c.name)))
 		}
 		c.pk, c.notNull, c.def = true, true, ""
 		old.pk = false
@@ -956,7 +1146,38 @@ var mutations = []mutation{
 		if !s.addFK(r, t, parent) {
 			return false
 		}
-		touched[t.name+"."+t.cols[len(t.cols)-1].name] = true
+		c := t.cols[len(t.cols)-1]
+		if c.notNull {
+			// existing rows need a parent before the column turns NOT NULL
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = 1", t.name, c.name))
+		}
+		touched[t.name+"."+c.name] = true
+		return true
+	}},
+	{"add composite foreign key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) < 2 {
+			return false
+		}
+		i, j := r.Intn(len(ts)), r.Intn(len(ts))
+		if i == j {
+			return false
+		}
+		if i < j {
+			i, j = j, i
+		}
+		t, parent := ts[i], ts[j]
+		if !s.addCompositeFK(r, t, parent) {
+			return false
+		}
+		for _, c := range parent.cols[len(parent.cols)-2:] {
+			c.fresh = true
+			touched[parent.name+"."+c.name] = true
+		}
+		for _, c := range t.cols[len(t.cols)-2:] {
+			c.fresh = true
+			touched[t.name+"."+c.name] = true
+		}
 		return true
 	}},
 	{"drop foreign key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
@@ -1019,7 +1240,10 @@ var mutations = []mutation{
 		// declarations written before this one name the table on their right side as it
 		// will be: the new name
 		for i, in := range s.intents {
-			s.intents[i] = strings.ReplaceAll(strings.ReplaceAll(in, " -> "+t.name+".", " -> "+to+"."), "enum "+t.name+".", "enum "+to+".")
+			in = strings.ReplaceAll(in, " -> "+t.name+".", " -> "+to+".")
+			in = strings.ReplaceAll(in, "enum "+t.name+".", "enum "+to+".")
+			in = strings.ReplaceAll(in, "backfill "+t.name+".", "backfill "+to+".")
+			s.intents[i] = in
 		}
 		for _, other := range s.tables {
 			for _, fk := range other.fks {
@@ -1098,11 +1322,75 @@ var mutations = []mutation{
 		c := &pCol{name: s.next("c"), typ: pick(r, []string{"int", "bigint unsigned"}), notNull: true, pk: true}
 		at := r.Intn(len(t.cols) + 1)
 		t.cols = append(t.cols[:at], append([]*pCol{c}, t.cols[at:]...)...)
+		if !old.auto && r.Intn(2) == 0 {
+			c.auto = true // the server numbers the existing rows
+		} else {
+			// the rows need distinct values before the key goes on: the old key's
+			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s", t.name, c.name, q(old.name)))
+		}
 		old.pk = false
 		if old.auto || len(referencedBy(s, t, old.name)) > 0 {
 			t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{old.name}})
 		}
 		touched[t.name+"."+old.name], touched[t.name+"."+c.name] = true, true
+		return true
+	}},
+	{"toggle collation", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, c := range t.cols {
+				if (c.typ == "text" || strings.HasPrefix(c.typ, "varchar")) && c.gen == "" && !touched[t.name+"."+c.name] {
+					c.collate = !c.collate
+					touched[t.name+"."+c.name] = true
+					return true
+				}
+			}
+		}
+		return false
+	}},
+	{"toggle invisible", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, c := range t.cols {
+				if !c.pk && c.gen == "" && !touched[t.name+"."+c.name] {
+					c.invisible = !c.invisible
+					touched[t.name+"."+c.name] = true
+					return true
+				}
+			}
+		}
+		return false
+	}},
+	{"toggle on update", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, c := range t.cols {
+				if c.typ == "datetime(6)" && c.gen == "" && !touched[t.name+"."+c.name] {
+					c.onUpdate = !c.onUpdate
+					if c.onUpdate && c.def == "" {
+						c.def = defaultFor(c)
+					}
+					touched[t.name+"."+c.name] = true
+					return true
+				}
+			}
+		}
+		return false
+	}},
+	{"add event", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		s.events = append(s.events, &pEvent{name: s.next("ev"), n: 1 + r.Intn(9)})
+		return true
+	}},
+	{"drop event", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		if len(s.events) == 0 {
+			return false
+		}
+		i := r.Intn(len(s.events))
+		s.events = append(s.events[:i], s.events[i+1:]...)
+		return true
+	}},
+	{"change event", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		if len(s.events) == 0 {
+			return false
+		}
+		pick(r, s.events).n += 10
 		return true
 	}},
 	{"table comment", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
@@ -1210,6 +1498,7 @@ type step struct {
 // to is skipped. It returns the target and the names of the steps that applied.
 func mutate(src *pSchema, recipe []step) (*pSchema, []string) {
 	s := src.clone()
+	s.mutating = true
 	touched := map[string]bool{}
 	var applied []string
 	for _, st := range recipe {
@@ -1262,8 +1551,18 @@ func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, appl
 		v.kind, v.detail = "plan refused", err.Error()
 		return v
 	}
-	got, _, err := c.Canonical(ctx, aText+"\nSET FOREIGN_KEY_CHECKS=1;\n"+strings.Join(ddl, "\n"))
+	// the source database holds rows: what apply runs against is never empty
+	got, _, err := c.Canonical(ctx, aText+"\n"+src.rows()+"\nSET FOREIGN_KEY_CHECKS=1;\n"+strings.Join(ddl, "\n"))
 	if err != nil {
+		if strings.Contains(err.Error(), "Error 1062") || strings.Contains(err.Error(), "Error 1452") || strings.Contains(err.Error(), "Error 3819") {
+			// the rows themselves (a duplicate, a dangling reference, a CHECK): a rows()
+			// mistake unless the plan's own statement raised it -- told apart below by
+			// loading the rows alone
+			if _, _, rerr := c.Canonical(ctx, aText+"\n"+src.rows()); rerr != nil {
+				v.kind, v.detail = "generator (rows)", rerr.Error()+"\n"+src.rows()
+				return v
+			}
+		}
 		v.kind, v.detail = "server refused the DDL", err.Error()
 		return v
 	}
@@ -1304,7 +1603,7 @@ func TestMigrateProbe(t *testing.T) {
 	var findings []verdict
 	for i := 0; i < *probeN; i++ {
 		src := generate(r)
-		n := 1 + r.Intn(3)
+		n := 1 + r.Intn(5)
 		var recipe []step
 		for j := 0; j < n; j++ {
 			recipe = append(recipe, step{m: r.Intn(len(mutations)), seed: r.Int63()})
@@ -1324,7 +1623,7 @@ func TestMigrateProbe(t *testing.T) {
 		if strings.HasPrefix(v.kind, "generator") {
 			counts[v.kind]++
 			if counts[v.kind] <= 3 {
-				t.Logf("%s (pair %d): %s\n%s", v.kind, i, v.detail, v.bSQL)
+				t.Logf("%s (pair %d, %s): %s\n%s", v.kind, i, strings.Join(applied, "; "), v.detail, v.aSQL)
 			}
 			continue
 		}
