@@ -1,29 +1,24 @@
 package migrate
 
-// The migrate probe: an oracle for Plan that a hand-written adversarial round cannot be. The
-// second adversarial round's migrate lane found six problems, all of one class -- the order
-// the plan's DDL runs in against a real server -- and a hand-picked case only ever catches
-// the one instance its author thought of. This probe generates schemas from the vocabulary
-// the planner handles (column types, generated columns, keys, foreign keys, AUTO_INCREMENT,
-// CHECKs, views, triggers, functions), mutates each into a target (columns added / dropped /
-// renamed / retyped / moved, keys and foreign keys attached and detached, the primary key
-// moved, tables added / dropped / renamed, ENUM labels, views, triggers, functions), and
-// judges the plan the way `sqlshape apply` would live: the DDL runs on a server holding the
-// source, the result must read back as the target's canonical form, and a second Plan from
-// there must be empty. Every pair is a change a real mysqld accepts written as one schema
-// (the target canonicalizes cleanly before the plan is judged), so a refused statement or a
-// leftover difference is the planner's.
+// The migrate probe, PostgreSQL side: the same oracle check/mysql/migrate has (see its
+// probe_test.go for the reasoning). Schemas are generated from the planner's vocabulary
+// (column types, an ENUM type, identity and generated columns, unique constraints and
+// indexes, foreign keys, CHECKs, table comments, views, functions, trigger functions with
+// their triggers), mutated into a target (columns added / dropped / renamed / widened /
+// re-nulled, constraints and indexes attached and detached, the primary key moved onto an
+// existing or a new column, tables added / dropped / renamed, ENUM labels added and dropped,
+// views, triggers and functions added / dropped / changed, generated expressions changed),
+// and judged the way `sqlshape apply` runs the plan: the DDL applied to a database holding
+// the source must read back as the target, column order aside (PostgreSQL cannot move a
+// column; Verify reports order as notes), and a second plan from there must be empty.
 //
 //	go test ./migrate -run TestMigrateProbe [-migrate-probe-n 200] [-migrate-probe-seed 1] \
 //	    [-migrate-probe-report /path/report.md]
 //
-// A failing pair is minimized (mutations removed while the failure stands) and written to
-// the report with its source, target, DDL and what went wrong; the test fails on any finding.
-// Skipped without a mysqld on PATH (nix-shell -p mysql84).
+// Skipped without pg_dump on PATH (nix-shell -p postgresql_17).
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -31,11 +26,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/kr9ly/sqlshape/check/mysql/v2/diff"
-	"github.com/kr9ly/sqlshape/check/mysql/v2/dump"
-	"github.com/kr9ly/sqlshape/mysqltest/v2"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
 )
 
 var (
@@ -44,44 +36,47 @@ var (
 	probeReport = flag.String("migrate-probe-report", "", "write the migrate probe's findings here (default: the test log)")
 )
 
-// ---- the model: a schema the generator can render and mutate --------------------------
+// ---- the model --------------------------------------------------------------------------
 
 type pSchema struct {
+	enums    []*pEnum
 	tables   []*pTable
 	views    []*pView
 	triggers []*pTrigger
 	funcs    []*pFunc
-	intents  []string // `-- @migrate` lines the mutations declared (target side only)
-	seq      int      // name counter
+	intents  []string
+	seq      int
+}
+
+type pEnum struct {
+	name   string
+	labels []string
 }
 
 type pTable struct {
 	name    string
-	orig    string // the name the source schema knows the table by (a declaration's left side)
+	orig    string // the source schema's name for the table (a declaration's left side)
 	cols    []*pCol
 	keys    []*pKey
 	fks     []*pFK
 	checks  []*pCheck
 	comment string
-	autoInc int // AUTO_INCREMENT=<n>, 0 for none
 }
 
 type pCol struct {
-	name    string
-	typ     string // as rendered: int, bigint unsigned, varchar(50), ...
-	labels  []string
-	notNull bool
-	def     string // default expression text, "" for none
-	pk      bool
-	auto    bool
-	gen     string // the column this generated column reads ("" for a plain column)
-	stored  bool
-	fresh   bool // added by a mutation: not in the source, so its drop needs no declaration
+	name     string
+	typ      string // integer, bigint, text, varchar(50), numeric(10,2), ..., or an enum type's name
+	notNull  bool
+	def      string
+	pk       bool
+	identity bool
+	gen      string // the column this generated (STORED) column reads
+	fresh    bool   // added by a mutation: not in the source, so its drop needs no declaration
 }
 
 type pKey struct {
 	name   string
-	unique bool
+	unique bool // a UNIQUE constraint; else a CREATE INDEX
 	cols   []string
 }
 
@@ -105,10 +100,10 @@ type pView struct {
 }
 
 type pTrigger struct {
-	name  string
+	name  string // the trigger; its function is name + "_fn"
 	table string
-	col   string // the column its body reads and sets (NEW.col)
-	n     int    // the constant the body adds (a body change is a different n)
+	col   string
+	n     int
 }
 
 type pFunc struct {
@@ -123,11 +118,13 @@ func (s *pSchema) next(prefix string) string {
 
 func (s *pSchema) clone() *pSchema {
 	c := &pSchema{seq: s.seq}
+	for _, e := range s.enums {
+		c.enums = append(c.enums, &pEnum{name: e.name, labels: append([]string(nil), e.labels...)})
+	}
 	for _, t := range s.tables {
-		nt := &pTable{name: t.name, orig: t.orig, comment: t.comment, autoInc: t.autoInc}
+		nt := &pTable{name: t.name, orig: t.orig, comment: t.comment}
 		for _, col := range t.cols {
 			nc := *col
-			nc.labels = append([]string(nil), col.labels...)
 			nt.cols = append(nt.cols, &nc)
 		}
 		for _, k := range t.keys {
@@ -170,6 +167,15 @@ func (s *pSchema) table(name string) *pTable {
 	return nil
 }
 
+func (s *pSchema) enum(name string) *pEnum {
+	for _, e := range s.enums {
+		if e.name == name {
+			return e
+		}
+	}
+	return nil
+}
+
 func (t *pTable) col(name string) *pCol {
 	for _, c := range t.cols {
 		if c.name == name {
@@ -177,16 +183,6 @@ func (t *pTable) col(name string) *pCol {
 		}
 	}
 	return nil
-}
-
-// inFK: a CHECK may not read a column a foreign key's referential action writes (Error 3823).
-func (t *pTable) inFK(col string) bool {
-	for _, fk := range t.fks {
-		if fk.col == col {
-			return true
-		}
-	}
-	return false
 }
 
 func (t *pTable) pk() *pCol {
@@ -198,92 +194,92 @@ func (t *pTable) pk() *pCol {
 	return nil
 }
 
-// ---- the type vocabulary --------------------------------------------------------------
+func (t *pTable) inFK(col string) bool {
+	for _, fk := range t.fks {
+		if fk.col == col {
+			return true
+		}
+	}
+	return false
+}
 
-var probeTypes = []string{"int", "bigint unsigned", "varchar(50)", "decimal(10,2)", "datetime(6)", "date", "text", "enum", "json", "tinyint(1)", "smallint", "double"}
+// ---- the type vocabulary ----------------------------------------------------------------
+
+var probeTypes = []string{"integer", "bigint", "smallint", "text", "varchar(50)", "numeric(10,2)", "double precision", "timestamptz", "date", "boolean", "jsonb", "enum"}
 
 func isNumeric(typ string) bool {
-	switch {
-	case strings.HasPrefix(typ, "int"), strings.HasPrefix(typ, "bigint"), strings.HasPrefix(typ, "decimal"),
-		strings.HasPrefix(typ, "tinyint"), strings.HasPrefix(typ, "smallint"), typ == "double":
+	switch typ {
+	case "integer", "bigint", "smallint", "numeric(10,2)", "numeric(14,2)", "double precision":
 		return true
 	}
 	return false
 }
 
-func isInteger(typ string) bool {
-	return isNumeric(typ) && !strings.HasPrefix(typ, "decimal") && typ != "double"
-}
+func isInteger(typ string) bool { return typ == "integer" || typ == "bigint" || typ == "smallint" }
 
-// keyable: a type an index takes without a prefix length.
-func keyable(typ string) bool { return typ != "text" && typ != "json" }
-
-func defaultFor(c *pCol) string {
-	switch {
-	case isInteger(c.typ):
-		return "'0'"
-	case strings.HasPrefix(c.typ, "decimal"):
-		return "'0.00'"
-	case c.typ == "double":
-		return "'0'"
-	case strings.HasPrefix(c.typ, "varchar"):
+func (s *pSchema) defaultFor(c *pCol) string {
+	switch c.typ {
+	case "integer", "bigint", "smallint", "double precision":
+		return "0"
+	case "numeric(10,2)", "numeric(14,2)":
+		return "0.00"
+	case "text":
 		return "'x'"
-	case c.typ == "datetime(6)":
-		return "CURRENT_TIMESTAMP(6)"
-	case c.typ == "date":
+	case "varchar(50)", "varchar(100)":
+		return "'x'"
+	case "timestamptz":
+		return "now()"
+	case "date":
 		return "'2020-01-01'"
-	case c.typ == "enum":
-		return "'" + c.labels[0] + "'"
+	case "boolean":
+		return "false"
+	case "jsonb":
+		return "'{}'"
 	}
-	return "" // text / json take no literal default
-}
-
-func widen(typ string) string {
-	switch typ {
-	case "int":
-		return "bigint"
-	case "smallint", "tinyint(1)":
-		return "int"
-	case "varchar(50)":
-		return "varchar(100)"
-	case "decimal(10,2)":
-		return "decimal(14,2)"
-	case "bigint unsigned":
-		return "decimal(20,0)"
+	if e := s.enum(c.typ); e != nil {
+		return "'" + e.labels[0] + "'"
 	}
 	return ""
 }
 
-// ---- rendering ------------------------------------------------------------------------
-
-func (c *pCol) typeText() string {
-	if c.typ == "enum" {
-		quoted := make([]string, len(c.labels))
-		for i, l := range c.labels {
-			quoted[i] = "'" + l + "'"
-		}
-		return "enum(" + strings.Join(quoted, ",") + ")"
+func widen(typ string) string {
+	switch typ {
+	case "integer":
+		return "bigint"
+	case "smallint":
+		return "integer"
+	case "varchar(50)":
+		return "varchar(100)"
+	case "numeric(10,2)":
+		return "numeric(14,2)"
 	}
-	return c.typ
+	return ""
+}
+
+// ---- rendering --------------------------------------------------------------------------
+
+func qi(name string) string { return `"` + name + `"` }
+
+func qilist(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = qi(n)
+	}
+	return strings.Join(out, ", ")
 }
 
 func (c *pCol) render() string {
 	var b strings.Builder
-	b.WriteString(q(c.name) + " " + c.typeText())
+	b.WriteString(qi(c.name) + " " + c.typ)
 	if c.gen != "" {
-		b.WriteString(" GENERATED ALWAYS AS ((" + q(c.gen) + " + 1))")
-		if c.stored {
-			b.WriteString(" STORED")
-		} else {
-			b.WriteString(" VIRTUAL")
-		}
+		b.WriteString(" GENERATED ALWAYS AS (" + qi(c.gen) + " + 1) STORED")
 		return b.String()
 	}
 	if c.notNull {
 		b.WriteString(" NOT NULL")
 	}
-	if c.auto {
-		b.WriteString(" AUTO_INCREMENT")
+	if c.identity {
+		b.WriteString(" GENERATED BY DEFAULT AS IDENTITY")
 	} else if c.def != "" {
 		b.WriteString(" DEFAULT " + c.def)
 	}
@@ -296,17 +292,15 @@ func (t *pTable) render() string {
 		parts = append(parts, "  "+c.render())
 	}
 	if pk := t.pk(); pk != nil {
-		parts = append(parts, "  PRIMARY KEY ("+q(pk.name)+")")
+		parts = append(parts, "  CONSTRAINT "+qi(t.name+"_pkey")+" PRIMARY KEY ("+qi(pk.name)+")")
 	}
 	for _, k := range t.keys {
-		kind := "KEY"
 		if k.unique {
-			kind = "UNIQUE KEY"
+			parts = append(parts, "  CONSTRAINT "+qi(k.name)+" UNIQUE ("+qilist(k.cols)+")")
 		}
-		parts = append(parts, "  "+kind+" "+q(k.name)+" ("+qlist(k.cols)+")")
 	}
 	for _, fk := range t.fks {
-		s := "  CONSTRAINT " + q(fk.name) + " FOREIGN KEY (" + q(fk.col) + ") REFERENCES " + q(fk.refTable) + " (" + q(fk.refCol) + ")"
+		s := "  CONSTRAINT " + qi(fk.name) + " FOREIGN KEY (" + qi(fk.col) + ") REFERENCES " + qi(fk.refTable) + " (" + qi(fk.refCol) + ")"
 		if fk.onDelete != "" {
 			s += " ON DELETE " + fk.onDelete
 		}
@@ -314,68 +308,78 @@ func (t *pTable) render() string {
 	}
 	for _, ck := range t.checks {
 		c := t.col(ck.col)
-		expr := "(" + q(ck.col) + " > 0)"
+		expr := "(" + qi(ck.col) + " > 0)"
 		if !isNumeric(c.typ) {
-			expr = "(char_length(" + q(ck.col) + ") > 0)"
+			expr = "(length(" + qi(ck.col) + ") > 0)"
 		}
-		parts = append(parts, "  CONSTRAINT "+q(ck.name)+" CHECK "+expr)
+		parts = append(parts, "  CONSTRAINT "+qi(ck.name)+" CHECK "+expr)
 	}
 	var b strings.Builder
-	b.WriteString("CREATE TABLE " + q(t.name) + " (\n" + strings.Join(parts, ",\n") + "\n) ENGINE=InnoDB")
-	if t.autoInc > 0 {
-		fmt.Fprintf(&b, " AUTO_INCREMENT=%d", t.autoInc)
+	b.WriteString("CREATE TABLE " + qi(t.name) + " (\n" + strings.Join(parts, ",\n") + "\n);\n")
+	for _, k := range t.keys {
+		if !k.unique {
+			b.WriteString("CREATE INDEX " + qi(k.name) + " ON " + qi(t.name) + " (" + qilist(k.cols) + ");\n")
+		}
 	}
 	if t.comment != "" {
-		b.WriteString(" COMMENT=" + lit(t.comment))
+		b.WriteString("COMMENT ON TABLE " + qi(t.name) + " IS '" + t.comment + "';\n")
 	}
-	b.WriteString(";\n")
 	return b.String()
 }
 
 func (s *pSchema) render() string {
 	var b strings.Builder
-	b.WriteString("-- sqlshape: mysql 8.4\n")
 	for _, in := range s.intents {
 		b.WriteString(in + "\n")
+	}
+	for _, e := range s.enums {
+		quoted := make([]string, len(e.labels))
+		for i, l := range e.labels {
+			quoted[i] = "'" + l + "'"
+		}
+		b.WriteString("CREATE TYPE " + qi(e.name) + " AS ENUM (" + strings.Join(quoted, ", ") + ");\n")
 	}
 	for _, t := range s.tables {
 		b.WriteString(t.render())
 	}
 	for _, v := range s.views {
-		b.WriteString("CREATE VIEW " + q(v.name) + " AS SELECT " + qlist(v.cols) + " FROM " + q(v.table) + ";\n")
+		b.WriteString("CREATE VIEW " + qi(v.name) + " AS SELECT " + qilist(v.cols) + " FROM " + qi(v.table) + ";\n")
 	}
 	for _, f := range s.funcs {
-		fmt.Fprintf(&b, "CREATE FUNCTION %s(a INT) RETURNS INT DETERMINISTIC RETURN a + %d;\n", q(f.name), f.n)
+		fmt.Fprintf(&b, "CREATE FUNCTION %s(a integer) RETURNS integer LANGUAGE sql IMMUTABLE RETURN a + %d;\n", qi(f.name), f.n)
 	}
 	for _, tr := range s.triggers {
-		fmt.Fprintf(&b, "CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW SET NEW.%s = COALESCE(NEW.%s, 0) + %d;\n",
-			q(tr.name), q(tr.table), q(tr.col), q(tr.col), tr.n)
+		fmt.Fprintf(&b, "CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.%s := coalesce(NEW.%s, 0) + %d; RETURN NEW; END $$;\n",
+			qi(tr.name+"_fn"), qi(tr.col), qi(tr.col), tr.n)
+		fmt.Fprintf(&b, "CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION %s();\n", qi(tr.name), qi(tr.table), qi(tr.name+"_fn"))
 	}
 	return b.String()
 }
 
-// ---- generating a source schema -------------------------------------------------------
+// ---- generating -------------------------------------------------------------------------
 
 func pick[T any](r *rand.Rand, list []T) T { return list[r.Intn(len(list))] }
 
 func (s *pSchema) newCol(r *rand.Rand) *pCol {
 	c := &pCol{name: s.next("c"), typ: pick(r, probeTypes)}
 	if c.typ == "enum" {
-		c.labels = []string{"a", "b", "c"}[:2+r.Intn(2)]
+		if len(s.enums) == 0 || r.Intn(3) == 0 {
+			e := &pEnum{name: s.next("e"), labels: []string{"a", "b", "c"}[:2+r.Intn(2)]}
+			s.enums = append(s.enums, e)
+		}
+		c.typ = pick(r, s.enums).name
 	}
 	c.notNull = r.Intn(2) == 0
 	if c.notNull || r.Intn(3) == 0 {
-		c.def = defaultFor(c)
+		c.def = s.defaultFor(c)
 	}
 	return c
 }
 
-// numericCols: the plain (not generated, not AUTO_INCREMENT) numeric columns a generated
-// column or a trigger body may read.
 func (t *pTable) numericCols() []*pCol {
 	var out []*pCol
 	for _, c := range t.cols {
-		if isNumeric(c.typ) && c.gen == "" && !c.auto {
+		if isNumeric(c.typ) && c.gen == "" && !c.identity {
 			out = append(out, c)
 		}
 	}
@@ -385,15 +389,14 @@ func (t *pTable) numericCols() []*pCol {
 func (s *pSchema) newTable(r *rand.Rand) *pTable {
 	t := &pTable{name: s.next("t")}
 	t.orig = t.name
-	id := &pCol{name: "id", typ: pick(r, []string{"int", "bigint unsigned"}), notNull: true, pk: true, auto: r.Intn(2) == 0}
+	id := &pCol{name: "id", typ: pick(r, []string{"integer", "bigint"}), notNull: true, pk: true, identity: r.Intn(2) == 0}
 	t.cols = append(t.cols, id)
 	n := 2 + r.Intn(4)
 	for i := 0; i < n; i++ {
 		t.cols = append(t.cols, s.newCol(r))
 	}
 	if src := t.numericCols(); len(src) > 0 && r.Intn(3) == 0 {
-		g := &pCol{name: s.next("g"), typ: "bigint", gen: pick(r, src).name, stored: r.Intn(2) == 0}
-		// before or after the column it reads: both are one CREATE TABLE
+		g := &pCol{name: s.next("g"), typ: "bigint", gen: pick(r, src).name}
 		at := r.Intn(len(t.cols) + 1)
 		t.cols = append(t.cols[:at], append([]*pCol{g}, t.cols[at:]...)...)
 	}
@@ -409,16 +412,13 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 	if r.Intn(4) == 0 {
 		t.comment = "about " + t.name
 	}
-	if id.auto && r.Intn(3) == 0 {
-		t.autoInc = 100 + r.Intn(900)
-	}
 	return t
 }
 
 func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
 	var cands []string
 	for _, c := range t.cols {
-		if keyable(c.typ) && !c.pk && (c.gen == "" || c.stored) {
+		if c.typ != "jsonb" && !c.pk {
 			cands = append(cands, c.name)
 		}
 	}
@@ -437,7 +437,7 @@ func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
 func (s *pSchema) addCheck(r *rand.Rand, t *pTable) bool {
 	var cands []string
 	for _, c := range t.cols {
-		if !c.auto && !c.pk && !t.inFK(c.name) && (isNumeric(c.typ) || strings.HasPrefix(c.typ, "varchar")) {
+		if !c.identity && !c.pk && (isNumeric(c.typ) || c.typ == "text" || strings.HasPrefix(c.typ, "varchar")) {
 			cands = append(cands, c.name)
 		}
 	}
@@ -448,7 +448,6 @@ func (s *pSchema) addCheck(r *rand.Rand, t *pTable) bool {
 	return true
 }
 
-// addFK gives t a new column referencing parent's primary key.
 func (s *pSchema) addFK(r *rand.Rand, t, parent *pTable) bool {
 	if parent == t {
 		return false
@@ -456,11 +455,12 @@ func (s *pSchema) addFK(r *rand.Rand, t, parent *pTable) bool {
 	ppk := parent.pk()
 	c := &pCol{name: s.next("r"), typ: ppk.typ, notNull: r.Intn(2) == 0}
 	t.cols = append(t.cols, c)
-	t.fks = append(t.fks, &pFK{name: s.next("fk"), col: c.name, refTable: parent.name, refCol: ppk.name,
-		onDelete: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT"})})
-	if t.fks[len(t.fks)-1].onDelete == "SET NULL" {
+	fk := &pFK{name: s.next("fk"), col: c.name, refTable: parent.name, refCol: ppk.name,
+		onDelete: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT"})}
+	if fk.onDelete == "SET NULL" {
 		c.notNull = false
 	}
+	t.fks = append(t.fks, fk)
 	return true
 }
 
@@ -507,13 +507,8 @@ func generate(r *rand.Rand) *pSchema {
 	return s
 }
 
-// ---- mutations ------------------------------------------------------------------------
+// ---- mutations --------------------------------------------------------------------------
 
-// A mutation edits the schema toward the target and declares what the diff cannot see; it
-// reports false when the schema offers nothing it applies to. touched is the set of names
-// ("t", "t.c") a mutation already moved: a second mutation keeps off them so every pair's
-// declarations describe one step per object (a column renamed and then dropped is a
-// declaration the planner is right to refuse, not a probe of its DDL).
 type mutation struct {
 	name  string
 	apply func(r *rand.Rand, s *pSchema, touched map[string]bool) bool
@@ -539,7 +534,6 @@ func untouched(s *pSchema, touched map[string]bool) []*pTable {
 	return out
 }
 
-// referencedBy: the foreign keys (in any table) that reference table t's column col.
 func referencedBy(s *pSchema, t *pTable, col string) []*pFK {
 	var out []*pFK
 	for _, other := range s.tables {
@@ -552,9 +546,36 @@ func referencedBy(s *pSchema, t *pTable, col string) []*pFK {
 	return out
 }
 
-// detach removes every part of the schema that reads t's column col: keys and checks over
-// it, foreign keys from it, generated columns reading it (dropped, declared), views'
-// projections of it (the view goes when it projected nothing else), triggers on it.
+func fkOwner(s *pSchema, fk *pFK) string {
+	for _, t := range s.tables {
+		for _, f := range t.fks {
+			if f == fk {
+				return t.name
+			}
+		}
+	}
+	return ""
+}
+
+func indexOf(list []string, s string) int {
+	for i, x := range list {
+		if x == s {
+			return i
+		}
+	}
+	return -1
+}
+
+func indexOfCol(t *pTable, name string) int {
+	for i, c := range t.cols {
+		if c.name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// detach removes everything that reads t's column col.
 func detach(s *pSchema, t *pTable, col string) {
 	var keys []*pKey
 	for _, k := range t.keys {
@@ -615,7 +636,6 @@ func detach(s *pSchema, t *pTable, col string) {
 	s.triggers = triggers
 }
 
-// renameRefs spells t's column from as to everywhere it is read.
 func renameRefs(s *pSchema, t *pTable, from, to string) {
 	for _, k := range t.keys {
 		for i, c := range k.cols {
@@ -690,6 +710,11 @@ func dropTable(s *pSchema, t *pTable) {
 	s.triggers = triggers
 }
 
+func insertCol(r *rand.Rand, t *pTable, c *pCol) {
+	at := r.Intn(len(t.cols) + 1)
+	t.cols = append(t.cols[:at], append([]*pCol{c}, t.cols[at:]...)...)
+}
+
 var mutations = []mutation{
 	{"add column", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
 		ts := untouched(s, touched)
@@ -699,13 +724,12 @@ var mutations = []mutation{
 		t := pick(r, ts)
 		var c *pCol
 		if src := t.numericCols(); len(src) > 0 && r.Intn(3) == 0 {
-			c = &pCol{name: s.next("g"), typ: "bigint", gen: pick(r, src).name, stored: r.Intn(2) == 0}
+			c = &pCol{name: s.next("g"), typ: "bigint", gen: pick(r, src).name}
 		} else {
 			c = s.newCol(r)
 		}
 		c.fresh = true
-		at := r.Intn(len(t.cols) + 1)
-		t.cols = append(t.cols[:at], append([]*pCol{c}, t.cols[at:]...)...)
+		insertCol(r, t, c)
 		touched[t.name+"."+c.name] = true
 		return true
 	}},
@@ -715,14 +739,11 @@ var mutations = []mutation{
 			return false
 		}
 		t := pick(r, ts)
-		x := &pCol{name: s.next("c"), typ: pick(r, []string{"int", "decimal(10,2)", "smallint"})}
-		g := &pCol{name: s.next("g"), typ: "bigint", gen: x.name, stored: r.Intn(2) == 0}
+		x := &pCol{name: s.next("c"), typ: pick(r, []string{"integer", "numeric(10,2)", "smallint"})}
+		g := &pCol{name: s.next("g"), typ: "bigint", gen: x.name}
 		x.fresh, g.fresh = true, true
-		// the generated column first or last, before or after its source
-		at := r.Intn(len(t.cols) + 1)
-		t.cols = append(t.cols[:at], append([]*pCol{g}, t.cols[at:]...)...)
-		at = r.Intn(len(t.cols) + 1)
-		t.cols = append(t.cols[:at], append([]*pCol{x}, t.cols[at:]...)...)
+		insertCol(r, t, g)
+		insertCol(r, t, x)
 		touched[t.name+"."+x.name], touched[t.name+"."+g.name] = true, true
 		return true
 	}},
@@ -799,7 +820,7 @@ var mutations = []mutation{
 		t := pick(r, ts)
 		var cands []*pCol
 		for _, c := range t.cols {
-			if widen(c.typ) != "" && c.gen == "" && !touched[t.name+"."+c.name] {
+			if widen(c.typ) != "" && c.gen == "" && !c.identity && !touched[t.name+"."+c.name] {
 				cands = append(cands, c)
 			}
 		}
@@ -808,15 +829,9 @@ var mutations = []mutation{
 		}
 		c := pick(r, cands)
 		w := widen(c.typ)
-		if c.auto && !isInteger(w) {
-			return false
+		if t.inFK(c.name) {
+			return false // a referencing column follows its parent's key
 		}
-		for _, fk := range t.fks {
-			if fk.col == c.name {
-				return false // a referencing column follows its parent's key (widened below)
-			}
-		}
-		// a referenced key and every column referencing it widen together
 		for _, fk := range referencedBy(s, t, c.name) {
 			child := s.table(fkOwner(s, fk))
 			cc := child.col(fk.col)
@@ -828,28 +843,8 @@ var mutations = []mutation{
 		}
 		c.typ = w
 		if c.def != "" {
-			c.def = defaultFor(c)
+			c.def = s.defaultFor(c)
 		}
-		touched[t.name+"."+c.name] = true
-		return true
-	}},
-	{"move column", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		ts := untouched(s, touched)
-		if len(ts) == 0 {
-			return false
-		}
-		t := pick(r, ts)
-		if len(t.cols) < 2 {
-			return false
-		}
-		i := r.Intn(len(t.cols))
-		c := t.cols[i]
-		if touched[t.name+"."+c.name] {
-			return false
-		}
-		t.cols = append(t.cols[:i], t.cols[i+1:]...)
-		j := r.Intn(len(t.cols) + 1)
-		t.cols = append(t.cols[:j], append([]*pCol{c}, t.cols[j:]...)...)
 		touched[t.name+"."+c.name] = true
 		return true
 	}},
@@ -864,6 +859,9 @@ var mutations = []mutation{
 			return false
 		}
 		c := pick(r, cands)
+		if c.identity {
+			return false
+		}
 		for _, fk := range t.fks {
 			if fk.col == c.name && fk.onDelete == "SET NULL" {
 				return false
@@ -871,7 +869,7 @@ var mutations = []mutation{
 		}
 		c.notNull = !c.notNull
 		if c.notNull || r.Intn(2) == 0 {
-			c.def = defaultFor(c)
+			c.def = s.defaultFor(c)
 		} else {
 			c.def = ""
 		}
@@ -889,16 +887,9 @@ var mutations = []mutation{
 		for _, t := range untouched(s, touched) {
 			if len(t.keys) > 0 {
 				i := r.Intn(len(t.keys))
-				// the index an AUTO_INCREMENT column or a foreign key (this table's, or one
-				// referencing this table) needs stays: without it the target is not a schema
-				lead := t.keys[i].cols[0]
-				if c := t.col(lead); c.auto || len(referencedBy(s, t, lead)) > 0 {
+				// a unique constraint a foreign key references stays
+				if t.keys[i].unique && len(t.keys[i].cols) == 1 && len(referencedBy(s, t, t.keys[i].cols[0])) > 0 {
 					return false
-				}
-				for _, fk := range t.fks {
-					if lead == fk.col {
-						return false
-					}
 				}
 				t.keys = append(t.keys[:i], t.keys[i+1:]...)
 				return true
@@ -915,7 +906,7 @@ var mutations = []mutation{
 		old := t.pk()
 		var cands []*pCol
 		for _, c := range t.cols {
-			if !c.pk && c.gen == "" && isInteger(c.typ) && !touched[t.name+"."+c.name] {
+			if !c.pk && c.gen == "" && isInteger(c.typ) && !touched[t.name+"."+c.name] && !t.inFK(c.name) {
 				cands = append(cands, c)
 			}
 		}
@@ -923,19 +914,31 @@ var mutations = []mutation{
 			return false
 		}
 		c := pick(r, cands)
-		for _, fk := range t.fks {
-			if fk.col == c.name {
-				return false
-			}
-		}
 		c.pk, c.notNull, c.def = true, true, ""
 		old.pk = false
-		// the old key column: an AUTO_INCREMENT column must stay a key, and so must a
-		// referenced one
-		if old.auto || len(referencedBy(s, t, old.name)) > 0 {
+		if len(referencedBy(s, t, old.name)) > 0 {
 			t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{old.name}})
-		} else if r.Intn(2) == 0 {
+		} else if !old.identity && r.Intn(2) == 0 {
 			old.notNull = false
+		}
+		touched[t.name+"."+old.name], touched[t.name+"."+c.name] = true, true
+		return true
+	}},
+	{"move primary key onto a new column", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		t := pick(r, ts)
+		old := t.pk()
+		if touched[t.name+"."+old.name] {
+			return false
+		}
+		c := &pCol{name: s.next("c"), typ: pick(r, []string{"integer", "bigint"}), notNull: true, pk: true, identity: r.Intn(2) == 0}
+		insertCol(r, t, c)
+		old.pk = false
+		if len(referencedBy(s, t, old.name)) > 0 {
+			t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{old.name}})
 		}
 		touched[t.name+"."+old.name], touched[t.name+"."+c.name] = true, true
 		return true
@@ -952,7 +955,7 @@ var mutations = []mutation{
 		if i < j {
 			i, j = j, i
 		}
-		t, parent := ts[i], ts[j] // the parent is created first in the rendered schema
+		t, parent := ts[i], ts[j]
 		if !s.addFK(r, t, parent) {
 			return false
 		}
@@ -1000,7 +1003,7 @@ var mutations = []mutation{
 		t := pick(r, ts)
 		for k := range touched {
 			if strings.HasPrefix(k, t.name+".") {
-				return false // a step already moved one of its columns: one declaration per object
+				return false
 			}
 		}
 		s.intents = append(s.intents, "-- @migrate drop "+t.orig)
@@ -1016,10 +1019,8 @@ var mutations = []mutation{
 		t := pick(r, ts)
 		to := t.name + "_new"
 		s.intents = append(s.intents, "-- @migrate rename "+t.orig+" -> "+to)
-		// declarations written before this one name the table on their right side as it
-		// will be: the new name
 		for i, in := range s.intents {
-			s.intents[i] = strings.ReplaceAll(strings.ReplaceAll(in, " -> "+t.name+".", " -> "+to+"."), "enum "+t.name+".", "enum "+to+".")
+			s.intents[i] = strings.ReplaceAll(in, " -> "+t.name+".", " -> "+to+".")
 		}
 		for _, other := range s.tables {
 			for _, fk := range other.fks {
@@ -1043,27 +1044,23 @@ var mutations = []mutation{
 		return true
 	}},
 	{"add enum label", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		for _, t := range untouched(s, touched) {
-			for _, c := range t.cols {
-				if c.typ == "enum" && !touched[t.name+"."+c.name] {
-					c.labels = append(c.labels, "z")
-					touched[t.name+"."+c.name] = true
-					return true
-				}
+		for _, e := range s.enums {
+			if !touched["enum:"+e.name] {
+				e.labels = append(e.labels, "z")
+				touched["enum:"+e.name] = true
+				return true
 			}
 		}
 		return false
 	}},
 	{"drop enum label", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		for _, t := range untouched(s, touched) {
-			for _, c := range t.cols {
-				if c.typ == "enum" && len(c.labels) > 1 && !touched[t.name+"."+c.name] {
-					gone := c.labels[len(c.labels)-1]
-					c.labels = c.labels[:len(c.labels)-1]
-					s.intents = append(s.intents, fmt.Sprintf("-- @migrate enum %s.%s: drop '%s' using '%s'", t.name, c.name, gone, c.labels[0]))
-					touched[t.name+"."+c.name] = true
-					return true
-				}
+		for _, e := range s.enums {
+			if len(e.labels) > 1 && !touched["enum:"+e.name] {
+				gone := e.labels[len(e.labels)-1]
+				e.labels = e.labels[:len(e.labels)-1]
+				s.intents = append(s.intents, fmt.Sprintf("-- @migrate enum %s: drop '%s' using '%s'", e.name, gone, e.labels[0]))
+				touched["enum:"+e.name] = true
+				return true
 			}
 		}
 		return false
@@ -1084,26 +1081,6 @@ var mutations = []mutation{
 			}
 		}
 		return false
-	}},
-	{"move primary key onto a new column", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		ts := untouched(s, touched)
-		if len(ts) == 0 {
-			return false
-		}
-		t := pick(r, ts)
-		old := t.pk()
-		if touched[t.name+"."+old.name] {
-			return false
-		}
-		c := &pCol{name: s.next("c"), typ: pick(r, []string{"int", "bigint unsigned"}), notNull: true, pk: true}
-		at := r.Intn(len(t.cols) + 1)
-		t.cols = append(t.cols[:at], append([]*pCol{c}, t.cols[at:]...)...)
-		old.pk = false
-		if old.auto || len(referencedBy(s, t, old.name)) > 0 {
-			t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{old.name}})
-		}
-		touched[t.name+"."+old.name], touched[t.name+"."+c.name] = true, true
-		return true
 	}},
 	{"table comment", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
 		ts := untouched(s, touched)
@@ -1154,8 +1131,7 @@ var mutations = []mutation{
 		if len(s.triggers) == 0 {
 			return false
 		}
-		tr := pick(r, s.triggers)
-		tr.n += 10
+		pick(r, s.triggers).n += 10
 		return true
 	}},
 	{"add function", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
@@ -1179,35 +1155,11 @@ var mutations = []mutation{
 	}},
 }
 
-func indexOfCol(t *pTable, name string) int {
-	for i, c := range t.cols {
-		if c.name == name {
-			return i
-		}
-	}
-	return -1
-}
-
-func fkOwner(s *pSchema, fk *pFK) string {
-	for _, t := range s.tables {
-		for _, f := range t.fks {
-			if f == fk {
-				return t.name
-			}
-		}
-	}
-	return ""
-}
-
-// step is one mutation with the seed it draws from, so a recipe replays deterministically
-// with steps removed.
 type step struct {
 	m    int
 	seed int64
 }
 
-// mutate applies the recipe to a copy of src; a step whose mutation finds nothing to apply
-// to is skipped. It returns the target and the names of the steps that applied.
 func mutate(src *pSchema, recipe []step) (*pSchema, []string) {
 	s := src.clone()
 	touched := map[string]bool{}
@@ -1221,10 +1173,10 @@ func mutate(src *pSchema, recipe []step) (*pSchema, []string) {
 	return s, applied
 }
 
-// ---- judging --------------------------------------------------------------------------
+// ---- judging ----------------------------------------------------------------------------
 
 type verdict struct {
-	kind    string // "" when the pair passes
+	kind    string
 	detail  string
 	ddl     []string
 	aSQL    string
@@ -1232,17 +1184,14 @@ type verdict struct {
 	applied []string
 }
 
-// judge plans src -> target and runs the plan on a server holding src. The generator's own
-// mistakes (a target the server refuses as one schema) are "generator" verdicts, kept apart
-// from the planner's.
-func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, applied []string) verdict {
+func judge(ctx context.Context, src, target *pSchema, applied []string) verdict {
 	v := verdict{aSQL: src.render(), bSQL: target.render(), applied: applied}
-	a, aText, err := c.Canonical(ctx, v.aSQL)
+	a, aText, err := server.Canonical(ctx, v.aSQL, nil)
 	if err != nil {
 		v.kind, v.detail = "generator (source)", err.Error()
 		return v
 	}
-	b, _, err := c.Canonical(ctx, v.bSQL)
+	b, _, err := server.Canonical(ctx, v.bSQL, nil)
 	if err != nil {
 		v.kind, v.detail = "generator (target)", err.Error()
 		return v
@@ -1262,16 +1211,18 @@ func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, appl
 		v.kind, v.detail = "plan refused", err.Error()
 		return v
 	}
-	got, _, err := c.Canonical(ctx, aText+"\nSET FOREIGN_KEY_CHECKS=1;\n"+strings.Join(ddl, "\n"))
+	got, _, err := server.Canonical(ctx, aText+"\nRESET search_path;\n"+strings.Join(ddl, "\n"), b)
 	if err != nil {
 		v.kind, v.detail = "server refused the DDL", err.Error()
 		return v
 	}
-	if changes := diff.Compare(got, b); len(changes) > 0 {
-		var d []string
-		for _, ch := range changes {
+	var d []string
+	for _, ch := range diff.Compare(got, b) {
+		if !ch.OrderOnly() {
 			d = append(d, ch.String())
 		}
+	}
+	if len(d) > 0 {
 		v.kind, v.detail = "DDL does not reach the target", strings.Join(d, "\n")
 		return v
 	}
@@ -1284,20 +1235,8 @@ func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, appl
 }
 
 func TestMigrateProbe(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	srv, err := mysqltest.Start(ctx, "-- sqlshape: mysql 8.4\n")
-	if errors.Is(err, mysqltest.ErrNoServer) {
-		t.Skip("no mysqld on PATH (nix-shell -p mysql84)")
-	} else if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.Close()
-	scratch, err := dump.NewScratch(srv.DSN())
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	requirePgDump(t)
+	ctx := context.Background()
 	r := rand.New(rand.NewSource(*probeSeed))
 	counts := map[string]int{}
 	byMutation := map[string]int{}
@@ -1313,7 +1252,7 @@ func TestMigrateProbe(t *testing.T) {
 		if len(applied) == 0 {
 			continue
 		}
-		v := judge(ctx, scratch, src, target, applied)
+		v := judge(ctx, src, target, applied)
 		for _, a := range applied {
 			byMutation[a]++
 		}
@@ -1329,7 +1268,6 @@ func TestMigrateProbe(t *testing.T) {
 			continue
 		}
 		counts["finding"]++
-		// minimize: drop steps while the failure stands
 		for j := 0; j < len(recipe); {
 			shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
 			tgt, app := mutate(src, shorter)
@@ -1337,7 +1275,7 @@ func TestMigrateProbe(t *testing.T) {
 				j++
 				continue
 			}
-			if w := judge(ctx, scratch, src, tgt, app); w.kind == v.kind {
+			if w := judge(ctx, src, tgt, app); w.kind == v.kind {
 				recipe, v = shorter, w
 				continue
 			}
@@ -1365,10 +1303,9 @@ func TestMigrateProbe(t *testing.T) {
 	}
 	t.Logf("migrate probe, seed %d, %d pairs:\n%s", *probeSeed, *probeN, summary.String())
 
-	// the same failure minimized from different pairs reads the same: dedupe by kind + DDL
 	seen := map[string]bool{}
 	var report strings.Builder
-	fmt.Fprintf(&report, "# migrate probe, seed %d, %d pairs\n\n%s\n", *probeSeed, *probeN, summary.String())
+	fmt.Fprintf(&report, "# migrate probe (postgres), seed %d, %d pairs\n\n%s\n", *probeSeed, *probeN, summary.String())
 	distinct := 0
 	for _, v := range findings {
 		key := v.kind + "\n" + v.detail

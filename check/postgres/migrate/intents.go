@@ -159,7 +159,27 @@ func (p *planner) readIntents(list []Intent) {
 	bad := func(i Intent, format string, args ...any) {
 		in.problems = append(in.problems, fmt.Sprintf("@migrate %s (line %d): %s", i, i.Line, fmt.Sprintf(format, args...)))
 	}
+	// table renames first, whatever line they are on: a column rename's right side names
+	// the table as it will be, which only the table's own declaration explains
+	isTableRename := func(i Intent) bool {
+		if i.Kind != Rename {
+			return false
+		}
+		fr, fc := resolveName(p.from, i.From)
+		return fr != nil && fc == ""
+	}
+	ordered := make([]Intent, 0, len(list))
 	for _, i := range list {
+		if isTableRename(i) {
+			ordered = append(ordered, i)
+		}
+	}
+	for _, i := range list {
+		if !isTableRename(i) {
+			ordered = append(ordered, i)
+		}
+	}
+	for _, i := range ordered {
 		switch i.Kind {
 		case Rename:
 			fr, fc := resolveName(p.from, i.From)

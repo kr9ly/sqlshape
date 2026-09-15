@@ -69,6 +69,29 @@ release it is a candidate for.
   NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
   or TRIGGER still refuses the directive (neither returns a value for it to describe).
 
+- PostgreSQL migrations have the same oracle: `check/postgres/migrate`'s `TestMigrateProbe`
+  generates schemas from the planner's vocabulary (column types, an ENUM type, identity and
+  generated columns, unique constraints and indexes, foreign keys, CHECKs, comments, views,
+  functions, trigger functions with their triggers), mutates each into a target and judges the
+  plan against the embedded PostgreSQL the way `sqlshape apply` runs it, column order aside.
+  Its first sweeps (about 3,000 pairs over eleven seeds) found ten orderings the server refuses
+  or the plan left short, each fixed and pinned in `probe_findings_test.go`: a trigger function
+  is dropped after the table whose triggers hold it (2BP01); a type change under a generated
+  column drops and re-adds the generated column around it (0A000); a new table's identity
+  column creates its own sequence, which is not emitted a second time (0A000); new columns are
+  added and gone columns dropped in generated-column dependency order (42703 / 2BP01); a foreign
+  key resting on a key that goes -- the primary key moving off the referenced column, the
+  constraint renamed along with its table, or the referencing table itself going -- is dropped
+  ahead of the key and re-added once the target's key exists (2BP01), and every table's foreign
+  keys are dropped before any table's other constraints; a generated-column rewrite restores
+  the multi-column constraints, indexes and CHECKs the DROP COLUMN takes down and does not add
+  them twice (42710); the views over a table whose generated column is rewritten are recreated
+  around it (2BP01), and a generated expression that differs from the target's only by a
+  declared column rename is not rewritten at all (RENAME COLUMN carries it); a replaced view is
+  created after the columns it may read (42703) and a view an ENUM recreation dropped is created
+  once (42P07); `-- @migrate rename` of a table is read before the column renames whose right
+  side names the table as it will be, whatever their line order.
+
 - MySQL migrations have an oracle: `check/mysql/migrate`'s `TestMigrateProbe` generates schemas
   from the planner's vocabulary (column types, generated columns, keys, foreign keys,
   AUTO_INCREMENT, CHECKs, views, triggers, functions), mutates each into a target (columns added,

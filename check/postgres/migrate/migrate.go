@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
@@ -41,6 +42,7 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p := &planner{from: from, to: to, recreated: map[string]bool{}, backfilled: map[string]bool{}}
 	p.readIntents(list)
 	p.enumRecreates()
+	p.generatedRecreates()
 	p.drops()
 	p.renames()
 	p.alters()
@@ -88,6 +90,12 @@ type planner struct {
 	// fromRels / toRels cache relations(); backfilled marks "rel.col" backfills emitted
 	fromRels, toRels map[string]*schema.Relation
 	backfilled       map[string]bool
+	// redoFK marks "rel.constraint" (target names) foreign keys drops() took down ahead of a
+	// key they rest on, unchanged in the target and so re-added by adds() all the same
+	redoFK map[string]bool
+	// restored marks "rel.name" constraints and indexes a generated-column rewrite
+	// (addGenerated) already put back, which adds() must not add again
+	restored map[string]bool
 	// enumRecreate: enums whose labels shrink, recreated under the same name with the
 	// declared label mapping; the tables whose columns carry them, and the views over
 	// those tables (dropped first, created anew)
@@ -229,6 +237,32 @@ func (p *planner) drops() {
 				p.emit("DROP POLICY %s ON %s", q(pol.Name), qrel(r))
 			}
 		}
+	}
+	// foreign keys of every surviving table first: they may reference keys dropped below,
+	// on this table or another one
+	droppedFK := map[string]bool{}
+	for _, r := range fromOrder {
+		tr := p.toOf(r)
+		if tr == nil || tr.Kind != r.Kind {
+			continue
+		}
+		toCon := constraints(tr)
+		for _, n := range sortedKeys(constraints(r)) {
+			c := constraints(r)[n]
+			if c.Kind != schema.ForeignKey {
+				continue
+			}
+			if tc, ok := toCon[n]; !ok || !same(p.from, p.to, c, tc) {
+				p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(r), q(n))
+				droppedFK[r.FullName()+"."+n] = true
+			}
+		}
+	}
+	for _, r := range fromOrder {
+		tr := p.toOf(r)
+		if tr == nil || tr.Kind != r.Kind {
+			continue
+		}
 		toIdx := indexes(tr)
 		for _, n := range sortedKeys(indexes(r)) {
 			if ti, ok := toIdx[n]; !ok || !same(p.from, p.to, indexes(r)[n], ti) {
@@ -236,16 +270,38 @@ func (p *planner) drops() {
 			}
 		}
 		toCon := constraints(tr)
-		// foreign keys first: they may reference keys dropped below
-		for pass := 0; pass < 2; pass++ {
-			for _, n := range sortedKeys(constraints(r)) {
-				c := constraints(r)[n]
-				if (c.Kind == schema.ForeignKey) != (pass == 0) {
-					continue
+		for _, n := range sortedKeys(constraints(r)) {
+			c := constraints(r)[n]
+			if c.Kind == schema.ForeignKey {
+				continue
+			}
+			if tc, ok := toCon[n]; !ok || !same(p.from, p.to, c, tc) {
+				if c.Kind == schema.PrimaryKey || c.Kind == schema.Unique {
+					// a foreign key elsewhere that rests on this key and survives unchanged
+					// blocks the drop (2BP01, measured): it goes ahead of the key and comes
+					// back in adds (redoFK), once the target's key over its columns exists
+					for _, other := range fromOrder {
+						for _, fn := range sortedKeys(constraints(other)) {
+							fk := constraints(other)[fn]
+							if fk.Kind != schema.ForeignKey || fk.RefTable != r.FullName() || droppedFK[other.FullName()+"."+fn] {
+								continue
+							}
+							if !(len(fk.RefColumns) == 0 && c.Kind == schema.PrimaryKey || sameStrings(fk.RefColumns, c.Columns)) {
+								continue
+							}
+							p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(other), q(fn))
+							droppedFK[other.FullName()+"."+fn] = true
+							if p.toOf(other) == nil {
+								continue // the table goes below; nothing to re-add
+							}
+							if p.redoFK == nil {
+								p.redoFK = map[string]bool{}
+							}
+							p.redoFK[p.toName(other.FullName())+"."+fn] = true
+						}
+					}
 				}
-				if tc, ok := toCon[n]; !ok || !same(p.from, p.to, c, tc) {
-					p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(r), q(n))
-				}
+				p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(r), q(n))
 			}
 		}
 	}
@@ -264,11 +320,6 @@ func (p *planner) drops() {
 			p.recreated[tr.FullName()] = true
 		}
 	}
-	for _, n := range sortedKeys(fromFns) {
-		if toFns[n] == nil {
-			p.emit("DROP %s %s", fnWord(fromFns[n]), n)
-		}
-	}
 	// columns of tables that survive
 	for _, r := range fromOrder {
 		tr := p.toOf(r)
@@ -276,13 +327,19 @@ func (p *planner) drops() {
 			continue
 		}
 		toCols := columnsOf(tr)
+		var gone []*schema.Column
 		for _, c := range r.Columns {
 			if toCols[p.toCol(r, c.Name)] == nil {
 				if !p.in.dropOK[r.FullName()+"."+c.Name] {
 					p.problem("column %s.%s is dropped, which no @migrate declares: add `-- @migrate drop %s.%s` or `-- @migrate rename %s.%s -> ...`", r.FullName(), c.Name, r.FullName(), c.Name, r.FullName(), c.Name)
 				}
-				p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
+				gone = append(gone, c)
 			}
+		}
+		// a generated column that reads another gone column goes first: PostgreSQL refuses
+		// to drop a column a generated column still reads (2BP01, measured)
+		for _, c := range orderGoneColumns(gone) {
+			p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
 		}
 	}
 	// tables and sequences: referencing tables before the tables they reference
@@ -304,6 +361,14 @@ func (p *planner) drops() {
 			p.problem("table %s is dropped, which no @migrate declares: add `-- @migrate drop %s` or `-- @migrate rename %s -> ...`", r.FullName(), r.FullName(), r.FullName())
 		}
 		p.emit("DROP %s %s", relWord(r), qrel(r))
+	}
+	// functions after the tables: a trigger function is held by the triggers of a table
+	// that goes (they go with the table, not by DROP TRIGGER above), and PostgreSQL refuses
+	// to drop it while they exist (2BP01, measured); a view calling one is already gone
+	for _, n := range sortedKeys(fromFns) {
+		if toFns[n] == nil {
+			p.emit("DROP %s %s", fnWord(fromFns[n]), n)
+		}
 	}
 	// types
 	fromTypes, toTypes := diff.UserTypes(p.from), diff.UserTypes(p.to)
@@ -351,9 +416,7 @@ func (p *planner) alters() {
 			p.alterTable(f, r)
 			p.backfillsLeft(r, f)
 		case schema.View:
-			if !same(p.from, p.to, f, r) && replaceable(p.from, p.to, f, r) {
-				p.emit("%s", strings.Replace(r.Definition, "CREATE VIEW", "CREATE OR REPLACE VIEW", 1))
-			}
+			// replaced in adds, once every column the new definition may read exists
 		case schema.Sequence:
 			if f.OwnedBy != r.OwnedBy {
 				owner := "NONE"
@@ -467,6 +530,7 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 func (p *planner) alterTable(f, r *schema.Relation) {
 	p.rowSecurity(f, r)
 	fromCols := columnsOf(f)
+	rewritten := map[string]bool{}
 	for _, c := range r.Columns {
 		fc := fromCols[p.fromCol(r, c.Name)]
 		if fc == nil {
@@ -474,7 +538,22 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 		}
 		fp, tp := colProps(p.from, fc), colProps(p.to, c)
 		if fp["type"] != tp["type"] && !p.enumColumn(fc) {
+			// PostgreSQL refuses to alter the type of a column a generated column reads
+			// (0A000 "cannot alter type of a column used by a generated column", measured):
+			// the dependents are dropped first and rewritten after, the same DROP COLUMN /
+			// ADD COLUMN rewrite a changed expression takes
+			var deps []*schema.Column
+			for _, g := range r.Columns {
+				if g.Generated != nil && fromCols[p.fromCol(r, g.Name)] != nil && !rewritten[g.Name] && readsColumn(g, fc.Name) {
+					deps = append(deps, g)
+					rewritten[g.Name] = true
+					p.dropGenerated(r, g)
+				}
+			}
 			p.emit("ALTER TABLE %s ALTER COLUMN %s TYPE %s", qrel(r), q(c.Name), typeText(p.to, c))
+			for _, g := range deps {
+				p.addGenerated(r, g)
+			}
 			if typmodNarrows(p.to, fc, c) {
 				p.note("table %s: column %s type %s -> %s narrows precision; PostgreSQL runs this ALTER without a USING clause and rounds or truncates the existing values silently -- add a USING clause, or fix the data first", r.FullName(), c.Name, fp["type"], tp["type"])
 			}
@@ -504,34 +583,15 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 				p.emit("ALTER TABLE %s ALTER COLUMN %s SET GENERATED %s", qrel(r), q(c.Name), identityWord(c.Identity))
 			}
 		}
-		if fp["generated"] != tp["generated"] || fp["generated kind"] != tp["generated kind"] {
+		if (p.renamedExpr(f, fp["generated"]) != tp["generated"] || fp["generated kind"] != tp["generated kind"]) && !rewritten[c.Name] {
 			if c.Generated == nil {
 				p.emit("ALTER TABLE %s ALTER COLUMN %s DROP EXPRESSION", qrel(r), q(c.Name))
 			} else {
 				// a generation expression (and STORED vs VIRTUAL, PostgreSQL 18) cannot be
 				// added or changed in place: PostgreSQL has no in-place ALTER, only DROP
-				// COLUMN + ADD COLUMN. DROP COLUMN silently takes down, without needing
-				// CASCADE, any index or table constraint defined solely on this column --
-				// and refuses outright if another table's foreign key rests on such a
-				// constraint. Drop what would block it and restore what it would otherwise
-				// lose, around the rewrite.
-				localIdx := p.soleColumnIndexes(r, c.Name)
-				localCon := p.soleColumnConstraints(r, c.Name)
-				refFKs := p.foreignKeysReferencing(r, c.Name)
-				for _, fk := range refFKs {
-					p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(fk.rel), q(fk.con.Name))
-				}
-				p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
-				p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, true))
-				for _, con := range localCon {
-					p.emitConstraint(r, con)
-				}
-				for _, idx := range localIdx {
-					p.emit("%s", idx.Definition)
-				}
-				for _, fk := range refFKs {
-					p.emitConstraint(fk.rel, fk.con)
-				}
+				// COLUMN + ADD COLUMN.
+				p.dropGenerated(r, c)
+				p.addGenerated(r, c)
 			}
 		}
 	}
@@ -543,27 +603,191 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 	}
 }
 
-// soleColumnIndexes are r's target-schema indexes whose only column is name: a
+// orderNewColumns orders cols (the columns a table gains) so a generated column comes after
+// every other new column its expression reads.
+func orderNewColumns(cols []*schema.Column) []*schema.Column {
+	var out []*schema.Column
+	done := map[string]bool{}
+	var visit func(c *schema.Column, stack map[string]bool)
+	visit = func(c *schema.Column, stack map[string]bool) {
+		if done[c.Name] || stack[c.Name] {
+			return
+		}
+		stack[c.Name] = true
+		if c.Generated != nil {
+			for _, other := range cols {
+				if other != c && readsColumn(c, other.Name) {
+					visit(other, stack)
+				}
+			}
+		}
+		done[c.Name] = true
+		out = append(out, c)
+	}
+	for _, c := range cols {
+		visit(c, map[string]bool{})
+	}
+	return out
+}
+
+// orderGoneColumns orders cols (the columns a table loses) so a generated column comes
+// before every other gone column it reads: the reverse of orderNewColumns's order.
+func orderGoneColumns(cols []*schema.Column) []*schema.Column {
+	fwd := orderNewColumns(cols)
+	out := make([]*schema.Column, len(fwd))
+	for i, c := range fwd {
+		out[len(fwd)-1-i] = c
+	}
+	return out
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// renamedExpr is a from-side expression text with f's declared column renames applied:
+// RENAME COLUMN rewrites the expressions that name the column (a generated column's, a
+// CHECK's) on its own, so an expression that differs from the target's only by the renames
+// is not a change (rewriting the generated column for it would drop and recompute it, and
+// take a dependent view down with it -- 2BP01, measured).
+func (p *planner) renamedExpr(f *schema.Relation, expr string) string {
+	for from, to := range p.in.colTo[f.FullName()] {
+		if from == to {
+			continue
+		}
+		re := regexp.MustCompile(`(^|[^A-Za-z0-9_"])` + regexp.QuoteMeta(from) + `($|[^A-Za-z0-9_"])`)
+		expr = re.ReplaceAllString(expr, "${1}"+to+"${2}")
+		expr = strings.ReplaceAll(expr, q(from), q(to))
+	}
+	return expr
+}
+
+// readsColumn reports whether generated column g's expression names column name.
+func readsColumn(g *schema.Column, name string) bool {
+	for _, ref := range schema.ColumnRefs(g.Generated) {
+		if ref == name {
+			return true
+		}
+	}
+	return false
+}
+
+// dropGenerated and addGenerated are the two halves of rewriting a generated column
+// (alterTable): DROP COLUMN silently takes down, without needing CASCADE, any index or
+// table constraint defined solely on this column -- and refuses outright if another
+// table's foreign key rests on such a constraint. dropGenerated drops what would block
+// the DROP COLUMN ahead of it; addGenerated adds the target's column back and restores
+// what the drop took down.
+func (p *planner) dropGenerated(r *schema.Relation, c *schema.Column) {
+	for _, fk := range p.foreignKeysReferencing(r, c.Name) {
+		p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(fk.rel), q(fk.con.Name))
+	}
+	p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
+}
+
+func (p *planner) addGenerated(r *schema.Relation, c *schema.Column) {
+	if p.restored == nil {
+		p.restored = map[string]bool{}
+	}
+	p.emit("ALTER TABLE %s ADD COLUMN %s", qrel(r), columnText(p.to, c, true))
+	for _, con := range p.soleColumnConstraints(r, c.Name) {
+		p.emitConstraint(r, con)
+		p.restored[r.FullName()+"."+con.Name] = true
+	}
+	for _, idx := range p.soleColumnIndexes(r, c.Name) {
+		p.emit("%s", idx.Definition)
+		p.restored[r.FullName()+"."+idx.Name] = true
+	}
+	for _, fk := range p.foreignKeysReferencing(r, c.Name) {
+		p.emitConstraint(fk.rel, fk.con)
+		p.restored[fk.rel.FullName()+"."+fk.con.Name] = true
+	}
+}
+
+// rewritesGenerated reports whether alterTable will drop and re-add a generated column of
+// r (its expression changed, or the type of a column it reads does): the views over r must
+// be recreated around it, since PostgreSQL refuses the DROP COLUMN while a view reads the
+// column (2BP01, measured).
+func (p *planner) rewritesGenerated(f, r *schema.Relation) bool {
+	fromCols := columnsOf(f)
+	for _, c := range r.Columns {
+		fc := fromCols[p.fromCol(r, c.Name)]
+		if fc == nil {
+			continue
+		}
+		fp, tp := colProps(p.from, fc), colProps(p.to, c)
+		if fp["type"] != tp["type"] && !p.enumColumn(fc) {
+			for _, g := range r.Columns {
+				if g.Generated != nil && fromCols[p.fromCol(r, g.Name)] != nil && readsColumn(g, fc.Name) {
+					return true
+				}
+			}
+		}
+		if c.Generated != nil && (p.renamedExpr(f, fp["generated"]) != tp["generated"] || fp["generated kind"] != tp["generated kind"]) {
+			return true
+		}
+	}
+	return false
+}
+
+// generatedRecreates marks the views over every table whose generated column alterTable
+// rewrites for recreation (dropped in drops, created anew in adds).
+func (p *planner) generatedRecreates() {
+	for _, r := range p.from.Relations {
+		tr := p.toOf(r)
+		if r.Kind != schema.Table || tr == nil || tr.Kind != schema.Table || !p.rewritesGenerated(r, tr) {
+			continue
+		}
+		for _, v := range p.from.DependentViews(r) {
+			if tv := p.toOf(v); tv != nil {
+				p.recreated[tv.FullName()] = true
+			}
+		}
+	}
+}
+
+// soleColumnIndexes are r's target-schema indexes over column name (alone or with others): a
 // generated-column DROP COLUMN / ADD COLUMN rewrite (alterTable) takes these down with
 // the column, without PostgreSQL needing CASCADE, and never re-creates them on its own.
 func (p *planner) soleColumnIndexes(r *schema.Relation, name string) []*schema.Index {
 	var out []*schema.Index
 	for _, i := range r.Indexes {
-		if len(i.Columns) == 1 && i.Columns[0] == name {
+		if hasString(i.Columns, name) {
 			out = append(out, i)
 		}
 	}
 	return out
 }
 
-// soleColumnConstraints are r's target-schema unique / primary key constraints whose
-// only column is name -- also taken down, silently, by the same rewrite.
+func hasString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// soleColumnConstraints are r's target-schema unique / primary key constraints over column
+// name (alone or with others) -- also taken down, silently, by the same rewrite (a
+// multi-column constraint goes with any of its columns, measured).
 func (p *planner) soleColumnConstraints(r *schema.Relation, name string) []*schema.Constraint {
 	var out []*schema.Constraint
 	for _, n := range sortedKeys(constraints(r)) {
 		c := constraints(r)[n]
-		if (c.Kind == schema.PrimaryKey || c.Kind == schema.Unique) && len(c.Columns) == 1 && c.Columns[0] == name {
+		switch {
+		case (c.Kind == schema.PrimaryKey || c.Kind == schema.Unique) && hasString(c.Columns, name):
 			out = append(out, c)
+		case c.Kind == schema.Check && hasString(schema.ColumnRefs(c.Expr), name):
+			out = append(out, c) // a CHECK reading the column goes with it too (measured)
 		}
 	}
 	return out
@@ -718,9 +942,15 @@ func (p *planner) adds() {
 				p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(r), qdot(r.OwnedBy))
 			}
 			if r.Kind == schema.Table {
-				// a dump declares a serial column's sequence and default outside CREATE TABLE
+				// a dump declares a serial column's sequence and default outside CREATE TABLE;
+				// an identity column's sequence is created by the ADD GENERATED ... AS IDENTITY
+				// among the table's Alters (emitting the sequence here too is 0A000 "cannot
+				// change ownership of identity sequence", measured)
 				for _, seq := range toOrder {
 					if seq.Kind == schema.Sequence && seq.OwnedBy != "" && ownerRelation(seq.OwnedBy) == r.FullName() {
+						if tc := r.Column(ownerColumn(seq.OwnedBy)); tc != nil && tc.Identity != 0 {
+							continue
+						}
 						p.emit("%s", seq.Definition)
 						p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(seq), qdot(seq.OwnedBy))
 					}
@@ -731,12 +961,25 @@ func (p *planner) adds() {
 			}
 			continue
 		}
+		if r.Kind == schema.View && !same(p.from, p.to, f, r) && replaceable(p.from, p.to, f, r) {
+			// a view that only grows is replaced in place, here rather than in alters: its
+			// new definition may read a column added just above (42703 otherwise, measured)
+			p.emit("%s", strings.Replace(r.Definition, "CREATE VIEW", "CREATE OR REPLACE VIEW", 1))
+		}
 		if r.Kind != schema.Table {
 			continue
 		}
 		fromCols := columnsOf(f)
+		var fresh []*schema.Column
 		for _, c := range r.Columns {
 			if fromCols[p.fromCol(r, c.Name)] == nil {
+				fresh = append(fresh, c)
+			}
+		}
+		// a generated column reading a column added alongside it comes after that column
+		// (42703 "column does not exist" otherwise, measured)
+		for _, c := range orderNewColumns(fresh) {
+			{
 				// a sequence owned by this new column must exist before ADD COLUMN (its
 				// DEFAULT nextval(...) names it), but OWNED BY needs the column to exist -
 				// so create it now and defer OWNED BY until right after the column lands.
@@ -775,7 +1018,7 @@ func (p *planner) adds() {
 				if (c.Kind == schema.ForeignKey) != (pass == 1) {
 					continue
 				}
-				if fc := fromCon[n]; fc != nil && same(p.from, p.to, fc, c) {
+				if fc := fromCon[n]; fc != nil && same(p.from, p.to, fc, c) && !p.redoFK[r.FullName()+"."+n] || p.restored[r.FullName()+"."+n] {
 					continue
 				}
 				if f == nil && c.Definition == "" {
@@ -797,7 +1040,7 @@ func (p *planner) adds() {
 		}
 		for _, n := range sortedKeys(indexes(r)) {
 			i := indexes(r)[n]
-			if fi := fromIdx[n]; fi != nil && same(p.from, p.to, fi, i) {
+			if fi := fromIdx[n]; fi != nil && same(p.from, p.to, fi, i) || p.restored[r.FullName()+"."+n] {
 				continue
 			}
 			p.emit("%s", i.Definition)
