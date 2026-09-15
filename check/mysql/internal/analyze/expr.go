@@ -631,6 +631,28 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		if len(ts) > 0 {
 			t = ts[0]
 		}
+	case class == "Item_first_last_value", class == "Item_nth_value": // FIRST_VALUE/LAST_VALUE/NTH_VALUE OVER (...): set_data_type_from_item(args[0])
+		if len(ts) > 0 {
+			t = typed{typ: ts[0].typ, known: ts[0].known}
+		}
+	case class == "Item_lead_lag": // LAG/LEAD OVER (...): resolve_type aggregates the value
+		// expr (ts[0]) with the default value (ts[2]) when both a default and an offset are
+		// given (exprArgs then carries three arguments: value, offset, default); nullable
+		// follows either of those two when a default is present, and is unconditionally
+		// true otherwise (there is no value for the missing previous/next/offset row,
+		// measured on mysqld 8.4).
+		if len(ts) > 0 {
+			agg := ts[:1]
+			if len(ts) >= 3 {
+				agg = []typed{ts[0], ts[2]}
+			}
+			t = aggregate(agg)
+			if len(ts) >= 3 {
+				nullable = ts[0].nullable || ts[2].nullable
+			} else {
+				nullable = true
+			}
+		}
 	case isA(class, "Item_sum_sum"): // SUM, AVG
 		if len(ts) > 0 && ts[0].known {
 			switch numericContext(ts[0]) {
@@ -722,6 +744,11 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		t.typ.Unsigned = true
 	}
 	switch {
+	case class == "Item_lead_lag":
+		// unlike every other Item_non_framing_wf, LAG/LEAD really can be NULL (the
+		// preceding/following row does not exist, or an explicit NULL default): computed
+		// above, not forced false the way ROW_NUMBER/RANK/NTILE/... are.
+		t.nullable = nullable
 	case isA(class, "Item_sum_count"), isA(class, "Item_sum_bit"), isA(class, "Item_non_framing_wf"):
 		// Item_sum::resolve_type says nullable for every aggregate; these never are
 		t.nullable = false

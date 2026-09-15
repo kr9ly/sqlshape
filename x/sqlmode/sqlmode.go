@@ -96,6 +96,16 @@ func (m Mode) Expand() Mode {
 // Strict is THD::is_strict_mode: either strict flag.
 func (m Mode) Strict() bool { return m&(StrictTransTables|StrictAllTables) != 0 }
 
+// StrictAll reports whether STRICT_ALL_TABLES is set: strict mode applies unconditionally,
+// on every storage engine and every row.
+func (m Mode) StrictAll() bool { return m&StrictAllTables != 0 }
+
+// StrictTransOnly reports whether STRICT_TRANS_TABLES is set without STRICT_ALL_TABLES:
+// the manual's STRICT_TRANS_TABLES is strict only for a transactional storage engine, and
+// for a nontransactional one behaves like no strict mode at all except that a single-row
+// statement (or the first row of a multi-row one) still errors.
+func (m Mode) StrictTransOnly() bool { return m&StrictAllTables == 0 && m&StrictTransTables != 0 }
+
 // Has reports whether every flag of f is set.
 func (m Mode) Has(f Mode) bool { return m&f == f }
 

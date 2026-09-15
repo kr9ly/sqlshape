@@ -4445,6 +4445,45 @@ func (x ItemFirstLastValue) A() Value             { return x.N.Arg("a") }
 func (x ItemFirstLastValue) NullTreatment() Value { return x.N.Arg("null_treatment") }
 func (x ItemFirstLastValue) W() Value             { return x.N.Arg("w") }
 
+// ItemLeadLag views a Item_lead_lag node.
+type ItemLeadLag struct{ N *Node }
+
+// AsItemLeadLag returns the view when v is a Item_lead_lag.
+func AsItemLeadLag(v Value) (ItemLeadLag, bool) {
+	n, ok := v.(*Node)
+	if !ok || n.Class != "Item_lead_lag" {
+		return ItemLeadLag{}, false
+	}
+	return ItemLeadLag{n}, true
+}
+
+// IsLead is true for LEAD, false for LAG.
+func (x ItemLeadLag) IsLead() Value { return x.N.Arg("is_lead") }
+
+// Args is [expr], [expr, offset] or [expr, offset, default_value]: hooks_dml.go's leadLag
+// only appends opt_lead_lag_info's offset / default_value when the statement gave them.
+func (x ItemLeadLag) Args() Value          { return x.N.Arg("args") }
+func (x ItemLeadLag) NullTreatment() Value { return x.N.Arg("null_treatment") }
+func (x ItemLeadLag) W() Value             { return x.N.Arg("w") }
+
+// ItemNthValue views a Item_nth_value node.
+type ItemNthValue struct{ N *Node }
+
+// AsItemNthValue returns the view when v is a Item_nth_value.
+func AsItemNthValue(v Value) (ItemNthValue, bool) {
+	n, ok := v.(*Node)
+	if !ok || n.Class != "Item_nth_value" {
+		return ItemNthValue{}, false
+	}
+	return ItemNthValue{n}, true
+}
+
+func (x ItemNthValue) Expr() Value          { return x.N.Arg("expr") }
+func (x ItemNthValue) N_() Value            { return x.N.Arg("n") }
+func (x ItemNthValue) FromLast() Value      { return x.N.Arg("from_last") }
+func (x ItemNthValue) NullTreatment() Value { return x.N.Arg("null_treatment") }
+func (x ItemNthValue) W() Value             { return x.N.Arg("w") }
+
 // PTIIntSplocal views a PTI_int_splocal node.
 type PTIIntSplocal struct{ N *Node }
 

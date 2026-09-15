@@ -167,3 +167,24 @@ func TestAdvCardPartialIndexPredicateExplicitCast(t *testing.T) {
 	}, "SELECT id FROM orders WHERE uid = $1::uuid AND status <> 'cancelled'::order_status",
 		"00000000-0000-0000-0000-000000000001")
 }
+
+// TestAdvCardSingleElementInFoldsToEq: not a finding from either adversarial round, and not
+// a mysqld/PostgreSQL measurement either -- it needs none. `col IN (x)` with exactly one
+// alternative fixes col to x for exactly the reason `col = x` does (SQL's IN takes a list of
+// alternatives, and a one-item list is one value), so x/cardinality's One proof should treat
+// it the same as an explicit `=`. check/postgres/analyze's alternatives() (facts.go) used to
+// require at least two items (`x.Rexpr.GetList().GetItems(); len(items) >= 2`) before it
+// built anything at all -- a singleton IN list fell all the way through predFacts to the
+// opaque fallback, so id IN ($1) never fixed id the way id = $1 does. Mirrored on the MySQL
+// side by TestAdv2SingleElementInFoldsToEq (check/mysql/dialect), so both producers treat
+// the same SQL shape identically.
+func TestAdvCardSingleElementInFoldsToEq(t *testing.T) {
+	schemaSQL, err := readSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkOneRow(t, schemaSQL, []string{
+		"INSERT INTO users (id, email) OVERRIDING SYSTEM VALUE VALUES (1, 'a@x')",
+		"INSERT INTO users (id, email) OVERRIDING SYSTEM VALUE VALUES (2, 'b@x')",
+	}, "SELECT id FROM users WHERE id IN ($1)", 1)
+}

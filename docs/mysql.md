@@ -37,6 +37,9 @@ per line, so the checker and the production connection agree on it
   The rest act at run time only and are accepted as written.
 - `lower_case_table_names`: 0 compares table and view names case-sensitively (the Linux
   default), 1 stores them lower-cased, 2 keeps the spelling and compares without case.
+  2 is only for a case-insensitive filesystem (macOS / Windows); on a case-sensitive one
+  `mysqld` warns and starts at 0 instead, out of step with a schema that declares 2
+  (`mysql.Verify` returns that drift).
 
 Without a declaration the checker assumes a freshly initialized 8.4 server: the default
 `sql_mode` (`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`)
@@ -99,17 +102,43 @@ A failure mode is named as MySQL names the constraint, and numbered as MySQL num
 | foreign key | the `CONSTRAINT` name, or `<table>_ibfk_<n>` when it has none | 1452 on the child side, 1451 on the parent side (following `ON DELETE` / `ON UPDATE CASCADE`) |
 | `CHECK` | the `CONSTRAINT` name, or `<table>_chk_<n>` | 3819 |
 | `NOT NULL` | `<table>.<column>` | 1048 |
+| a view's `WITH CHECK OPTION` | the view's own name (MySQL's own message names it, unlike PostgreSQL's unnamed 44000) | 1369 |
 
 What a statement's own form does to the list:
 
 - `INSERT IGNORE` violates nothing;
 - `ON DUPLICATE KEY UPDATE` absorbs the insert's key violations;
 - `REPLACE` violates no key and may violate a referencing foreign key (1451);
+- `UPDATE IGNORE` absorbs a `WITH CHECK OPTION` view's 1369 the same way it absorbs a key
+  or `NOT NULL` violation (measured), unlike a trigger's own `SIGNAL`, which no `IGNORE`
+  absorbs;
 - without strict mode only a single-row `INSERT` or `REPLACE` (its `ON DUPLICATE KEY UPDATE`
   included) rejects a `NULL` for a `NOT NULL` column; more rows, `INSERT ... SELECT` and `UPDATE`
   store the type's implicit default with a warning, so no 1048 is listed for them.
 
 `mysql.Violates(err, key)` tests the run-time error by the same names.
+
+The same two shapes are two writes for the obligation checker (x/obligation), not one:
+
+| statement | writes recorded | why |
+|---|---|---|
+| `INSERT ... ON DUPLICATE KEY UPDATE` | an INSERT, and an UPDATE of the columns the branch assigns | the branch moves an existing row |
+| `REPLACE` | an INSERT and a DELETE | a colliding key deletes the old row first (its `AFTER DELETE` trigger fires, measured) |
+
+A write through a view declared `WITH CHECK OPTION` discharges `require pinned(<col>)` on the
+base table (`Discharge.Path` `ByView`):
+
+- when the view's own `WHERE` fixes the column by equality; a plain `WITH CHECK OPTION` is
+  CASCADED, so an underlying view's `WHERE` counts too, `WITH LOCAL CHECK OPTION` stops at the
+  view itself;
+- the 1369 above is what makes the pin genuine: a view without the clause never discharges it
+  (a write through it moves the row out of the view's `WHERE` silently);
+- for `UPDATE` only so far: `INSERT` and `DELETE` through a view are not analyzed yet, a gap
+  older than this.
+
+Not a failure mode here: a length, range or `ENUM` value truncation (1265 / 1406 / 1366 /
+1264). It is a property of the type (a parameter's Go type, a literal's own value set), caught
+on that side.
 
 ### Triggers and stored routines
 
@@ -154,9 +183,21 @@ What the server itself refuses when the body is created is an error here too:
 | a FUNCTION with no `RETURN` | 1320 |
 | an undeclared cursor or variable, a `FETCH` column-count mismatch | 1324 / 1327 / 1328 |
 | a mismatched `SELECT ... INTO` column count | 1222 |
-| a trigger or function that returns a result set | 1415 |
+| a trigger or function that returns a result set (its own INTO-less `SELECT`, or a `CALL`ed PROCEDURE's own) | 1415 |
 | `COMMIT` / `START TRANSACTION` / a DDL statement inside a body | 1422 |
 | a trigger that writes its own table | 1442, on every one of the 18 timing x event x write combinations (measured): always a failure, reported on the trigger's own definition rather than on a statement that fires it |
+| two `DECLARE`s of the same variable name in one block | 1331 |
+| dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) in a trigger or FUNCTION (a PROCEDURE is exempt) | 1336 |
+| a bare `RESIGNAL` reached outside any `HANDLER` | 1645, certain every time |
+| a routine that `CALL`s itself | 1456 on every recursive invocation (`max_sp_recursion_depth` defaults to 0, not a setting this package reads); direct self-recursion only, not a routine reaching itself through another |
+| a trigger chain writing back into a table already in use further up (`INSERT INTO x` fires `x`'s trigger writing `y`, whose trigger writes `x`) | 1442, though neither trigger writes its own table |
+
+And among the body's failure modes, the "may" shape a `SIGNAL` has:
+
+| construct | failure mode |
+|---|---|
+| a `CASE` (simple or searched) with no `ELSE` | 1339, "Case not found for CASE statement", when no `WHEN` matches |
+| a bare `RESIGNAL` with its own `SET MYSQL_ERRNO` | re-raises with that number, not the caught `SIGNAL`'s |
 
 A trigger's or routine's own writes bring their own failure modes into the body's: the
 schema's constraints, and what those writes' own triggers raise in turn (a cycle is cut). A
@@ -205,7 +246,14 @@ for PostgreSQL; a call then types as NOT NULL instead. A PROCEDURE or a TRIGGER 
 the directive: neither returns a value for it to describe.
 
 `CALL p(...)` types an `IN` / `INOUT` argument by its parameter and requires an `OUT` /
-`INOUT` argument to be a variable (1414; a `?` counts as one); its own facts are `Kind Call`.
+`INOUT` argument to be a variable (1414); its own facts are `Kind Call`. What counts as a
+variable there:
+
+| argument | variable? |
+|---|---|
+| a declared variable, a parameter, a `?` | yes |
+| `NEW.col` inside a `BEFORE` trigger's own body | yes (the server's own 1414 message names this exception) |
+| `OLD.col`, or `NEW.col` in an `AFTER` trigger | no |
 Its result columns come from the body's own INTO-less `SELECT`s: none is no columns, one is
 those columns, several of the same shape agree on one list, several of different shapes is
 the checker's own error (not something mysqld itself refuses -- it only ever returns

@@ -121,7 +121,7 @@ func TestTriggerSignalPropagates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "1048 orders.id, 1048 orders.total, 1062 PRIMARY, 30001 30001=OrderTooLarge"
+	want := "1048 orders.id, 1048 orders.total, 1062 PRIMARY, 1364 orders.customer_id, 30001 30001=OrderTooLarge"
 	if got := violationKeys(r.Violations); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
@@ -196,7 +196,7 @@ func TestHandlerAbsorbsByNumber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "1048 orders.total, 30001 30001=OrderTooLarge, 30003 30003"
+	want := "1048 orders.total, 1364 orders.customer_id, 30001 30001=OrderTooLarge, 30003 30003"
 	if got := violationKeys(br.Violations); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}

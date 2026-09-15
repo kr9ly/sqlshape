@@ -145,7 +145,7 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 
 1.1.0 の敵対的テスト（7レーン、rc後）で裁定したもの。
 
-- 書き込みは「表に対して実際にすること」で数える。MERGEは枝ごとに枝の文種の`Write`（文全体の`Write`は出さない）、`INSERT ... ON CONFLICT DO UPDATE`はINSERTの`Write`とUPDATEの`Write`の2つ、`TRUNCATE`は全行のDELETE、自動更新可能ビューへの書き込みは基底表の`Write`（列名も基底表のもの）。`Write.InWith`がWITH項目の書き込みを区別し、`single`の証明対象から外す
+- 書き込みは「表に対して実際にすること」で数える。MERGEは枝ごとに枝の文種の`Write`（文全体の`Write`は出さない）、`INSERT ... ON CONFLICT DO UPDATE`はINSERTの`Write`とUPDATEの`Write`の2つ、`TRUNCATE`は全行のDELETE、自動更新可能ビューへの書き込みは基底表の`Write`（列名も基底表のもの）。`Write.InWith`がWITH項目の書き込みを区別し、`single`の証明対象から外す。MySQLの`INSERT ... ON DUPLICATE KEY UPDATE`も同じ形で、INSERTの`Write`とON DUPLICATE枝のUPDATEの`Write`の2つ。MySQLの`REPLACE INTO`はキーが衝突すると既存行を削除してから挿入するので、INSERTの`Write`に加えてDELETEの`Write`も出す（衝突しない実行がありうる文でも、義務は文の形で判定するので両方出す）。`facts.Write.Table`が基底表であるのと同じく、`facts.Leaf.Table`（`obligation.Check`が義務の宛先を探す方）も自動更新可能ビューへの書き込みでは基底表を名乗る（2巡目でMySQL側の食い違いを修正: 以前はビュー自身の名前のままで、ビュー経由の書き込みに基底表の義務が一切効いていなかった）
 - `pinned`をUPDATEで満たすのはWHEREの固定だけ。SETで列に代入しても満たさない（代入で満たすのはINSERTと、INSERT枝しかないMERGE）。ON CONFLICT DO UPDATE / MERGEの枝が`pinned`列に代入するなら、文が同じ列を固定していることも求める
 - 文脈の`waive <body> on <kinds>`は名指しの文種だけを解除する（`Kinds`の差分）。`-require-columns`等フラグ由来の義務は宣言と同格で、文脈の`waive`で解除できる（`FromFlags`を`InContext`の前に足す）
 - スキーマに無い文脈名、ディレクティブとして読めない`sqlshape: context`行、ディレクティブを読まない文（ALTER TABLE / COMMENT ON）の直上のディレクティブは、黙って無視せず報告する
@@ -228,6 +228,7 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - **opt-outの名前と粒度** → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）。`unfiltered`は述語型だけを外す別名として残す
 - **関数本体の中の文** → ビューと同じ扱い。本体はschema読み込み時に自身が判定され（PL/pgSQLは行番号つき）、呼び出し側はその関数の中の表について判定されない。`via view`は関数呼び出しを直接参照と数えない（`-no-tables`が関数を許してきたのと同じ線。「DBがAPIを出す」路線ではビューと関数が出口）
 - **ビューに付けた義務** → ビューの**読み手**への義務。ビューの定義文は、中の表の義務を自分で履行する側。`require pinned(tenant_id)`をビューに付ければ読み手が固定し、`require via view`を表に付ければビューの定義文が履行経路になる。両方が同時に成り立つ
+- **`WITH CHECK OPTION`を宣言したビューへの書き込み** → 上の対称形（読み手ではなく**書き手**側）。ビューのWHEREが保証する等値を、その書き込みの`pinned`履行として使う（`Discharge.Path`は`ByView`）。CASCADED（PostgreSQLの、およびMySQLの既定）は下位ビューのWHEREまで届き、LOCAL（PostgreSQLのみ）はそのビュー自身のWHEREで止まる。履行できるのはサーバ自身がCHECK OPTION違反を拒む（PostgreSQL SQLSTATE 44000、MySQL 1369 `ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを宣言していないビューへの書き込みはこの経路を持たない（行がビューから見えなくなるだけで、サーバは拒まない）。`x/facts`の`LiftThroughView`がビュー本体のWHERE（`Origin`が`FromStatement`のもの）を書き込み文のleafへ列名を介して写像し、`x/obligation`の`pinned`が`FromView`起源の等値を`FromPolicy`と同じ形で見る
 - **文をまたぐ規則** → 持たない。分析の単位は文で、これは核の裁定（「核はSQLしか見ない」）と同じ根。トランザクション内の対（accountsのUPDATEとledgerのINSERT）は、書き込みCTEで1文にまとめる形に変換できるものだけ扱う（ロードマップの`paired`）。Go側で`pgx.Tx`上の呼び出し集合を集める層は作らない
 - **FK伝播をNULL性と`One`の証明に使うか** → 義務の外。`prover`の話で、design.mdのRLSの項「未対応」に残す。義務側は複合FKで`pinned`を運ぶところまで
 - **「掘り先」の優先順位** → 1.1.0には入れない。次は状態機械とoutbox（`paired`）。下記ロードマップ

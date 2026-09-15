@@ -184,6 +184,26 @@ func pinEvents(canon *schema.Schema, source string) {
 	}
 }
 
+// pinAutoIncrement carries a table's own explicit `AUTO_INCREMENT=<n>` (the author's chosen
+// starting value for a table's first creation, a schema decision) from the source text into
+// the canonical schema: normalizeTable strips the counter from every canonicalized CREATE
+// TABLE unconditionally (a live counter is data, not schema), so schema.Load(text) never sees
+// it there. The source can still have it (schema.Table.Definition is the statement's own text
+// as written), so it is read back here and kept on Table.AutoIncrementStart for a fresh CREATE
+// TABLE (migrate.adds) to reproduce; diff.TableProps has no field for it, so this makes no
+// difference to any comparison of a table that already exists on both sides.
+func pinAutoIncrement(canon *schema.Schema, source string) {
+	src, err := schema.Load(source)
+	if err != nil {
+		return
+	}
+	for _, t := range canon.Tables {
+		if st := src.Table(t.Name); st != nil {
+			t.AutoIncrementStart = st.AutoIncrementStart
+		}
+	}
+}
+
 // readRoutines renders every stored procedure and function of the database, in name (then
 // kind, so a PROCEDURE and a FUNCTION of the same name sort deterministically) order.
 func readRoutines(ctx context.Context, db Querier, b *strings.Builder) error {
@@ -521,6 +541,7 @@ func canonicalOn(ctx context.Context, db *sql.DB, schemaSQL, header string) (*sc
 		return nil, "", fmt.Errorf("load canonical: %w", err)
 	}
 	pinEvents(s, schemaSQL)
+	pinAutoIncrement(s, schemaSQL)
 	return s, text, nil
 }
 
@@ -548,6 +569,7 @@ func (Local) Canonical(ctx context.Context, schemaSQL string) (*schema.Schema, s
 		return nil, "", fmt.Errorf("load canonical: %w", err)
 	}
 	pinEvents(s, schemaSQL)
+	pinAutoIncrement(s, schemaSQL)
 	return s, text, nil
 }
 

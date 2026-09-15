@@ -21,6 +21,7 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 	for _, r := range sc.rels {
 		fs.Leaves = append(fs.Leaves, a.leafFacts(r))
 	}
+	a.checkOptionFacts(sc, fs)
 	if w := body.Arg("opt_where_clause"); w != nil {
 		if n, ok := w.(*mysqlast.Node); ok {
 			fs.At = int32(a.ph.Back(n.Start))
@@ -63,6 +64,9 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 		}
 	}
 	closeFixed(fs)
+	// fdClosure's cutoffs, before HAVING's own preds and nnMarks are added
+	sc.wherePreds = len(fs.Preds)
+	sc.whereNN = len(sc.nnMarks)
 	if sc.kids != nil {
 		for _, k := range *sc.kids {
 			if !a.claimed[k] { // a subquery body hangs off its EXISTS / IN predicate instead
@@ -71,7 +75,93 @@ func (a *analyzer) block(sc *scope, body *mysqlast.Node) *facts.Scope {
 		}
 	}
 	a.shape(sc, fs, body)
+	a.havingFacts(sc, fs, body)
 	return fs
+}
+
+// checkOptionFacts: a write through a view declared WITH CHECK OPTION is pinned by
+// whatever the view's own WHERE (and, unless the view says LOCAL -- MySQL's own default,
+// a plain WITH CHECK OPTION, is CASCADED) an underlying view's WHERE fixes. The server
+// refuses any row that would not satisfy it (1369 ER_VIEW_CHECK_FAILED, always naming the
+// view written through, whichever level's WHERE actually failed -- measured), the
+// write-side counterpart of a view carrying its WHERE into a reading statement's
+// obligations. Also records the view as a failure mode of the write's base table
+// (violations.go's checkOptionViolations), by the same reasoning insertViolations /
+// updateViolations already use for the schema's own constraints.
+func (a *analyzer) checkOptionFacts(sc *scope, fs *facts.Scope) {
+	for i, r := range sc.rels {
+		if !r.target || r.view == "" {
+			continue
+		}
+		v := a.s.View(r.view)
+		if v == nil || v.CheckOption == "" || v.CheckOption == "NONE" {
+			continue
+		}
+		for _, pr := range facts.LiftThroughView(fs.Leaves[i], i, v.CheckOption == "CASCADED") {
+			if pr.Op == facts.Eq {
+				fs.Preds = append(fs.Preds, pr)
+			}
+		}
+		if base := baseTableOf(r.cols); base != nil {
+			if a.checkOptionViews == nil {
+				a.checkOptionViews = map[*schema.Table][]string{}
+			}
+			a.checkOptionViews[base] = append(a.checkOptionViews[base], r.view)
+		}
+	}
+}
+
+// havingFacts folds a HAVING conjunct into fs exactly like a WHERE conjunct, but only when
+// doing so is sound: mysqld runs HAVING after grouping, so in general a HAVING predicate
+// says something about a group's aggregate, not about one row. It is safe -- and measured
+// identical to the same predicate written in WHERE -- for exactly the conjuncts that read
+// no aggregate and mention only columns that are themselves GROUP BY expressions: within a
+// surviving group every row shares that column's one value (that is what GROUP BY means),
+// so filtering groups by it is the same partition of rows WHERE would have made before
+// grouping. A conjunct that reads an aggregate, or a non-grouped column MySQL's own
+// extension allows into HAVING, is left as untyped noise -- shape() and this function
+// together are what fullgroup.go's stricter ONLY_FULL_GROUP_BY validation does not need to
+// answer, so neither borrows the other's classification.
+func (a *analyzer) havingFacts(sc *scope, fs *facts.Scope, body *mysqlast.Node) {
+	hv := havingExpr(body.Arg("opt_having_clause"))
+	if hv == nil {
+		return
+	}
+	groupCols := map[facts.ColRef]bool{}
+	for _, g := range fs.Groups {
+		if g.Kind == facts.Column {
+			groupCols[g.Col] = true
+		}
+	}
+	changed := false
+	for _, c := range conjuncts(hv) {
+		if constTrue(c) {
+			continue
+		}
+		n, ok := c.(*mysqlast.Node)
+		if !ok || containsAggregate(c) {
+			continue
+		}
+		if _, cols := a.opaqueText(sc, n); !allIn(cols, groupCols) {
+			continue // says something about the group, not about one grouped-by column
+		}
+		a.predFacts(sc, fs, c, nil)
+		a.nullRejecting(sc, c, nil)
+		changed = true
+	}
+	if changed {
+		closeFixed(fs)
+	}
+}
+
+// allIn reports whether every column of cols is a key of set.
+func allIn(cols []facts.ColRef, set map[facts.ColRef]bool) bool {
+	for _, c := range cols {
+		if !set[c] {
+			return false
+		}
+	}
+	return true
 }
 
 // shape writes down what a SELECT block says about its own row count: its GROUP BY
@@ -163,6 +253,18 @@ func (a *analyzer) leafFacts(r relation) facts.Leaf {
 				lf.Keys = append(lf.Keys, facts.Key{Columns: cols})
 			}
 		}
+	} else if r.target && r.view != "" && r.updatable {
+		// a write through an updatable view lands on the base table (WITH CHECK OPTION
+		// pins it further, in checkOptionFacts); the rows written are the view's, proved
+		// through its body. r.updatable being true here (the column resolution that made
+		// this a write target already required it, or the statement would have failed
+		// with 1288 before facts were built) means every plain column of r.cols carries
+		// its ultimate base table, however many views it passed through.
+		if base := baseTableOf(r.cols); base != nil {
+			lf.Table, lf.Kind = base.Name, facts.Table
+		} else {
+			lf.Table, lf.Kind = r.view, facts.View
+		}
 	} else if r.view != "" {
 		lf.Table, lf.Kind = r.view, facts.View
 	}
@@ -183,6 +285,20 @@ func (a *analyzer) leafFacts(r relation) facts.Leaf {
 		lf.Waived = append([]string{}, waived[lf.Table]...)
 	}
 	return lf
+}
+
+// baseTableOf is the base table a merged view's plain columns ultimately came from,
+// however many views the reference passed through (Column.base / baseTable already name
+// the root, set once where a query resolves a plain column of a real table and carried
+// along unchanged through every further view that just selects it on); nil for a view
+// whose every output is computed (nothing a write could land on).
+func baseTableOf(cols []Column) *schema.Table {
+	for _, c := range cols {
+		if c.baseTable != nil {
+			return c.baseTable
+		}
+	}
+	return nil
 }
 
 // conjuncts flattens the ANDs of a condition.
@@ -269,6 +385,18 @@ func (a *analyzer) predFacts(sc *scope, fs *facts.Scope, c mysqlast.Value, restr
 			}
 			fs.Preds = append(fs.Preds, pr)
 			return
+		}
+	case "PTI_handle_sql2003_note184_exception":
+		// `expr1 IN (expr2)`, exactly one alternative: the grammar's own rule for a
+		// one-item IN list (bit_expr IN_SYM '(' expr ')') never builds an Item_func_in --
+		// only the two-or-more-item list rule does -- so this is the only node a
+		// single-element IN ever parses to (measured: mysqlparse/shapes.go's `predicate`
+		// production). It is exactly col = x, so pinned / single-row proofs may treat it
+		// as Eq. <=> is not part of this path (a NULL-safe IN does not exist).
+		if !isTrue(n.Arg("is_negation")) {
+			if a.eqFacts(sc, fs, n.Arg("left"), n.Arg("right"), restrict, pr) {
+				return
+			}
 		}
 	case "Item_func_in":
 		list, _ := n.Arg("list").(mysqlast.List)
@@ -410,6 +538,21 @@ func (a *analyzer) eqFacts(sc *scope, fs *facts.Scope, left, right mysqlast.Valu
 			return false
 		}
 		if term, ok := a.termFacts(sc, other); ok && allowed(col, restrict) {
+			if a.stringNumberCoercion(sc, col, other) {
+				// col = <numeric literal> against a string-typed column: mysqld
+				// converts the column's stored value to a number for the
+				// comparison (Type Conversion in Expression Evaluation, measured:
+				// a VARCHAR PRIMARY KEY holding both '5' and '05' both satisfy
+				// `id = 5`), so the equality does not fix the column to one value
+				// -- neither pinned nor the One proof may treat it as Eq. The
+				// reverse (a numeric column, a string literal) is not excluded:
+				// mysqld converts both sides to a float there, and a numeric
+				// column already has one canonical value per row, so no two rows
+				// of it can share a converted value the way two spellings of the
+				// same number can share a string column's value. <=> is not this
+				// path (eqFacts only ever sees plain =).
+				return false
+			}
 			fs.Preds = append(fs.Preds, facts.Pred{Op: facts.Eq, Col: col, Term: term, Text: pr.Text, Restricts: pr.Restricts, Origin: facts.FromStatement})
 			fs.Fixed = append(fs.Fixed, col)
 			if term.Kind == facts.Known {
@@ -469,6 +612,8 @@ func (a *analyzer) nullRejecting(sc *scope, c mysqlast.Value, restrict []int) {
 		args = []mysqlast.Value{n.Arg("a"), n.Arg("b"), n.Arg("c")}
 	case "Item_func_in":
 		args, _ = n.Arg("list").(mysqlast.List)
+	case "PTI_handle_sql2003_note184_exception":
+		args = []mysqlast.Value{n.Arg("left"), n.Arg("right")}
 	case "Item_func_isnotnull":
 		args = []mysqlast.Value{n.Arg("a")}
 	default:
@@ -646,6 +791,64 @@ func literalClass(class string) bool {
 		return true
 	}
 	return false
+}
+
+// numericLiteralClass reports whether class is a numeric literal's (Item_int, Item_uint,
+// Item_decimal, Item_float): the constant classes for which mysqld's own comparison rules
+// (Type Conversion in Expression Evaluation) convert a string column's value to a number
+// rather than the other way around. A quoted numeral (a text literal that happens to look
+// like a number, e.g. '5') is not one of these classes and is compared as a string when the
+// column is a string type, so it is not part of the hazard eqFacts guards against.
+func numericLiteralClass(class string) bool {
+	switch class {
+	case "Item_int", "Item_uint", "Item_decimal", "Item_float":
+		return true
+	}
+	return false
+}
+
+// stringColumnType reports whether t is one of the character string types (CHAR, VARCHAR,
+// the TEXT family): the ones mysqld's own comparison rules convert to a number, rather than
+// converting the other operand, when compared with a numeric literal. BINARY/VARBINARY and
+// the BLOB family are not included: they hold bytes, not a server-parsed character string,
+// and are not measured here.
+func stringColumnType(t schema.Type) bool {
+	switch t.Name {
+	case "char", "varchar", "tinytext", "text", "mediumtext", "longtext":
+		return true
+	}
+	return false
+}
+
+// stringNumberCoercion reports whether col = other is exactly the hazard measured on mysqld
+// 8.4: a string-typed column compared with a numeric literal. mysqld converts the *column's*
+// stored value to a number for such a comparison (not the literal to a string), so distinct
+// column values that convert to the same number ('5' and '05', say) both satisfy the
+// equality -- an equality sqlshape must not use to fix the column to one value, whether for
+// `require single` (x/cardinality's One proof) or for `require pinned` (both read Fixed /
+// Eq facts as "this column has exactly one value here").
+//
+// The reverse -- a numeric column compared with a text literal -- is not excluded: mysqld
+// converts both sides to floating point there, and a numeric column already stores one
+// canonical value per row, so no two rows of it can convert to the same float the way two
+// spellings of a number can convert to the same float from a string column. A parameter
+// ($n) is bound with its Go-side type already fixed by the driver, not textual, so it never
+// reaches this check (termFacts gives it Kind Param, handled before this branch runs); `<=>`
+// does not go through eqFacts either (nullRejecting and eqFacts's caller only route plain =
+// comparisons here).
+func (a *analyzer) stringNumberCoercion(sc *scope, col facts.ColRef, other mysqlast.Value) bool {
+	n, ok := other.(*mysqlast.Node)
+	if !ok || !numericLiteralClass(n.Class) {
+		return false
+	}
+	if col.Leaf < 0 || col.Leaf >= len(sc.rels) {
+		return false
+	}
+	ref, ok := sc.rels[col.Leaf].column(col.Column)
+	if !ok {
+		return false
+	}
+	return stringColumnType(ref.c.Type)
 }
 
 // isNullLiteral reports whether v is the literal NULL: `col = NULL` is never true and fixes

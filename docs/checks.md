@@ -1005,7 +1005,7 @@ A directive belongs to the `CREATE TABLE`, `CREATE VIEW`, `CREATE FUNCTION` or s
 below it. One written above another statement (an `ALTER TABLE`, a `COMMENT ON`) is a schema problem,
 not a declaration.
 
-An obligation is discharged one of five ways, and `-strict` reports the ones that deserve a look:
+An obligation is discharged one of six ways, and `-strict` reports the ones that deserve a look:
 
 1. by the statement's own WHERE / ON / SET;
 2. by a view: a view's definition is judged on its own when the schema loads, and readers of the
@@ -1016,7 +1016,13 @@ An obligation is discharged one of five ways, and `-strict` reports the ones tha
    (`-strict` notes the owner caveat unless the table has `FORCE ROW LEVEL SECURITY`);
 4. across a composite foreign key: with `FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`,
    a join on `order_id = orders.id` where `orders.tenant_id` is pinned pins `order_items.tenant_id` too;
-5. by an opt-out in the statement: `-- sqlshape: unfiltered orders` (the predicate obligations) or
+5. the write-side counterpart of 2: a write through an auto-updatable view declared
+   `WITH CHECK OPTION` is pinned by whatever the view's own WHERE fixes (CASCADED also by an
+   underlying view's) -- the server refuses any row that would not satisfy it, so `pinned` is
+   discharged even where the statement's own WHERE never mentions the column (PostgreSQL's
+   SQLSTATE 44000, MySQL's 1369 `ER_VIEW_CHECK_FAILED`; a view with no CHECK OPTION at all never
+   discharges this way);
+6. by an opt-out in the statement: `-- sqlshape: unfiltered orders` (the predicate obligations) or
    `-- sqlshape: waive orders pinned(tenant_id)` (one obligation, spelled as declared; `waive orders`
    alone waives every obligation on the table). Opt-outs are reported with `-strict`.
 

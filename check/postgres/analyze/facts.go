@@ -246,6 +246,26 @@ func (a *analyzer) scopeFacts(p *prover, waived map[string][]string) *facts.Scop
 			}
 		}
 	}
+	// WITH CHECK OPTION: a write landing on the base table through an auto-updatable view
+	// is pinned by whatever the view's own WHERE fixes (CASCADED also by an underlying
+	// view's, down to the base table); the server refuses any row that would not satisfy
+	// it (SQLSTATE 44000). Only Eq conjuncts are lifted -- `pinned` is the only obligation
+	// this discharges; `visible where` through a view stays the view definition's own
+	// concern (checked when the view was loaded), not the writing statement's.
+	for i, lf := range fs.Leaves {
+		if lf.Role != facts.Target || lf.Body == nil {
+			continue
+		}
+		view := p.leaves[i].viewRel
+		if view == nil || view.CheckOption == 0 {
+			continue
+		}
+		for _, pr := range facts.LiftThroughView(lf, i, view.CheckOption == 'c') {
+			if pr.Op == facts.Eq {
+				fs.Preds = append(fs.Preds, pr)
+			}
+		}
+	}
 	return fs
 }
 
@@ -434,6 +454,26 @@ func (a *analyzer) predFacts(p *prover, n *pgparse.Node, ref func(colKey) (facts
 	if sub := n.GetSubLink(); sub != nil && !policy {
 		if pr, ok := a.existsFacts(p, sub, ref); ok {
 			return pr
+		}
+	}
+	// col IN (x), one alternative: the same fix as col = x -- x/cardinality's One proof
+	// and x/obligation's pinned() both read Eq / Fixed for "this column has exactly one
+	// value here", not In, so a singleton IN list is folded the same way plain `=` is
+	// (mirrors the MySQL producer's own fold of a one-element Item_func_in).
+	if x := n.GetAExpr(); x != nil && x.Kind == pgparse.A_Expr_Kind_AEXPR_IN && x.Lexpr != nil {
+		if items := x.Rexpr.GetList().GetItems(); len(items) == 1 {
+			if k, isCol := p.resolve(x.Lexpr); isCol {
+				if r, ok := ref(k); ok {
+					rhs := items[0]
+					if rk, rcol := p.resolve(rhs); rcol {
+						if rr, ok := ref(rk); ok {
+							return facts.Pred{Op: facts.Eq, Col: r, Term: facts.Term{Kind: facts.Column, Col: rr}}
+						}
+					} else if known(rhs) {
+						return facts.Pred{Op: facts.Eq, Col: r, Term: term(rhs)}
+					}
+				}
+			}
 		}
 	}
 	// col IN (a, b, ...) / col = a OR col = b: the column holds one of known values

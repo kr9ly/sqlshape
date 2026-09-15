@@ -114,9 +114,13 @@ func spNameOf(v mysqlast.Value) (db, name string) {
 // into: a placeholder (a prepared statement's own bind slot always qualifies -- measured:
 // `CALL p(?, ?)` with any two bound values raises nothing even for the OUT position, since
 // the placeholder acts as an anonymous variable slot the same way `@out` does), a `@user`
-// variable, or -- inside a trigger's/routine's own body -- a declared local variable or
-// parameter. Anything else (a literal, an expression) is 1414 (measured: `CALL p4(5)`, p4's
-// sole parameter INOUT, a bare literal in that position).
+// variable, -- inside a trigger's/routine's own body -- a declared local variable or
+// parameter, or NEW.col inside a BEFORE trigger's own body (measured: `CALL p_out(NEW.v)`
+// inside a BEFORE INSERT trigger raises nothing; the server's own 1414 message names this
+// exception outright -- "... is not a variable or NEW pseudo-variable in BEFORE trigger").
+// OLD.col never qualifies (OLD is never writable, in any trigger timing) and neither does
+// NEW.col outside a BEFORE trigger. Anything else (a literal, an expression) is 1414
+// (measured: `CALL p4(5)`, p4's sole parameter INOUT, a bare literal in that position).
 func (a *analyzer) isCallVariableTarget(v mysqlast.Value) bool {
 	if isParam(v) {
 		return true
@@ -133,6 +137,9 @@ func (a *analyzer) isCallVariableTarget(v mysqlast.Value) bool {
 	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident":
 		_, ok := a.lookupVar(str(n.Arg("ident")))
 		return ok
+	case "PTI_simple_ident_q_2d":
+		return a.trig != nil && strings.EqualFold(a.trig.Timing, "BEFORE") &&
+			strings.EqualFold(str(n.Arg("table")), "new")
 	}
 	return false
 }
@@ -198,6 +205,11 @@ func resultColumnsOf(br *BodyResult) ([]Column, bool) {
 	for _, st := range br.Statements {
 		if len(st.Columns) > 0 {
 			sets = append(sets, st.Columns)
+		}
+	}
+	for _, cols := range br.NestedCallColumns {
+		if len(cols) > 0 {
+			sets = append(sets, cols)
 		}
 	}
 	if len(sets) == 0 {

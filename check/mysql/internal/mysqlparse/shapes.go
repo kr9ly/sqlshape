@@ -2476,7 +2476,7 @@ var shapes = [...][]Shape{
 		{Syms: "LAG_SYM '(' expr opt_lead_lag_info ')' opt_null_treatment windowing_clause", Kind: ActUnknown},
 		{Syms: "FIRST_VALUE_SYM '(' expr ')' opt_null_treatment windowing_clause", Kind: ActNew, Class: "Item_first_last_value", Params: []string{"pos", "first", "a", "null_treatment", "w"}, Args: []Arg{{Text: "@$"}, {Text: "true"}, {Child: 3}, {Child: 5}, {Child: 6}}},
 		{Syms: "LAST_VALUE_SYM '(' expr ')' opt_null_treatment windowing_clause", Kind: ActNew, Class: "Item_first_last_value", Params: []string{"pos", "first", "a", "null_treatment", "w"}, Args: []Arg{{Text: "@$"}, {Text: "false"}, {Child: 3}, {Child: 5}, {Child: 6}}},
-		{Syms: "NTH_VALUE_SYM '(' expr ',' simple_expr ')' opt_from_first_last opt_null_treatment windowing_clause", Kind: ActUnknown},
+		{Syms: "NTH_VALUE_SYM '(' expr ',' simple_expr ')' opt_from_first_last opt_null_treatment windowing_clause", Kind: ActNew, Class: "Item_nth_value", Params: []string{"pos", "expr", "n", "from_last", "null_treatment", "w"}, Args: []Arg{{Text: "@$"}, {Child: 3}, {Child: 5}, {Child: 7}, {Child: 8}, {Child: 9}}},
 	},
 	462: { // opt_lead_lag_info
 		{Syms: "", Kind: ActStruct, Fields: []Field{{Name: "offset", Arg: Arg{Text: "nullptr"}}, {Name: "default_value", Arg: Arg{Text: "nullptr"}}}},

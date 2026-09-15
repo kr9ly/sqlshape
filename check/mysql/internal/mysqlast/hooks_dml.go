@@ -249,7 +249,7 @@ func init() {
 					args = append(args, v)
 				}
 			}
-			return &Node{Class: "Item_lead_lag", Args: []Value{Const(map[bool]string{true: "true", false: "false"}[isLead]), args, kids[5], kids[6]}, Start: n.Start, End: n.End}, nil
+			return &Node{Class: "Item_lead_lag", Names: []string{"is_lead", "args", "null_treatment", "w"}, Args: []Value{Const(map[bool]string{true: "true", false: "false"}[isLead]), args, kids[5], kids[6]}, Start: n.Start, End: n.End}, nil
 		}
 	}
 	register("window_func_call", "LEAD_SYM '(' expr opt_lead_lag_info ')' opt_null_treatment windowing_clause", leadLag(true))

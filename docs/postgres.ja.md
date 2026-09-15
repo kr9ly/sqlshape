@@ -90,6 +90,11 @@ type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
 
 同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。生成した名前がPostgreSQLの63バイトという識別子の上限を超える場合は、マルチバイト文字を途中で切らないよう、PostgreSQLと同じやり方で切り詰める。
 
+自動更新可能ビューで`WITH CHECK OPTION`を宣言したものへの`UPDATE` / `INSERT`は、基底表の`require pinned(<列>)`を履行する（`Discharge.Path`は`ByView`）:
+
+- ビュー自身のWHEREがその列を等値で固定しているとき。`WITH CHECK OPTION`単独ならCASCADEDなので下位ビューのWHEREも数え、`WITH LOCAL CHECK OPTION`はそのビュー自身で止まる
+- 裏付けは上の44000そのもの。CHECK OPTIONを宣言していないビューはこの経路を持たない
+
 ## ランタイム: pgx
 
 ```

@@ -33,6 +33,15 @@ type BodyResult struct {
 	// may collide with (1442, call.go's checkCalledRoutineOverlap) when the invoking
 	// statement itself references (reads or writes) the same table.
 	WriteTables []string
+	// NestedCallColumns are the result-column shapes of every CALL this body itself contains
+	// (walkCall), one entry per nested CALL whose own callee has a single agreed shape:
+	// mysqld propagates a nested CALL's own result set out through every enclosing CALL
+	// exactly as if the inner SELECT sat directly in the outer body (measured), so
+	// resultColumnsOf (call.go) folds these in alongside Statements' own Columns rather than
+	// recording the nested CALL as one of Statements (which would misrepresent it as this
+	// body's own Facts for the dialect's obligations -- a CALL is "no scope of its own",
+	// callStmt's own doc).
+	NestedCallColumns [][]Column
 }
 
 // BodyStatement is one DML statement's facts, with the 1-based line of the definition
@@ -250,7 +259,17 @@ func (a *analyzer) resolveHandlerConditions(v mysqlast.Value) []condRef {
 //     trigger");
 //   - NEW.col reads NULL-able in a BEFORE INSERT/UPDATE trigger regardless of the column's
 //     own NOT NULL (measured: the server's own NOT NULL check has not run yet at that
-//     point); an AFTER trigger's NEW.col, and OLD.col at any timing, follow the column's
+//     point) -- EXCEPT a BEFORE INSERT's NEW.col for an omitted AUTO_INCREMENT column, or
+//     an omitted column with a non-NULL DEFAULT: the server has already substituted the
+//     value (the AUTO_INCREMENT placeholder 0, or the default) before the trigger body
+//     runs, so NEW.col is never actually NULL there (measured: `INSERT INTO orders (total)
+//     VALUES (...)`, omitting an AUTO_INCREMENT id, fires a BEFORE INSERT trigger that
+//     reads NEW.id = 0 and can insert it into another table's NOT NULL column without
+//     error). A BEFORE UPDATE's NEW.col stays conservatively nullable even for such a
+//     column: an UPDATE can name the column explicitly and assign it NULL, which the
+//     server's own NOT NULL check rejects with 1048 at the statement level, not inside the
+//     trigger body -- so from the trigger body's point of view NEW.col could still be NULL
+//     going in. An AFTER trigger's NEW.col, and OLD.col at any timing, follow the column's
 //     declared nullability (measured: an AFTER INSERT trigger on a table with an
 //     AUTO_INCREMENT key, a NOT NULL DEFAULT column and a plain NOT NULL column sees none
 //     of them NULL for an INSERT naming only the last, and an INSERT of an explicit NULL
@@ -281,7 +300,15 @@ func (a *analyzer) trigRowColumn(qualifier, field string, at int, write bool) (*
 	}
 	nullable := !col.NotNull
 	if row == "NEW" && timing == "BEFORE" {
-		nullable = true
+		// an AUTO_INCREMENT column holds the placeholder 0 in a BEFORE INSERT body whether
+		// the statement omitted it or wrote NULL (measured), so it is never NULL there. A
+		// DEFAULT does not help: an explicit NULL reaches the body as NULL (measured: the
+		// body's own INSERT of NEW.total into a NOT NULL column is 1048, on that column),
+		// and a body is analyzed once for every statement, so it stays nullable.
+		substituted := event == "INSERT" && col.AutoIncrement
+		if !substituted {
+			nullable = true
+		}
 	}
 	return col, nullable, nil
 }
@@ -596,10 +623,18 @@ func (a *analyzer) walkCursorToken(name string, at int) error {
 // commitCheck is 1422 for a transaction-control statement (COMMIT / START TRANSACTION /
 // ROLLBACK / SAVEPOINT, folded to a {sql_command: SQLCOM_*} Struct) or a DDL statement
 // (a PT_create_*/PT_drop_*/PT_alter_*/PT_rename_*/PT_truncate_* node) in a trigger or
-// function body -- measured on mysqld: a procedure is exempt.
+// function body -- measured on mysqld: a procedure is exempt. Dynamic SQL (PREPARE /
+// EXECUTE / DEALLOCATE PREPARE -- PREPARE and DEALLOCATE PREPARE fold to the same
+// {sql_command: SQLCOM_*} Struct walkOne dispatches here directly; EXECUTE folds to a bare
+// "execute" Node instead, whose own walkNode case calls this the same way) is 1336 in a
+// trigger or function body, measured ("Dynamic SQL is not allowed in stored function or
+// trigger"): a procedure is exempt from this too.
 func (a *analyzer) commitCheck(class string, at int) error {
 	if a.trig == nil && (a.routine == nil || a.routine.Kind != schema.Function) {
-		return nil // a procedure: COMMIT and DDL are allowed
+		return nil // a procedure: COMMIT, DDL and dynamic SQL are all allowed
+	}
+	if class == "SQLCOM_PREPARE" || class == "SQLCOM_DEALLOCATE_PREPARE" || class == "SQLCOM_EXECUTE" {
+		return &Error{Message: "Dynamic SQL is not allowed in stored function or trigger", Code: 1336, Position: a.ph.Back(at)}
 	}
 	ddl := strings.HasPrefix(class, "PT_create_") || strings.HasPrefix(class, "PT_drop_") ||
 		strings.HasPrefix(class, "PT_alter_") || strings.HasPrefix(class, "PT_rename_") ||
@@ -660,6 +695,9 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 				return err
 			}
 		}
+		if n.Args[2] == nil {
+			a.raiseCaseNotFound(n.Start)
+		}
 		return a.walkOne(sc, n.Args[2], br)
 	case "searched_case_stmt":
 		for _, w := range flattenBinaryList(n.Args[0], "searched_when_clause_list") {
@@ -674,6 +712,9 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 				return err
 			}
 		}
+		if n.Args[1] == nil {
+			a.raiseCaseNotFound(n.Start)
+		}
 		return a.walkOne(sc, n.Args[1], br)
 	case "sp_leave":
 		return a.checkLabel("LEAVE", str(n.Arg("label")), n.Start)
@@ -687,6 +728,10 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		return a.walkSet(sc, n)
 	case "PT_call":
 		return a.walkCall(n, br)
+	case "execute":
+		// EXECUTE <stmt>: dynamic SQL the same way PREPARE / DEALLOCATE PREPARE are
+		// (commitCheck), but folded to a bare Node (no sql_command Struct of its own).
+		return a.commitCheck("SQLCOM_EXECUTE", n.Start)
 	case "sp_proc_stmt_fetch":
 		return a.walkFetch(n)
 	case "PT_select_stmt":
@@ -790,7 +835,9 @@ func (a *analyzer) absorb(sc scope, raisedAt int, handlers []pendingHandler, br 
 		}
 		saved := a.handlerRaise
 		a.handlerRaise = caught
+		a.inHandler++
 		err := a.walkOne(sc, h.body, br)
+		a.inHandler--
 		a.handlerRaise = saved
 		if err != nil {
 			return err
@@ -815,7 +862,17 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		}
 		names, _ := n.Arg("names").(mysqlast.List)
 		for _, nm := range names {
-			a.declareVar(str(nm), t)
+			name := str(nm)
+			if a.vars != nil {
+				if _, dup := a.vars.vars[strings.ToLower(name)]; dup {
+					// the server refuses two DECLAREs of the same name in the same block
+					// at CREATE time (1331 "Duplicate variable: x", measured); a nested
+					// block's own DECLARE shadowing an outer one is ordinary scoping, not
+					// a duplicate -- a.vars is that innermost block's own scope alone.
+					return &Error{Message: fmt.Sprintf("Duplicate variable: %s", name), Code: 1331, Position: a.ph.Back(n.Start)}
+				}
+			}
+			a.declareVar(name, t)
 		}
 		if def := n.Arg("default"); def != nil {
 			return a.exprAt(def, "default")
@@ -931,9 +988,12 @@ func (a *analyzer) walkReturn(n *mysqlast.Node) error {
 // CONDITION FOR one of those two (never SQLWARNING/NOT FOUND/SQLEXCEPTION, which sp_hcond
 // alone accepts); a number, bare or through a named CONDITION, is 1646 at CREATE time
 // (measured: "SIGNAL/RESIGNAL can only use a CONDITION defined with SQLSTATE"). A bare
-// RESIGNAL (no condition given) re-raises whatever the innermost enclosing HANDLER is
-// itself handling (a.handlerRaise), unchanged (measured: same number, same message) --
-// RESIGNAL with a condition is an ordinary SIGNAL instead (measured: a fresh number).
+// RESIGNAL (no condition given) reached outside any HANDLER (a.inHandler == 0) is 1645
+// ("RESIGNAL when handler not active"), certain every time (measured); reached inside one,
+// it re-raises whatever the innermost enclosing HANDLER is itself handling (a.handlerRaise),
+// unchanged, unless its own SET MYSQL_ERRNO overrides the number (measured: the caller sees
+// the RESIGNAL's own overridden number, not the original SIGNAL's) -- RESIGNAL with a
+// condition is an ordinary SIGNAL instead (measured: a fresh number).
 //
 // The key (Violation.Constraint here) is the SET MYSQL_ERRNO value as decimal text when
 // the SIGNAL gives one, the SQLSTATE otherwise (mysql/errors.go's runtime uses the same
@@ -954,7 +1014,7 @@ func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 	cond := n.Arg("condition")
 	if cond == nil {
 		if n.Class == "sp_resignal" {
-			a.raised = append(a.raised, a.handlerRaise...)
+			a.raiseResignal(items)
 		}
 		return nil
 	}
@@ -989,6 +1049,46 @@ func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 	}
 	a.raised = append(a.raised, v)
 	return nil
+}
+
+// raiseResignal is a bare RESIGNAL's (no condition) own work: 1645 when reached outside any
+// HANDLER (measured: "RESIGNAL when handler not active", certain every time this branch
+// runs), otherwise a.handlerRaise re-raised, each overridden to the RESIGNAL's own SET
+// MYSQL_ERRNO when it has one (measured: the caller sees the RESIGNAL's own number, not the
+// original SIGNAL's -- the SQLSTATE and everything else about the violation stay the
+// caught one's, only the number/key changes).
+func (a *analyzer) raiseResignal(items mysqlast.List) {
+	if a.inHandler == 0 {
+		v := Violation{Code: 1645, Constraint: "1645", SQLState: "HY000"}
+		if a.trig != nil {
+			v.Table, v.Trigger = a.trigTable.Name, a.trig.Name
+		}
+		a.raised = append(a.raised, v)
+		return
+	}
+	errno, ok := signalErrno(items)
+	if !ok {
+		a.raised = append(a.raised, a.handlerRaise...)
+		return
+	}
+	key := strconv.Itoa(errno)
+	for _, v := range a.handlerRaise {
+		v.Code, v.Constraint, v.Name = errno, key, a.raises[key]
+		a.raised = append(a.raised, v)
+	}
+}
+
+// raiseCaseNotFound is 1339 ("Case not found for CASE statement"): a stored routine's own
+// CASE (simple or searched) with no ELSE may fail every time none of its WHENs match --
+// measured on mysqld -- the same "may" shape every other body-level failure mode here has
+// (not certain, the way a SIGNAL naming a fixed condition is, since which branch a CASE
+// takes depends on its own expression/predicates, not proven exhaustive here).
+func (a *analyzer) raiseCaseNotFound(at int) {
+	v := Violation{Code: 1339, Constraint: "1339", SQLState: "20000"}
+	if a.trig != nil {
+		v.Table, v.Trigger = a.trigTable.Name, a.trig.Name
+	}
+	a.raised = append(a.raised, v)
 }
 
 // signalErrno reads a SIGNAL/RESIGNAL's own `SET MYSQL_ERRNO = n` item, when there is one.
@@ -1118,6 +1218,42 @@ func (a *analyzer) walkCall(n *mysqlast.Node, br *BodyResult) error {
 		}
 	}
 	a.noteCalledRoutine(r, n.Start)
+	if a.routine != nil && r == a.routine {
+		// max_sp_recursion_depth defaults to 0 (not a setting sqlshape itself tracks): any
+		// actual recursive invocation -- even this first one -- is refused by the server at
+		// run time every time (1456 "Recursive limit ... was exceeded", measured). Detected
+		// here (this CALL's own callee is the very routine being walked) rather than through
+		// AnalyzeRoutine's own cycle-breaking cache (which exists only to stop the walk
+		// itself from looping, and answers "no writes, no error" for the in-progress call --
+		// never a signal that the branch is certain to fail).
+		a.raised = append(a.raised, Violation{Code: 1456, Constraint: "1456", SQLState: "HY000"})
+	}
+	if a.trig != nil || (a.routine != nil && a.routine.Kind == schema.Function) {
+		// a FUNCTION/TRIGGER cannot return a result set itself (walkSelect's own 1415 for
+		// its own INTO-less top-level SELECT); CALLing a PROCEDURE whose own body has one
+		// is certain to raise the very same 1415 at every execution too -- the server only
+		// catches it at run time, not at this CREATE (measured), but the schema is whole
+		// here, so resultColumnsOf's answer (the callee's own INTO-less top-level SELECTs)
+		// already settles it.
+		if cbr, err := AnalyzeRoutine(a.s, r); err == nil && cbr != nil {
+			if cols, ok := resultColumnsOf(cbr); ok && len(cols) > 0 {
+				what := "function"
+				if a.trig != nil {
+					what = "trigger"
+				}
+				return &Error{Message: fmt.Sprintf("Not allowed to return a result set from a %s", what), Code: 1415, Position: a.ph.Back(n.Start)}
+			}
+		}
+	}
+	// the callee's own result set propagates out through this CALL exactly as if it sat
+	// directly in this body (measured); a callee whose own shapes disagree contributes
+	// nothing here (resultColumnsOf reports that mismatch, if it matters, at whatever CALL
+	// site is the outermost one asking for it)
+	if cbr, err := AnalyzeRoutine(a.s, r); err == nil && cbr != nil {
+		if cols, ok := resultColumnsOf(cbr); ok && len(cols) > 0 {
+			br.NestedCallColumns = append(br.NestedCallColumns, cols)
+		}
+	}
 	// the callee's writes and failure modes are this body's (transitively, finishCalls);
 	// a CALL's own arguments reference no table, so it collides only with a trigger's own
 	// table (measured: `CALL p3(7)` alone never collides with what p3 writes)
@@ -1270,6 +1406,7 @@ func (a *analyzer) walkDML(n *mysqlast.Node, kind facts.StmtKind, br *BodyResult
 				br.WriteTables = appendTableName(br.WriteTables, m.table.Name)
 			}
 		}
+		foldTriggerWriteTables(a.s, br, a.write)
 	}
 	if err := a.finishCalls(br, false); err != nil {
 		return err
@@ -1282,6 +1419,57 @@ func (a *analyzer) walkDML(n *mysqlast.Node, kind facts.StmtKind, br *BodyResult
 	}
 	a.appendStatement(br, n.Start)
 	return nil
+}
+
+// foldTriggerWriteTables adds, to br.WriteTables, the tables written by whatever trigger(s)
+// w's own write fires (measured: a body's UPDATE of b_tbl, with b_tbl's own AFTER UPDATE
+// trigger writing a_tbl, makes a_tbl every bit as much this body's own write as b_tbl is --
+// `SELECT f(...) FROM a_tbl` collides 1442 the same way it would if f wrote a_tbl directly).
+// This is the same event mapping triggerFailureModes uses for violations, applied to
+// WriteTables instead: REPLACE also fires the DELETE event on a displaced row, ON DUPLICATE
+// KEY UPDATE also fires the UPDATE event on a collision.
+func foldTriggerWriteTables(s *schema.Schema, br *BodyResult, w *write) {
+	switch w.kind {
+	case facts.Insert:
+		appendTriggerWriteTables(s, br, w.table, "INSERT")
+		if w.replace {
+			appendTriggerWriteTables(s, br, w.table, "DELETE")
+		}
+		if w.onDuplicate != nil {
+			appendTriggerWriteTables(s, br, w.table, "UPDATE")
+		}
+	case facts.Update:
+		appendTriggerWriteTables(s, br, w.table, "UPDATE")
+		for _, m := range w.more {
+			appendTriggerWriteTables(s, br, m.table, "UPDATE")
+		}
+	case facts.Delete:
+		appendTriggerWriteTables(s, br, w.table, "DELETE")
+		for _, m := range w.more {
+			appendTriggerWriteTables(s, br, m.table, "DELETE")
+		}
+	}
+}
+
+// appendTriggerWriteTables folds t's own event triggers' WriteTables (each analyzed once
+// and cached, cachedAnalyzeTrigger -- so a further cascade, a trigger whose own write fires
+// another trigger in turn, folds in recursively through that trigger's own walkDML) into br.
+func appendTriggerWriteTables(s *schema.Schema, br *BodyResult, t *schema.Table, event string) {
+	if t == nil {
+		return
+	}
+	for _, tg := range s.Triggers {
+		if !strings.EqualFold(tg.Table, t.Name) || !strings.EqualFold(tg.Event, event) {
+			continue
+		}
+		tbr, err := cachedAnalyzeTrigger(s, tg)
+		if err != nil || tbr == nil {
+			continue
+		}
+		for _, wt := range tbr.WriteTables {
+			br.WriteTables = appendTableName(br.WriteTables, wt)
+		}
+	}
 }
 
 // appendTableName adds name to names, once (case-insensitively): BodyResult.WriteTables'

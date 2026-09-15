@@ -150,6 +150,11 @@ type analyzer struct {
 	// write is the statement's write, for the failure modes: its target, the columns
 	// assigned with what is stored in them, and IGNORE / ON DUPLICATE KEY UPDATE
 	write *write
+	// checkOptionViews are the WITH CHECK OPTION views (and, down a CASCADED chain,
+	// further ones) a write reaching table through it must satisfy (1369), by the base
+	// table: computed once in facts.go's checkOptionFacts, alongside the pinned lift it
+	// does through the same view chain for the same reason
+	checkOptionViews map[*schema.Table][]string
 	// outerRefs are the column references a nested query resolved in an enclosing block
 	// (fullgroup.go reads them: a correlated reference is a column of the block it names)
 	outerRefs []outerRef
@@ -211,8 +216,14 @@ type analyzer struct {
 	raised []Violation
 	// handlerRaise is, while walking a HANDLER's own body, the exact violations this
 	// handler is catching (the block's own subset that matched its conditions): a bare
-	// RESIGNAL (no condition, no SET) re-raises them unchanged.
+	// RESIGNAL (no condition, no SET) re-raises them unchanged (its own SET MYSQL_ERRNO,
+	// when it has one, overrides the number instead, walkSignal).
 	handlerRaise []Violation
+	// inHandler counts the HANDLER bodies currently being walked (absorb), nested ones
+	// included: a bare RESIGNAL reached with this at 0 is outside any HANDLER, which the
+	// server always refuses at 1645 (walkSignal), regardless of what handlerRaise holds
+	// (left over from an enclosing statement's own last HANDLER, never this one's).
+	inHandler int
 	// raises names the trigger's/routine's own `-- sqlshape: error <key> = <Name>`
 	// annotations, by key (a MYSQL_ERRNO as decimal text, or a SQLSTATE).
 	raises map[string]string
@@ -407,6 +418,18 @@ type scope struct {
 	// that carry it. An unqualified reference to it is not ambiguous, and `*` lists it once,
 	// first (the left side's).
 	merged []mergedCol
+	// wherePreds is how many of facts.Preds, and whereNN how many of nnMarks, came from
+	// WHERE and JOIN ON (block() sets both right after those are recorded, before HAVING's
+	// own are folded in): fullgroup.go's fdClosure reads only these prefixes, since a WHERE
+	// (or an inner join's ON) equality or non-null mark genuinely extends ONLY_FULL_GROUP_BY's
+	// functional dependency (measured: `WHERE u = 1 GROUP BY a` and `WHERE u IS NOT NULL
+	// GROUP BY u` both accept a nonaggregated column that depends on u), but the same
+	// predicate written in HAVING does not (measured: `GROUP BY u HAVING u IS NOT NULL` and
+	// `GROUP BY a, u HAVING u = 1` still require every nonaggregated select-list column to
+	// depend on the GROUP BY columns alone) -- HAVING runs after grouping, so it restricts
+	// which groups come out, not what the server may assume about a row while deciding
+	// whether the query is well-formed.
+	wherePreds, whereNN int
 }
 
 // mergedCol is one coalesced join column.
@@ -590,11 +613,20 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		}
 	}
 	a.facts.Writes = []facts.Write{a.writeFacts(facts.Insert, rel, targets, values)}
+	if w.replace {
+		// REPLACE deletes the colliding row before it inserts the new one (measured: an
+		// AFTER DELETE trigger on the table fires) -- a second write, of Kind Delete, so
+		// `require never on delete` and other OnDelete obligations see it (x/obligation's
+		// writes() keys off facts.Write.Kind, not the statement's own top-level Kind).
+		a.facts.Writes = append(a.facts.Writes, facts.Write{Table: rel.table.Name, Kind: facts.Delete, Position: int32(a.ph.Back(rel.pos))})
+	}
 	dupCols, _ := arg(n, "opt_on_duplicate_column_list", 10).(mysqlast.List)
 	dupVals, _ := arg(n, "opt_on_duplicate_value_list", 11).(mysqlast.List)
 	if len(dupCols) > 0 {
 		w.onDuplicate = []assignment{}
 	}
+	var dupTargets []*schema.Column
+	var dupTerms []facts.Term
 	for i, c := range dupCols {
 		a.assigning = true
 		col, err := a.targetColumn(rel, c, "field list")
@@ -608,7 +640,17 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 				return err
 			}
 			w.onDuplicate = append(w.onDuplicate, as)
+			dupTargets = append(dupTargets, col)
+			dupTerms = append(dupTerms, a.storedTerm(scope{rels: []relation{*rel}}, col, dupVals[i]))
 		}
+	}
+	if len(dupTargets) > 0 {
+		// ON DUPLICATE KEY UPDATE is a second write, of Kind Update, on the same row as
+		// the INSERT branch would have targeted -- the same shape x/obligation already
+		// has a case for on PostgreSQL's ON CONFLICT DO UPDATE (a branch reassigning a
+		// pinned column needs its own WHERE-less write checked, since nothing in the
+		// UPDATE branch itself fixes the row it moves).
+		a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Update, rel, dupTargets, dupTerms))
 	}
 	return nil
 }

@@ -134,6 +134,15 @@ A second constraint that would get the same name is numbered, as PostgreSQL does
 (`orders_total_check1`). A generated name over PostgreSQL's 63-byte identifier limit is cut down the
 same way PostgreSQL cuts it, without splitting a multibyte character.
 
+An UPDATE / INSERT through an auto-updatable view declared `WITH CHECK OPTION` discharges
+a base table's `require pinned(<col>)` (`Discharge.Path` `ByView`):
+
+- when the view's own WHERE fixes the column by equality; `WITH CHECK OPTION` alone is
+  CASCADED, so an underlying view's WHERE counts too, `WITH LOCAL CHECK OPTION` stops at the
+  view itself;
+- the 44000 above is what makes the pin genuine: a view with no CHECK OPTION never discharges
+  it.
+
 ## The runtime: pgx
 
 ```

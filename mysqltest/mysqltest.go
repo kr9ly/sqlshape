@@ -117,6 +117,20 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 		d.Close()
 		return nil, fmt.Errorf("mysqltest: mysqld did not come up: %w%s", err, log)
 	}
+	// lower_case_table_names = 2 is only honored on a case-insensitive filesystem: on a
+	// case-sensitive one mysqld warns and starts at 0 instead (measured), silently out of
+	// step with what the schema declared. A caller loading a schema declaring 2 on such a
+	// filesystem needs to know its tests are not actually exercising 2, not a server that
+	// silently answers as 0.
+	var gotLCTN string
+	if err := d.db.QueryRowContext(ctx, "SELECT @@GLOBAL.lower_case_table_names").Scan(&gotLCTN); err != nil {
+		d.Close()
+		return nil, fmt.Errorf("mysqltest: reading lower_case_table_names: %w", err)
+	}
+	if gotLCTN != lctn {
+		d.Close()
+		return nil, fmt.Errorf("mysqltest: schema declares lower_case_table_names = %s, but the running mysqld started with %s (2 needs a case-insensitive filesystem)", lctn, gotLCTN)
+	}
 	if err := d.load(ctx, schemaSQL); err != nil {
 		d.Close()
 		return nil, err

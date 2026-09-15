@@ -433,6 +433,16 @@ func (c *checker) pinned(sc *facts.Scope, i int, o *Obligation, rel Relation, d 
 			return
 		}
 	}
+	for _, p := range sc.Preds {
+		// a write through a WITH CHECK OPTION view is pinned by the view's own WHERE
+		// (LiftThroughView already stopped short of a nested view when the option is
+		// LOCAL): the server refuses any row the view's WHERE would not accept, the same
+		// guarantee a policy's USING gives a row-security table.
+		if p.Origin == facts.FromView && applies(p, i) && p.Op == facts.Eq && p.Col == ref && p.Term.Kind != facts.Column {
+			d.Path = ByView
+			return
+		}
+	}
 	d.Message = fmt.Sprintf("%s.%s is not pinned: every statement on %s must fix %s by equality (or assign it)%s", rel.Name(), col, rel.Name(), col, occurrence(sc, i))
 	if root, ok := strings.CutPrefix(o.Source, "aggregate "); ok {
 		d.Message = fmt.Sprintf("%s is a child of aggregate %s: reach it through %s (fix %s.%s by equality, or join on %s's key)", rel.Name(), root, root, rel.Name(), col, root)

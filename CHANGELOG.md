@@ -12,6 +12,16 @@ release it is a candidate for.
 
 ### Added
 
+- A write through a view declared `WITH CHECK OPTION` discharges `require pinned(<col>)` (path
+  `ByView`) when the view chain's own `WHERE` fixes the column: CASCADED (PostgreSQL's, and MySQL's
+  only) reaches an underlying view's `WHERE` too, LOCAL (PostgreSQL) stops at the view itself; the
+  server's own enforcement (44000, MySQL's 1369) is what makes the pin genuine. `x/facts` gained
+  `LiftThroughView`, the translation both producers share. MySQL: `WITH CHECK OPTION` is a modeled
+  failure mode, an UPDATE through such a view may raise 1369 (absorbed by `UPDATE IGNORE`,
+  measured), `mysql.Violates` keys it by the view's name; and a write's target leaf reaching the
+  base table through an updatable view now names the base table, so obligations declared on the
+  base table are checked for a write through a view at all.
+
 - `cmd/sqlshape/internal/vet` gained `docs_test.go`: a harness that reads the go/sql fences out of
   `docs/checks.md` and `checks.ja.md` at test time (both the code and the diagnostic wording a
   Rejected fence's trailing comment claims), completes each into a compiling program under
@@ -59,6 +69,41 @@ release it is a candidate for.
   NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
   or TRIGGER still refuses the directive (neither returns a value for it to describe).
 
+- MySQL after a second adversarial round against a running mysqld 8.4 (7 lanes, 29 findings, each
+  a regression test in `adv2_*_test.go`; the surface that grew since the first round). Bodies:
+  dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) in a trigger or FUNCTION is the
+  server's CREATE-time refusal 1336 and two `DECLARE`s of one name in a block 1331, both schema
+  problems now; a bare `RESIGNAL`'s own `SET MYSQL_ERRNO` overrides the number and a bare
+  `RESIGNAL` outside any `HANDLER` is 1645; a `CASE` statement with no `ELSE` carries 1339 among
+  the body's failure modes; a routine that `CALL`s itself is 1456 (`max_sp_recursion_depth`
+  defaults to 0); a FUNCTION or TRIGGER `CALL`ing a PROCEDURE that returns a result set is 1415;
+  the "table already in use" 1442 covers the whole invoking chain (`x`'s trigger writes `y`,
+  whose trigger writes `x`) and a called routine's write reached through a fired trigger. Calls:
+  `NEW.col` is a valid `OUT` / `INOUT` argument inside a `BEFORE` trigger (no 1414); a stored
+  FUNCTION in a generated column, a `DEFAULT (expr)` or a `CHECK` is refused at `CREATE TABLE`
+  (3763 / 3770 / 3814); a nested `CALL`'s result set propagates out. Failure modes: a
+  multi-column `UNIQUE` is exempt from 1062 when any one column is left NULL; an omitted `NOT NULL`
+  column with no `DEFAULT` is 1364; a `CHECK` on a generated column is judged against writes to
+  its source columns; `STRICT_TRANS_TABLES` binds only transactional engines (a MyISAM table
+  follows the single-row / first-row rule, `x/sqlmode` distinguishes the two strict flags);
+  `mysql.Violates` reads a live 1442 / 1172 back. Types: `NTH_VALUE` is read (it used to reject the
+  statement), `LAG` / `LEAD` / `FIRST_VALUE` / `LAST_VALUE` are typed from their argument, `LAG` /
+  `LEAD` nullable unless a default is given; a `BEFORE INSERT` trigger's `NEW.col` of an
+  `AUTO_INCREMENT` column is not nullable (the placeholder 0 is there before the body runs; a
+  defaulted column's is, since an explicit NULL reaches the body as NULL, measured). Facts: `INSERT ... ON DUPLICATE KEY UPDATE` records its update branch as a second write and
+  `REPLACE` a delete beside its insert, so `pinned` and `never on delete` see them; a string
+  column compared to a numeric literal fixes nothing (`'5'` and `'05'` both match `= 5`); a
+  `HAVING` conjunct over `GROUP BY` columns with no aggregate is a fact like a `WHERE` one; a
+  one-element `IN (x)` is `= x` on both dialects (MySQL parses it to its own node the producer
+  never read; PostgreSQL's `alternatives` wanted two). Migrations: `ADD` / `DROP COLUMN` follow
+  generated-column dependencies; a parent key and its referencing column widened together drop
+  and re-add the foreign key around the two `MODIFY`s; a primary key moving off an
+  `AUTO_INCREMENT` column drops and adds in one `ALTER TABLE`; a renamed primary-key column is a
+  `RENAME COLUMN`, not a `DROP PRIMARY KEY` (the drop side now translates the rename as the add side
+  did); a new table's own `AUTO_INCREMENT=n` reaches the `CREATE TABLE` (an existing table's counter
+  is still not compared). `mysqltest.Start` errors when the server's `lower_case_table_names`
+  differs from the declaration (a declared `2` on a case-sensitive filesystem starts at `0`, docs
+  say so now); docs say length / range / `ENUM` truncation is a type matter, not a failure mode.
 - PostgreSQL after a third adversarial round against a running server (8 lanes, 23 findings, each a
   regression test in `adv_*_test.go`), the failure modes first. `TRUNCATE` of a table another table's
   foreign key still references (no `CASCADE`, the referrer not in the list) is reported as certain to

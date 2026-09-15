@@ -60,6 +60,8 @@ const (
 	codeCheckViolation = 3819
 	code1442           = 1442 // a trigger writing its own table: always fails (measured)
 	code1172           = 1172 // SELECT ... INTO with more than one row
+	codeNoDefault      = 1364 // "Field '...' doesn't have a default value"
+	codeViewCheck      = 1369 // ER_VIEW_CHECK_FAILED: a write through a WITH CHECK OPTION view
 )
 
 // Key identifies a violation the way the expect line and mysql.Violates spell it: the
@@ -87,10 +89,11 @@ func (a *analyzer) violations() []Violation {
 			case facts.Insert:
 				out = a.insertViolations(w)
 			case facts.Update:
-				strict := a.s.Settings.Strict()
-				out = a.updateViolations(w.table, w.values, nil, strict)
+				out = a.updateViolations(w.table, w.values, nil, a.strictFor(w.table))
+				out = append(out, a.checkOptionViolations(w.table)...)
 				for _, m := range w.more {
-					out = append(out, a.updateViolations(m.table, m.values, nil, strict)...)
+					out = append(out, a.updateViolations(m.table, m.values, nil, a.strictFor(m.table))...)
+					out = append(out, a.checkOptionViolations(m.table)...)
 				}
 			case facts.Delete:
 				out = a.referencingViolations(w.table, nil, true, map[*schema.Table]bool{})
@@ -134,28 +137,49 @@ func (a *analyzer) calledRoutineViolations() []Violation {
 // (measured: BI always, then BU/AU instead of AI on a collision) -- both "may", the way
 // every other failure mode here is.
 func (a *analyzer) triggerFailureModes(w *write) []Violation {
+	// inUse seeds the table-reuse chain (triggerViolations) with the tables this very
+	// statement already writes: a trigger reached further down the chain writing back into
+	// one of them is 1442 too, the same certain way a trigger writing its own table
+	// directly is (measured: a chain through a different table, back into one already in
+	// use, always fails -- see triggerViolations).
+	inUse := writeTableSet(w)
 	var out []Violation
 	switch w.kind {
 	case facts.Insert:
-		out = append(out, triggerViolations(a.s, w.table, "INSERT")...)
+		out = append(out, triggerViolations(a.s, w.table, "INSERT", inUse)...)
 		if w.replace {
-			out = append(out, triggerViolations(a.s, w.table, "DELETE")...)
+			out = append(out, triggerViolations(a.s, w.table, "DELETE", inUse)...)
 		}
 		if w.onDuplicate != nil {
-			out = append(out, triggerViolations(a.s, w.table, "UPDATE")...)
+			out = append(out, triggerViolations(a.s, w.table, "UPDATE", inUse)...)
 		}
 	case facts.Update:
-		out = append(out, triggerViolations(a.s, w.table, "UPDATE")...)
+		out = append(out, triggerViolations(a.s, w.table, "UPDATE", inUse)...)
 		for _, m := range w.more {
-			out = append(out, triggerViolations(a.s, m.table, "UPDATE")...)
+			out = append(out, triggerViolations(a.s, m.table, "UPDATE", inUse)...)
 		}
 	case facts.Delete:
-		out = append(out, triggerViolations(a.s, w.table, "DELETE")...)
+		out = append(out, triggerViolations(a.s, w.table, "DELETE", inUse)...)
 		for _, m := range w.more {
-			out = append(out, triggerViolations(a.s, m.table, "DELETE")...)
+			out = append(out, triggerViolations(a.s, m.table, "DELETE", inUse)...)
 		}
 	}
 	return out
+}
+
+// writeTableSet is w's own tables (lower-cased, w.table plus every w.more target): what
+// triggerFailureModes seeds triggerViolations' own "already in use" set with.
+func writeTableSet(w *write) map[string]bool {
+	set := map[string]bool{}
+	if w.table != nil {
+		set[strings.ToLower(w.table.Name)] = true
+	}
+	for _, m := range w.more {
+		if m.table != nil {
+			set[strings.ToLower(m.table.Name)] = true
+		}
+	}
+	return set
 }
 
 // triggerViolations lists what t's triggers for event (INSERT/UPDATE/DELETE) may raise: each
@@ -163,7 +187,19 @@ func (a *analyzer) triggerFailureModes(w *write) []Violation {
 // resolved to its own failure modes (its SIGNALs, and what its own embedded writes may
 // violate -- including their own triggers, recursively, a cycle broken by the cache's
 // in-progress marker: see body.go).
-func triggerViolations(s *schema.Schema, t *schema.Table, event string) []Violation {
+//
+// inUse is the set of tables (lower-cased) already in use by the statement that reaches
+// this point: the firing statement's own write table(s) to begin with, grown by each
+// trigger's own table and writes as the chain is walked further down. A trigger's own body
+// writing a table already in this set is 1442 the same way a trigger writing its OWN table
+// is (walkDML's ownTableWrite, body.go) -- not only when it is the very same table, but
+// anywhere up the chain that reached it (measured: `INSERT INTO x` fires x_bi, which
+// INSERTs into y, which fires y_bi, which INSERTs into x -- x is already in use by the very
+// first INSERT, and mysqld always raises 1442 there, though neither trigger's own table is
+// the one its own body writes). Each of a trigger's own BodyStatements already carries its
+// write's table and DML kind (facts.Write), which is what this walks to find the next
+// table/event to chain into, and what it compares against inUse.
+func triggerViolations(s *schema.Schema, t *schema.Table, event string, inUse map[string]bool) []Violation {
 	if t == nil {
 		// defensive: every caller passes w.table or a moreTarget's table, both resolved
 		// (non-nil) *schema.Table values by the time a write is recorded.
@@ -179,8 +215,33 @@ func triggerViolations(s *schema.Schema, t *schema.Table, event string) []Violat
 			continue
 		}
 		out = append(out, br.Violations...)
+		chained := addTable(inUse, tg.Table)
+		for _, st := range br.Statements {
+			for _, w := range st.Facts.Writes {
+				lw := strings.ToLower(w.Table)
+				if chained[lw] {
+					out = append(out, Violation{
+						Code: code1442, Constraint: itoa(code1442),
+						Table: tg.Table, Trigger: tg.Name, SQLState: constraintSQLState(code1442),
+					})
+					continue
+				}
+				out = append(out, triggerViolations(s, s.Table(w.Table), w.Kind.String(), addTable(chained, w.Table))...)
+			}
+		}
 	}
 	return dedupe(out)
+}
+
+// addTable copies set with name added (case-insensitively), leaving set itself untouched: a
+// sibling branch of the trigger chain must not see another branch's own growth.
+func addTable(set map[string]bool, name string) map[string]bool {
+	out := make(map[string]bool, len(set)+1)
+	for k := range set {
+		out[k] = true
+	}
+	out[strings.ToLower(name)] = true
+	return out
 }
 
 // constraintSQLState is the SQLSTATE class a schema-constraint violation carries, for a
@@ -192,12 +253,40 @@ func constraintSQLState(code int) string {
 	switch code {
 	case codeDuplicateKey, codeForeignKeyRow, codeForeignKeyRef, codeNotNull, codeCheckViolation:
 		return "23000"
-	case code1442:
+	case code1442, codeNoDefault:
 		return "HY000"
 	case code1172:
 		return "42000"
 	}
 	return "HY000"
+}
+
+// strictFor reports whether a write into t is judged under strict mode: STRICT_ALL_TABLES
+// is unconditional, but STRICT_TRANS_TABLES (without STRICT_ALL_TABLES) is strict only for
+// a transactional storage engine -- on a nontransactional one (MyISAM et al.) a later row
+// of a multi-row statement instead gets the column's implicit default with a warning, the
+// same as with no strict mode at all (measured: TestAdv2StrictTransTablesIgnoresEngine).
+func (a *analyzer) strictFor(t *schema.Table) bool {
+	mode := a.s.Settings.SQLMode
+	if mode.StrictAll() {
+		return true
+	}
+	if mode.StrictTransOnly() {
+		return transactionalEngine(t.Engine)
+	}
+	return false
+}
+
+// transactionalEngine reports whether a storage engine is transactional. An unspecified
+// ENGINE (schema.Table.Engine == "") defaults to InnoDB, the server's own default, which is
+// transactional.
+func transactionalEngine(engine string) bool {
+	switch strings.ToUpper(engine) {
+	case "", "INNODB", "NDB", "NDBCLUSTER":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *analyzer) insertViolations(w *write) []Violation {
@@ -219,15 +308,17 @@ func (a *analyzer) insertViolations(w *write) []Violation {
 		}
 	}
 	for _, c := range t.Checks {
-		if cols := exprColumns(c.Expr); c.Enforced && anyIn(cols, w.inserted) {
+		cols := exprColumns(c.Expr)
+		if c.Enforced && anyIn(expandGeneratedColumns(t, cols), w.inserted) {
 			out = append(out, Violation{Code: codeCheckViolation, Constraint: t.CheckName(c), Table: t.Name, Columns: cols})
 		}
 	}
 	// a NULL for a NOT NULL column: an error in strict mode, and for a single-row INSERT
 	// (its ON DUPLICATE KEY UPDATE included) in any mode
-	notNull := a.s.Settings.Strict() || w.rows == 1
+	notNull := a.strictFor(t) || w.rows == 1
 	if notNull {
 		out = append(out, notNullViolations(t, w.values)...)
+		out = append(out, omittedNotNullViolations(t, w.inserted)...)
 	}
 	if w.onDuplicate != nil {
 		out = append(out, a.updateViolations(t, w.onDuplicate, nil, notNull)...)
@@ -251,16 +342,21 @@ func systemGenerated(t *schema.Table, cols []string, inserted map[string]bool) b
 	return true
 }
 
-// leftNull: no column of the key is inserted and each one defaults to NULL, so the key
-// holds NULL, which a unique key never rejects.
+// leftNull: at least one column of the key is left to default to NULL (not inserted,
+// nullable, no DEFAULT, not AUTO_INCREMENT). MySQL's multi-column UNIQUE key semantics take
+// the whole tuple out of duplicate checking when ANY of its columns holds NULL, not only
+// when every column does (measured: TestAdv2CompositeUniqueKeyLeftPartiallyNull).
 func leftNull(t *schema.Table, cols []string, inserted map[string]bool) bool {
 	for _, name := range cols {
 		c := t.Column(name)
-		if c == nil || inserted[name] || c.NotNull || c.Default != nil || c.AutoIncrement {
-			return false
+		if c == nil {
+			continue
+		}
+		if !inserted[name] && !c.NotNull && c.Default == nil && !c.AutoIncrement {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // updateViolations: the constraints an UPDATE (or the update of ON DUPLICATE KEY UPDATE)
@@ -285,7 +381,8 @@ func (a *analyzer) updateViolations(t *schema.Table, values []assignment, skip m
 		}
 	}
 	for _, c := range t.Checks {
-		if cols := exprColumns(c.Expr); c.Enforced && anyIn(cols, set) {
+		cols := exprColumns(c.Expr)
+		if c.Enforced && anyIn(expandGeneratedColumns(t, cols), set) {
 			out = append(out, Violation{Code: codeCheckViolation, Constraint: t.CheckName(c), Table: t.Name, Columns: cols})
 		}
 	}
@@ -294,6 +391,22 @@ func (a *analyzer) updateViolations(t *schema.Table, values []assignment, skip m
 	}
 	out = append(out, a.referencingViolations(t, set, false, map[*schema.Table]bool{})...)
 	return dedupe(out)
+}
+
+// checkOptionViolations is the 1369 (ER_VIEW_CHECK_FAILED) an UPDATE reaching t through a
+// WITH CHECK OPTION view may hit -- one entry per view the statement writes through
+// directly (facts.go's checkOptionFacts records it there, alongside the pinned lift
+// through the same view chain). MySQL's own message always names the view written
+// through, whichever level's WHERE actually failed (measured: a CASCADED chain through an
+// underlying view with no CHECK OPTION of its own still names the outer one), so unlike
+// PostgreSQL's checkedViews there is nothing to walk here -- the view named in the
+// statement is the only name that can appear.
+func (a *analyzer) checkOptionViolations(t *schema.Table) []Violation {
+	var out []Violation
+	for _, name := range a.checkOptionViews[t] {
+		out = append(out, Violation{Code: codeViewCheck, Constraint: name, Table: name, Name: name})
+	}
+	return out
 }
 
 // notNullViolations: a NOT NULL column stored a value that may be NULL.
@@ -307,6 +420,22 @@ func notNullViolations(t *schema.Table, values []assignment) []Violation {
 		}
 		seen[as.col] = true
 		out = append(out, Violation{Code: codeNotNull, Table: t.Name, Columns: []string{as.col.Name}, Param: as.param})
+	}
+	return out
+}
+
+// omittedNotNullViolations: a NOT NULL column with no DEFAULT, not AUTO_INCREMENT and not
+// GENERATED, left entirely out of the INSERT's column list. mysqld raises 1364 "Field
+// '...' doesn't have a default value" for this in strict mode (measured:
+// TestAdv2OmittedNotNullColumnNoDefault) -- notNullViolations never sees it since it only
+// walks the columns the statement actually assigns.
+func omittedNotNullViolations(t *schema.Table, inserted map[string]bool) []Violation {
+	var out []Violation
+	for _, c := range t.Columns {
+		if inserted[c.Name] || !c.NotNull || c.Default != nil || c.AutoIncrement || c.Generated != nil {
+			continue
+		}
+		out = append(out, Violation{Code: codeNoDefault, Table: t.Name, Columns: []string{c.Name}})
 	}
 	return out
 }
@@ -402,6 +531,36 @@ func exprColumns(v mysqlast.Value) []string {
 		}
 	}
 	walk(v)
+	return out
+}
+
+// expandGeneratedColumns: cols is a CHECK's own column set (exprColumns of its expression);
+// for each one that is itself a generated column, the source columns it is computed from
+// are added too, since a generated column is never itself assigned -- a write to the
+// source column recomputes it and re-checks the CHECK on every write that can change it
+// (measured: TestAdv2GeneratedColumnCheckViaSourceColumn). Recurses through chains of
+// generated columns; a cycle cannot occur (the schema loader rejects a generated column
+// whose expression refers to itself or a later column).
+func expandGeneratedColumns(t *schema.Table, cols []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	var add func(name string)
+	add = func(name string) {
+		key := strings.ToLower(name)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, name)
+		if c := t.Column(name); c != nil && c.Generated != nil {
+			for _, src := range exprColumns(c.Generated) {
+				add(src)
+			}
+		}
+	}
+	for _, name := range cols {
+		add(name)
+	}
 	return out
 }
 

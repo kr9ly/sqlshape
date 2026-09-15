@@ -113,9 +113,15 @@ type Table struct {
 	Engine      string
 	Charset     string
 	Collation   string
-	Comment     string
-	Temporary   bool
-	Partitioned bool
+	// AutoIncrementStart is the table's own `AUTO_INCREMENT=<n>` option as written, "" when
+	// the statement declares none. A live counter is data, not schema (dump.normalizeTable
+	// strips it from a canonicalized table read back from a server), but the value an
+	// author wrote for a table's first creation is a schema decision the loader still keeps
+	// here so a fresh CREATE TABLE can reproduce it (see dump.pinAutoIncrement).
+	AutoIncrementStart string
+	Comment            string
+	Temporary          bool
+	Partitioned        bool
 	// Definition is the CREATE TABLE text; Alters the ALTER TABLE texts applied after it.
 	Definition string
 	Alters     []string
@@ -280,9 +286,9 @@ type Param struct {
 
 // Routine is a CREATE PROCEDURE or CREATE FUNCTION.
 type Routine struct {
-	Name   string
-	Kind   RoutineKind
-	Params []Param
+	Name    string
+	Kind    RoutineKind
+	Params  []Param
 	Returns Type // a stored function's RETURNS type; the zero Type for a procedure
 	// NotNull is the `-- sqlshape: not null` annotation above a CREATE FUNCTION: the
 	// function's result is never NULL, the same override postgres/schema.Function.NotNull
@@ -677,9 +683,48 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 	case "PT_check_constraint":
 		x, _ := mysqlast.AsPTCheckConstraint(n)
 		t.Checks = append(t.Checks, &Check{Name: str(x.Name()), Expr: x.Expr(), Enforced: !isFalse(x.IsEnforced()), Text: text})
+		if fn, ok := s.exprCallsStoredFunction(x.Expr()); ok {
+			s.problem(at(n), "An expression of a check constraint '%s' contains disallowed function: %s", str(x.Name()), fn)
+		}
 	default:
 		s.problem(at(n), "table element not understood: %s", n.Class)
 	}
+}
+
+// exprCallsStoredFunction walks v (a generated column's, a column DEFAULT's, or a CHECK
+// constraint's own expression) looking for a call to a schema-declared FUNCTION anywhere
+// inside it, and returns its name when found. Measured on mysqld 8.4: a stored FUNCTION in
+// any of those three positions is refused at CREATE TABLE time regardless of whether the
+// function itself is DETERMINISTIC (3763 for a generated column, 3770 for a column DEFAULT
+// expression, 3814 for a CHECK constraint) -- unlike a routine's own body, where only a
+// non-deterministic construct matters, here the position itself disallows every stored
+// function outright.
+func (s *Schema) exprCallsStoredFunction(v mysqlast.Value) (string, bool) {
+	switch x := v.(type) {
+	case *mysqlast.Node:
+		switch x.Class {
+		case "PTI_function_call_generic_2d":
+			if r := s.RoutineOf(Function, str(x.Arg("func"))); r != nil {
+				return r.Name, true
+			}
+		case "PTI_function_call_generic_ident_sys":
+			if r := s.RoutineOf(Function, str(x.Arg("ident"))); r != nil {
+				return r.Name, true
+			}
+		}
+		for _, a := range x.Args {
+			if fn, ok := s.exprCallsStoredFunction(a); ok {
+				return fn, true
+			}
+		}
+	case mysqlast.List:
+		for _, e := range x {
+			if fn, ok := s.exprCallsStoredFunction(e); ok {
+				return fn, true
+			}
+		}
+	}
+	return "", false
 }
 
 // column reads a column definition: the type, then the attributes, some of which are keys
@@ -704,6 +749,9 @@ func (s *Schema) column(name string, fieldDef mysqlast.Value, at func(mysqlast.V
 		col.Generated = fd.Arg("expr")
 		col.Stored = str(fd.Arg("virtual_or_stored")) == "Virtual_or_stored::STORED"
 		attrs = fd.Arg("opt_attrs")
+		if fn, ok := s.exprCallsStoredFunction(col.Generated); ok {
+			s.problem(at(fd), "Expression of generated column '%s' contains a disallowed function: `%s`", name, fn)
+		}
 	default:
 		s.problem(at(fd), "column %s: %s not understood", name, fd.Class)
 	}
@@ -721,6 +769,9 @@ func (s *Schema) column(name string, fieldDef mysqlast.Value, at func(mysqlast.V
 			col.Default = an.Arg("item")
 		case "PT_generated_default_val_column_attr":
 			col.Default = an.Arg("expr")
+			if fn, ok := s.exprCallsStoredFunction(col.Default); ok {
+				s.problem(at(an), "Default value expression of column '%s' contains a disallowed function (%s)", name, fn)
+			}
 		case "PT_on_update_column_attr":
 			col.OnUpdate = true
 		case "PT_auto_increment_column_attr":
@@ -739,6 +790,9 @@ func (s *Schema) column(name string, fieldDef mysqlast.Value, at func(mysqlast.V
 			col.Collation = str(an.Arg("collation"))
 		case "PT_check_constraint_column_attr":
 			check = &Check{Name: str(an.Arg("name")), Expr: an.Arg("expr"), Enforced: !isFalse(an.Arg("enforced"))}
+			if fn, ok := s.exprCallsStoredFunction(check.Expr); ok {
+				s.problem(at(an), "An expression of a check constraint '%s' contains disallowed function: %s", name, fn)
+			}
 		case "PT_column_visibility_attr":
 			col.Invisible = isFalse(an.Arg("is_visible"))
 		case "PT_srid_column_attr":
@@ -769,8 +823,10 @@ func (s *Schema) tableOptions(t *Table, opts []mysqlast.Value, at func(mysqlast.
 			t.Collation = str(n.Arg("value"))
 		case "PT_create_commen_option":
 			t.Comment = str(n.Arg("value"))
+		case "PT_create_auto_increment_option":
+			t.AutoIncrementStart = str(n.Arg("value"))
 		}
-		// every other option (ROW_FORMAT, AUTO_INCREMENT, STATS_*, ...) has no shape
+		// every other option (ROW_FORMAT, STATS_*, ...) has no shape
 	}
 }
 
@@ -1266,6 +1322,13 @@ func (s *Schema) createTrigger(n *mysqlast.Node, st mysqlparse.Statement, at fun
 			}
 		}
 	}
+	if msg := bodyRefusalProblem(trg.Body, true); msg != "" {
+		// the server refuses this CREATE TRIGGER outright (1336 dynamic SQL, 1331 a
+		// duplicate variable): a problem the same way an unknown table is, but the
+		// trigger is still loaded -- analyze.AnalyzeTrigger reads the very same body and
+		// raises the matching error for whatever statement's own check reaches it there.
+		s.problem(at(n), "CREATE TRIGGER %s: %s", name, msg)
+	}
 	trg.Directives, _ = s.spDirectives("trigger", name, st.SQL, st.Offset)
 	s.Triggers = append(s.Triggers, trg)
 }
@@ -1448,8 +1511,87 @@ func (s *Schema) createRoutine(n *mysqlast.Node, kind RoutineKind, st mysqlparse
 		s.applyChistics(r, list(n.Args[3]))
 		r.Body = n.Args[4]
 	}
+	if msg := bodyRefusalProblem(r.Body, kind == Function); msg != "" {
+		// the server refuses this CREATE outright (1336 dynamic SQL in a FUNCTION, 1331 a
+		// duplicate variable in either kind): a problem the same way an unknown table is,
+		// but the routine is still loaded -- analyze.AnalyzeRoutine reads the very same
+		// body and raises the matching error wherever a statement's own check reaches it.
+		s.problem(at(n), "CREATE %s %s: %s", kind, name, msg)
+	}
 	r.Directives, r.NotNull = s.spDirectives(strings.ToLower(kind.String()), name, st.SQL, st.Offset)
 	s.Routines = append(s.Routines, r)
+}
+
+// bodyRefusalProblem walks a trigger's or routine's body for a construct the server itself
+// refuses at CREATE time that createTrigger/createRoutine cannot otherwise see: dynamic SQL
+// (PREPARE / EXECUTE / DEALLOCATE PREPARE) inside a trigger or FUNCTION body (1336, measured
+// -- a PROCEDURE is exempt, so dynamicSQL gates it), and two DECLAREs of the same variable
+// name in the same block, any kind (1331, measured). Mirrors analyze/body.go's own
+// commitCheck / walkDecl duplicate check, which this package cannot import (analyze imports
+// schema, not the other way around) -- so analyze.AnalyzeTrigger / AnalyzeRoutine raise the
+// matching error independently when a statement's own check reaches the same body.
+func bodyRefusalProblem(v mysqlast.Value, dynamicSQL bool) string {
+	switch x := v.(type) {
+	case mysqlast.List:
+		for _, e := range x {
+			if msg := bodyRefusalProblem(e, dynamicSQL); msg != "" {
+				return msg
+			}
+		}
+	case *mysqlast.Struct:
+		if dynamicSQL {
+			if cmd, ok := x.Fields["sql_command"].(mysqlast.Const); ok &&
+				(cmd == "SQLCOM_PREPARE" || cmd == "SQLCOM_DEALLOCATE_PREPARE") {
+				return "Dynamic SQL is not allowed in stored function or trigger"
+			}
+		}
+		for _, k := range x.Order {
+			if msg := bodyRefusalProblem(x.Fields[k], dynamicSQL); msg != "" {
+				return msg
+			}
+		}
+	case *mysqlast.Node:
+		if dynamicSQL && x.Class == "execute" {
+			return "Dynamic SQL is not allowed in stored function or trigger"
+		}
+		if x.Class == "sp_block_content" {
+			if msg := duplicateVariableProblem(x.Args[0]); msg != "" {
+				return msg
+			}
+		}
+		for _, a := range x.Args {
+			if msg := bodyRefusalProblem(a, dynamicSQL); msg != "" {
+				return msg
+			}
+		}
+	}
+	return ""
+}
+
+// duplicateVariableProblem is bodyRefusalProblem's own check for one block's own
+// declarations (sp_block_content's first argument): two DECLAREs of the same name,
+// case-insensitively, is 1331 ("Duplicate variable: x", measured); a nested block's own
+// DECLARE of the same name is ordinary shadowing, not a duplicate, so this never looks past
+// decls' own top level (bodyRefusalProblem's own recursion finds a nested block's decls in
+// turn, as its own sp_block_content).
+func duplicateVariableProblem(decls mysqlast.Value) string {
+	names, _ := decls.(mysqlast.List)
+	seen := map[string]bool{}
+	for _, d := range names {
+		dn, ok := d.(*mysqlast.Node)
+		if !ok || dn.Class != "sp_decl_var" {
+			continue
+		}
+		for _, nm := range list(dn.Arg("names")) {
+			name := str(nm)
+			key := strings.ToLower(name)
+			if seen[key] {
+				return fmt.Sprintf("Duplicate variable: %s", name)
+			}
+			seen[key] = true
+		}
+	}
+	return ""
 }
 
 // paramsOf reads a routine's parameter list (a List of sp_param nodes).

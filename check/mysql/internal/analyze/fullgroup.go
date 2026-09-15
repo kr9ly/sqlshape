@@ -743,9 +743,15 @@ func (sc *scope) ndJoin(restrict []int) bool {
 }
 
 // simplified reports an outer join the WHERE turns into an inner join: it rejects NULL
-// for a column of the nullable side (simplify_joins).
+// for a column of the nullable side (simplify_joins). Only a WHERE-level mark counts (see
+// scope.whereNN): HAVING runs after the join is already evaluated, so it cannot be what
+// simplify_joins itself reacts to.
 func (sc *scope) simplified(restrict []int) bool {
-	for _, m := range sc.nnMarks {
+	nn := sc.nnMarks
+	if sc.whereNN < len(nn) {
+		nn = nn[:sc.whereNN]
+	}
+	for _, m := range nn {
 		if m.restrict != nil {
 			continue
 		}
@@ -873,15 +879,29 @@ func (a *analyzer) fdClosure(info *blockInfo, top bool, seeds, seedNonNull []fac
 	for _, c := range a.nullEq[fs] {
 		fd.known[c] = true // `col = NULL`: a constant equality to the server's dependency check
 	}
-	for _, m := range sc.nnMarks {
+	whereNN := sc.nnMarks
+	if sc.whereNN < len(whereNN) {
+		whereNN = whereNN[:sc.whereNN]
+	}
+	for _, m := range whereNN {
 		// an ON marks its nullable side only, unless the WHERE makes the join inner
 		if m.restrict == nil || allowed(m.col, m.restrict) || sc.simplified(m.restrict) {
 			fd.nonNull[m.col] = true
 		}
 	}
+	// wherePreds bounds this to the WHERE / JOIN ON conjuncts: a HAVING conjunct restricts
+	// which groups the query returns, not what may be assumed about a row while judging
+	// ONLY_FULL_GROUP_BY (facts.go's havingFacts folds HAVING into fs.Preds too, for the
+	// obligation checker, but past wherePreds -- measured: `GROUP BY u HAVING u = 1` still
+	// requires a nonaggregated select-list column to depend on u alone, unlike the same
+	// equality written as `WHERE u = 1 GROUP BY a`).
+	wherePreds := fs.Preds
+	if sc.wherePreds < len(wherePreds) {
+		wherePreds = wherePreds[:sc.wherePreds]
+	}
 	for changed := true; changed; {
 		changed = false
-		for _, pr := range fs.Preds {
+		for _, pr := range wherePreds {
 			if pr.Op != facts.Eq || (pr.Restricts != nil && sc.ndJoin(pr.Restricts)) {
 				continue
 			}

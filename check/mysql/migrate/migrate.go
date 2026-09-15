@@ -43,6 +43,7 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.readIntents(list)
 	p.drops()
 	p.renames()
+	p.coordinateForeignKeys()
 	p.alters()
 	p.adds()
 	p.backfills()
@@ -83,6 +84,7 @@ type planner struct {
 	enumDrops   []Intent
 	backfillsOf []Intent
 	droppedFKs  map[string]bool // "table.fk" already dropped ahead of a table that goes
+	earlyKeys   map[string]bool // "table.key" (target names) already added by dropKeysOf
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -215,9 +217,11 @@ func (p *planner) dropParts(f, t *schema.Table) {
 		tcols[c.Name] = true
 	}
 	var goneCols []string
+	var goneColObjs []*schema.Column
 	for _, c := range f.Columns {
 		if !tcols[p.toCol(f.Name, c.Name)] {
 			goneCols = append(goneCols, c.Name)
+			goneColObjs = append(goneColObjs, c)
 			if !p.droppable[f.Name+"."+c.Name] {
 				p.problem("column %s.%s is dropped, which no @migrate declares (`-- @migrate drop %s.%s`, or a rename)", f.Name, c.Name, f.Name, c.Name)
 			}
@@ -236,17 +240,19 @@ func (p *planner) dropParts(f, t *schema.Table) {
 		}
 	}
 	tkeys := keysByName(t)
+	var dropKeys []*schema.Key
 	for _, k := range f.Keys {
 		name := keyName(k)
 		tk, ok := tkeys[name]
-		if !ok || !sameProps(diff.KeyProps(k), diff.KeyProps(tk)) || touchesParts(k, goneCols) {
-			if k.Kind == schema.Primary {
-				p.emit("ALTER TABLE %s DROP PRIMARY KEY;", q(f.Name))
-			} else {
-				p.emit("ALTER TABLE %s DROP INDEX %s;", q(f.Name), q(k.Name))
-			}
+		// the key's own columns are translated through any `-- @migrate rename` before the
+		// comparison, the same way renamedFK is above and renamedKey is in addParts: a
+		// rename of one of the key's columns must not, on its own, make the (otherwise
+		// unchanged) key look different and get dropped.
+		if !ok || !sameProps(diff.KeyProps(renamedKey(p, f, k)), diff.KeyProps(tk)) || touchesParts(k, goneCols) {
+			dropKeys = append(dropKeys, k)
 		}
 	}
+	p.dropKeysOf(f, t, dropKeys)
 	tchecks := checksByName(t)
 	for _, c := range f.Checks {
 		name := f.CheckName(c)
@@ -255,9 +261,72 @@ func (p *planner) dropParts(f, t *schema.Table) {
 			p.emit("ALTER TABLE %s DROP CHECK %s;", q(f.Name), q(name))
 		}
 	}
-	for _, c := range goneCols {
-		p.emit("ALTER TABLE %s DROP COLUMN %s;", q(f.Name), q(c))
+	for _, c := range orderGoneColumns(goneColObjs) {
+		p.emit("ALTER TABLE %s DROP COLUMN %s;", q(f.Name), q(c.Name))
 	}
+}
+
+// dropKeysOf emits the DROP PRIMARY KEY / DROP INDEX statements for dropKeys (the from-side
+// keys dropParts found changed or gone). MySQL requires an AUTO_INCREMENT column to be the
+// leading column of some index at every statement boundary (Error 1075 the instant it is
+// not, measured -- not only checked once at the end of a script): dropping dropKeys alone
+// can leave such a column with no index at all, if the key that covered it is going and the
+// target's replacement key for it has not been added yet (addParts only runs later, once
+// every column exists). When that would happen, the drop and that replacement ADD are folded
+// into one ALTER TABLE (measured against mysqld 8.4: DROP PRIMARY KEY and ADD KEY on the
+// auto_increment column, as two clauses of the same statement, succeed where two separate
+// statements do not -- the invariant is only checked once the whole ALTER TABLE has applied
+// all of its clauses), and addParts is told (earlyKeys) not to add that key again.
+func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key) {
+	if len(dropKeys) == 0 {
+		return
+	}
+	dropping := map[string]bool{}
+	for _, k := range dropKeys {
+		dropping[keyName(k)] = true
+	}
+	fkeys := keysByName(f)
+	var adds []string
+	for _, ai := range f.Columns {
+		if !ai.AutoIncrement {
+			continue
+		}
+		covered := false
+		for _, k := range f.Keys {
+			if !dropping[keyName(k)] && len(k.Parts) > 0 && strings.EqualFold(k.Parts[0].Column, ai.Name) {
+				covered = true
+			}
+		}
+		if covered {
+			continue
+		}
+		toName := p.toCol(f.Name, ai.Name)
+		for _, tk := range t.Keys {
+			if len(tk.Parts) == 0 || !strings.EqualFold(tk.Parts[0].Column, toName) {
+				continue
+			}
+			fk, ok := fkeys[keyName(tk)]
+			if ok && !dropping[keyName(fk)] && sameProps(diff.KeyProps(renamedKey(p, f, fk)), diff.KeyProps(tk)) && !touchesParts(fk, goneColumns(p, f, t)) {
+				continue // this key of the target already exists unchanged, not being added
+			}
+			adds = append(adds, "ADD "+keyText(tk))
+			if p.earlyKeys == nil {
+				p.earlyKeys = map[string]bool{}
+			}
+			p.earlyKeys[t.Name+"."+keyName(tk)] = true
+			break
+		}
+	}
+	var clauses []string
+	for _, k := range dropKeys {
+		if k.Kind == schema.Primary {
+			clauses = append(clauses, "DROP PRIMARY KEY")
+		} else {
+			clauses = append(clauses, "DROP INDEX "+q(k.Name))
+		}
+	}
+	clauses = append(clauses, adds...)
+	p.emit("ALTER TABLE %s %s;", q(f.Name), strings.Join(clauses, ", "))
 }
 
 // dropTriggers drops every trigger that the target lacks or whose definition differs
@@ -381,6 +450,84 @@ func (p *planner) renames() {
 	}
 }
 
+// changedColumns are the target names of the pair f, t's columns whose definition (type,
+// nullability, default, ...) differs between them, ignoring position: the columns alterTable
+// is about to MODIFY.
+func changedColumns(p *planner, f, t *schema.Table) map[string]bool {
+	fcols := map[string]*schema.Column{}
+	for _, c := range f.Columns {
+		fcols[p.toCol(f.Name, c.Name)] = c
+	}
+	out := map[string]bool{}
+	for _, c := range t.Columns {
+		fc, ok := fcols[c.Name]
+		if ok && diff.Definition(fc.Text, fc.Name) != diff.Definition(c.Text, c.Name) {
+			out[c.Name] = true
+		}
+	}
+	return out
+}
+
+// coordinateForeignKeys drops (ahead of alters, the MODIFY COLUMNs below) every foreign key
+// that persists unchanged in the target but whose referencing or referenced column is about
+// to change type, and marks it so addParts re-adds it once both sides are done: MySQL checks
+// a foreign key's type compatibility the moment either side's ALTER runs, and the planner
+// alters one table at a time (alphabetically, since dump.Read lists tables in that order), so
+// a parent's MODIFY and the child's MODIFY are never in the same statement for the server to
+// see together (measured against mysqld 8.4: Error 3780, Referencing column ... incompatible,
+// on the very first MODIFY, parent or child, whichever runs first). Dropping the foreign key
+// first and re-adding it after both MODIFYs is the minimal fix measured to work; combining a
+// table's own MODIFY and its foreign key's maintenance into one ALTER TABLE does not help
+// here since the two tables are always separate statements regardless.
+func (p *planner) coordinateForeignKeys() {
+	changed := map[string]map[string]bool{} // from table name -> its changing target column names
+	for _, t := range p.to.Tables {
+		f, _ := p.pair(t)
+		if f == nil {
+			continue
+		}
+		changed[f.Name] = changedColumns(p, f, t)
+	}
+	for _, t := range p.to.Tables {
+		f, _ := p.pair(t)
+		if f == nil {
+			continue
+		}
+		tfks := foreignKeysByName(t)
+		for _, fk := range f.ForeignKeys {
+			name := f.ForeignKeyName(fk)
+			if p.droppedFKs[f.Name+"."+name] {
+				continue // already handled (e.g. a table it references is going)
+			}
+			tf, ok := tfks[name]
+			if !ok || !sameProps(diff.ForeignKeyProps(p.renamedFK(f, fk)), diff.ForeignKeyProps(tf)) {
+				continue // dropParts already drops a foreign key that changes or goes
+			}
+			touched := false
+			for _, c := range fk.Columns {
+				if changed[f.Name][p.toCol(f.Name, c)] {
+					touched = true
+				}
+			}
+			if refFrom := p.from.Table(fk.RefTable); refFrom != nil {
+				for _, c := range fk.RefColumns {
+					if changed[refFrom.Name][p.toCol(refFrom.Name, c)] {
+						touched = true
+					}
+				}
+			}
+			if !touched {
+				continue
+			}
+			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(f.Name), q(name))
+			if p.droppedFKs == nil {
+				p.droppedFKs = map[string]bool{}
+			}
+			p.droppedFKs[f.Name+"."+name] = true
+		}
+	}
+}
+
 // --- alters ----------------------------------------------------------------------
 
 func (p *planner) alters() {
@@ -464,21 +611,34 @@ func (p *planner) reorder(f, t *schema.Table) {
 			cur = append(cur, p.toCol(f.Name, c.Name))
 		}
 	}
-	// the added columns went in AFTER their target predecessor (addParts)
 	have := map[string]bool{}
 	for _, c := range cur {
 		have[c] = true
 	}
-	for i, c := range t.Columns {
-		if have[c.Name] {
-			continue
+	newCols, positioned := newColumnsOrder(t, have)
+	if positioned {
+		// addParts placed each one directly at its target position (AFTER its target
+		// predecessor), the same as this loop assumed before dependency ordering existed.
+		for i, c := range t.Columns {
+			if have[c.Name] {
+				continue
+			}
+			at := 0
+			if i > 0 {
+				at = indexOf(cur, t.Columns[i-1].Name) + 1
+			}
+			cur = append(cur[:at], append([]string{c.Name}, cur[at:]...)...)
+			have[c.Name] = true
 		}
-		at := 0
-		if i > 0 {
-			at = indexOf(cur, t.Columns[i-1].Name) + 1
+	} else {
+		// a generated column among the new ones reads another new column out of the
+		// target's own order: addParts appended them all at the end of the table instead,
+		// in dependency-safe order, and the loop below reaches each one's real target
+		// position via an explicit MODIFY COLUMN.
+		for _, c := range newCols {
+			cur = append(cur, c.Name)
+			have[c.Name] = true
 		}
-		cur = append(cur[:at], append([]string{c.Name}, cur[at:]...)...)
-		have[c.Name] = true
 	}
 	for i, c := range t.Columns {
 		if i < len(cur) && cur[i] == c.Name {
@@ -528,7 +688,16 @@ func (p *planner) adds() {
 		}
 	}
 	for _, t := range fkOrder(fresh) {
-		p.emit("%s;", strings.TrimSuffix(strings.TrimSpace(t.Definition), ";"))
+		def := strings.TrimSuffix(strings.TrimSpace(t.Definition), ";")
+		if t.AutoIncrementStart != "" {
+			// t.Definition is the canonical CREATE TABLE text, which never carries
+			// AUTO_INCREMENT=<n> (dump.normalizeTable strips a live counter from every
+			// canonicalized table); a brand new table's own declared starting value
+			// (dump.pinAutoIncrement) is a schema decision, not data, and belongs on the
+			// CREATE that brings the table into existence.
+			def += " AUTO_INCREMENT=" + t.AutoIncrementStart
+		}
+		p.emit("%s;", def)
 	}
 	// parts of tables that stay, then their columns' order
 	for _, t := range p.to.Tables {
@@ -552,20 +721,36 @@ func (p *planner) addParts(f, t *schema.Table) {
 	for _, c := range f.Columns {
 		fcols[p.toCol(f.Name, c.Name)] = true
 	}
+	// Ordinarily a new column is added directly at its target position (AFTER its target
+	// predecessor, same as always). But a generated column reading a column added alongside
+	// it must not run before that column exists (MySQL resolves a generated expression
+	// against the table as it stands at that ADD, not the final target -- measured: Error
+	// 1054, Unknown column, otherwise); newColumnsOrder reports when the target's own order
+	// does not already satisfy every such dependency, and then the new columns go in at the
+	// end instead, in dependency-safe order, with no position clause -- reorder (below,
+	// after addParts for every table) moves every column into its final target position
+	// with its own MODIFY COLUMN FIRST/AFTER pass once all columns exist.
+	newCols, positioned := newColumnsOrder(t, fcols)
+	targetIndex := map[string]int{}
 	for i, c := range t.Columns {
-		if fcols[c.Name] {
-			continue
-		}
+		targetIndex[c.Name] = i
+	}
+	for _, c := range newCols {
 		clause := "ADD COLUMN " + c.Text
-		if i == 0 {
-			clause += " FIRST"
-		} else {
-			clause += " AFTER " + q(t.Columns[i-1].Name)
+		if positioned {
+			if i := targetIndex[c.Name]; i == 0 {
+				clause += " FIRST"
+			} else {
+				clause += " AFTER " + q(t.Columns[i-1].Name)
+			}
 		}
 		p.emit("ALTER TABLE %s %s;", q(t.Name), clause)
 	}
 	fkeys := keysByName(f)
 	for _, k := range t.Keys {
+		if p.earlyKeys[t.Name+"."+keyName(k)] {
+			continue // dropKeysOf already added this one, folded into its own DROP
+		}
 		fk, ok := fkeys[keyName(k)]
 		if ok && sameProps(diff.KeyProps(renamedKey(p, f, fk)), diff.KeyProps(k)) && !touchesParts(fk, goneColumns(p, f, t)) {
 			continue
@@ -575,7 +760,10 @@ func (p *planner) addParts(f, t *schema.Table) {
 	ffks := foreignKeysByName(f)
 	for _, fk := range t.ForeignKeys {
 		ffk, ok := ffks[t.ForeignKeyName(fk)]
-		if ok && sameProps(diff.ForeignKeyProps(p.renamedFK(f, ffk)), diff.ForeignKeyProps(fk)) && !touches(ffk.Columns, goneColumns(p, f, t)) {
+		// coordinateForeignKeys drops an otherwise-unchanged foreign key ahead of a type
+		// change on either of its sides (droppedFKs), which must still be re-added here.
+		if ok && sameProps(diff.ForeignKeyProps(p.renamedFK(f, ffk)), diff.ForeignKeyProps(fk)) &&
+			!touches(ffk.Columns, goneColumns(p, f, t)) && !p.droppedFKs[f.Name+"."+t.ForeignKeyName(fk)] {
 			continue
 		}
 		p.emit("ALTER TABLE %s ADD %s;", q(t.Name), fkText(t, fk))
@@ -601,6 +789,92 @@ func goneColumns(p *planner, f, t *schema.Table) []string {
 		if !tcols[p.toCol(f.Name, c.Name)] {
 			out = append(out, c.Name)
 		}
+	}
+	return out
+}
+
+// newColumns are the target's columns (in target order) that have is missing (have keyed by
+// target column name): the columns addParts is about to ADD, or reorder has already accounted
+// for as added.
+func newColumns(t *schema.Table, have map[string]bool) []*schema.Column {
+	var out []*schema.Column
+	for _, c := range t.Columns {
+		if !have[c.Name] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// newColumnsOrder is the columns a table is gaining (have keyed by target column name, as
+// newColumns takes), and whether the target's own order already puts every generated column
+// after every other new column it reads: when it does, addParts can add each one directly at
+// its target position (AFTER its target predecessor) as it always could; when it does not, a
+// real reordering is needed (orderNewColumns), and the caller adds them at the end instead,
+// in that safe order, leaving reorder to place them.
+func newColumnsOrder(t *schema.Table, have map[string]bool) (cols []*schema.Column, positioned bool) {
+	cols = newColumns(t, have)
+	ordered := orderNewColumns(cols)
+	for i, c := range ordered {
+		if cols[i] != c {
+			return ordered, false
+		}
+	}
+	return cols, true
+}
+
+// readsColumn reports whether a generated column's own definition text reads another column
+// of the same ADD/DROP batch, by whether its text names that column (quoted, as the server's
+// own canonical spelling of a generated expression always does: GENERATED ALWAYS AS ((`x` +
+// 1)) VIRTUAL). Only cols of the same table and the same batch (new columns together, or
+// gone columns together) are checked, so this need not parse the expression itself.
+func readsColumn(c, other *schema.Column) bool {
+	return c.Generated != nil && c.Name != other.Name && strings.Contains(c.Text, q(other.Name))
+}
+
+// orderNewColumns orders cols (the columns a table is gaining, in the target's own order) so
+// that a generated column comes after every other new column its own expression reads:
+// MySQL resolves a generated column's expression against the table as it stands at the ADD
+// that creates it, not the table's eventual final shape, so a column ADDed before one it
+// reads fails (Error 1054, measured). The position each ADD ends up in the table does not
+// depend on this order (reorder moves every column into its target position afterward), only
+// which columns already exist when a given ADD runs.
+func orderNewColumns(cols []*schema.Column) []*schema.Column {
+	var out []*schema.Column
+	done := map[string]bool{}
+	var visit func(c *schema.Column, stack map[string]bool)
+	visit = func(c *schema.Column, stack map[string]bool) {
+		if done[c.Name] || stack[c.Name] {
+			return
+		}
+		stack[c.Name] = true
+		for _, other := range cols {
+			if readsColumn(c, other) {
+				visit(other, stack)
+			}
+		}
+		done[c.Name] = true
+		out = append(out, c)
+	}
+	for _, c := range cols {
+		visit(c, map[string]bool{})
+	}
+	return out
+}
+
+// orderGoneColumns orders cols (the columns a table is losing) so that a generated column
+// comes before every other gone column its own expression reads: MySQL refuses to drop a
+// column a live generated column still reads (Error 3108, measured), even when the plan
+// intends to drop both, so the generated column must go first.
+func orderGoneColumns(cols []*schema.Column) []*schema.Column {
+	// orderNewColumns already computes a valid dependency order for this same graph (a
+	// generated column after every other column its own expression reads); reversing a
+	// topological order of a DAG is a topological order of the reverse graph, so this puts a
+	// generated column before every other column it reads, exactly what DROP COLUMN needs.
+	fwd := orderNewColumns(cols)
+	out := make([]*schema.Column, len(fwd))
+	for i, c := range fwd {
+		out[len(fwd)-1-i] = c
 	}
 	return out
 }

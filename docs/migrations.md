@@ -168,7 +168,9 @@ Compared, object by object:
 Not compared: seeded rows, which the MySQL loader does not know yet. A one-time event
 (`AT ...`) without `ON COMPLETION PRESERVE` is dropped by the server once it has run, so
 `verify-schema` reports it missing from then on: that is the event's own definition, not
-drift.
+drift. An existing table's `AUTO_INCREMENT=<n>` counter is data, not schema, and is never
+compared either; a brand new table's own declared `AUTO_INCREMENT=<n>` is a schema decision
+and does reach the table when it is created.
 
 The plan uses MySQL's own definitions:
 
