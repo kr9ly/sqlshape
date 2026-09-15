@@ -69,6 +69,27 @@ release it is a candidate for.
   NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
   or TRIGGER still refuses the directive (neither returns a value for it to describe).
 
+- MySQL migrations have an oracle: `check/mysql/migrate`'s `TestMigrateProbe` generates schemas
+  from the planner's vocabulary (column types, generated columns, keys, foreign keys,
+  AUTO_INCREMENT, CHECKs, views, triggers, functions), mutates each into a target (columns added,
+  dropped, renamed, widened, moved, re-nulled; keys, foreign keys and checks attached and
+  detached; the primary key moved onto an existing or a new column; tables added, dropped,
+  renamed; ENUM labels; views, triggers, functions) and judges the plan the way `sqlshape apply`
+  runs it: the DDL applied to a mysqld holding the source must read back as the target's
+  canonical form, and a second plan from there must be empty. Failing pairs are minimized and
+  written to a report (`-migrate-probe-n`, `-migrate-probe-seed`, `-migrate-probe-report`); 200
+  pairs of seed 1 are the gate. Its first sweeps (3,000 pairs over eleven seeds) found seven
+  orderings a real server refuses, each fixed and pinned in `probe_findings_test.go`: a
+  declared key over a foreign key's columns replaces the index the server made for the
+  constraint, and its DROP INDEX and ADD must be one ALTER TABLE (1553), as must DROP PRIMARY KEY
+  off a column another table's foreign key references and the replacing key; RENAME COLUMN of a
+  column a generated column reads carries the dependent generated columns' MODIFY in the same
+  statement (3108); a replaced view reading a column the plan adds is created after the ADD
+  COLUMN (1054), so views, new and replaced, now come last in the target's dependency order; a
+  new table's CREATE comes after the columns and keys the tables that stay are gaining (3734,
+  6125) and a staying table's new foreign keys come after the new tables; a foreign key dropped
+  around a type change names its table as it is after the renames (1146).
+
 - MySQL after a second adversarial round against a running mysqld 8.4 (7 lanes, 29 findings, each
   a regression test in `adv2_*_test.go`; the surface that grew since the first round). Bodies:
   dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) in a trigger or FUNCTION is the

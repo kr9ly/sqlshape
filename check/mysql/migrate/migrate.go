@@ -85,6 +85,7 @@ type planner struct {
 	backfillsOf []Intent
 	droppedFKs  map[string]bool // "table.fk" already dropped ahead of a table that goes
 	earlyKeys   map[string]bool // "table.key" (target names) already added by dropKeysOf
+	earlyMods   map[string]bool // "table.column" (target names) already MODIFYed by renames
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -229,6 +230,7 @@ func (p *planner) dropParts(f, t *schema.Table) {
 	}
 	// foreign keys the target lacks, or that a dropped / changed column takes with them
 	tfks := foreignKeysByName(t)
+	var keptFKs []*schema.ForeignKey
 	for _, fk := range f.ForeignKeys {
 		name := f.ForeignKeyName(fk)
 		if p.droppedFKs[f.Name+"."+name] {
@@ -237,6 +239,8 @@ func (p *planner) dropParts(f, t *schema.Table) {
 		tf, ok := tfks[name]
 		if !ok || !sameProps(diff.ForeignKeyProps(p.renamedFK(f, fk)), diff.ForeignKeyProps(tf)) || touches(fk.Columns, goneCols) {
 			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(f.Name), q(name))
+		} else {
+			keptFKs = append(keptFKs, fk)
 		}
 	}
 	tkeys := keysByName(t)
@@ -252,7 +256,7 @@ func (p *planner) dropParts(f, t *schema.Table) {
 			dropKeys = append(dropKeys, k)
 		}
 	}
-	p.dropKeysOf(f, t, dropKeys)
+	p.dropKeysOf(f, t, dropKeys, keptFKs)
 	tchecks := checksByName(t)
 	for _, c := range f.Checks {
 		name := f.CheckName(c)
@@ -277,7 +281,13 @@ func (p *planner) dropParts(f, t *schema.Table) {
 // auto_increment column, as two clauses of the same statement, succeed where two separate
 // statements do not -- the invariant is only checked once the whole ALTER TABLE has applied
 // all of its clauses), and addParts is told (earlyKeys) not to add that key again.
-func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key) {
+//
+// A foreign key that stays (keptFKs), and the columns other tables' foreign keys reference,
+// have the same need: they must lead some index at every statement boundary (Error 1553 "Cannot drop index: needed in a foreign key
+// constraint" on the DROP INDEX, measured -- the index the server created for the
+// constraint goes when the target declares its own key over the same columns, so the
+// dropped and the replacing key are the same fold).
+func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key, keptFKs []*schema.ForeignKey) {
 	if len(dropKeys) == 0 {
 		return
 	}
@@ -287,22 +297,21 @@ func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key) {
 	}
 	fkeys := keysByName(f)
 	var adds []string
-	for _, ai := range f.Columns {
-		if !ai.AutoIncrement {
-			continue
-		}
-		covered := false
+	added := map[string]bool{}
+	// coverEarly folds the target's key leading with cols (the from side's names) into this
+	// ALTER when no surviving from-side key leads with them.
+	coverEarly := func(cols []string) {
 		for _, k := range f.Keys {
-			if !dropping[keyName(k)] && len(k.Parts) > 0 && strings.EqualFold(k.Parts[0].Column, ai.Name) {
-				covered = true
+			if !dropping[keyName(k)] && leadsWith(k, cols) {
+				return
 			}
 		}
-		if covered {
-			continue
+		toCols := make([]string, len(cols))
+		for i, c := range cols {
+			toCols[i] = p.toCol(f.Name, c)
 		}
-		toName := p.toCol(f.Name, ai.Name)
 		for _, tk := range t.Keys {
-			if len(tk.Parts) == 0 || !strings.EqualFold(tk.Parts[0].Column, toName) {
+			if !leadsWith(tk, toCols) || added[keyName(tk)] {
 				continue
 			}
 			fk, ok := fkeys[keyName(tk)]
@@ -310,11 +319,33 @@ func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key) {
 				continue // this key of the target already exists unchanged, not being added
 			}
 			adds = append(adds, "ADD "+keyText(tk))
+			added[keyName(tk)] = true
 			if p.earlyKeys == nil {
 				p.earlyKeys = map[string]bool{}
 			}
 			p.earlyKeys[t.Name+"."+keyName(tk)] = true
-			break
+			return
+		}
+	}
+	for _, ai := range f.Columns {
+		if ai.AutoIncrement {
+			coverEarly([]string{ai.Name})
+		}
+	}
+	for _, fk := range keptFKs {
+		coverEarly(fk.Columns)
+	}
+	// and the referenced side: a foreign key of another table pointing at f needs f's
+	// referenced columns to lead an index just the same (the same 1553 on DROP PRIMARY KEY
+	// when the primary key moves off a referenced column, measured)
+	for _, other := range p.from.Tables {
+		if other == f {
+			continue
+		}
+		for _, fk := range other.ForeignKeys {
+			if strings.EqualFold(fk.RefTable, f.Name) {
+				coverEarly(fk.RefColumns)
+			}
 		}
 	}
 	var clauses []string
@@ -327,6 +358,20 @@ func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key) {
 	}
 	clauses = append(clauses, adds...)
 	p.emit("ALTER TABLE %s %s;", q(f.Name), strings.Join(clauses, ", "))
+}
+
+// leadsWith reports whether k's leading parts are cols, in order (the index a foreign key
+// or an AUTO_INCREMENT column needs).
+func leadsWith(k *schema.Key, cols []string) bool {
+	if len(k.Parts) < len(cols) {
+		return false
+	}
+	for i, c := range cols {
+		if !strings.EqualFold(k.Parts[i].Column, c) {
+			return false
+		}
+	}
+	return true
 }
 
 // dropTriggers drops every trigger that the target lacks or whose definition differs
@@ -444,8 +489,30 @@ func (p *planner) renames() {
 			cols = append(cols, c)
 		}
 		sort.Strings(cols)
+		f, tt := p.from.Table(t), p.to.Table(p.toName(t))
 		for _, c := range cols {
-			p.emit("ALTER TABLE %s RENAME COLUMN %s TO %s;", q(p.toName(t)), q(c), q(p.colRename[t][c]))
+			clauses := []string{fmt.Sprintf("RENAME COLUMN %s TO %s", q(c), q(p.colRename[t][c]))}
+			// MySQL refuses to rename a column a generated column reads (Error 3108 "has a
+			// generated column dependency", measured against mysqld 8.4) unless the same
+			// ALTER TABLE also rewrites every such generated column with the new name: the
+			// target's definitions of them ride along, and alterTable skips them.
+			if f != nil && tt != nil {
+				for _, g := range f.Columns {
+					if !readsColumn(g, &schema.Column{Name: c}) {
+						continue
+					}
+					tg := tt.Column(p.toCol(t, g.Name))
+					if tg == nil || tg.Text == "" {
+						continue
+					}
+					clauses = append(clauses, "MODIFY COLUMN "+tg.Text)
+					if p.earlyMods == nil {
+						p.earlyMods = map[string]bool{}
+					}
+					p.earlyMods[tt.Name+"."+tg.Name] = true
+				}
+			}
+			p.emit("ALTER TABLE %s %s;", q(p.toName(t)), strings.Join(clauses, ", "))
 		}
 	}
 }
@@ -519,7 +586,9 @@ func (p *planner) coordinateForeignKeys() {
 			if !touched {
 				continue
 			}
-			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(f.Name), q(name))
+			// after renames: the table already bears its target name (measured: the from
+			// name is Error 1146 here when the table was renamed)
+			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(p.toName(f.Name)), q(name))
 			if p.droppedFKs == nil {
 				p.droppedFKs = map[string]bool{}
 			}
@@ -538,11 +607,7 @@ func (p *planner) alters() {
 		}
 		p.alterTable(f, t)
 	}
-	for _, v := range p.to.Views {
-		if f := p.from.View(v.Name); f != nil && !sameProps(diff.ViewProps(f), diff.ViewProps(v)) {
-			p.emit("CREATE OR REPLACE %s;", diff.ViewProps(v)["definition"])
-		}
-	}
+	// views that change are replaced in adds, once every column they may read exists
 }
 
 func (p *planner) alterTable(f, t *schema.Table) {
@@ -589,7 +654,7 @@ func (p *planner) alterTable(f, t *schema.Table) {
 			}
 		}
 		_ = i
-		if diff.Definition(fc.Text, fc.Name) == diff.Definition(c.Text, c.Name) {
+		if diff.Definition(fc.Text, fc.Name) == diff.Definition(c.Text, c.Name) || p.earlyMods[t.Name+"."+c.Name] {
 			continue // the position, if it differs, is settled once every column exists (reorder)
 		}
 		p.emit("ALTER TABLE %s MODIFY COLUMN %s;", q(t.Name), c.Text)
@@ -677,9 +742,24 @@ func hasLabel(c *schema.Column, label string) bool {
 
 // --- adds ------------------------------------------------------------------------
 
+// adds emits what the target has and the from side lacks, in an order every statement's
+// dependencies allow (measured against mysqld 8.4, each the probe's finding): the columns,
+// keys and checks of tables that stay first, since a brand new table's own CREATE TABLE may
+// reference a column those tables are only now gaining (Error 3734 "Missing column ... in the
+// referenced table" otherwise); then the new tables, parents before children; then the
+// foreign keys of the tables that stay, which may reference a new table; then the tables'
+// column order; then the views, new and replaced alike, in the target's dependency order,
+// since a view's new definition may read a column added just above (Error 1054 otherwise).
 func (p *planner) adds() {
 	// routines ahead of everything else: a view (below) may call one.
 	p.addRoutines()
+	staying := map[*schema.Table]*schema.Table{}
+	for _, t := range p.to.Tables {
+		if f, _ := p.pair(t); f != nil {
+			staying[t] = f
+			p.addParts(f, t)
+		}
+	}
 	// new tables, parents before children
 	var fresh []*schema.Table
 	for _, t := range p.to.Tables {
@@ -699,19 +779,17 @@ func (p *planner) adds() {
 		}
 		p.emit("%s;", def)
 	}
-	// parts of tables that stay, then their columns' order
 	for _, t := range p.to.Tables {
-		f, _ := p.pair(t)
-		if f == nil {
-			continue
+		if f := staying[t]; f != nil {
+			p.addForeignKeys(f, t)
+			p.reorder(f, t)
 		}
-		p.addParts(f, t)
-		p.reorder(f, t)
 	}
-	// views: new ones, and the ones added after the tables they read
 	for _, v := range p.to.Views {
-		if p.from.View(v.Name) == nil {
+		if f := p.from.View(v.Name); f == nil {
 			p.emit("%s;", strings.TrimSuffix(strings.TrimSpace(v.Definition), ";"))
+		} else if !sameProps(diff.ViewProps(f), diff.ViewProps(v)) {
+			p.emit("CREATE OR REPLACE %s;", diff.ViewProps(v)["definition"])
 		}
 	}
 }
@@ -757,6 +835,19 @@ func (p *planner) addParts(f, t *schema.Table) {
 		}
 		p.emit("ALTER TABLE %s ADD %s;", q(t.Name), keyText(k))
 	}
+	fchecks := checksByName(f)
+	for _, c := range t.Checks {
+		fc, ok := fchecks[t.CheckName(c)]
+		if ok && sameProps(diff.CheckProps(f, fc), diff.CheckProps(t, c)) {
+			continue
+		}
+		p.emit("ALTER TABLE %s ADD %s;", q(t.Name), checkText(t, c))
+	}
+}
+
+// addForeignKeys adds the foreign keys of a table that stays, after every table and column
+// they may reference exists.
+func (p *planner) addForeignKeys(f, t *schema.Table) {
 	ffks := foreignKeysByName(f)
 	for _, fk := range t.ForeignKeys {
 		ffk, ok := ffks[t.ForeignKeyName(fk)]
@@ -767,14 +858,6 @@ func (p *planner) addParts(f, t *schema.Table) {
 			continue
 		}
 		p.emit("ALTER TABLE %s ADD %s;", q(t.Name), fkText(t, fk))
-	}
-	fchecks := checksByName(f)
-	for _, c := range t.Checks {
-		fc, ok := fchecks[t.CheckName(c)]
-		if ok && sameProps(diff.CheckProps(f, fc), diff.CheckProps(t, c)) {
-			continue
-		}
-		p.emit("ALTER TABLE %s ADD %s;", q(t.Name), checkText(t, c))
 	}
 }
 
