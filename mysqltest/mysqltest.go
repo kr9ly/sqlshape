@@ -81,7 +81,7 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "sqlshape-mysqld-")
+	dir, err := os.MkdirTemp(scratchRoot(), "sqlshape-mysqld-")
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +286,27 @@ func ensureTemplate(ctx context.Context, mysqld, version, lctn string) (string, 
 		return "", err
 	}
 	return template, nil
+}
+
+// scratchRoot is where a server's data directory goes: SQLSHAPE_MYSQLTEST_DIR when set,
+// else /dev/shm when it is a writable directory (tmpfs on Linux: copying the 95 MB template
+// and InnoDB's own writes leave the disk out of it; a start measured 2.05 s on ext4 and
+// 1.45 s there), else the system temp directory. TMPDIR alone does not opt out, since
+// nix-shell and other wrappers set it to a disk path as a matter of course. The directory
+// is removed on Close either way.
+func scratchRoot() string {
+	if d := os.Getenv("SQLSHAPE_MYSQLTEST_DIR"); d != "" {
+		return d
+	}
+	const shm = "/dev/shm"
+	if st, err := os.Stat(shm); err == nil && st.IsDir() {
+		if f, err := os.CreateTemp(shm, "sqlshape-probe-"); err == nil {
+			f.Close()
+			os.Remove(f.Name())
+			return shm
+		}
+	}
+	return ""
 }
 
 // copyTree copies the template data directory (regular files and directories only).
