@@ -508,9 +508,15 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 	case "PT_insert":
 		return a.insert(n)
 	case "PT_update":
-		return a.update(n)
+		if err := a.update(n); err != nil {
+			return err
+		}
+		return a.targetInSubquery("UPDATE")
 	case "PT_delete":
-		return a.delete(n)
+		if err := a.delete(n); err != nil {
+			return err
+		}
+		return a.targetInSubquery("DELETE")
 	case "PT_call":
 		return a.callStmt(n)
 	case "lock_tables":
@@ -521,6 +527,94 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 		return a.loadData(n)
 	}
 	return fmt.Errorf("analyze: %s is not supported yet", strings.TrimPrefix(n.Class, "PT_"))
+}
+
+// targetInSubquery is the server's refusal of an UPDATE / DELETE whose subquery reads the
+// table it writes: 1093 "You can't specify target table 't' for update in FROM clause" for
+// a subquery naming the target itself (in WHERE, EXISTS or IN alike), 1443 "The definition
+// of table 'v' prevents operation UPDATE on table 't'." for one reading a view over it
+// (measured on 8.4, found by x/factsprobe). A derived table over the target is
+// materialized and allowed (measured), as is an INSERT ... SELECT from its own table; a
+// scalar subquery in SET is not recorded in the facts and goes unchecked here.
+func (a *analyzer) targetInSubquery(op string) error {
+	f := a.facts
+	if f == nil || f.Top == nil {
+		return nil
+	}
+	var target, alias string
+	for _, l := range f.Top.Leaves {
+		if l.Role == facts.Target && l.Kind == facts.Table {
+			target, alias = l.Table, l.Alias
+			break
+		}
+	}
+	if target == "" {
+		return nil
+	}
+	var visit func(sc *facts.Scope, top bool) error
+	visit = func(sc *facts.Scope, top bool) error {
+		if sc == nil {
+			return nil
+		}
+		derived := map[*facts.Scope]bool{}
+		for _, l := range sc.Leaves {
+			if l.Kind == facts.Derived || l.Kind == facts.CTE {
+				derived[l.Body] = true // materialized: allowed, and not followed
+				continue
+			}
+			if top {
+				continue
+			}
+			switch l.Kind {
+			case facts.Table:
+				if a.s.Table(l.Table) == a.s.Table(target) {
+					return &Error{Message: fmt.Sprintf("You can't specify target table '%s' for update in FROM clause", alias), Code: 1093, Position: int(l.Position)}
+				}
+			case facts.View:
+				if a.viewReads(l.Body, target) {
+					return &Error{Message: fmt.Sprintf("The definition of table '%s' prevents operation %s on table '%s'.", l.Alias, op, alias), Code: 1443, Position: int(l.Position)}
+				}
+			}
+		}
+		for _, p := range sc.Preds {
+			if err := visit(p.Sub, false); err != nil {
+				return err
+			}
+		}
+		for _, ch := range sc.Children {
+			if derived[ch] {
+				continue
+			}
+			if err := visit(ch, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return visit(f.Top, true)
+}
+
+// viewReads: a view body (or a view it reads in turn) names table.
+func (a *analyzer) viewReads(body *facts.Scope, table string) bool {
+	if body == nil {
+		return false
+	}
+	for _, l := range body.Leaves {
+		if l.Kind == facts.Table && a.s.Table(l.Table) == a.s.Table(table) || l.Kind == facts.View && a.viewReads(l.Body, table) {
+			return true
+		}
+	}
+	for _, p := range body.Preds {
+		if a.viewReads(p.Sub, table) {
+			return true
+		}
+	}
+	for _, ch := range body.Children {
+		if a.viewReads(ch, table) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *analyzer) selectStmt(n *mysqlast.Node) error {

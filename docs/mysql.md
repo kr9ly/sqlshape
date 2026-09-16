@@ -318,7 +318,10 @@ column of the same name wins in `GROUP BY`); a derived table needs an alias (124
 rejected as 8.4 rejects it without the hypergraph optimizer (6037). A `USING` or `NATURAL` join
 coalesces its common columns (an unqualified name resolves to the left side, `SELECT *` lists it
 once). Table and view names compare as `lower_case_table_names` says; column and key names never
-mind case.
+mind case. An `UPDATE` or `DELETE` whose subquery reads the table it writes is refused as the
+server refuses it: 1093 for the table itself (in `WHERE`, `EXISTS` or `IN` alike), 1443 for a
+view over it; a derived table over it is materialized and accepted, as is `INSERT ... SELECT`
+from the same table (measured).
 
 ### Views
 

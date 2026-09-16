@@ -632,8 +632,37 @@ func (p *prover) outerRef(n *pgparse.Node) (facts.ColRef, bool) {
 		return facts.ColRef{}, false
 	}
 	parent := p.sc.parent.queryScope()
-	pp := p.a.newProverFor(parent)
-	for _, it := range parent.items {
+	// the items visible where the subquery sits: the query level's, then those of the
+	// passthrough scopes a join's ON clause is analyzed in (joinExpr's `both`, holding
+	// the two sides). While the join is still being analyzed its sides are not in the
+	// level's own items yet, and the reference fell through to a Known term -- a value
+	// fixed before the row is examined, which a column of the joined row is not (found
+	// by x/factsprobe). The join's sides come after the level's items, where the level's
+	// own facts will list them once the join is added.
+	items := append([]*rte(nil), parent.items...)
+	seen := map[*rte]bool{}
+	for _, it := range items {
+		for _, l := range it.leaves() {
+			seen[l] = true
+		}
+	}
+	for s := p.sc.parent; s != nil && s.passthrough; s = s.parent {
+		for _, it := range s.items {
+			dup := false
+			for _, l := range it.leaves() {
+				dup = dup || seen[l]
+			}
+			if dup {
+				continue
+			}
+			for _, l := range it.leaves() {
+				seen[l] = true
+			}
+			items = append(items, it)
+		}
+	}
+	pp := p.a.newProverFor(&scope{parent: parent.parent, items: items, ctes: parent.ctes})
+	for _, it := range items {
 		pp.addItem(it)
 	}
 	k, ok := pp.resolve(n)

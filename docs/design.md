@@ -124,6 +124,8 @@ RDBMSを使うアプリケーションに要るのは4つ。SQLの構文と型�
 
 棄てた案。文をまたぐ規則（トランザクション内の対）を扱う層（分析の単位は文、という核の裁定と衝突する）。方言をまたぐ義務DSL（SQL式と少数の構造述語で足りる）。opt-outの命名規則によるパッケージ→文脈の写像（暗黙は読めない。パッケージコメントの`// sqlshape: context`とフラグで明示する）。
 
+事実の正しさは実サーバで測る（2026-09-16）。`x/factsprobe`がスキーマと行と文を生成し、両方言のアナライザーが出したFactsの主張——述語が返る全行で成り立つ、列が既知の値に固定されている、高々1行、書き込みが格納する値——をサーバの返した行で反証する（検査器の型をembedded PGで、マイグレーションの計画を正準形一致で測るのと同じ位置づけ。マイグレーションのprobeと同じく生成器・判定器・報告を方言中立に一つ書き、ドライバだけ方言ごと）。初回で両方言に1件ずつ見つかった（MySQLの1093 / 1443、PGのJOIN ON内サブクエリの外部参照）。
+
 ### PostgreSQLの版は`schema.sql`が宣言し、版ごとに本物の文法とカタログで判定する
 
 決めたこと。`schema.sql`は`-- sqlshape: postgres 18`と1行で、どの版のPostgreSQL向けかを宣言する。宣言は必須で、無いファイルは読まない。この1行が、スキーマと全部の文を読む文法、型・関数・演算子を解決するカタログ、`pgtest`とマイグレーション系コマンドが起動するPostgreSQLの版を決める。パーサはlibpg_queryを版ごとにWebAssemblyへビルドして埋め込み、wazeroで実行する（`check/postgres/pgparse`）。カタログは版ごとにその版の埋め込みPostgreSQLからdumpしたTSV（`check/postgres/catalog/data/<major>/`）、オラクルとregressコーパスも版ごと。ノードのGo型は最新版の`pg_query.proto`から生成した1組だけを持ち、どの版の木もパーサのJSON出力をprotojsonで読む。古い版で名前が違うフィールドは読む前にJSON上で最新版の形に書き換える（`pgparse/upgrade.go`。17→18は`returningList`→`returningClause.exprs`、`is_enforced=true`、`generated_kind="s"`と、生の木には現れない3フィールドの削除）。版で判定が変わる規則はアナライザー内の版分岐（RETURNING old/new、セッションTZの略称、数値フィールドの厳格化、aclitemの引用符、JSON_VALUEの照合衝突、jsonpath引数の型、CTE越しの外側集約）。`diff` / `apply` / `verify-schema`は接続先の`server_version`が宣言と違うメジャー版なら警告して続行する。
