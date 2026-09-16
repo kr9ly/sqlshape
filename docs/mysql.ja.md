@@ -15,7 +15,7 @@ CREATE TABLE ...
 
 `schema.sql`はどのバージョンのMySQL向けかを名乗る。持っているのは8.4。MySQL自身の文法がスキーマと全部の文を読み、MySQLの規則が式に型を付ける。値の違う宣言が2つある、または`postgres`も同時に名乗る、はNG。
 
-文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である（[checks.ja.md](checks.ja.md#スキーマはサーバの設定を名乗るserver)）。MySQLが読むのは2つ:
+文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である（[checks.ja.md](checks.ja.md#スキーマはサーバの設定を名乗るserver)）。MySQLが読むのは3つ:
 
 - `sql_mode`。カンマ区切りの名前（大文字小文字は問わない）、空文字列、組み合わせモードの`ANSI`と`TRADITIONAL`。組み合わせはサーバと同じに展開する。判定を変えるモードは次のとおり。
   - 字句解析のビット（`ANSI_QUOTES`、`PIPES_AS_CONCAT`、`IGNORE_SPACE`、`NO_BACKSLASH_ESCAPES`、`HIGH_NOT_PRECEDENCE`、`REAL_AS_FLOAT`）: パーサがテキストをどう読むか
@@ -25,8 +25,9 @@ CREATE TABLE ...
 
   残りは実行時にしか効かないので、そのまま受け付ける。
 - `lower_case_table_names`。0は表名とビュー名を大文字小文字で区別する（Linuxの既定）、1は小文字にして持つ、2は綴りを保って区別せずに照合する。2は大文字小文字を区別しないファイルシステム（macOSやWindows）専用であり、区別するファイルシステムでは`mysqld`が警告を出して0で起動するため、2を宣言したスキーマとずれる（`mysql.Verify`がそのずれを返す）。
+- `max_sp_recursion_depth`。0〜255。0（既定）なら自分自身を`CALL`するPROCEDUREは呼び出しのたびに1456、0より大きければ呼び出しが達する深さは静的に決まらないので検査器は何も予測しない。
 
-宣言が無ければ、Linuxで初期化したままの8.4を仮定する。既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`である。
+宣言が無ければ、Linuxで初期化したままの8.4を仮定する。既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）、`lower_case_table_names = 0`、`max_sp_recursion_depth = 0`である。
 
 ## 検査器が埋め込んでいるもの
 
@@ -125,10 +126,13 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 | 同じブロック内で同名の変数を2回`DECLARE`する | 1331 |
 | 同じブロック内で同名の`DECLARE ... CONDITION`か`DECLARE ... CURSOR`を2回（変数とカーソルの同名は名前空間が別で許される） | 1332 / 1333 |
 | 同じブロック内の2つの`HANDLER`が同じ条件値を名指す（`SQLEXCEPTION`と`SQLSTATE '45000'`のように重なるだけなら許される） | 1413 |
-| トリガまたはFUNCTION内の動的SQL（`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`。PROCEDUREは対象外） | 1336 |
+| トリガまたはFUNCTION内の動的SQL（`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`）と`FLUSH`（PROCEDUREは対象外） | 1336 |
+| 5文字でないSQLSTATEリテラル（`SIGNAL SQLSTATE '4500'`、それを名指す`CONDITION`や`HANDLER`） | CREATE時に1407。5文字ならどんな文字でも受理する（測定済み） |
+| `MYSQL_ERRNO = 0`を設定する`SIGNAL` / `RESIGNAL` | 1231。常に失敗する |
 | どの`HANDLER`の外でも届く値の無い`RESIGNAL` | 1645。常に失敗する |
-| 自分自身を`CALL`するルーチン | 再帰呼び出しのたびに1456（`max_sp_recursion_depth`の既定は0。この仕組みが読む設定ではない）。直接の自己再帰だけで、別ルーチン経由で自身に戻るものは対象外 |
-| 上流で使用中の表に書き戻すトリガの連鎖（`INSERT INTO x`がxのトリガを発火してyに書き、yのトリガがxに書く） | 1442。どちらのトリガも自分の表には書いていなくても |
+| 自分自身を`CALL`するPROCEDURE | `max_sp_recursion_depth`が0（既定）のあいだ再帰呼び出しのたびに1456（0より大きく宣言すれば何も予測しない）。直接の自己再帰だけで、別ルーチン経由で自身に戻るものは対象外 |
+| 自分自身を呼ぶFUNCTION | 呼び出しのたびに1424（`CREATE`は通る。この設定は関数には効かない） |
+| 上流で使用中の表に書き戻すトリガの連鎖（`INSERT INTO x`がxのトリガを発火してyに書き、yのトリガがxに書く）、またはロック付きで読み戻す連鎖（`SELECT ... FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`。ロック無しの読みは衝突しない、測定済み） | 1442。どちらのトリガも自分の表には書いていなくても。`CALL`したルーチンが続ける連鎖も同じに数え、連鎖のどこかで見つかった確実な失敗（1442、1456）は発火した文に報告する |
 
 本体の失敗モードのうち、`SIGNAL`と同じ「しうる」の形のもの:
 
@@ -137,7 +141,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 | `ELSE`の無い`CASE`（simple・searchedいずれも） | 1339「Case not found for CASE statement」。どの`WHEN`にも一致しないとき |
 | 自身の`SET MYSQL_ERRNO`を持つ値の無い`RESIGNAL` | 捕まえた`SIGNAL`の番号でなく、その番号で再送する |
 
-トリガ・ルーチンの本体自身の書き込みは、その書き込み自身の失敗モード（本文の制約、その書き込みが起こす自分自身のトリガの失敗モード、再帰は打ち切り）を本体の失敗モードに持ち込む。`SIGNAL`のキーは、番号を設定していれば`MYSQL_ERRNO`の10進表記、無ければSQLSTATE（[ランタイム](#ランタイム-databasesql)がエラーを読み戻すのと同じ規則）。SQLSTATEクラス`01`は警告で失敗モードにならず、未処理のクラス`02`は1643、それ以外の未処理は1644になる。名前付き`CONDITION`はその値に解決し、値の無い`RESIGNAL`は最も内側の`HANDLER`が処理中のものをそのまま再送する。`CREATE TRIGGER` / `FUNCTION` / `PROCEDURE`の上に書く`-- sqlshape: error <key> = <Name>`は、PostgreSQLの同じ注釈（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）と同じもので、`<key>`にNameを与え、プログラムはそれを`sqlshape.Error(<key>)`で写し取り、vetがスキーマと両方向に照合する。expect行と`mysql.Violates`が判定に使うのは相変わらずキーそのもの（`<Name>`でなく`30001`）だが、`<Name>`で綴っても同じことになる——`sqlshape.Error("30001")`から作った`sqlshape.Failure`はそのコードだけを運んでいるので。`DECLARE ... HANDLER FOR`はそのブロック内の一致する失敗モードを吸収する（`SQLEXCEPTION`はクラス`01`と`02`以外の全部、`SQLWARNING` / `NOT FOUND`はそのクラス、SQLSTATEや番号そのものは一致するもの）。`INSERT` / `UPDATE IGNORE`はトリガのSIGNALを何も吸収しない（測定済み: 文はそれでも失敗する）。`SELECT ... INTO`は、`One`が使うのと同じ証明で多くとも1行と示せない限り1172を持つ（1行も無ければNOT FOUNDで警告、失敗にはならない）。
+トリガ・ルーチンの本体自身の書き込みは、その書き込み自身の失敗モード（本文の制約、その書き込みが起こす自分自身のトリガの失敗モード、再帰は打ち切り）を本体の失敗モードに持ち込む。`SIGNAL`のキーは、番号を設定していれば`MYSQL_ERRNO`の10進表記（組み込みの番号でも同じ。SQLSTATE `'23000'`の下で`SET MYSQL_ERRNO = 1062`とすればキーは`1062`で、メッセージに無いキー名を探しにいかない。測定済み）、無ければSQLSTATE（[ランタイム](#ランタイム-databasesql)がエラーを読み戻すのと同じ規則）。SQLSTATEクラス`01`は警告で失敗モードにならず、未処理のクラス`02`は1643、それ以外の未処理は1644になる。名前付き`CONDITION`はその値に解決し、値の無い`RESIGNAL`は最も内側の`HANDLER`が処理中のものをそのまま再送する。`CREATE TRIGGER` / `FUNCTION` / `PROCEDURE`の上に書く`-- sqlshape: error <key> = <Name>`は、PostgreSQLの同じ注釈（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）と同じもので、`<key>`にNameを与え、プログラムはそれを`sqlshape.Error(<key>)`で写し取り、vetがスキーマと両方向に照合する。expect行と`mysql.Violates`が判定に使うのは相変わらずキーそのもの（`<Name>`でなく`30001`）だが、`<Name>`で綴っても同じことになる——`sqlshape.Error("30001")`から作った`sqlshape.Failure`はそのコードだけを運んでいるので。`DECLARE ... HANDLER FOR`はそのブロック内の一致する失敗モードを吸収する（`SQLEXCEPTION`はクラス`01`と`02`以外の全部、`SQLWARNING` / `NOT FOUND`はそのクラス、SQLSTATEや番号そのものは一致するもの）。`INSERT` / `UPDATE IGNORE`はトリガのSIGNALを何も吸収しない（測定済み: 文はそれでも失敗する）。`SELECT ... INTO`は、`One`が使うのと同じ証明で多くとも1行と示せない限り1172を持つ（1行も無ければNOT FOUNDで警告、失敗にはならない）。
 
 表への文は、その表のトリガのその事象向けの失敗モードを引き継ぐ: INSERT / UPDATE / DELETE。`REPLACE`はINSERTとDELETEのトリガを、`ON DUPLICATE KEY UPDATE`はINSERTとUPDATEのトリガを発火させる（測定済み）。
 
@@ -187,6 +191,10 @@ SELECT name, count(*) FROM users GROUP BY id            -- OK: id は主キー
 ### 名前解決
 
 `ORDER BY`、`GROUP BY`、`HAVING`はサーバと同じにSELECTリストの別名を見る（`GROUP BY`では同名の表の列が勝つ）。派生表には別名が要る（1248）。`QUALIFY`は8.4がハイパーグラフオプティマイザ無しで拒むとおりに拒む（6037）。`USING`と`NATURAL`の結合は共通列を1つにまとめる（修飾の無い名前は左側に解決し、`SELECT *`は1回だけ並べる）。表名とビュー名は`lower_case_table_names`の言うとおりに照合し、列名とキー名は大文字小文字を区別しない。
+
+### ビュー
+
+ビューは、`ALGORITHM=TEMPTABLE`と書かれているか、問い合わせがマージできない形（`GROUP BY`・`HAVING`・`DISTINCT`・`LIMIT`・集合演算・ウィンドウ関数・選択リスト内のサブクエリ）でない限り、読む側の問い合わせにマージされる（サーバ自身の`is_mergeable`）。マージされるビュー経由の書き込みは基底表に届き、それ以外のビューへの書き込みは1288になる。サーバがマージしないビューに付けた`WITH CHECK OPTION`は、サーバが`CREATE`を拒む（1368）のと同じくスキーマの読み込み時に拒む。`CREATE OR REPLACE VIEW`は前の定義を置き換える。
 
 ### MySQLに無いもの
 

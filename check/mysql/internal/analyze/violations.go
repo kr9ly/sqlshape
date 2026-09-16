@@ -117,7 +117,16 @@ func (a *analyzer) calledRoutineViolations() []Violation {
 	var out []Violation
 	for _, cr := range a.calledRoutines {
 		br, err := AnalyzeRoutine(a.s, cr.r)
-		if err != nil || br == nil {
+		if br == nil {
+			// the callee's own body is certain to fail CREATE (a malformed SQLSTATE, a
+			// FUNCTION's own direct recursion, ...): that certain failure is this call
+			// site's own "may" (measured: TestAdv3ChainCallCascadeThroughAnotherTriggerSwallowed
+			// and TestAdv3ChainCallRecursionAnd1442BothSwallowed reach the same swallow here
+			// as triggerViolations' own, below), not nothing at all.
+			if v, ok := errorAsViolation(err); ok {
+				v.Function = cr.r.Name
+				out = append(out, v)
+			}
 			continue
 		}
 		for _, v := range br.Violations {
@@ -126,6 +135,22 @@ func (a *analyzer) calledRoutineViolations() []Violation {
 		}
 	}
 	return out
+}
+
+// errorAsViolation folds a chained trigger's or called routine's own certain CREATE-time
+// failure (an *Error, from cachedAnalyzeTrigger/AnalyzeRoutine) into a Violation the firing
+// statement itself may raise, instead of discarding it outright (measured:
+// TestAdv3ChainCallCascadeThroughAnotherTriggerSwallowed -- AnalyzeTrigger(ca_a_bi), asked
+// directly, already computes the correct 1442 that firing `INSERT INTO ca_a` always
+// reaches, but triggerViolations/calledRoutineViolations threw it away). Not every analysis
+// failure is an *Error (a construct the analyzer does not understand yet is a plain error,
+// never seen here in practice): ok is false for those, unchanged from before.
+func errorAsViolation(err error) (Violation, bool) {
+	ae, ok := err.(*Error)
+	if !ok {
+		return Violation{}, false
+	}
+	return Violation{Code: ae.Code, Constraint: itoa(ae.Code), SQLState: constraintSQLState(ae.Code)}, true
 }
 
 // triggerFailureModes lists what the write's table's triggers may raise for this
@@ -211,7 +236,19 @@ func triggerViolations(s *schema.Schema, t *schema.Table, event string, inUse ma
 			continue
 		}
 		br, err := cachedAnalyzeTrigger(s, tg)
-		if err != nil || br == nil {
+		if br == nil {
+			// tg's own body is certain to fail once fired here (a CALL cascading through
+			// another trigger back into a table already in use, a CALL that both recurses
+			// and would otherwise collide, ...): fold that failure into this firing
+			// statement's own Violations instead of discarding it (measured:
+			// TestAdv3ChainCallCascadeThroughAnotherTriggerSwallowed,
+			// TestAdv3ChainCallRecursionAnd1442BothSwallowed -- AnalyzeTrigger(tg), asked
+			// directly, already computes the right answer; this walk threw it away instead
+			// of reaching for the firing statement's own prediction).
+			if v, ok := errorAsViolation(err); ok {
+				v.Table, v.Trigger = tg.Table, tg.Name
+				out = append(out, v)
+			}
 			continue
 		}
 		out = append(out, br.Violations...)
@@ -227,6 +264,20 @@ func triggerViolations(s *schema.Schema, t *schema.Table, event string, inUse ma
 					continue
 				}
 				out = append(out, triggerViolations(s, s.Table(w.Table), w.Kind.String(), addTable(chained, w.Table))...)
+			}
+			// a locking read (SELECT ... FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE) of a
+			// table already in the chain is 1442 too, the same certain way a further write
+			// back into it is (measured: TestAdv3ChainSelectForUpdateInsideTriggerIs1442 --
+			// a plain SELECT or a subquery read does not collide, only a locking one; see
+			// walkSelect's own resolveLockingSelect, body.go, for how st.LockedReads is
+			// populated).
+			for _, lr := range st.LockedReads {
+				if chained[strings.ToLower(lr)] {
+					out = append(out, Violation{
+						Code: code1442, Constraint: itoa(code1442),
+						Table: tg.Table, Trigger: tg.Name, SQLState: constraintSQLState(code1442),
+					})
+				}
 			}
 		}
 	}

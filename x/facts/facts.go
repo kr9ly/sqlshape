@@ -282,7 +282,15 @@ type Term struct {
 	Kind TermKind
 	// Param is the 1-based $n for a Param term.
 	Param int32
-	// Const is the literal's text for a Const term.
+	// Const is the literal's text for a Const term, spelled as one type-tag byte followed
+	// by the bare value, with no surrounding quotes: 'i' + an integer ("i5"), 'f' + a float
+	// ("f1.5"), 's' + a string's content ("sdraft"), 'b' + "true"/"false", 'x' + anything
+	// else a producer cannot classify, or the literal text "NULL" for a null literal (not a
+	// tagged form -- there is no "value" to tag). Every producer of this package's facts
+	// (PostgreSQL: check/postgres/analyze/card.go's constText; MySQL: the corresponding
+	// termFacts/literalClass path) must spell a Const this way, since x/obligation's
+	// stateOf reads the tag off Const's first byte to recover a bare state name for the
+	// `transitions` obligation.
 	Const string
 	// Col is the other column for a Column term.
 	Col ColRef

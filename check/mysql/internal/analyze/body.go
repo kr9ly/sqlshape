@@ -2,12 +2,14 @@ package analyze
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
@@ -56,6 +58,13 @@ type BodyStatement struct {
 	Facts   *facts.Facts
 	Line    int
 	Columns []Column
+	// LockedReads are the tables a locking read (SELECT ... FOR UPDATE / FOR SHARE / LOCK
+	// IN SHARE MODE) this statement is names: a further hop in the trigger chain writing
+	// back into one of them is 1442, the same certain way a further write is (measured:
+	// TestAdv3ChainSelectForUpdateInsideTriggerIs1442 -- a plain SELECT or a subquery read
+	// does not collide, only a locking one). Populated by walkSelect's own
+	// resolveLockingSelect, read back by violations.go's triggerViolations.
+	LockedReads []string
 }
 
 // lineAt is pos's 1-based line within the definition text (schema.Trigger.Definition /
@@ -182,69 +191,90 @@ func (a *analyzer) lookupCondition(name string) (condRef, bool) {
 // Const case was once missing) had HANDLER FOR SQLWARNING / NOT FOUND / SQLEXCEPTION all
 // silently resolve to the zero condRef (kind condSQLState, sqlstate ""), catching nothing a
 // real Violation (which always carries a non-empty SQLState) could ever match).
-func classifyMysqlerr(v mysqlast.Value) condRef {
+// classifyMysqlerr's second return is the malformed SQLSTATE literal's own text ("" when it
+// is well-formed, or the value was not a SQLSTATE literal at all): the server refuses
+// CREATE for a SIGNAL/RESIGNAL/HANDLER FOR/DECLARE ... CONDITION naming a SQLSTATE that is
+// not exactly 5 characters long (1407 "Bad SQLSTATE: '<x>'", measured; a well-formed
+// 5-character one that happens to be non-numeric, e.g. 'ABCDE', is accepted) --
+// resolveCondValue turns this into that Error, at the one call site position it has.
+func classifyMysqlerr(v mysqlast.Value) (condRef, string) {
 	switch x := v.(type) {
 	case int:
 		// defensive: ulong_num's own reduction (sp_cond's Args{Child:1}, no Field applied)
 		// carries the mysqlparse-level value straight through, which is mysqlast.Number,
 		// not a bare Go int; kept in case that ever changes.
-		return condRef{kind: condNumber, number: x}
+		return condRef{kind: condNumber, number: x}, ""
 	case mysqlast.Number:
-		return condRef{kind: condNumber, number: int(x)}
+		return condRef{kind: condNumber, number: int(x)}, ""
 	case string:
 		return classifyMysqlerrString(x)
 	case mysqlast.Const:
 		return classifyMysqlerrString(string(x))
 	}
 	// defensive: sp_condition_value's own _mysqlerr is always one of the four cases above.
-	return condRef{}
+	return condRef{}, ""
 }
 
 // classifyMysqlerrString is classifyMysqlerr's own work once the value is a plain string
-// (however it got there): one of the three keyword conditions, or a SQLSTATE literal.
-func classifyMysqlerrString(x string) condRef {
+// (however it got there): one of the three keyword conditions, or a SQLSTATE literal (bad
+// when it is not exactly 5 characters).
+func classifyMysqlerrString(x string) (condRef, string) {
 	switch x {
 	case "sp_condition_value::WARNING":
-		return condRef{kind: condWarning}
+		return condRef{kind: condWarning}, ""
 	case "sp_condition_value::NOT_FOUND":
-		return condRef{kind: condNotFound}
+		return condRef{kind: condNotFound}, ""
 	case "sp_condition_value::EXCEPTION":
-		return condRef{kind: condException}
+		return condRef{kind: condException}, ""
 	default:
-		return condRef{kind: condSQLState, sqlstate: strings.ToUpper(x)}
+		if len(x) != 5 {
+			return condRef{}, x
+		}
+		return condRef{kind: condSQLState, sqlstate: strings.ToUpper(x)}, ""
 	}
 }
 
 // resolveCondValue resolves one condition value of a SIGNAL, a RESIGNAL or a HANDLER FOR
 // list: a bare sp_condition_value (a literal), or a sp_condition_name (a DECLARE ...
-// CONDITION FOR, resolved against the block chain).
-func (a *analyzer) resolveCondValue(v mysqlast.Value) (condRef, bool) {
+// CONDITION FOR, resolved against the block chain). err is non-nil (1407) only for a
+// malformed SQLSTATE literal (classifyMysqlerr); every other caller only ever saw ok, so it
+// keeps meaning exactly what it always has.
+func (a *analyzer) resolveCondValue(v mysqlast.Value) (condRef, bool, error) {
 	n, ok := v.(*mysqlast.Node)
 	if !ok {
 		// defensive: every caller (a SIGNAL/RESIGNAL's own condition, a HANDLER FOR list's
 		// items) passes a sp_cond/sp_hcond value, always a *mysqlast.Node.
-		return condRef{}, false
+		return condRef{}, false, nil
 	}
 	switch n.Class {
 	case "sp_condition_value":
-		return classifyMysqlerr(n.Arg("_mysqlerr")), true
+		ref, bad := classifyMysqlerr(n.Arg("_mysqlerr"))
+		if bad != "" {
+			return condRef{}, false, &Error{Message: fmt.Sprintf("Bad SQLSTATE: '%s'", bad), Code: 1407, Position: a.ph.Back(n.Start)}
+		}
+		return ref, true, nil
 	case "sp_condition_name":
-		return a.lookupCondition(str(n.Arg("name")))
+		ref, ok := a.lookupCondition(str(n.Arg("name")))
+		return ref, ok, nil
 	}
 	// defensive: sp_cond/sp_hcond only ever build one of the two classes above.
-	return condRef{}, false
+	return condRef{}, false, nil
 }
 
 // resolveHandlerConditions resolves a HANDLER FOR's comma-separated condition list.
-func (a *analyzer) resolveHandlerConditions(v mysqlast.Value) []condRef {
+func (a *analyzer) resolveHandlerConditions(v mysqlast.Value) ([]condRef, error) {
 	list, _ := v.(mysqlast.List)
 	out := make([]condRef, 0, len(list))
 	for _, c := range list {
-		if ref, ok := a.resolveCondValue(c); ok {
+		ref, ok, err := a.resolveCondValue(c)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			out = append(out, ref)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // trigRowColumn resolves NEW.field / OLD.field inside a trigger body, applying the
@@ -636,6 +666,13 @@ func (a *analyzer) commitCheck(class string, at int) error {
 	if class == "SQLCOM_PREPARE" || class == "SQLCOM_DEALLOCATE_PREPARE" || class == "SQLCOM_EXECUTE" {
 		return &Error{Message: "Dynamic SQL is not allowed in stored function or trigger", Code: 1336, Position: a.ph.Back(at)}
 	}
+	if class == "SQLCOM_FLUSH" {
+		// measured: FLUSH TABLES inside a FUNCTION or a TRIGGER is refused at CREATE time
+		// every time (1336, the same family PREPARE/EXECUTE/DEALLOCATE PREPARE already
+		// carry); a PROCEDURE is exempt, like it is from those (the a.trig==nil &&
+		// a.routine.Kind != Function guard above).
+		return &Error{Message: "FLUSH is not allowed in stored function or trigger", Code: 1336, Position: a.ph.Back(at)}
+	}
 	ddl := strings.HasPrefix(class, "PT_create_") || strings.HasPrefix(class, "PT_drop_") ||
 		strings.HasPrefix(class, "PT_alter_") || strings.HasPrefix(class, "PT_rename_") ||
 		strings.HasPrefix(class, "PT_truncate_")
@@ -732,6 +769,14 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		// EXECUTE <stmt>: dynamic SQL the same way PREPARE / DEALLOCATE PREPARE are
 		// (commitCheck), but folded to a bare Node (no sql_command Struct of its own).
 		return a.commitCheck("SQLCOM_EXECUTE", n.Start)
+	case "flush":
+		// FLUSH TABLES (and every other FLUSH form): folded to a bare "flush" Node with no
+		// sql_command Struct of its own either (measured against the generated shapes,
+		// TestDumpFlush, scratchpad/adv3 -- the "flush" simple_statement rule is ActEmpty,
+		// and "FLUSH_SYM opt_no_write_to_binlog flush_options" builds a plain Node named
+		// after the rule, not a Struct), so commitCheck is reached the same way EXECUTE's
+		// own bare Node is, not through walkOne's generic *Struct case.
+		return a.commitCheck("SQLCOM_FLUSH", n.Start)
 	case "sp_proc_stmt_fetch":
 		return a.walkFetch(n)
 	case "PT_select_stmt":
@@ -783,7 +828,11 @@ func (a *analyzer) walkBlock(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	var handlers []pendingHandler
 	for _, d := range decls {
 		if dn, ok := d.(*mysqlast.Node); ok && dn.Class == "sp_decl_handler" {
-			h := pendingHandler{conds: a.resolveHandlerConditions(dn.Arg("conditions")), body: dn.Arg("body")}
+			conds, err := a.resolveHandlerConditions(dn.Arg("conditions"))
+			if err != nil {
+				return err
+			}
+			h := pendingHandler{conds: conds, body: dn.Arg("body")}
 			// two handlers of one block naming the same condition value (the same
 			// SQLSTATE, error number or class, a named condition resolved to its value)
 			// are refused at CREATE time: 1413 "Duplicate handler declared in the same
@@ -894,7 +943,11 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		}
 		return nil
 	case "sp_decl_condition":
-		if ref, ok := a.resolveCondValue(n.Arg("value")); ok {
+		ref, ok, err := a.resolveCondValue(n.Arg("value"))
+		if err != nil {
+			return err
+		}
+		if ok {
 			name := str(n.Arg("name"))
 			if a.vars != nil {
 				if _, dup := a.vars.conds[strings.ToLower(name)]; dup {
@@ -1050,7 +1103,10 @@ func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 		}
 		return nil
 	}
-	ref, ok := a.resolveCondValue(cond)
+	ref, ok, err := a.resolveCondValue(cond)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil // an unresolved named condition: nothing to predict (defensive)
 	}
@@ -1064,7 +1120,21 @@ func (a *analyzer) walkSignal(n *mysqlast.Node) error {
 	if class == "01" {
 		return nil // SQLWARNING: a warning, not a failure mode
 	}
-	errno, _ := signalErrno(items)
+	errno, explicit := signalErrno(items)
+	if explicit && errno == 0 {
+		// an explicit `SET MYSQL_ERRNO = 0` is never the SQLSTATE's own default number:
+		// MYSQL_ERRNO must be in 1..65535, and the server raises 1231 ("Variable
+		// 'MYSQL_ERRNO' can't be set to the value of '0'") unconditionally instead, every
+		// time (measured, SQLSTATE 42000) -- signalErrno's own second return value (whether
+		// MYSQL_ERRNO was given at all) is what tells this apart from "no MYSQL_ERRNO
+		// given", for which 0 and code==0 below correctly default to 1643/1644.
+		v := Violation{Code: 1231, Constraint: itoa(1231), SQLState: "42000"}
+		if a.trig != nil {
+			v.Table, v.Trigger = a.trigTable.Name, a.trig.Name
+		}
+		a.raised = append(a.raised, v)
+		return nil
+	}
 	code, key := errno, ref.sqlstate
 	if code == 0 {
 		if class == "02" {
@@ -1250,14 +1320,18 @@ func (a *analyzer) walkCall(n *mysqlast.Node, br *BodyResult) error {
 		}
 	}
 	a.noteCalledRoutine(r, n.Start)
-	if a.routine != nil && r == a.routine {
-		// max_sp_recursion_depth defaults to 0 (not a setting sqlshape itself tracks): any
-		// actual recursive invocation -- even this first one -- is refused by the server at
-		// run time every time (1456 "Recursive limit ... was exceeded", measured). Detected
-		// here (this CALL's own callee is the very routine being walked) rather than through
-		// AnalyzeRoutine's own cycle-breaking cache (which exists only to stop the walk
-		// itself from looping, and answers "no writes, no error" for the in-progress call --
-		// never a signal that the branch is certain to fail).
+	if a.routine != nil && r == a.routine && a.s.Settings.MaxSPRecursionDepth == 0 {
+		// max_sp_recursion_depth defaults to 0: any actual recursive invocation -- even
+		// this first one -- is refused by the server at run time every time (1456
+		// "Recursive limit ... was exceeded", measured). Detected here (this CALL's own
+		// callee is the very routine being walked) rather than through AnalyzeRoutine's own
+		// cycle-breaking cache (which exists only to stop the walk itself from looping, and
+		// answers "no writes, no error" for the in-progress call -- never a signal that the
+		// branch is certain to fail). Once the schema raises the setting above 0 (schema.go's
+		// SettingNames), how deep a call chain actually runs is not something this checker
+		// proves statically (a CALL can be conditioned on anything), so it predicts nothing
+		// here at all rather than a false 1456 (measured: TestAdv3BodyRecursionDepthSettingIgnoredBy1456
+		// -- 5 levels of direct recursion under max_sp_recursion_depth=200 succeeds outright).
 		a.raised = append(a.raised, Violation{Code: 1456, Constraint: "1456", SQLState: "HY000"})
 	}
 	if a.trig != nil || (a.routine != nil && a.routine.Kind == schema.Function) {
@@ -1351,6 +1425,7 @@ func (a *analyzer) selectIntoTarget(v mysqlast.Value) (bool, error) {
 // variable target must be declared (1327).
 func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	a.resetStatement()
+	n, locking := a.resolveLockingSelect(n)
 	if err := a.selectStmt(n); err != nil {
 		return err
 	}
@@ -1366,6 +1441,9 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 			return err
 		}
 		a.appendStatementCols(br, n.Start, a.columns)
+		if locking {
+			a.markLastLockedReads(br)
+		}
 		return nil
 	}
 	if len(into) != len(a.columns) {
@@ -1390,7 +1468,77 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 		return err
 	}
 	a.appendStatement(br, n.Start)
+	if locking {
+		a.markLastLockedReads(br)
+	}
 	return nil
+}
+
+// markLastLockedReads records a.refRels (the tables the just-appended locking SELECT
+// references -- FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE lock every table the query
+// reads, absent an "OF <tables>" narrowing it, which resolveLockingSelect does not attempt)
+// on the BodyStatement walkSelect just appended.
+func (a *analyzer) markLastLockedReads(br *BodyResult) {
+	if len(br.Statements) == 0 {
+		return // defensive: only ever called right after appendStatement/appendStatementCols
+	}
+	var tables []string
+	for name := range a.refRels {
+		tables = append(tables, name)
+	}
+	br.Statements[len(br.Statements)-1].LockedReads = tables
+}
+
+// lockingClauseSuffix matches a locking read's own trailing clause -- FOR UPDATE, FOR
+// SHARE, or LOCK IN SHARE MODE, each with an optional NOWAIT/SKIP LOCKED, with no "OF
+// <tables>" naming a subset (out of this milestone's scope: resolveLockingSelect falls back
+// to the pre-existing gap for that shape, below).
+var lockingClauseSuffix = regexp.MustCompile(`(?is)\s+(FOR\s+UPDATE|FOR\s+SHARE|LOCK\s+IN\s+SHARE\s+MODE)(\s+(NOWAIT|SKIP\s+LOCKED))?\s*$`)
+
+// resolveLockingSelect reparses n's own source span (a.text[n.Start:n.End]) with its
+// trailing locking clause stripped (see lockingClauseSuffix) and returns the corrected
+// node, when n has one: this framework's own generic action-shape builder
+// (mysqlast.Builder.constant) folds a query bearing a trailing locking_clause_list to an
+// unevaluated action-text constant instead of a real PT_query_expression (measured: the
+// shapes.go "query_expression locking_clause_list" production's own qe Arg is {Text:
+// "NEW_PTNPT_locking(@$,$1,$2)"}, never a Child reference -- TestDumpForUpdateAST,
+// scratchpad/adv3), discarding the query, including which table(s) it reads, entirely
+// (walkSelect's own a.selectStmt(n) would otherwise fail with "query expression not
+// understood"). Reparsing the clause-stripped source recovers the ordinary PT_select_stmt
+// the grammar builds for every other read, which the rest of walkSelect types normally
+// (INTO targets, cardinality, columns); markLastLockedReads reads a.refRels once that
+// typing is done for the table(s) the lock reads.
+//
+// ok is false (n unchanged) when n has no such clause, or the stripped statement does not
+// parse/type on its own (defensive: not observed in practice -- every locking read is
+// otherwise an ordinary SELECT). Position values a later Error computes from the corrected
+// node are relative to the reparsed, clause-stripped text, not a.text: a known imprecision
+// specific to this narrow workaround, immaterial to a Violation (which carries no Position
+// at all).
+func (a *analyzer) resolveLockingSelect(n *mysqlast.Node) (*mysqlast.Node, bool) {
+	if n.Start < 0 || n.End > len(a.text) || n.Start > n.End {
+		return n, false // defensive: every PT_select_stmt's own span is within a.text
+	}
+	raw := a.text[n.Start:n.End]
+	loc := lockingClauseSuffix.FindStringIndex(raw)
+	if loc == nil {
+		return n, false
+	}
+	stripped := raw[:loc[0]]
+	mode := a.s.Settings.ParseMode()
+	cst, err := mysqlparse.Parse(stripped, mode)
+	if err != nil {
+		return n, false
+	}
+	root, err := mysqlast.BuildMode(stripped, cst, mode)
+	if err != nil {
+		return n, false
+	}
+	rn, ok := root.(*mysqlast.Node)
+	if !ok || rn.Class != "PT_select_stmt" {
+		return n, false
+	}
+	return rn, true
 }
 
 // selectInto digs a SELECT's own INTO target list out (nil when there is none).

@@ -23,7 +23,7 @@ declarations that disagree, or one that also names `postgres`, are rejected.
 
 A server variable that changes how a statement is judged is declared next to the version, one
 per line, so the checker and the production connection agree on it
-([checks.md](checks.md#the-schema-names-the-servers-settings-server)). MySQL reads two:
+([checks.md](checks.md#the-schema-names-the-servers-settings-server)). MySQL reads three:
 
 - `sql_mode`: the names in any case, comma-separated, the empty string, and the combination modes
   `ANSI` and `TRADITIONAL`, expanded as the server expands them. The modes that change a judgment:
@@ -40,10 +40,13 @@ per line, so the checker and the production connection agree on it
   2 is only for a case-insensitive filesystem (macOS / Windows); on a case-sensitive one
   `mysqld` warns and starts at 0 instead, out of step with a schema that declares 2
   (`mysql.Verify` returns that drift).
+- `max_sp_recursion_depth`: 0 to 255. At 0 (the default) a PROCEDURE that `CALL`s itself is
+  1456 on every invocation; above 0 the depth a call reaches is not static, so the checker
+  predicts nothing for it.
 
 Without a declaration the checker assumes a freshly initialized 8.4 server: the default
-`sql_mode` (`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`)
-and `lower_case_table_names = 0`.
+`sql_mode` (`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`),
+`lower_case_table_names = 0` and `max_sp_recursion_depth = 0`.
 
 ## What the checker embeds
 
@@ -190,10 +193,13 @@ What the server itself refuses when the body is created is an error here too:
 | two `DECLARE`s of the same variable name in one block | 1331 |
 | two `DECLARE ... CONDITION`s or two `DECLARE ... CURSOR`s of one name in one block (a variable and a cursor of one name are different namespaces) | 1332 / 1333 |
 | two `HANDLER`s of one block naming the same condition value (handlers that merely overlap, `SQLEXCEPTION` next to `SQLSTATE '45000'`, are accepted) | 1413 |
-| dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) in a trigger or FUNCTION (a PROCEDURE is exempt) | 1336 |
+| dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) or `FLUSH` in a trigger or FUNCTION (a PROCEDURE is exempt) | 1336 |
+| a SQLSTATE literal that is not five characters (`SIGNAL SQLSTATE '4500'`, a `CONDITION` or `HANDLER` naming one) | 1407 at CREATE; five characters of any kind are accepted (measured) |
+| a `SIGNAL` or `RESIGNAL` setting `MYSQL_ERRNO = 0` | 1231, certain every time |
 | a bare `RESIGNAL` reached outside any `HANDLER` | 1645, certain every time |
-| a routine that `CALL`s itself | 1456 on every recursive invocation (`max_sp_recursion_depth` defaults to 0, not a setting this package reads); direct self-recursion only, not a routine reaching itself through another |
-| a trigger chain writing back into a table already in use further up (`INSERT INTO x` fires `x`'s trigger writing `y`, whose trigger writes `x`) | 1442, though neither trigger writes its own table |
+| a PROCEDURE that `CALL`s itself | 1456 on every recursive invocation while `max_sp_recursion_depth` is 0 (the default; declare it above 0 and nothing is predicted); direct self-recursion only, not a routine reaching itself through another |
+| a FUNCTION that calls itself | 1424 on every invocation (the `CREATE` goes through; the setting does not apply to functions) |
+| a trigger chain writing back into a table already in use further up (`INSERT INTO x` fires `x`'s trigger writing `y`, whose trigger writes `x`), or reading it under a lock (`SELECT ... FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`; a plain read does not collide, measured) | 1442, though neither trigger writes its own table; a chain that a `CALL`ed routine continues counts the same, and a certain failure found anywhere along the chain (1442, 1456) is reported on the firing statement |
 
 And among the body's failure modes, the "may" shape a `SIGNAL` has:
 
@@ -204,8 +210,10 @@ And among the body's failure modes, the "may" shape a `SIGNAL` has:
 
 A trigger's or routine's own writes bring their own failure modes into the body's: the
 schema's constraints, and what those writes' own triggers raise in turn (a cycle is cut). A
-`SIGNAL`'s key is its `MYSQL_ERRNO` as decimal text when it sets one, else its SQLSTATE (the
-same rule the [runtime](#the-runtime-databasesql) reads an error back by); SQLSTATE class
+`SIGNAL`'s key is its `MYSQL_ERRNO` as decimal text when it sets one -- a builtin's number
+too, `SET MYSQL_ERRNO = 1062` under SQLSTATE `'23000'` is keyed `1062`, not by a key name the
+message never carried (measured) -- else its SQLSTATE (the same rule the
+[runtime](#the-runtime-databasesql) reads an error back by); SQLSTATE class
 `01` is a warning and no failure mode, an unhandled class `02` is 1643, anything else
 unhandled is 1644. A named `CONDITION` resolves to its value; a bare `RESIGNAL` re-raises
 whatever the innermost `HANDLER` is itself handling. `-- sqlshape: error <key> = <Name>`
@@ -310,6 +318,15 @@ rejected as 8.4 rejects it without the hypergraph optimizer (6037). A `USING` or
 coalesces its common columns (an unqualified name resolves to the left side, `SELECT *` lists it
 once). Table and view names compare as `lower_case_table_names` says; column and key names never
 mind case.
+
+### Views
+
+A view is merged into the query that reads it unless it says `ALGORITHM=TEMPTABLE` or its
+query cannot be merged (`GROUP BY`, `HAVING`, `DISTINCT`, `LIMIT`, a set operation, a window
+function or a subquery in the select list) -- the server's own `is_mergeable`. A write through a
+merged view lands on its base table; through any other view it is 1288. `WITH CHECK OPTION` on
+a view the server would not merge is refused when the schema loads, as the server refuses the
+`CREATE` (1368). `CREATE OR REPLACE VIEW` replaces the earlier definition.
 
 ### Not on MySQL
 

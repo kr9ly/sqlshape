@@ -47,6 +47,32 @@ func AtMostOne(f *facts.Facts) (bool, string) {
 // ScopeSingle is the proof over one scope, on its own.
 func ScopeSingle(sc *facts.Scope) (bool, string) { return scopeSingle(sc, nil) }
 
+// TargetSingle proves that leaf i of sc alone is touched by at most one row, without
+// requiring every leaf of the level to be single. A write statement (UPDATE / DELETE) only
+// moves the rows of its own target leaf; a table joined into the same level purely to
+// filter (an ON with no unique key of its own fixed) may see many rows there and still
+// leave the target singular -- measured on MySQL 8.4: `DELETE o FROM orders o JOIN items i
+// ON i.order_id = o.id WHERE o.id = 1` deletes exactly the one orders row regardless of how
+// many items rows the join matches, since items is read, not written. The whole-level proof
+// (scopeSingle, AtMostOne) stays as it is for SELECT, where every leaf's row count matters.
+func TargetSingle(sc *facts.Scope, i int) (bool, string) {
+	if sc.Single {
+		return true, ""
+	}
+	if sc.Many != "" {
+		return false, sc.Many
+	}
+	if i < 0 || i >= len(sc.Leaves) {
+		return false, notAnalyzed
+	}
+	p := newProof(sc, nil)
+	p.fixpoint()
+	if p.single[i] {
+		return true, ""
+	}
+	return false, p.describe(sc.Leaves[i], i)
+}
+
 // scopeSingle proves one level; seeds are its leaves' columns fixed from outside (the
 // enclosing level's equalities on a derived leaf's outputs).
 func scopeSingle(sc *facts.Scope, seeds []facts.ColRef) (bool, string) {

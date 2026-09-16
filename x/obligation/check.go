@@ -8,8 +8,18 @@ import (
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
-// single: the statement provably touches at most one row (the One proof over its facts).
-func (c *checker) single() bool {
+// singleWrite: the write touches at most one row of its own target. An UPDATE / DELETE is
+// judged by its target leaf alone (cardinality.TargetSingle): a table joined into the same
+// level only to filter may see many rows there without the write itself moving past one
+// row -- measured on MySQL 8.4, `DELETE o FROM orders o JOIN items i ON i.order_id = o.id
+// WHERE o.id = 1` deletes exactly one orders row regardless of how many items rows the JOIN
+// matches, since items is never a delete target. An INSERT keeps the whole-statement proof
+// over its Source (cardinality.AtMostOne), unchanged.
+func (c *checker) singleWrite(w facts.Write, sc *facts.Scope, li int) bool {
+	if (w.Kind == facts.Update || w.Kind == facts.Delete) && sc != nil {
+		ok, _ := cardinality.TargetSingle(sc, li)
+		return ok
+	}
 	ok, _ := cardinality.AtMostOne(c.f)
 	return ok
 }
@@ -100,7 +110,7 @@ func (c *checker) writes(bySubject map[string][]*Obligation) {
 				switch {
 				case !main:
 					d.Message = fmt.Sprintf("%s requires a single-row %s, which cannot be proved for a write inside WITH", rel.Name(), strings.ToUpper(w.Kind.String()))
-				case c.single():
+				case c.singleWrite(w, sc, li):
 					d.Path = ByStatement
 				default:
 					d.Message = fmt.Sprintf("%s requires a single-row %s: fix a unique key by equality (the One proof)", rel.Name(), strings.ToUpper(w.Kind.String()))

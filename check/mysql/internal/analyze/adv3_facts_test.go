@@ -92,7 +92,7 @@ CREATE VIEW v_outer AS SELECT id, tenant_id, v FROM v_inner WHERE v > 0 WITH LOC
 	}
 	found := false
 	for _, p := range r.Facts.Top.Preds {
-		if p.Op == facts.Eq && p.Origin == facts.FromView && p.Term.Kind == facts.Const && p.Term.Const == "1" {
+		if p.Op == facts.Eq && p.Origin == facts.FromView && p.Term.Kind == facts.Const && p.Term.Const == "i1" { // constText's tagged spelling (facts.go)
 			found = true
 		}
 	}

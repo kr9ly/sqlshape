@@ -53,10 +53,17 @@ type Settings struct {
 	// case-insensitively (Windows), 2 stores them as declared and compares
 	// case-insensitively (macOS).
 	LowerCaseTableNames int
+	// MaxSPRecursionDepth is max_sp_recursion_depth (0..255, the server's default is 0):
+	// analyze/body.go's walkCall reads it to decide whether a routine's own direct
+	// recursion is certain to fail (1456) -- 0 (or undeclared) means every actual
+	// recursive invocation is refused, above 0 the depth reached is not something this
+	// checker proves statically, so it predicts nothing (measured:
+	// TestAdv3BodyRecursionDepthSettingIgnoredBy1456).
+	MaxSPRecursionDepth int
 }
 
 // SettingNames are the server variables the loader reads.
-var SettingNames = []string{"sql_mode", "lower_case_table_names"}
+var SettingNames = []string{"sql_mode", "lower_case_table_names", "max_sp_recursion_depth"}
 
 // ParseMode is the sql_mode as the parser takes it.
 func (st Settings) ParseMode() mysqlparse.Mode { return mysqlparse.Mode(uint32(st.SQLMode)) }
@@ -548,6 +555,13 @@ func (s *Schema) setting(st dialect.Setting) {
 			return
 		}
 		s.Settings.LowerCaseTableNames = n
+	case "max_sp_recursion_depth":
+		n, err := strconv.Atoi(st.Value)
+		if err != nil || n < 0 || n > 255 {
+			s.problem(st.Position, "server %s = %s: want 0-255", st.Name, st.Value)
+			return
+		}
+		s.Settings.MaxSPRecursionDepth = n
 	default:
 		s.problem(st.Position, "server %s: not a variable sqlshape reads for MySQL (%s)", st.Name, strings.Join(SettingNames, ", "))
 	}
@@ -1381,6 +1395,15 @@ func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
 	for _, c := range list(n.Arg("column_list")) {
 		v.Columns = append(v.Columns, str(c))
 	}
+	if v.CheckOption != "" && v.CheckOption != "NONE" && (v.Algorithm == "TEMPTABLE" || !mysqlast.Mergeable(v.Query)) {
+		// the server refuses WITH CHECK OPTION on a view it cannot update -- one it would
+		// not merge (GROUP BY, DISTINCT, HAVING, LIMIT, a set operation, a subquery in the
+		// select list, ALGORITHM=TEMPTABLE) -- at CREATE time: 1368 "CHECK OPTION on
+		// non-updatable view" (measured on 8.4). The analyzer's own merge test is the
+		// server's is_mergeable, so the two agree on which views these are.
+		s.problem(st.Offset, "CREATE VIEW %s: CHECK OPTION on non-updatable view (1368)", name)
+		return
+	}
 	s.viewDirectives(v, st.SQL, st.Offset)
 	if old := s.View(name); old != nil {
 		if n.Arg("replace") == nil {
@@ -2017,9 +2040,11 @@ func bodyRefusalProblem(v mysqlast.Value, dynamicSQL bool) string {
 		}
 	case *mysqlast.Struct:
 		if dynamicSQL {
-			if cmd, ok := x.Fields["sql_command"].(mysqlast.Const); ok &&
-				(cmd == "SQLCOM_PREPARE" || cmd == "SQLCOM_DEALLOCATE_PREPARE") {
-				return "Dynamic SQL is not allowed in stored function or trigger"
+			if cmd, ok := x.Fields["sql_command"].(mysqlast.Const); ok {
+				switch cmd {
+				case "SQLCOM_PREPARE", "SQLCOM_DEALLOCATE_PREPARE":
+					return "Dynamic SQL is not allowed in stored function or trigger"
+				}
 			}
 		}
 		for _, k := range x.Order {
@@ -2030,6 +2055,23 @@ func bodyRefusalProblem(v mysqlast.Value, dynamicSQL bool) string {
 	case *mysqlast.Node:
 		if dynamicSQL && x.Class == "execute" {
 			return "Dynamic SQL is not allowed in stored function or trigger"
+		}
+		if dynamicSQL && x.Class == "flush" {
+			// mirrors analyze/body.go's own commitCheck: FLUSH folds to a bare "flush"
+			// Node, not a sql_command Struct (measured against the generated shapes), so
+			// it is checked here the same way "execute" is, not through the *Struct case
+			// above.
+			return "FLUSH is not allowed in stored function or trigger"
+		}
+		if x.Class == "sp_condition_value" {
+			// mirrors analyze/body.go's own classifyMysqlerrString: a SIGNAL/RESIGNAL/
+			// HANDLER FOR/DECLARE ... CONDITION FOR naming a SQLSTATE literal that is not
+			// exactly 5 characters long is refused at CREATE time (1407 "Bad SQLSTATE:
+			// '<x>'", measured; a well-formed 5-character one that happens to be
+			// non-numeric, e.g. 'ABCDE', is accepted).
+			if msg := malformedSQLStateProblem(x.Arg("_mysqlerr")); msg != "" {
+				return msg
+			}
 		}
 		if x.Class == "sp_block_content" {
 			if msg := duplicateVariableProblem(x.Args[0]); msg != "" {
@@ -2043,6 +2085,19 @@ func bodyRefusalProblem(v mysqlast.Value, dynamicSQL bool) string {
 		}
 	}
 	return ""
+}
+
+// malformedSQLStateProblem is bodyRefusalProblem's own check for a sp_condition_value's
+// "_mysqlerr": a bare Go string only for the TEXT_STRING_literal alternative (a SQLSTATE
+// literal; the three keyword conditions -- WARNING/NOT FOUND/EXCEPTION -- build a
+// mysqlast.Const instead, and a bare number a mysqlast.Number, neither of which this ever
+// sees), 1407 when it is not exactly 5 characters long.
+func malformedSQLStateProblem(v mysqlast.Value) string {
+	x, ok := v.(string)
+	if !ok || len(x) == 5 {
+		return ""
+	}
+	return fmt.Sprintf("Bad SQLSTATE: '%s'", x)
 }
 
 // duplicateVariableProblem is bodyRefusalProblem's own check for one block's own

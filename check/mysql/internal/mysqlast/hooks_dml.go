@@ -385,6 +385,36 @@ func init() {
 		return view, nil
 	}
 	register("view_or_trigger_or_sp_or_event", "view_replace_or_algorithm definer_opt init_lex_create_info view_tail", viewHead)
+	// view_replace / view_algorithm are keyword-only rules whose server actions set
+	// create_view_mode / create_view_algorithm on the LEX; the generic fold keeps nothing of
+	// them, so viewHead's mode and algorithm read as nil for every view (OR REPLACE was a
+	// "view already exists" problem and ALGORITHM=TEMPTABLE never reached the analyzer,
+	// measured). They fold into the Struct viewHead expects.
+	register("view_replace", "OR_SYM REPLACE_SYM", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return Const("VIEW_CREATE_OR_REPLACE"), nil
+	})
+	for _, alt := range []struct{ syms, algo string }{
+		{"ALGORITHM_SYM EQ UNDEFINED_SYM", "VIEW_ALGORITHM_UNDEFINED"},
+		{"ALGORITHM_SYM EQ MERGE_SYM", "VIEW_ALGORITHM_MERGE"},
+		{"ALGORITHM_SYM EQ TEMPTABLE_SYM", "VIEW_ALGORITHM_TEMPTABLE"},
+	} {
+		algo := alt.algo
+		register("view_algorithm", alt.syms, func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+			return Const(algo), nil
+		})
+	}
+	viewMode := func(mode, algorithm Value) (Value, error) {
+		return &Struct{Fields: map[string]Value{"create_view_mode": mode, "create_view_algorithm": algorithm}, Order: []string{"create_view_mode", "create_view_algorithm"}}, nil
+	}
+	register("view_replace_or_algorithm", "view_replace", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return viewMode(kids[0], nil)
+	})
+	register("view_replace_or_algorithm", "view_replace view_algorithm", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return viewMode(kids[0], kids[1])
+	})
+	register("view_replace_or_algorithm", "view_algorithm", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return viewMode(nil, kids[0])
+	})
 	register("view_or_trigger_or_sp_or_event", "definer init_lex_create_info definer_tail", viewHead)
 	register("view_or_trigger_or_sp_or_event", "no_definer init_lex_create_info no_definer_tail", viewHead)
 }

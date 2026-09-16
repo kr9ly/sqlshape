@@ -18,6 +18,18 @@ type calledRoutine struct {
 	pos int
 }
 
+// hasCode reports whether vs carries a Violation of code (checkCalledRoutineOverlap's own
+// use: whether a called routine's own analysis already found a certain-shaped direct
+// recursion, 1456).
+func hasCode(vs []Violation, code int) bool {
+	for _, v := range vs {
+		if v.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 // noteCalledRoutine records r as called, once (a statement calling the same function twice,
 // or through two argument positions, does not fold in its failure modes twice): violations()
 // and checkCalledRoutineOverlap both read a.calledRoutines.
@@ -82,6 +94,17 @@ func (a *analyzer) checkCalledRoutineOverlap() error {
 	for _, cr := range a.calledRoutines {
 		br, err := AnalyzeRoutine(a.s, cr.r)
 		if err != nil || br == nil {
+			continue
+		}
+		if hasCode(br.Violations, 1456) {
+			// cr.r calls itself, unconditionally reached before any of its own further
+			// statements (max_sp_recursion_depth defaults to 0, so the very first actual
+			// recursive invocation always fails): the write this overlap would otherwise
+			// name never runs, so mysqld raises cr.r's own 1456 instead, not this one
+			// (measured: TestAdv3ChainCallRecursionAnd1442BothSwallowed -- a trigger CALLing
+			// a directly-recursive procedure that also writes the trigger's own table fails
+			// with 1456 every time, never 1442). cr.r's own Violations (including that 1456)
+			// are folded in the ordinary way instead, by calledRoutineViolations.
 			continue
 		}
 		for _, wt := range br.WriteTables {

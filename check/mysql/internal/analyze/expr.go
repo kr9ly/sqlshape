@@ -531,6 +531,15 @@ func (a *analyzer) storedFuncCall(sc scope, r *schema.Routine, args []mysqlast.V
 		}
 	}
 	a.noteCalledRoutine(r, at)
+	if a.routine != nil && r == a.routine {
+		// unlike a PROCEDURE's own direct recursion (walkCall's own self-CALL check,
+		// body.go -- 1456, and only certain once max_sp_recursion_depth is exceeded), a
+		// FUNCTION can never recurse at all: CREATE FUNCTION accepts a body that RETURNs
+		// the result of calling itself (measured), but every single execution fails with
+		// 1424 ("Recursive stored functions and triggers are not allowed"), regardless of
+		// max_sp_recursion_depth.
+		a.raised = append(a.raised, Violation{Code: 1424, Constraint: itoa(1424), SQLState: "HY000"})
+	}
 	return typed{typ: r.Returns, known: r.Returns.Name != "", nullable: !r.NotNull}, nil
 }
 

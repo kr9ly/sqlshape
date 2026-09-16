@@ -404,7 +404,22 @@ func (a *analyzer) predFacts(sc *scope, fs *facts.Scope, c mysqlast.Value, restr
 		// production). It is exactly col = x, so pinned / single-row proofs may treat it
 		// as Eq. <=> is not part of this path (a NULL-safe IN does not exist).
 		if !isTrue(n.Arg("is_negation")) {
-			if a.eqFacts(sc, fs, n.Arg("left"), n.Arg("right"), restrict, pr) {
+			left, right := n.Arg("left"), n.Arg("right")
+			if lr, rr := rowElements(left), rowElements(right); lr != nil && rr != nil && len(lr) == len(rr) {
+				// (a, b) IN ((c, d)) is (a, b) = (c, d), the same row-constructor
+				// decomposition the PTI_comp_op "=" case above does -- this grammar path
+				// hands eqFacts an Item_row on either side unless unpacked here first, and
+				// eqFacts itself never calls rowElements. Measured: `(a, b) IN ((5, 6))`
+				// selects exactly the row with a = 5 AND b = 6 on mysqld 8.4.
+				for i := range lr {
+					if !a.eqFacts(sc, fs, lr[i], rr[i], restrict, pr) {
+						fs.Preds = append(fs.Preds, pr)
+						return
+					}
+				}
+				return
+			}
+			if a.eqFacts(sc, fs, left, right, restrict, pr) {
 				return
 			}
 		}
@@ -740,7 +755,13 @@ func (a *analyzer) colFact(sc *scope, v mysqlast.Value) (facts.ColRef, bool) {
 	default:
 		return facts.ColRef{}, false
 	}
-	own := scope{rels: sc.rels} // this level only
+	// merged: sc.merged, so an unqualified name coalesced by USING / NATURAL resolves to
+	// the left leaf (lookup's mergedLeaves check) instead of failing ambiguous (1052) --
+	// measured: `items JOIN orders USING (tenant_id) ... WHERE tenant_id = ?` only ever
+	// touches the named tenant's items row on mysqld 8.4, so the coalesced column must be
+	// recognized as a fact of both leaves (the existing USING equality edge, block()'s
+	// j.using loop, then carries Fixed to the right leaf).
+	own := scope{rels: sc.rels, merged: sc.merged} // this level only
 	ref, err := a.column(own, n, "where clause")
 	if err != nil || ref.rel == nil {
 		return facts.ColRef{}, false
@@ -776,7 +797,7 @@ func (a *analyzer) termFacts(sc *scope, v mysqlast.Value) (facts.Term, bool) {
 		return facts.Term{Kind: facts.Param, Param: int32(a.ph.Number(n.Start))}, true
 	}
 	if literalClass(n.Class) {
-		return facts.Term{Kind: facts.Const, Const: a.textOf(n)}, true
+		return facts.Term{Kind: facts.Const, Const: constText(n)}, true
 	}
 	if a.readsBlock(sc, v) || !deterministic(v) {
 		return facts.Term{}, false // a value the row decides, or one the execution decides (RAND()), is not known
@@ -801,6 +822,38 @@ func literalClass(class string) bool {
 		return true
 	}
 	return false
+}
+
+// constText renders a literal in x/obligation's spelling: a one-letter type tag followed
+// by the literal's bare value, matching check/postgres/analyze/card.go's constText so a
+// Const term compares equal across dialects and so x/obligation/check.go's stateOf (which
+// strips exactly one of "ifsbx" off the front) can recover a MySQL state name. Built from
+// the AST node's own token value (quotes/escapes already resolved by the lexer, e.g.
+// PTI_text_literal_text_string's "literal" token), not textOf's raw source span, because
+// textOf would keep the source's own quoting instead of the tag ("'submitted'" can never
+// equal a declaration's bare "submitted" -- the transitions obligation's finding). "" for
+// a class literalClass does not recognize (never reached: the two switches list the same
+// classes).
+func constText(n *mysqlast.Node) string {
+	switch n.Class {
+	case "Item_int":
+		return "i" + str(n.Arg("i"))
+	case "Item_uint":
+		return "i" + str(n.Arg("str"))
+	case "Item_decimal", "Item_float":
+		return "f" + str(n.Arg("str"))
+	case "PTI_text_literal_text_string", "PTI_text_literal_nchar_string", "PTI_text_literal_underscore_charset":
+		return "s" + str(n.Arg("literal"))
+	case "Item_hex_string", "Item_bin_string":
+		return "x" + str(n.Arg("literal"))
+	case "Item_null":
+		return "NULL"
+	case "Item_func_true":
+		return "btrue"
+	case "Item_func_false":
+		return "bfalse"
+	}
+	return ""
 }
 
 // numericLiteralClass reports whether class is a numeric literal's (Item_int, Item_uint,
@@ -830,25 +883,57 @@ func stringColumnType(t schema.Type) bool {
 	return false
 }
 
+// castNumericTarget reports a CAST(... AS type) (or CONVERT(x, type)) node whose own
+// target type is one of the numeric SQL types -- SIGNED, UNSIGNED, DECIMAL, FLOAT, DOUBLE
+// or REAL -- read the way analyze.go's cast (expr.go) itself reads the "type" argument,
+// without typing the CAST's own argument (its type plays no part in the CAST's result
+// type). Measured on mysqld 8.4: `c = CAST(1 AS SIGNED)` against a VARCHAR UNIQUE column
+// holding '1' and '01' matches both rows -- the column is converted to a number for the
+// comparison exactly as it is for a bare numeric literal, so a computed CAST is the same
+// hazard as numericLiteralClass, just not a literal.
+func castNumericTarget(n *mysqlast.Node) bool {
+	if n.Class != "create_func_cast" {
+		return false
+	}
+	target := ""
+	if s, ok := n.Arg("type").(*mysqlast.Struct); ok {
+		target = str(s.Fields["target"])
+	} else {
+		target = str(n.Arg("type")) // BINARY x / CAST(x AS CHAR ...): never numeric
+	}
+	if strings.Contains(target, "?ITEM_CAST_DOUBLE:ITEM_CAST_FLOAT") {
+		return true // the grammar action's (dec == NOT_FIXED_DEC) ? DOUBLE : FLOAT: both numeric
+	}
+	switch strings.TrimPrefix(target, "ITEM_CAST_") {
+	case "SIGNED_INT", "UNSIGNED_INT", "DECIMAL", "FLOAT", "DOUBLE":
+		return true
+	}
+	return false
+}
+
 // stringNumberCoercion reports whether col = other is exactly the hazard measured on mysqld
-// 8.4: a string-typed column compared with a numeric literal. mysqld converts the *column's*
-// stored value to a number for such a comparison (not the literal to a string), so distinct
-// column values that convert to the same number ('5' and '05', say) both satisfy the
-// equality -- an equality sqlshape must not use to fix the column to one value, whether for
-// `require single` (x/cardinality's One proof) or for `require pinned` (both read Fixed /
-// Eq facts as "this column has exactly one value here").
+// 8.4: a string-typed column compared with an operand of a numeric result type. mysqld
+// converts the *column's* stored value to a number for such a comparison (not the other
+// operand to a string), so distinct column values that convert to the same number ('5' and
+// '05', say) both satisfy the equality -- an equality sqlshape must not use to fix the
+// column to one value, whether for `require single` (x/cardinality's One proof) or for
+// `require pinned` (both read Fixed / Eq facts as "this column has exactly one value
+// here"). The hazard is not literal-shaped: a bare numeric literal (numericLiteralClass),
+// TRUE / FALSE (Item_func_true/false, which compare as the integers 1 and 0 -- measured:
+// `c = TRUE` matches both '1' and '01'), and a computed CAST/CONVERT to a numeric type
+// (castNumericTarget) all trigger it the same way.
 //
 // The reverse -- a numeric column compared with a text literal -- is not excluded: mysqld
 // converts both sides to floating point there, and a numeric column already stores one
 // canonical value per row, so no two rows of it can convert to the same float the way two
 // spellings of a number can convert to the same float from a string column. A parameter
-// ($n) is bound with its Go-side type already fixed by the driver, not textual, so it never
-// reaches this check (termFacts gives it Kind Param, handled before this branch runs); `<=>`
-// does not go through eqFacts either (nullRejecting and eqFacts's caller only route plain =
-// comparisons here).
+// ($n) is bound with its Go-side type already fixed by the driver, not textual: its class
+// (Item_param) is none of the ones checked here, so it is never flagged, whatever its
+// eventual bound type turns out to be. `<=>` does not go through eqFacts either
+// (nullRejecting and eqFacts's caller only route plain = comparisons here).
 func (a *analyzer) stringNumberCoercion(sc *scope, col facts.ColRef, other mysqlast.Value) bool {
 	n, ok := other.(*mysqlast.Node)
-	if !ok || !numericLiteralClass(n.Class) {
+	if !ok || !(numericLiteralClass(n.Class) || n.Class == "Item_func_true" || n.Class == "Item_func_false" || castNumericTarget(n)) {
 		return false
 	}
 	if col.Leaf < 0 || col.Leaf >= len(sc.rels) {

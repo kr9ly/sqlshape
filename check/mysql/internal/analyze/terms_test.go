@@ -44,8 +44,11 @@ func TestSetDefaultStoresTheLiteralDefault(t *testing.T) {
 	}
 	w := r.Facts.Writes[0]
 	want := map[string]facts.Term{
-		"status": {Kind: facts.Const, Const: "'draft'"},
-		"n":      {Kind: facts.Const, Const: "3"},
+		// constText's tagged spelling (facts.go), not the source's own quoting: a Const
+		// must compare equal to a literal written in the statement (x/obligation's Const
+		// vs Const, and its transitions/stateOf), whatever DEFAULT's own text looked like.
+		"status": {Kind: facts.Const, Const: "sdraft"},
+		"n":      {Kind: facts.Const, Const: "i3"},
 		"ts":     {Kind: facts.Known, Text: "DEFAULT"},
 		"e":      {Kind: facts.Known, Text: "DEFAULT"},
 	}

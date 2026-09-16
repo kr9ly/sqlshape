@@ -1459,7 +1459,11 @@ func (a *analyzer) storedTerm(sc scope, col *schema.Column, v mysqlast.Value) fa
 	if n, ok := v.(*mysqlast.Node); ok && n.Class == "Item_default_value" {
 		if col != nil && col.Default != nil {
 			if d, ok := col.Default.(*mysqlast.Node); ok && literalClass(d.Class) {
-				if text := literalText(d); text != "" {
+				// constText (facts.go), not literalText: a Const must carry the same
+				// tagged spelling termFacts gives every other literal, so a DEFAULT's
+				// value compares equal to a literal written in the statement (Eq/state
+				// comparisons in x/obligation/check.go read Const as plain text).
+				if text := constText(d); text != "" {
 					return facts.Term{Kind: facts.Const, Const: text}
 				}
 			}

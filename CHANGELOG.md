@@ -96,7 +96,19 @@ release it is a candidate for.
   fact; a string column compared to a numeric literal fixes nothing; an expression the server
   rejects in an INSERT's or UPDATE's value is that error, not an unknown type; two `DECLARE`s
   of one condition, cursor or handler condition in a block are the server's own 1332 / 1333 /
-  1413.
+  1413, a SQLSTATE literal of other than five characters 1407, `FLUSH` in a trigger or
+  FUNCTION 1336, `SIGNAL ... MYSQL_ERRNO = 0` 1231, a FUNCTION calling itself 1424; a
+  trigger chain is followed through the routines it `CALL`s and through locking reads, and
+  a certain failure anywhere along it is reported on the firing statement; a string column
+  compared to `TRUE` or to a `CAST` to a number fixes nothing either, `(a, b) IN ((?, ?))`
+  is two equalities, and an unqualified column of a `USING` join pins both sides; a view's
+  `OR REPLACE` and `ALGORITHM` are read (a `TEMPTABLE` view is not written through), and
+  `WITH CHECK OPTION` on a view the server would not merge is refused as the server's 1368;
+  a `SIGNAL` impersonating a builtin number keeps that number as its key. `schema.sql` may
+  declare `max_sp_recursion_depth`; above 0 a PROCEDURE's self-recursion is not predicted.
+- Obligations on both databases: `require single` on an UPDATE or DELETE asks about the
+  target table's rows alone, so a join that only filters no longer breaks the proof;
+  `transitions` reads MySQL's constants (both producers now spell a constant the same way).
 - Obligations on both databases: `pinned` propagates across a composite foreign key only into a
   `NOT NULL` column (a NULL in a foreign-key column exempts the row from the constraint, so
   such a row joins the parent while agreeing on nothing); `WITH CHECK OPTION` follows every

@@ -1424,8 +1424,8 @@ CREATE TABLE ...
 
 Rejected
 
-- a variable the dialect does not read: for MySQL anything but `sql_mode` and
-  `lower_case_table_names`; for PostgreSQL every variable, for now (its judgments follow the
+- a variable the dialect does not read: for MySQL anything but `sql_mode`,
+  `lower_case_table_names` and `max_sp_recursion_depth`; for PostgreSQL every variable, for now (its judgments follow the
   server's defaults, and `search_path` is the schema's own `SET`)
 - a `sql_mode` name 8.4 does not have, a `lower_case_table_names` other than 0, 1 or 2
 - a value with spaces not written as a string literal, a variable declared twice

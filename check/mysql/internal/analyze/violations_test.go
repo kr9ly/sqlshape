@@ -225,7 +225,7 @@ func TestLower(t *testing.T) {
 	}{
 		{"user_id = $1", "0.user_id = $1", ""},
 		{"note IS NULL AND total > 0", "0.note IS NULL | opaque \"total > 0\" cols 0.total", ""},
-		{"user_id IN (1, 2)", "0.user_id IN (const 1, const 2)", ""},
+		{"user_id IN (1, 2)", "0.user_id IN (const i1, const i2)", ""}, // constText's tagged spelling (facts.go)
 		{"nope = 1", "", "Unknown column 'nope' in 'where clause' (MySQL error 1054)"},
 		{"user_id = ", "", "1064"},
 	}

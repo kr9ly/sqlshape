@@ -1142,7 +1142,7 @@ CREATE TABLE ...
 
 NG
 
-- その方言が読まない変数。MySQLでは`sql_mode`と`lower_case_table_names`以外、PostgreSQLでは今のところ全部（判定はサーバの既定値に従い、`search_path`はスキーマ自身の`SET`で扱う）
+- その方言が読まない変数。MySQLでは`sql_mode`・`lower_case_table_names`・`max_sp_recursion_depth`以外、PostgreSQLでは今のところ全部（判定はサーバの既定値に従い、`search_path`はスキーマ自身の`SET`で扱う）
 - 8.4に無い`sql_mode`の名前、0・1・2以外の`lower_case_table_names`
 - 空白を含む値を文字列リテラルにしていない、同じ変数を2回宣言している
 

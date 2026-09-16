@@ -513,72 +513,12 @@ func oneRow(v mysqlast.Value) bool {
 	return false
 }
 
-// mergeable reports whether the server merges a derived table or view of this query
-// expression into the outer query (Query_expression::is_mergeable and merge_heuristic):
-// a single SELECT over at least one table, without GROUP BY, HAVING, DISTINCT, LIMIT,
-// window functions, or a subquery in its select list. What is not merged is
-// materialized into a temporary table, whose columns are typed by materialized.
-func mergeable(v mysqlast.Value) bool {
-	qe, ok := v.(*mysqlast.Node)
-	if !ok || qe.Class != "PT_query_expression" {
-		return false
-	}
-	if qe.Arg("limit") != nil {
-		return false
-	}
-	body, ok := qe.Arg("body").(*mysqlast.Node)
-	if !ok {
-		return false
-	}
-	if body.Class == "PT_query_expression" {
-		return mergeable(body)
-	}
-	if body.Class != "PT_query_specification" {
-		return false
-	}
-	from, _ := body.Arg("from_clause").(mysqlast.List)
-	if len(from) == 0 || body.Arg("opt_group_clause") != nil || body.Arg("opt_having_clause") != nil || body.Arg("opt_window_clause") != nil {
-		return false
-	}
-	if strings.Contains(fmt.Sprint(body.Arg("options")), "SELECT_DISTINCT") {
-		return false
-	}
-	items, _ := body.Arg("item_list").(mysqlast.List)
-	for _, item := range items {
-		if containsClass(item, "PT_window") || containsClass(item, "PT_subquery") {
-			return false
-		}
-	}
-	return true
-}
+// mergeable is mysqlast.Mergeable: shared with the schema loader, which refuses WITH CHECK
+// OPTION on a view the server would not merge (1368) the way the server does at CREATE.
+func mergeable(v mysqlast.Value) bool { return mysqlast.Mergeable(v) }
 
-// containsClass reports whether a node of the class occurs in v.
-func containsClass(v mysqlast.Value, class string) bool {
-	switch x := v.(type) {
-	case *mysqlast.Node:
-		if x.Class == class {
-			return true
-		}
-		for _, a := range x.Args {
-			if containsClass(a, class) {
-				return true
-			}
-		}
-	case mysqlast.List:
-		for _, e := range x {
-			if containsClass(e, class) {
-				return true
-			}
-		}
-	case *mysqlast.Struct:
-		for _, e := range x.Fields {
-			if containsClass(e, class) {
-				return true
-			}
-		}
-	}
-	return false
-}
+// containsClass is mysqlast.ContainsClass.
+func containsClass(v mysqlast.Value, class string) bool { return mysqlast.ContainsClass(v, class) }
 
 // materialized retypes the columns of a query the server materializes into a temporary
 // table. For a single SELECT the temporary table's fields come from its items

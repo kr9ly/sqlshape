@@ -189,7 +189,7 @@ func TestSettingsProblems(t *testing.T) {
 	cases := []struct{ line, want string }{
 		{"-- sqlshape: server sql_mode = 'STRICT'", `"STRICT" is not a mode of MySQL 8.4`},
 		{"-- sqlshape: server lower_case_table_names = 3", "want 0, 1 or 2"},
-		{"-- sqlshape: server max_allowed_packet = 64M", "not a variable sqlshape reads for MySQL (sql_mode, lower_case_table_names)"},
+		{"-- sqlshape: server max_allowed_packet = 64M", "not a variable sqlshape reads for MySQL (sql_mode, lower_case_table_names, max_sp_recursion_depth)"},
 	}
 	for _, c := range cases {
 		s, err := schema.Load("-- sqlshape: mysql 8.4\n" + c.line + "\nCREATE TABLE t (a INT);")

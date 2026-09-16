@@ -123,6 +123,13 @@ func wrapErr(err error) error {
 		}
 		return err
 	}
+	if c.Key == "" {
+		// the number is a constraint's but the message is not the server's own for it: a
+		// SIGNAL that set MYSQL_ERRNO to a builtin number (measured: SQLSTATE '23000',
+		// MYSQL_ERRNO = 1062 from a trigger). A SIGNAL's key is its MYSQL_ERRNO as decimal
+		// text, whichever number it chose.
+		c.Key = strconv.Itoa(int(me.Number))
+	}
 	c.Key = strings.TrimSpace(c.Key)
 	return c
 }
