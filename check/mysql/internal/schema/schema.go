@@ -124,13 +124,51 @@ type Table struct {
 	AutoIncrementStart string
 	Comment            string
 	Temporary          bool
-	Partitioned        bool
+	// Partitioning is the table's PARTITION BY clause, nil for an unpartitioned table.
+	Partitioning *Partitioning
 	// Definition is the CREATE TABLE text; Alters the ALTER TABLE texts applied after it.
 	Definition string
 	Alters     []string
 	// Directives are the `-- sqlshape: ...` lines written above the CREATE, normalized:
 	// the obligations x/obligation parses.
 	Directives []string
+}
+
+// Partitioning is a table's PARTITION BY clause.
+//
+// Kind is "RANGE" or "HASH" when the clause is simple enough for the planner to write
+// incremental DDL for -- a single partitioning column or expression, not LINEAR, no
+// COLUMNS variant, no subpartitions -- and "" for anything else (RANGE/LIST COLUMNS, KEY,
+// LINEAR HASH/KEY, subpartitions): Text alone is what a "" Kind falls back to, both for
+// comparison (two such clauses are equal iff their Text is, whatever they actually spell)
+// and for DDL (a change can only be written as the clause's own whole rewrite, never an
+// incremental ADD / DROP / REORGANIZE PARTITION, since this package does not parse far
+// enough into it to know those are safe).
+type Partitioning struct {
+	Kind string
+	// Expr is the partitioning key's own text, as written ("`id`", "(`id` + 1)"); set only
+	// when Kind is "RANGE" or "HASH".
+	Expr string
+	// Num is HASH's partition count (PARTITIONS n); Parts is RANGE's ordered partition
+	// list. Exactly one of them holds anything, matching Kind.
+	Num   int
+	Parts []Partition
+	// Text is the whole clause verbatim, from PARTITION BY to the closing paren of the
+	// partition list, unwrapped from any versioned comment the way closeVersionComment
+	// unwraps a column's (SHOW CREATE TABLE wraps the entire clause the same way, measured:
+	// `/*!50100 PARTITION BY RANGE (\x60id\x60) (...) */`) -- what "ALTER TABLE t <Text>"
+	// rewrites the clause whole to, and the fallback equality check for a Kind of "".
+	Text string
+}
+
+// Partition is one partition of a RANGE Partitioning.
+type Partition struct {
+	Name string
+	// MaxValue is this partition's "VALUES LESS THAN MAXVALUE" (only the last partition of
+	// a RANGE clause may say this); Bound is the literal boundary expression's own text
+	// ("10") otherwise.
+	MaxValue bool
+	Bound    string
 }
 
 // Column is a table column.
@@ -627,11 +665,120 @@ func (s *Schema) createTable(n *mysqlast.Node, st mysqlparse.Statement, at func(
 		s.tableElement(t, el, at)
 	}
 	s.tableOptions(t, list(x.OptCreateTableOptions()), at)
-	if x.OptPartitioning() != nil {
-		t.Partitioned = true
+	if p := x.OptPartitioning(); p != nil {
+		t.Partitioning = s.partitioning(p)
 	}
 	s.tableDirectives(t, st.SQL, st.Offset)
 	s.Tables = append(s.Tables, t)
+}
+
+// partitioning reads v, a PT_partition node (CREATE TABLE's own, or an ALTER TABLE
+// PARTITION BY's), into the model. Text is always captured (see Partitioning's own doc
+// comment for why); Kind, Expr, Num and Parts only when the clause is simple enough this
+// package tells apart -- a single-column, non-LINEAR RANGE or HASH, no subpartitions.
+func (s *Schema) partitioning(v mysqlast.Value) *Partitioning {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Start < 0 || n.End > len(s.cur) || n.Start >= n.End {
+		return &Partitioning{}
+	}
+	p := &Partitioning{Text: s.cur[n.Start:n.End]}
+	x, _ := mysqlast.AsPTPartition(n)
+	if x.OptSubPart() != nil {
+		return p // subpartitions: Text-only fallback
+	}
+	switch d := x.PartTypeDef().(type) {
+	case *mysqlast.Node:
+		switch d.Class {
+		case "PT_part_type_def_range_expr":
+			rx, _ := mysqlast.AsPTPartTypeDefRangeExpr(d)
+			p.Kind, p.Expr = "RANGE", s.exprText(rx.Expr())
+		case "PT_part_type_def_hash":
+			hx, _ := mysqlast.AsPTPartTypeDefHash(d)
+			if isTrue(hx.IsLinear()) {
+				return p // LINEAR HASH: Text-only fallback
+			}
+			p.Kind, p.Expr = "HASH", s.exprText(hx.Expr())
+		default:
+			return p // RANGE/LIST COLUMNS, LIST, KEY: Text-only fallback
+		}
+	default:
+		return p
+	}
+	if num := x.OptNumParts(); num != nil {
+		if n, ok := num.(mysqlast.Number); ok {
+			p.Num = int(n)
+		}
+	}
+	defs := list(x.PartDefs())
+	if p.Kind == "HASH" {
+		if len(defs) > 0 {
+			return &Partitioning{Text: p.Text} // an explicit PARTITION list, not PARTITIONS n: fallback
+		}
+		return p
+	}
+	// RANGE: every partition definition names its own upper bound (or MAXVALUE)
+	for _, el := range defs {
+		pd, ok := el.(*mysqlast.Node)
+		if !ok {
+			return &Partitioning{Text: p.Text}
+		}
+		part, ok := s.partitionDef(pd)
+		if !ok {
+			return &Partitioning{Text: p.Text}
+		}
+		p.Parts = append(p.Parts, part)
+	}
+	return p
+}
+
+// partitionDef reads one PT_part_definition of a RANGE Partitioning; ok is false for
+// anything this package does not break down (a LIST partition's VALUES IN, a multi-column
+// RANGE COLUMNS value list, subpartitions), the caller's cue to fall back to Text alone.
+func (s *Schema) partitionDef(n *mysqlast.Node) (Partition, bool) {
+	x, _ := mysqlast.AsPTPartDefinition(n)
+	if x.OptSubPartitions() != nil {
+		return Partition{}, false
+	}
+	part := Partition{Name: str(x.Name())}
+	values := x.OptPartValues()
+	if values == nil {
+		part.MaxValue = true // a RANGE partition with no VALUES clause: unbounded (MAXVALUE)
+		return part, true
+	}
+	vn, ok := values.(*mysqlast.Node)
+	if !ok || vn.Class != "PT_part_value_item_list_paren" {
+		return Partition{}, false // PT_part_values_in_list: a LIST partition's VALUES IN
+	}
+	items := list(vn.Arg("values"))
+	if len(items) != 1 {
+		return Partition{}, false // a multi-column RANGE COLUMNS value list
+	}
+	switch item := items[0].(type) {
+	case *mysqlast.Node:
+		switch item.Class {
+		case "PT_part_value_item_expr":
+			part.Bound = s.exprText(item.Arg("expr"))
+		case "PT_part_value_item_max":
+			part.MaxValue = true
+		default:
+			return Partition{}, false
+		}
+	default:
+		return Partition{}, false
+	}
+	return part, true
+}
+
+// exprText is v's own text, verbatim from the source: a partitioning expression or a
+// partition boundary literal, neither of which this package evaluates -- only compares
+// and reproduces as written, the same way a CHECK constraint's expression is kept as Text
+// rather than a value this package understands (schema.Check's own doc comment).
+func (s *Schema) exprText(v mysqlast.Value) string {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Start < 0 || n.End > len(s.cur) || n.Start >= n.End {
+		return ""
+	}
+	return s.cur[n.Start:n.End]
 }
 
 // closeVersionComment extends [start, end) over the ` */` that closes a versioned comment
@@ -995,7 +1142,31 @@ func copyTable(dst, src *Table) {
 		dst.Checks = append(dst.Checks, &cc)
 	}
 	dst.Engine, dst.Charset, dst.Collation, dst.RowFormat = src.Engine, src.Charset, src.Collation, src.RowFormat
-	// LIKE copies no foreign keys
+	// LIKE copies no foreign keys, and (measured against mysqld 8.4) no partitioning either
+}
+
+// addPartitions applies an ADD PARTITION (...) def_list to t's RANGE Partitioning; the
+// whole clause falls back to Text-only tracking if any of the new definitions is not one
+// this package breaks down (see partitionDef).
+func (t *Table) addPartitions(defs []mysqlast.Value, s *Schema) {
+	if t.Partitioning == nil || t.Partitioning.Kind != "RANGE" {
+		return
+	}
+	var added []Partition
+	for _, el := range defs {
+		pd, ok := el.(*mysqlast.Node)
+		if !ok {
+			t.Partitioning = &Partitioning{Text: t.Partitioning.Text}
+			return
+		}
+		part, ok := s.partitionDef(pd)
+		if !ok {
+			t.Partitioning = &Partitioning{Text: t.Partitioning.Text}
+			return
+		}
+		added = append(added, part)
+	}
+	t.Partitioning.Parts = append(t.Partitioning.Parts, added...)
 }
 
 // --- CREATE INDEX / VIEW, DROP, RENAME -------------------------------------------------
@@ -1231,13 +1402,84 @@ func (s *Schema) alterTable(n *mysqlast.Node, st mysqlparse.Statement, at func(m
 			t.Collation = str(an.Arg("opt_collation"))
 		case "PT_create_table_engine_option", "PT_create_table_default_charset", "PT_create_table_default_collation", "PT_create_commen_option", "PT_create_row_format_option":
 			s.tableOptions(t, []mysqlast.Value{an}, at)
-		case "PT_alter_table_partition_by", "PT_alter_table_add_partition", "PT_alter_table_add_partition_num", "PT_alter_table_add_partition_def_list":
-			t.Partitioned = true
+		case "PT_alter_table_partition_by":
+			x, _ := mysqlast.AsPTAlterTablePartitionBy(an)
+			t.Partitioning = s.partitioning(x.Partition())
 		case "PT_alter_table_remove_partitioning":
-			t.Partitioned = false
+			t.Partitioning = nil
+		case "PT_alter_table_add_partition_def_list":
+			x, _ := mysqlast.AsPTAlterTableAddPartitionDefList(an)
+			t.addPartitions(list(x.DefList()), s)
+		case "PT_alter_table_add_partition_num":
+			x, _ := mysqlast.AsPTAlterTableAddPartitionNum(an)
+			if t.Partitioning != nil && t.Partitioning.Kind == "HASH" {
+				t.Partitioning.Num += numOf(x.NumParts())
+			}
+		case "PT_alter_table_coalesce_partition":
+			x, _ := mysqlast.AsPTAlterTableCoalescePartition(an)
+			if t.Partitioning != nil && t.Partitioning.Kind == "HASH" {
+				t.Partitioning.Num -= numOf(x.NumParts())
+			}
+		case "PT_alter_table_drop_partition":
+			x, _ := mysqlast.AsPTAlterTableDropPartition(an)
+			if t.Partitioning != nil {
+				names := map[string]bool{}
+				for _, nm := range list(x.Partitions()) {
+					names[str(nm)] = true
+				}
+				var kept []Partition
+				for _, part := range t.Partitioning.Parts {
+					if !names[part.Name] {
+						kept = append(kept, part)
+					}
+				}
+				t.Partitioning.Parts = kept
+			}
+		case "PT_alter_table_reorganize_partition_into":
+			x, _ := mysqlast.AsPTAlterTableReorganizePartitionInto(an)
+			if t.Partitioning != nil && t.Partitioning.Kind == "RANGE" {
+				names := map[string]bool{}
+				for _, nm := range list(x.PartitionNames()) {
+					names[str(nm)] = true
+				}
+				var into []Partition
+				ok := true
+				for _, el := range list(x.Into()) {
+					pd, isNode := el.(*mysqlast.Node)
+					if !isNode {
+						ok = false
+						break
+					}
+					part, partOK := s.partitionDef(pd)
+					if !partOK {
+						ok = false
+						break
+					}
+					into = append(into, part)
+				}
+				if !ok {
+					t.Partitioning = &Partitioning{Text: t.Partitioning.Text}
+				} else {
+					var kept []Partition
+					done := false
+					for _, part := range t.Partitioning.Parts {
+						if names[part.Name] {
+							if !done {
+								kept = append(kept, into...)
+								done = true
+							}
+							continue
+						}
+						kept = append(kept, part)
+					}
+					t.Partitioning.Parts = kept
+				}
+			}
 		case "PT_alter_table_order", "PT_alter_table_force", "PT_alter_table_enable_keys", "PT_alter_table_set_default_row_format",
-			"PT_alter_table_discard_tablespace", "PT_alter_table_import_tablespace", "PT_alter_table_secondary_load", "PT_alter_table_secondary_unload":
-			// storage-level, no shape
+			"PT_alter_table_discard_tablespace", "PT_alter_table_import_tablespace", "PT_alter_table_secondary_load", "PT_alter_table_secondary_unload",
+			"PT_alter_table_add_partition":
+			// storage-level, no shape (PT_alter_table_add_partition: measured unreachable --
+			// every ADD PARTITION this grammar accepts folds to _def_list or _num instead)
 		default:
 			if strings.HasPrefix(an.Class, "PT_create_") { // any other table option
 				continue
@@ -1780,6 +2022,14 @@ func str(v mysqlast.Value) string {
 func list(v mysqlast.Value) []mysqlast.Value {
 	l, _ := v.(mysqlast.List)
 	return l
+}
+
+// numOf is v's own integer value (a Number literal); 0 for anything else.
+func numOf(v mysqlast.Value) int {
+	if n, ok := v.(mysqlast.Number); ok {
+		return int(n)
+	}
+	return 0
 }
 
 func isTrue(v mysqlast.Value) bool {

@@ -378,3 +378,22 @@ CREATE TABLE children (id INT PRIMARY KEY, ra INT, rb INT);
 `)
 	plan(t, ctx, "invisible column modified, composite key dropped under a child's foreign key", base, to)
 }
+
+// A table's primary key moving onto a new column that the same target also partitions by:
+// alterTable used to write the ALTER TABLE ... PARTITION BY in the same early pass as the
+// other table options, ahead of the ADD COLUMN and the backfill that give the row its
+// value (Error 1054 "Unknown column 'c' in 'partition function'", measured) -- partitionAlters
+// now holds every table's partitioning change for its own late phase, after adds() and
+// backfills() have run.
+func TestProbePartitionByNewPrimaryKeyColumn(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL);
+`)
+	to := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+-- @migrate backfill t.c = id
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, c BIGINT UNSIGNED NOT NULL, PRIMARY KEY (c))
+PARTITION BY HASH (c) PARTITIONS 2;
+`)
+	plan(t, ctx, "primary key onto a new column the target also partitions by", base, to)
+}

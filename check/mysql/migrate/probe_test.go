@@ -74,6 +74,28 @@ type pTable struct {
 	// for the one mutation that exercises "~ table engine" (diff.Alphabet) -- guarded to
 	// tables with no foreign key on either side, since MyISAM does not support them.
 	engine string
+	// partition: nil for an unpartitioned table. Every partition mutation guards its
+	// candidates to a table with no foreign key on either side and no UNIQUE key besides
+	// its own PRIMARY KEY (every UNIQUE key, PRIMARY included, must carry the partitioning
+	// column -- Error 1503, measured -- and this generator always partitions by the id
+	// column, so a plain UNIQUE elsewhere would refuse it).
+	partition *pPartitioning
+}
+
+// pPartitioning is a table's PARTITION BY clause: RANGE (id), an ordered list of parts, or
+// HASH (id) PARTITIONS n. Always over the id column (see pTable.partition's own comment).
+type pPartitioning struct {
+	kind  string  // "RANGE" or "HASH"
+	num   int     // HASH's PARTITIONS n
+	parts []pPart // RANGE's ordered partitions
+}
+
+// pPart is one partition of a RANGE pPartitioning: `VALUES LESS THAN (bound)`, or
+// `VALUES LESS THAN MAXVALUE` when maxValue (only the last partition may say this).
+type pPart struct {
+	name     string
+	maxValue bool
+	bound    int
 }
 
 type pCol struct {
@@ -180,6 +202,11 @@ func (s *pSchema) clone() *pSchema {
 	for _, t := range s.tables {
 		nt := &pTable{name: t.name, orig: t.orig, comment: t.comment, autoInc: t.autoInc,
 			charset: t.charset, collation: t.collation, rowFormat: t.rowFormat, engine: t.engine}
+		if t.partition != nil {
+			np := *t.partition
+			np.parts = append([]pPart(nil), t.partition.parts...)
+			nt.partition = &np
+		}
 		for _, col := range t.cols {
 			nc := *col
 			nc.labels = append([]string(nil), col.labels...)
@@ -482,8 +509,28 @@ func (t *pTable) render() string {
 	if t.comment != "" {
 		b.WriteString(" COMMENT=" + lit(t.comment))
 	}
+	if t.partition != nil {
+		b.WriteString("\n" + t.partition.render(t.pk().name))
+	}
 	b.WriteString(";\n")
 	return b.String()
+}
+
+// render spells p's clause, over col (always the table's id column -- see pTable.partition
+// and pPartitioning's own doc comments for why).
+func (p *pPartitioning) render(col string) string {
+	if p.kind == "HASH" {
+		return fmt.Sprintf("PARTITION BY HASH (%s) PARTITIONS %d", q(col), p.num)
+	}
+	defs := make([]string, len(p.parts))
+	for i, part := range p.parts {
+		if part.maxValue {
+			defs[i] = "PARTITION " + q(part.name) + " VALUES LESS THAN MAXVALUE"
+		} else {
+			defs[i] = fmt.Sprintf("PARTITION %s VALUES LESS THAN (%d)", q(part.name), part.bound)
+		}
+	}
+	return fmt.Sprintf("PARTITION BY RANGE (%s)\n(%s)", q(col), strings.Join(defs, ",\n "))
 }
 
 func (s *pSchema) render() string {
@@ -2137,6 +2184,163 @@ var mutations = []mutation{
 		}
 		return false
 	}},
+	{"partition table by range", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool { return t.partition == nil })
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		// two partitions covering every row (id 1..3): p0 < 2, p1 < 100 -- no MAXVALUE, so
+		// a later "add partition" mutation can still extend the tail (migrate.go's ADD
+		// PARTITION path refuses once the last partition is already unbounded).
+		t.partition = &pPartitioning{kind: "RANGE", parts: []pPart{
+			{name: s.next("p"), bound: 2},
+			{name: s.next("p"), bound: 100},
+		}}
+		touched[t.name] = true
+		return true
+	}},
+	{"partition table by hash", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool { return t.partition == nil })
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		t.partition = &pPartitioning{kind: "HASH", num: 2}
+		touched[t.name] = true
+		return true
+	}},
+	{"remove partitioning", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool { return t.partition != nil })
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		t.partition = nil
+		touched[t.name] = true
+		return true
+	}},
+	{"add partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			return t.partition != nil && t.partition.kind == "RANGE" && !t.partition.parts[len(t.partition.parts)-1].maxValue
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		last := t.partition.parts[len(t.partition.parts)-1]
+		if r.Intn(2) == 0 {
+			// close the range off: nothing above it belongs to any lower partition
+			t.partition.parts = append(t.partition.parts, pPart{name: s.next("p"), maxValue: true})
+		} else {
+			t.partition.parts = append(t.partition.parts, pPart{name: s.next("p"), bound: last.bound + 100})
+		}
+		touched[t.name] = true
+		return true
+	}},
+	{"drop partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// only a partition an earlier "add partition" step in this same recipe appended
+		// (parts[2:]): the generator's own first two partitions are what every row of a
+		// freshly partitioned table depends on to have somewhere to go (id 1..3 always
+		// fits in the second, VALUES LESS THAN (100)); dropping the table's own tail
+		// beyond that never takes a row down with it.
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			return t.partition != nil && t.partition.kind == "RANGE" && len(t.partition.parts) >= 3
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		gone := t.partition.parts[len(t.partition.parts)-1]
+		t.partition.parts = t.partition.parts[:len(t.partition.parts)-1]
+		s.intents = append(s.intents, fmt.Sprintf("-- @migrate drop partition %s.%s", t.orig, gone.name))
+		touched[t.name] = true
+		return true
+	}},
+	{"reorganize partition boundary", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			return t.partition != nil && t.partition.kind == "RANGE" && !t.partition.parts[len(t.partition.parts)-1].maxValue
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		last := &t.partition.parts[len(t.partition.parts)-1]
+		last.bound += 50 // still above every row's id, and above the partition before it
+		touched[t.name] = true
+		return true
+	}},
+	{"reorganize partition insert before maxvalue", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			return t.partition != nil && t.partition.kind == "RANGE" && t.partition.parts[len(t.partition.parts)-1].maxValue
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		parts := t.partition.parts
+		prev := 0
+		if len(parts) > 1 {
+			prev = parts[len(parts)-2].bound
+		}
+		mid := pPart{name: s.next("p"), bound: prev + 50}
+		t.partition.parts = append(parts[:len(parts)-1], mid, parts[len(parts)-1])
+		touched[t.name] = true
+		return true
+	}},
+	{"change hash partition count", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool { return t.partition != nil && t.partition.kind == "HASH" })
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		if t.partition.num > 1 && r.Intn(2) == 0 {
+			t.partition.num--
+		} else {
+			t.partition.num++
+		}
+		touched[t.name] = true
+		return true
+	}},
+}
+
+// partitionCandidates: untouched tables a partitioning mutation may act on that also
+// satisfy pred (already, or not yet, partitioned, in whatever shape the mutation needs).
+// Every partitioning mutation guards to this set: no foreign key either side (Error 1506),
+// no UNIQUE key besides PRIMARY (Error 1503 -- every UNIQUE key must carry the
+// partitioning column, and this generator always partitions by id, which a plain UNIQUE
+// elsewhere never does), and no spatial (point) column at all -- InnoDB refuses to
+// partition a table carrying one anywhere, not only as the partitioning key itself
+// (Error 1178, "The storage engine for the table doesn't support GEOMETRY", measured).
+func partitionCandidates(s *pSchema, touched map[string]bool, pred func(*pTable) bool) []*pTable {
+	var out []*pTable
+	for _, t := range untouched(s, touched) {
+		if !pred(t) || len(t.fks) > 0 || len(referencedByAny(s, t)) > 0 {
+			continue
+		}
+		unique := false
+		for _, k := range t.keys {
+			if k.unique {
+				unique = true
+				break
+			}
+		}
+		if unique {
+			continue
+		}
+		spatial := false
+		for _, c := range t.cols {
+			if c.typ == "point" {
+				spatial = true
+				break
+			}
+		}
+		if spatial {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 func indexOfCol(t *pTable, name string) int {
@@ -2431,6 +2635,4 @@ func TestMigrateProbe(t *testing.T) {
 // TestMigrateProbe): the planner writes no DDL for it (a note or a problem, measured in
 // migrate.go), or this probe's real server can never produce a pair carrying it in the
 // first place.
-var alphabetKnownUnreached = map[string]string{
-	"~ table partitioned": "migrate.go's alterTable only problems a partitioning difference (\"the plan does not write PARTITION BY clauses\"), never DDL; the generator also has no partition vocabulary at all (deferred, see brief-common.md), so both sides of every pair always agree on it (false)",
-}
+var alphabetKnownUnreached = map[string]string{}

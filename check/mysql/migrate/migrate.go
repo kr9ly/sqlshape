@@ -47,6 +47,10 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.alters()
 	p.adds()
 	p.backfills()
+	// partitioning: after every column add and backfill above, since a PARTITION BY may
+	// name a column only adds() just created and backfills() just gave every row a value
+	// (see partitionAlters' own doc comment).
+	p.alterPartitions()
 	// column MODIFYs alterTable deferred (deferredMods): after every row-touching
 	// statement above, so a column newly auto-updating does not fire on one of them.
 	for _, stmt := range p.deferredMods {
@@ -93,18 +97,26 @@ type planner struct {
 	problems []string
 	// renames: from-name -> to-name for tables, and per table for columns (by the
 	// from table's name)
-	tableRename   map[string]string
-	colRename     map[string]map[string]string
-	droppable     map[string]bool // "table" or "table.column" declared droppable
-	enumDrops     []Intent
-	backfillsOf   []Intent
-	droppedFKs    map[string]bool // "table.fk" already dropped ahead of a table that goes
-	earlyKeys     map[string]bool // "table.key" (target names) already added by dropKeysOf
-	earlyMods     map[string]bool // "table.column" (target names) already MODIFYed by renames
-	backfilled    map[int]bool    // indexes into backfillsOf already emitted ahead of their statement
-	deferredMods  []string        // MODIFY COLUMN statements alterTable holds for the very end
-	keyVisAlters  []string        // "ALTER TABLE ... ALTER INDEX ... [NOT] VISIBLE" (dropParts)
-	visKeyHandled map[string]bool // "table.key" (from names) keyVisAlters covers, so dropParts' dropKeys and addParts' adds skip it
+	tableRename        map[string]string
+	colRename          map[string]map[string]string
+	droppable          map[string]bool // "table" or "table.column" declared droppable
+	droppablePartition map[string]bool // "table.partition" declared droppable
+	enumDrops          []Intent
+	backfillsOf        []Intent
+	droppedFKs         map[string]bool // "table.fk" already dropped ahead of a table that goes
+	earlyKeys          map[string]bool // "table.key" (target names) already added by dropKeysOf
+	earlyMods          map[string]bool // "table.column" (target names) already MODIFYed by renames
+	backfilled         map[int]bool    // indexes into backfillsOf already emitted ahead of their statement
+	deferredMods       []string        // MODIFY COLUMN statements alterTable holds for the very end
+	keyVisAlters       []string        // "ALTER TABLE ... ALTER INDEX ... [NOT] VISIBLE" (dropParts)
+	visKeyHandled      map[string]bool // "table.key" (from names) keyVisAlters covers, so dropParts' dropKeys and addParts' adds skip it
+	// partitionAlters: the (from, to) table pairs alterTable found a partitioning
+	// difference on, held for alterPartitions to write once every column the target's
+	// clause may read exists (adds()) and holds a value (backfills()) -- a partitioning
+	// column a mutation adds in the same step as partitioning it is otherwise Error 1054
+	// "Unknown column ... in 'partition function'" against the plan's own earlier ALTER
+	// TABLE ... PARTITION BY, measured.
+	partitionAlters [][2]*schema.Table
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -752,7 +764,7 @@ func (p *planner) alterTable(f, t *schema.Table) {
 		p.emit("ALTER TABLE %s %s;", q(t.Name), strings.Join(opts, " "))
 	}
 	if fp["partitioned"] != tp["partitioned"] {
-		p.problem("table %s: partitioning differs; the plan does not write PARTITION BY clauses", t.Name)
+		p.partitionAlters = append(p.partitionAlters, [2]*schema.Table{f, t})
 	}
 	// columns: the ENUM label drops first (an UPDATE the type change needs), then MODIFY
 	// for every column whose definition or position differs
@@ -796,6 +808,136 @@ func (p *planner) alterTable(f, t *schema.Table) {
 		}
 		p.emit("ALTER TABLE %s MODIFY COLUMN %s;", q(t.Name), c.Text)
 	}
+}
+
+// alterPartitioning writes the DDL for f's Partitioning becoming t's -- one of a whole
+// rewrite (PARTITION BY / REMOVE PARTITIONING, when either side is absent, the kind or
+// expression itself changes, or either clause is one this package's Kind does not break
+// down at all), a HASH partition count change (ADD PARTITION PARTITIONS n / COALESCE
+// PARTITION n), or a RANGE change at the tail alterRangePartitioning works out. Every
+// pattern here keeps to the rest of the plan's own style: a change that can only lose
+// rows (a partition dropped outright) is refused unless a `-- @migrate drop partition`
+// declares it, the same requirement dropParts already carries for a column.
+// alterPartitions writes the DDL for every table alterTable found a partitioning
+// difference on (partitionAlters' own doc comment says why this runs as its own late
+// phase, not inline in alterTable).
+func (p *planner) alterPartitions() {
+	for _, pair := range p.partitionAlters {
+		p.alterPartitioning(pair[0], pair[1])
+	}
+}
+
+func (p *planner) alterPartitioning(f, t *schema.Table) {
+	from, to := f.Partitioning, t.Partitioning
+	switch {
+	case from == nil:
+		p.emit("ALTER TABLE %s %s;", q(t.Name), to.Text)
+	case to == nil:
+		p.emit("ALTER TABLE %s REMOVE PARTITIONING;", q(t.Name))
+	case from.Kind == "" || to.Kind == "" || from.Kind != to.Kind || from.Expr != to.Expr:
+		p.emit("ALTER TABLE %s %s;", q(t.Name), to.Text)
+	case from.Kind == "HASH":
+		switch {
+		case to.Num > from.Num:
+			p.emit("ALTER TABLE %s ADD PARTITION PARTITIONS %d;", q(t.Name), to.Num-from.Num)
+		case to.Num < from.Num:
+			p.emit("ALTER TABLE %s COALESCE PARTITION %d;", q(t.Name), from.Num-to.Num)
+		}
+	default: // RANGE
+		p.alterRangePartitioning(f, t, from, to)
+	}
+}
+
+// alterRangePartitioning writes the DDL for a RANGE Partitioning that stays RANGE over the
+// same expression: the two partition lists' common leading run stays as it is (an earlier
+// partition never moves once one after it does, this package's generator included), and
+// what differs after it is one of: a plain tail extension (ADD PARTITION, only when the
+// common run's own last partition is not already MAXVALUE -- nothing could follow it),
+// a plain tail loss (DROP PARTITION, declared, every one of them), or both sides having a
+// tail of their own (REORGANIZE PARTITION ... INTO, whether it only moves a boundary,
+// splits one partition into several, or inserts one ahead of a trailing MAXVALUE) -- a
+// partition named in the from side's tail that the to side's tail does not carry forward
+// by name is still a loss REORGANIZE only papers over server-side, so it needs the same
+// declaration a plain DROP PARTITION would.
+func (p *planner) alterRangePartitioning(f, t *schema.Table, from, to *schema.Partitioning) {
+	k := 0
+	for k < len(from.Parts) && k < len(to.Parts) && samePartition(from.Parts[k], to.Parts[k]) {
+		k++
+	}
+	fromTail, toTail := from.Parts[k:], to.Parts[k:]
+	switch {
+	case len(fromTail) == 0 && len(toTail) == 0:
+		return // the props differed on something this package does not track per-partition
+	case len(fromTail) == 0 && !(k > 0 && from.Parts[k-1].MaxValue):
+		p.emit("ALTER TABLE %s ADD PARTITION (%s);", q(t.Name), renderPartitionDefs(toTail))
+	case len(toTail) == 0:
+		p.dropRangePartitions(f, t, fromTail)
+	default:
+		toNames := map[string]bool{}
+		for _, part := range toTail {
+			toNames[part.Name] = true
+		}
+		var gone []schema.Partition
+		for _, part := range fromTail {
+			if !toNames[part.Name] {
+				gone = append(gone, part)
+			}
+		}
+		if !p.checkPartitionsDroppable(f.Name, gone) {
+			return
+		}
+		p.emit("ALTER TABLE %s REORGANIZE PARTITION %s INTO (%s);", q(t.Name), partitionNameList(fromTail), renderPartitionDefs(toTail))
+	}
+}
+
+// dropRangePartitions emits DROP PARTITION for parts (fromTail's own, a table's whole
+// tail lost), once every one of them is declared.
+func (p *planner) dropRangePartitions(f, t *schema.Table, parts []schema.Partition) {
+	if !p.checkPartitionsDroppable(f.Name, parts) {
+		return
+	}
+	p.emit("ALTER TABLE %s DROP PARTITION %s;", q(t.Name), partitionNameList(parts))
+}
+
+// checkPartitionsDroppable reports whether every one of parts (fromTable's own) is
+// declared droppable, raising a problem for each that is not.
+func (p *planner) checkPartitionsDroppable(fromTable string, parts []schema.Partition) bool {
+	ok := true
+	for _, part := range parts {
+		if !p.droppablePartition[fromTable+"."+part.Name] {
+			p.problem("table %s: partition %s is dropped, which no @migrate declares (`-- @migrate drop partition %s.%s`)",
+				fromTable, part.Name, fromTable, part.Name)
+			ok = false
+		}
+	}
+	return ok
+}
+
+func samePartition(a, b schema.Partition) bool {
+	return a.Name == b.Name && a.MaxValue == b.MaxValue && a.Bound == b.Bound
+}
+
+func partitionNameList(parts []schema.Partition) string {
+	names := make([]string, len(parts))
+	for i, part := range parts {
+		names[i] = q(part.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+// renderPartitionDefs spells parts the way ADD PARTITION / REORGANIZE ... INTO takes them:
+// this package's own rendering, not any captured text (added or reorganized-in partitions
+// have none), which is why RANGE's Kind is restricted to what this covers completely.
+func renderPartitionDefs(parts []schema.Partition) string {
+	defs := make([]string, len(parts))
+	for i, part := range parts {
+		bound := "MAXVALUE"
+		if !part.MaxValue {
+			bound = "(" + part.Bound + ")"
+		}
+		defs[i] = fmt.Sprintf("PARTITION %s VALUES LESS THAN %s", q(part.Name), bound)
+	}
+	return strings.Join(defs, ", ")
 }
 
 // reorder moves the columns of a table that stays into the target's order, once the

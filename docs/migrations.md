@@ -65,8 +65,18 @@ views over those tables, drop the old type; an array column of the enum is repor
 problem. A `backfill` is type-checked against the target schema and emitted as an `UPDATE` after
 the column exists.
 
-Changes to a domain's base type, a range's subtype, `INHERITS`, partitioning and `OF type` are
-printed as `-- ` notes for the operator rather than as DDL.
+Partitions are schema like everything else. A new partitioned table is created with its
+`PARTITION BY` and its partitions attached once they exist; a partition added to a table is a
+`CREATE TABLE ... PARTITION OF ... FOR VALUES ...`; a partition that goes is a `DROP TABLE` and,
+since it takes its rows, needs a `-- @migrate drop` of that table; a table becoming or ceasing
+to be a partition is `ATTACH PARTITION` / `DETACH PARTITION`, a changed bound a detach and an
+attach (every detach in the plan runs before any attach, so a moving bound never overlaps a
+neighbour's), and the plan never alters a partition's own columns, which follow the parent's.
+Changing the partition key or strategy of a table that holds rows has no lossless DDL: the plan
+reports it as a problem and `apply` stops, rather than letting the difference stand as drift.
+
+Changes to a domain's base type, a range's subtype, `INHERITS` and `OF type` are printed as
+`-- ` notes for the operator rather than as DDL.
 
 A column's `ALTER COLUMN ... TYPE` gets one of these notes too when the new type narrows a
 `numeric`'s precision or scale, a `varchar(n)` / `char(n)` length, a `time` / `timestamp` family's
@@ -150,7 +160,8 @@ very server the migration targets, version and settings (`-- sqlshape: server`) 
 
 Compared, object by object:
 
-- tables: engine, charset, collation, comment;
+- tables: engine, charset, collation, row format, comment, and partitioning (`PARTITION BY
+  RANGE` / `HASH` structurally, the others as the text the server renders);
 - columns: type, the whole definition as the server spells it, and their position (MySQL can
   reorder columns, so an order difference is a change the plan settles with
   `MODIFY COLUMN ... AFTER`);
@@ -180,6 +191,12 @@ The plan uses MySQL's own definitions:
 | a changed column | `ALTER TABLE ... MODIFY COLUMN` with the target's definition |
 | a changed key, foreign key or check | a `DROP` and an `ADD` |
 | a changed view | `CREATE OR REPLACE VIEW` |
+| a table gaining partitioning, or a different kind or key | `ALTER TABLE ... PARTITION BY ...` (the server redistributes the rows; a row no partition takes is its error 1526) |
+| a table losing partitioning | `ALTER TABLE ... REMOVE PARTITIONING` |
+| a `RANGE` partition added at the end | `ADD PARTITION` |
+| a `RANGE` partition gone | `DROP PARTITION`, which takes its rows and so needs `-- @migrate drop partition orders.p0` |
+| a `RANGE` bound moved, or a partition inserted before `MAXVALUE` | `REORGANIZE PARTITION ... INTO (...)` (the server moves the rows) |
+| a `HASH` table's partition count | `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` |
 | a changed or removed trigger, procedure or function | a `DROP` and a `CREATE` (MySQL has no `CREATE OR REPLACE TRIGGER`) |
 | a changed or removed event | a `DROP EVENT` and a `CREATE EVENT`, the target's own text (a `STARTS` it omits starts the new event when the migration runs) |
 
@@ -192,9 +209,10 @@ The order keeps the migration's own steps from tripping over each other:
 4. a trigger's `CREATE` comes after the backfills, so a newly added trigger does not fire on the
    migration's own writes.
 
-The `-- @migrate` declarations are the same, with one difference: an ENUM is a column type on
+The `-- @migrate` declarations are the same, with two differences: an ENUM is a column type on
 MySQL, so `enum` names the column (`-- @migrate enum orders.status: drop 'canceled' using
-'cancelled'`), and the plan updates the rows before it narrows the type.
+'cancelled'`), and the plan updates the rows before it narrows the type; and a partition is not
+a table, so dropping one is declared as `-- @migrate drop partition orders.p0`.
 
 `apply` runs the DDL statement by statement: MySQL's DDL commits implicitly, so a script is not a
 transaction and `-no-transaction` has no effect. When a statement fails, `apply` says which one
@@ -216,10 +234,11 @@ every kind of change the diff can report (a table added, a column's type changed
 turning deferrable, ...) is enumerated from the diff's own comparison functions, and the gate
 (200 pairs of one fixed seed) fails unless each of them is produced by some pair or listed as
 unreachable with a reason. Only two reasons are accepted: the planner writes no DDL for that
-change and reports it instead (PostgreSQL's `INHERITS`, `PARTITION`, `OF type`, a domain's base
-type, a range's subtype; MySQL's partitioning), or the change cannot appear (PostgreSQL 18
-syntax against the PostgreSQL 17 the probe runs). Combinations and orderings are left to the
-random pairs. As of the third round, PostgreSQL reaches 90 of 102 kinds and MySQL 47 of 48; the classes of planner bugs the probe found, all of them orderings a real server
+change and reports it instead (PostgreSQL's `INHERITS`, `OF type`, a domain's base type, a
+range's subtype, and the partition key of a table holding rows), or the change cannot appear
+(PostgreSQL 18 syntax against the PostgreSQL 17 the probe runs). Combinations and orderings are
+left to the random pairs. As of the fourth round, PostgreSQL reaches 92 of 103 kinds and MySQL
+all 48; the classes of planner bugs the probe found, all of them orderings a real server
 refuses, are the regression tests.
 
 What this does not reach: schema shapes outside the generator's model (legacy spellings,

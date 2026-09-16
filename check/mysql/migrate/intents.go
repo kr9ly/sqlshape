@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
 // Intent is one `-- @migrate` declaration in the schema source: what a diff of two
@@ -16,6 +18,7 @@ import (
 //	                                                     the left side names things as they are
 //	                                                     now, the right as they will be
 //	-- @migrate drop orders.legacy                        a column or table may go (data loss accepted)
+//	-- @migrate drop partition orders.p0                  a RANGE / LIST partition may go the same way
 //	-- @migrate enum orders.status: drop 'canceled' using 'cancelled'
 //	-- @migrate backfill orders.status = 'pending' where status is null
 type Intent struct {
@@ -24,7 +27,9 @@ type Intent struct {
 	From, To string
 	// EnumDrop: the ENUM column, the label removed and the label its values become.
 	Label, Using string
-	// EnumDrop / Backfill: the column; Backfill: the SQL expression and the optional WHERE.
+	// EnumDrop / Backfill: the column; Backfill: the SQL expression and the optional WHERE;
+	// DropPartition: the partition (Column carries its name, reusing the field the same
+	// way EnumDrop's Table does).
 	Table, Column, Expr, Where string
 	Line                       int
 }
@@ -37,11 +42,13 @@ const (
 	Drop
 	EnumDrop
 	Backfill
+	DropPartition
 )
 
 var (
 	intentLine   = regexp.MustCompile(`(?m)^[ \t]*--[ \t]*@migrate[ \t]+(.+?)[ \t]*$`)
 	renameRe     = regexp.MustCompile(`^rename\s+(\S+)\s*->\s*(\S+)$`)
+	dropPartRe   = regexp.MustCompile(`^drop\s+partition\s+(\S+)$`)
 	dropRe       = regexp.MustCompile(`^drop\s+(\S+)$`)
 	enumDropRe   = regexp.MustCompile(`^enum\s+(\S+)\s*:\s*drop\s+'((?:[^']|'')*)'\s+using\s+'((?:[^']|'')*)'$`)
 	backfillRe   = regexp.MustCompile(`^backfill\s+(\S+)\s*=\s*(.+)$`)
@@ -60,6 +67,14 @@ func ParseIntents(schemaSQL string) ([]Intent, error) {
 		case renameRe.MatchString(text):
 			g := renameRe.FindStringSubmatch(text)
 			in.Kind, in.From, in.To = Rename, g[1], g[2]
+		case dropPartRe.MatchString(text):
+			g := dropPartRe.FindStringSubmatch(text)
+			t, c, ok := splitColumn(g[1])
+			if !ok {
+				errs = append(errs, fmt.Sprintf("line %d: drop partition needs table.partition, got %q", line, g[1]))
+				continue
+			}
+			in.Kind, in.Table, in.Column = DropPartition, t, c
 		case dropRe.MatchString(text):
 			in.Kind, in.From = Drop, dropRe.FindStringSubmatch(text)[1]
 		case enumDropRe.MatchString(text):
@@ -110,6 +125,8 @@ func (in Intent) String() string {
 		return "rename " + in.From + " -> " + in.To
 	case Drop:
 		return "drop " + in.From
+	case DropPartition:
+		return "drop partition " + in.Table + "." + in.Column
 	case EnumDrop:
 		return "enum " + in.Table + "." + in.Column + ": drop " + lit(in.Label) + " using " + lit(in.Using)
 	case Backfill:
@@ -219,6 +236,21 @@ func (p *planner) readIntents(list []Intent) {
 				continue
 			}
 			p.droppable[t+"."+c] = true
+		case DropPartition:
+			f := p.from.Table(in.Table)
+			if f == nil || f.Partitioning == nil || !hasPartition(f.Partitioning, in.Column) {
+				p.problem("line %d: drop partition %s.%s: not in the current schema", in.Line, in.Table, in.Column)
+				continue
+			}
+			tt := p.to.Table(p.toName(in.Table))
+			if tt != nil && tt.Partitioning != nil && hasPartition(tt.Partitioning, in.Column) {
+				p.problem("line %d: drop partition %s.%s: still exists in the target schema", in.Line, in.Table, in.Column)
+				continue
+			}
+			if p.droppablePartition == nil {
+				p.droppablePartition = map[string]bool{}
+			}
+			p.droppablePartition[in.Table+"."+in.Column] = true
 		case EnumDrop:
 			t := p.to.Table(in.Table)
 			if t == nil || t.Column(in.Column) == nil {
@@ -249,6 +281,17 @@ func (p *planner) readIntents(list []Intent) {
 			p.backfillsOf = append(p.backfillsOf, in)
 		}
 	}
+}
+
+// hasPartition reports whether p (a RANGE / LIST Partitioning; HASH/KEY's Parts is always
+// empty, and its size changes by count, never by name) names a partition called name.
+func hasPartition(p *schema.Partitioning, name string) bool {
+	for _, part := range p.Parts {
+		if part.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 type schemaColumn struct{ values []string }

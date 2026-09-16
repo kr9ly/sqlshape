@@ -69,6 +69,43 @@ release it is a candidate for.
   NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
   or TRIGGER still refuses the directive (neither returns a value for it to describe).
 
+- Partitions are migrated, on both dialects, instead of being noted (PostgreSQL) or refused
+  (MySQL). PostgreSQL: the schema model carries a table's partition strategy, key text and a
+  partition's bound (from `PARTITION OF ... FOR VALUES` as well as pg_dump's `CREATE TABLE` +
+  `ALTER TABLE ONLY ... ATTACH PARTITION` pair), the loader accepts `ALTER INDEX ... ATTACH
+  PARTITION` (it refused every partitioned dump before), the diff reports `partition key` as
+  `<STRATEGY> (<key>)` and a new `partition bound`, and the plan creates a partitioned table with
+  its partitions attached once they exist, adds a partition to an existing parent, drops one
+  (declared with `-- @migrate drop`, since it takes its rows), attaches and detaches (every
+  detach before any attach, so a moving bound never overlaps a neighbour's, 23514), skips a
+  partition's own constraints and indexes when a pre-existing parent already carries them
+  (PostgreSQL builds them on attach, 42P16 otherwise) and never alters a partition's own
+  columns; a changed partition key or strategy on a table holding rows is a problem that stops
+  `apply`, not a note. MySQL: `Table.Partitioned` became `Table.Partitioning` (RANGE and HASH
+  structurally, the other kinds as the server's own text), read from `CREATE TABLE` and the
+  `ALTER TABLE ... PARTITION BY` / `ADD` / `DROP` / `REORGANIZE` / `COALESCE` / `REMOVE
+  PARTITIONING` actions, compared as a table property, and planned as `PARTITION BY ...` (a table
+  gaining partitioning or changing kind or key), `REMOVE PARTITIONING`, `ADD PARTITION` (a
+  `RANGE` partition appended), `DROP PARTITION` (declared with the new `-- @migrate drop
+  partition <table>.<partition>`), `REORGANIZE PARTITION ... INTO` (a bound moved or a partition
+  inserted before `MAXVALUE`) and `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` (a
+  `HASH` count); partition changes run after the plan's column adds and backfills (a table
+  partitioned by a column the same plan adds, 1054). Measured and pinned in
+  `probe_findings_test.go`: a new partition's attach after its own `CREATE TABLE` (42P01), an
+  owned sequence kept when its owning column is renamed rather than dropped and re-owned when
+  its old owner table goes (42P01), PostgreSQL's automatic key on attach; MySQL's partition
+  ordering. The probes generate partitioned tables (PostgreSQL: RANGE and LIST with a DEFAULT
+  partition, one row per partition; MySQL: RANGE with and without `MAXVALUE`, HASH) and mutate
+  them (add / drop / attach / detach / move a bound / reorganize / change a count / remove
+  partitioning), so the alphabet's `~ table partition of`, `~ table partition bound` and MySQL's
+  `~ table partitioned` are reached; PostgreSQL stands at 92 of 103 (the partition key of a
+  populated table being a problem-only change), MySQL at 48 of 48. A partitioned InnoDB table
+  cannot hold a `POINT` column at all (1178), every unique key must include the partition
+  columns (1503) and no foreign key may touch it (1506), measured, and the generators keep to
+  that. Ruling recorded in `docs/design.md`: partitions are schema, so the plan handles them
+  like columns rather than leaving a difference the way Skeema's `partitioning=keep` does, and
+  the migration's scope extends to the operations that move rows.
+
 - The migrate probes have a coverage unit and a third round of vocabulary. `diff.Alphabet()`
   (both dialects) enumerates every kind of change the diff can report -- an `(Op, Kind, Field)`
   triple such as `+ table`, `~ column type`, `~ constraint deferrable` -- mined from the same

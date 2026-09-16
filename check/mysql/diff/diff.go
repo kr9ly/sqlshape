@@ -296,8 +296,39 @@ func TableProps(t *schema.Table) map[string]string {
 		"collation":   t.Collation,
 		"rowFormat":   t.RowFormat,
 		"comment":     t.Comment,
-		"partitioned": fmt.Sprint(t.Partitioned),
+		"partitioned": PartitioningProps(t.Partitioning),
 	}
+}
+
+// PartitioningProps is a table's PARTITION BY clause, canonicalized to one comparable
+// string: "" for an unpartitioned table (nil), Partitioning.Text for a clause too complex
+// for this package's Kind to say more about (RANGE/LIST COLUMNS, KEY, LINEAR, LIST,
+// subpartitions), else the pieces alterTable itself decides DDL from -- kind, expression
+// and, in order, every partition's own name and boundary -- so two clauses this package
+// tells apart the same way (an ADD PARTITION reordering nothing, say) never look changed
+// on account of some detail alterTable does not look at either.
+func PartitioningProps(p *schema.Partitioning) string {
+	if p == nil {
+		return ""
+	}
+	if p.Kind == "" {
+		return p.Text
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%s)", p.Kind, p.Expr)
+	if p.Kind == "HASH" {
+		fmt.Fprintf(&b, " PARTITIONS %d", p.Num)
+		return b.String()
+	}
+	for _, part := range p.Parts {
+		b.WriteString(" " + part.Name + ":")
+		if part.MaxValue {
+			b.WriteString("MAXVALUE")
+		} else {
+			b.WriteString(part.Bound)
+		}
+	}
+	return b.String()
 }
 
 // ColumnProps are a column's properties: its type, its whole definition as the server

@@ -44,6 +44,7 @@ type pSchema struct {
 	composites []*pComposite
 	ranges     []*pRange
 	tables     []*pTable
+	partTables []*pPartTable
 	views      []*pView
 	triggers   []*pTrigger
 	funcs      []*pFunc
@@ -63,6 +64,64 @@ type pSchema struct {
 // planner's vocabulary here (an ALTER of its subtype is note-only, see
 // alphabetKnownUnreached), so it does not need one.
 type pRange struct{ name string }
+
+// pPartTable is a small, self-contained RANGE- or LIST-partitioned table: a parent
+// (PARTITION BY RANGE (id) / LIST (kind)) with two ordinary partitions and (usually) a
+// DEFAULT one -- brief-partition-pg.md's vocabulary items 1-4 (create / drop the whole
+// thing, a partition added or removed, DETACH / ATTACH, a bound moved). Deliberately
+// narrow: no key, no index, no foreign key, nothing else references it -- pTable already
+// exercises that vocabulary against ordinary tables (items 5-6, propagation to a
+// partition's own columns and keys resting on the partition key, are instead measured by
+// hand against the planner directly; see the round's report for why this generator does
+// not fold partitioning into pTable itself).
+type pPartTable struct {
+	name     string
+	orig     string // the source schema's qualified name (a declaration's left side)
+	strategy string // "RANGE" or "LIST"
+	parts    []*pPartChild
+}
+
+// pPartChild is one partition (or, once detached, a plain standalone table that used to
+// be one): RANGE bound is [lo, hi), LIST bound is one or more values, and a DEFAULT
+// partition has neither.
+type pPartChild struct {
+	name      string
+	orig      string
+	isDefault bool
+	lo, hi    int      // RANGE bound; 0 for LIST / DEFAULT
+	values    []string // LIST bound; nil for RANGE / DEFAULT
+	detached  bool     // stands alone now: rendered as a plain CREATE TABLE, no PARTITION OF
+	gone      bool     // dropped outright (declared, like pTable's own drop)
+}
+
+// bound is the FOR VALUES clause (or DEFAULT) attached to a direct CREATE TABLE ...
+// PARTITION OF, or ALTER TABLE ... ATTACH PARTITION -- the same text either way.
+func (c *pPartChild) bound() string {
+	switch {
+	case c.isDefault:
+		return "DEFAULT"
+	case len(c.values) > 0:
+		var q []string
+		for _, v := range c.values {
+			q = append(q, "'"+v+"'")
+		}
+		return "FOR VALUES IN (" + strings.Join(q, ", ") + ")"
+	default:
+		return fmt.Sprintf("FOR VALUES FROM (%d) TO (%d)", c.lo, c.hi)
+	}
+}
+
+func (pt *pPartTable) child(name string) *pPartChild {
+	for _, c := range pt.parts {
+		if c.name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func (pt *pPartTable) full() string { return "public." + pt.name }
+func (c *pPartChild) full() string  { return "public." + c.name }
 
 // pRule is a CREATE RULE ... AS ON INSERT TO table [WHERE (id > 0)] DO INSTEAD NOTHING:
 // a no-op rule (every row still holds id > 0, so the predicate is never false) whose
@@ -289,6 +348,15 @@ func (s *pSchema) clone() *pSchema {
 			nt.checks = append(nt.checks, &nck)
 		}
 		c.tables = append(c.tables, nt)
+	}
+	for _, pt := range s.partTables {
+		npt := &pPartTable{name: pt.name, orig: pt.orig, strategy: pt.strategy}
+		for _, ch := range pt.parts {
+			nch := *ch
+			nch.values = append([]string(nil), ch.values...)
+			npt.parts = append(npt.parts, &nch)
+		}
+		c.partTables = append(c.partTables, npt)
 	}
 	for _, v := range s.views {
 		nv := *v
@@ -624,6 +692,29 @@ func (t *pTable) render(s *pSchema) string {
 	return b.String()
 }
 
+// render is the parent's CREATE TABLE ... PARTITION BY ..., then each surviving
+// partition: PARTITION OF for one still attached, a plain CREATE TABLE for one detached
+// (pPartChild.detached); a gone one (dropped outright, declared) writes nothing.
+func (pt *pPartTable) render() string {
+	col, keyword := "id", "RANGE"
+	if pt.strategy == "LIST" {
+		col, keyword = "kind", "LIST"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "CREATE TABLE %s (id integer NOT NULL, kind text NOT NULL) PARTITION BY %s (%s);\n", qi(pt.name), keyword, qi(col))
+	for _, c := range pt.parts {
+		if c.gone {
+			continue
+		}
+		if c.detached {
+			b.WriteString("CREATE TABLE " + qi(c.name) + " (id integer NOT NULL, kind text NOT NULL);\n")
+			continue
+		}
+		b.WriteString("CREATE TABLE " + qi(c.name) + " PARTITION OF " + qi(pt.name) + " " + c.bound() + ";\n")
+	}
+	return b.String()
+}
+
 // renderIndex is a plain CREATE INDEX: a partial predicate over cols[0] ("notnull" /
 // "positive", both true for every row a table holds), or an expression over cols[0]
 // ("lower" for a text-like column, "plus1" for a numeric one) in place of the column list.
@@ -787,6 +878,9 @@ func (s *pSchema) render() string {
 	for _, t := range s.tables {
 		b.WriteString(t.render(s))
 	}
+	for _, pt := range s.partTables {
+		b.WriteString(pt.render())
+	}
 	if st := s.seedTable; st != nil {
 		b.WriteString(st.render())
 	}
@@ -864,6 +958,36 @@ func (s *pSchema) rows() string {
 			rows = append(rows, "("+strings.Join(vals, ", ")+")")
 		}
 		fmt.Fprintf(&b, "INSERT INTO %s (%s) VALUES %s;\n", t.ref(), strings.Join(names, ", "), strings.Join(rows, ", "))
+	}
+	for _, pt := range s.partTables {
+		b.WriteString(pt.rows())
+	}
+	return b.String()
+}
+
+// rows is one row per partition still attached (gone / detached ones get none: a
+// detached partition is a plain table now, holding whatever it held while attached, which
+// INSERT INTO the parent never reaches again), landing in it by construction: a RANGE
+// child's id is its own lower bound (any DEFAULT partition's is a value comfortably above
+// every bound this generator ever produces), a LIST child's kind is its own first value
+// (a DEFAULT partition's is a value no non-default child here is ever given).
+func (pt *pPartTable) rows() string {
+	var b strings.Builder
+	i := 0
+	for _, c := range pt.parts {
+		if c.gone || c.detached {
+			continue
+		}
+		i++
+		id, kind := 100000+i, "zz"
+		if !c.isDefault {
+			if pt.strategy == "LIST" {
+				kind = c.values[0]
+			} else {
+				id = c.lo
+			}
+		}
+		fmt.Fprintf(&b, "INSERT INTO %s (id, kind) VALUES (%d, '%s');\n", qi(pt.name), id, kind)
 	}
 	return b.String()
 }
@@ -1047,6 +1171,32 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 		t.comment = "about " + t.name
 	}
 	return t
+}
+
+// newPartTable makes a RANGE or LIST partitioned table with three partitions: two
+// ordinary ones and a DEFAULT.
+func (s *pSchema) newPartTable(r *rand.Rand) *pPartTable {
+	name := s.next("part")
+	pt := &pPartTable{name: name, orig: "public." + name, strategy: "RANGE"}
+	if r.Intn(2) == 0 {
+		pt.strategy = "LIST"
+	}
+	c1, c2 := s.next(name+"_"), s.next(name+"_")
+	def := s.next(name + "_")
+	if pt.strategy == "LIST" {
+		pt.parts = []*pPartChild{
+			{name: c1, orig: "public." + c1, values: []string{"a", "b"}},
+			{name: c2, orig: "public." + c2, values: []string{"c"}},
+			{name: def, orig: "public." + def, isDefault: true},
+		}
+	} else {
+		pt.parts = []*pPartChild{
+			{name: c1, orig: "public." + c1, lo: 1, hi: 10},
+			{name: c2, orig: "public." + c2, lo: 10, hi: 20},
+			{name: def, orig: "public." + def, isDefault: true},
+		}
+	}
+	return pt
 }
 
 func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
@@ -1239,6 +1389,10 @@ func generate(r *rand.Rand) *pSchema {
 	for i := 0; i < n; i++ {
 		s.tables = append(s.tables, s.newTable(r))
 	}
+	// a partitioned table from pair 0 too (see untouched-style helpers below for why): a
+	// spare "drop partition" / "detach partition" needs a candidate that isn't only one a
+	// same-recipe "add partitioned table" step happened to leave behind
+	s.partTables = append(s.partTables, s.newPartTable(r))
 	if r.Intn(2) == 0 {
 		s.addViewKind(r, false) // a spare plain view, so "drop view" has one from pair 0
 	}
@@ -1775,7 +1929,13 @@ var mutations = []mutation{
 		if c.notNull {
 			f := s.fill(c)
 			if t.inFK(c.name) {
-				f = "1" // a parent every table has
+				// a parent every table has (rows() gives every table a row 3), and never
+				// row 1's or row 2's own FK value: rows() only ever nulls a nullable
+				// column's third row, so this backfill only ever reaches row 3 -- reusing
+				// its own row number rather than a fixed "1" cannot duplicate row 1's or
+				// row 2's, which an EXCLUDE (WITH =) over this column would otherwise
+				// refuse as a duplicate (23P01, measured)
+				f = "3"
 			}
 			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s where %s is null", t.full(), c.name, f, qi(c.name)))
 		}
@@ -3262,7 +3422,13 @@ var mutations = []mutation{
 			// explicit value is always allowed to override.
 			f := s.fill(c)
 			if t.inFK(c.name) {
-				f = "1" // a parent every table has
+				// a parent every table has (rows() gives every table a row 3), and never
+				// row 1's or row 2's own FK value: rows() only ever nulls a nullable
+				// column's third row, so this backfill only ever reaches row 3 -- reusing
+				// its own row number rather than a fixed "1" cannot duplicate row 1's or
+				// row 2's, which an EXCLUDE (WITH =) over this column would otherwise
+				// refuse as a duplicate (23P01, measured)
+				f = "3"
 			}
 			s.intents = append(s.intents, fmt.Sprintf("-- @migrate backfill %s.%s = %s where %s is null", t.full(), c.name, f, qi(c.name)))
 			c.notNull, c.idAlways = true, false
@@ -3282,6 +3448,131 @@ var mutations = []mutation{
 		}
 		return false
 	}},
+	{"add partitioned table", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		pt := s.newPartTable(r)
+		s.partTables = append(s.partTables, pt)
+		touched[pt.name] = true
+		return true
+	}},
+	{"add partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		pts := untouchedPartTables(s, touched)
+		if len(pts) == 0 {
+			return false
+		}
+		pt := pick(r, pts)
+		name := s.next(pt.name + "_")
+		if pt.strategy == "LIST" {
+			used := map[string]bool{}
+			for _, c := range pt.parts {
+				for _, v := range c.values {
+					used[v] = true
+				}
+			}
+			letter := "d"
+			for _, cand := range []string{"d", "e", "f", "g", "h"} {
+				if !used[cand] {
+					letter = cand
+					break
+				}
+			}
+			pt.parts = append(pt.parts, &pPartChild{name: name, orig: "public." + name, values: []string{letter}})
+		} else {
+			hi := 0
+			for _, c := range pt.parts {
+				if !c.isDefault && !c.gone && c.hi > hi {
+					hi = c.hi
+				}
+			}
+			pt.parts = append(pt.parts, &pPartChild{name: name, orig: "public." + name, lo: hi, hi: hi + 10})
+		}
+		touched[pt.name] = true
+		return true
+	}},
+	{"drop partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, pt := range untouchedPartTables(s, touched) {
+			var live []*pPartChild
+			for _, c := range pt.parts {
+				if !c.gone && !c.detached && !c.isDefault {
+					live = append(live, c)
+				}
+			}
+			if len(live) < 2 {
+				continue // keep at least one ordinary partition besides DEFAULT
+			}
+			c := pick(r, live)
+			c.gone = true
+			s.intents = append(s.intents, "-- @migrate drop "+c.orig)
+			touched[pt.name] = true
+			return true
+		}
+		return false
+	}},
+	{"detach partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, pt := range untouchedPartTables(s, touched) {
+			var live []*pPartChild
+			for _, c := range pt.parts {
+				if !c.gone && !c.detached && !c.isDefault {
+					live = append(live, c)
+				}
+			}
+			if len(live) < 2 {
+				continue // keep at least one ordinary partition besides DEFAULT
+			}
+			c := pick(r, live)
+			c.detached = true
+			touched[pt.name] = true
+			return true
+		}
+		return false
+	}},
+	{"attach partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, pt := range untouchedPartTables(s, touched) {
+			for _, c := range pt.parts {
+				if c.detached && !c.gone {
+					c.detached = false
+					touched[pt.name] = true
+					return true
+				}
+			}
+		}
+		return false
+	}},
+	{"move partition bound", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, pt := range untouchedPartTables(s, touched) {
+			var last *pPartChild
+			for _, c := range pt.parts {
+				if !c.gone && !c.detached && !c.isDefault {
+					last = c // the highest RANGE bound / most recently added LIST child
+				}
+			}
+			if last == nil {
+				continue
+			}
+			if pt.strategy == "LIST" {
+				last.values = append(last.values, "w")
+			} else {
+				last.hi += 5
+			}
+			touched[pt.name] = true
+			return true
+		}
+		return false
+	}},
+}
+
+// untouchedPartTables is untouched's counterpart for pPartTable: candidates a mutation may
+// still act on, keyed the same way (touched[pt.name]) so a recipe never applies two
+// partition mutations to the same partitioned table in one pair (matching how pTable
+// mutations use touched[t.name] to keep a pair's changes disjoint and so unambiguous to
+// re-derive @migrate declarations for).
+func untouchedPartTables(s *pSchema, touched map[string]bool) []*pPartTable {
+	var out []*pPartTable
+	for _, pt := range s.partTables {
+		if !touched[pt.name] {
+			out = append(out, pt)
+		}
+	}
+	return out
 }
 
 // policyPredicates is which of USING / WITH CHECK a policy for command needs: SELECT and
@@ -3394,9 +3685,8 @@ func judge(ctx context.Context, src, target *pSchema, applied []string) verdict 
 // migrate.go), or this probe's real server can never produce a pair carrying it in the
 // first place.
 var alphabetKnownUnreached = map[string]string{
-	"~ table inherits":              "migrate.go's alterTable only notes inherits/partition of/partition key/of type changes (\"cannot be altered by the plan\"); never DDL. Regular table inheritance is also out of this probe's vocabulary (partition-adjacent, deferred with partitioning per brief-common.md)",
-	"~ table partition of":          "same note-only path as table inherits; partitioning itself is out of scope for this probe chunk (brief-common.md)",
-	"~ table partition key":         "same note-only path as table inherits; partitioning itself is out of scope for this probe chunk (brief-common.md)",
+	"~ table inherits":              "migrate.go's alterTable only notes inherits/of type changes (\"cannot be altered by the plan\"); never DDL. Regular table INHERITS (distinct from PARTITION OF, now in this round's vocabulary) is still out of this probe's vocabulary",
+	"~ table partition key":         "no lossless DDL exists for repartitioning a table already holding data under a different key or strategy (PostgreSQL has no ALTER ... PARTITION BY, measured); migrate.go reports it as a problem (halts apply) rather than a note, so the generator never declares this mutation and no pair carries it -- brief-partition-pg.md item 7",
 	"~ table of type":               "same note-only path as table inherits; typed tables (CREATE TABLE OF) are also not in this probe's vocabulary",
 	"~ domain base":                 "migrate.go's alterType domain case only notes a base type change (\"cannot be altered\"); never DDL",
 	"~ range subtype":               "migrate.go's alterType range case only notes any change (\"cannot be altered\"); never DDL. The generator also has no range type vocabulary",
@@ -3418,7 +3708,7 @@ func TestMigrateProbe(t *testing.T) {
 	var findings []verdict
 	for i := 0; i < *probeN; i++ {
 		src := generate(r)
-		n := 1 + r.Intn(5)
+		n := 1 + r.Intn(7)
 		var recipe []step
 		for j := 0; j < n; j++ {
 			recipe = append(recipe, step{m: r.Intn(len(mutations)), seed: r.Int63()})

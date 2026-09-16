@@ -228,12 +228,13 @@ func relProps(s *schema.Schema, r *schema.Relation) map[string]string {
 	if len(parents) > 0 {
 		if r.IsPartition {
 			p["partition of"] = strings.Join(parents, ", ")
+			p["partition bound"] = r.PartBound
 		} else {
 			p["inherits"] = strings.Join(parents, ", ")
 		}
 	}
 	if len(r.PartKey) > 0 {
-		p["partition key"] = strings.Join(r.PartKey, ", ")
+		p["partition key"] = r.PartStrategy + " (" + r.PartKeyText + ")"
 	}
 	if r.OfType != 0 {
 		p["of type"] = s.Types.Format(schema.TypeRef{OID: r.OfType, Typmod: -1})

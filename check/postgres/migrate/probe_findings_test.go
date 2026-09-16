@@ -415,3 +415,124 @@ CREATE TABLE public.t (id bigserial PRIMARY KEY);
 `)
 	roundTrip(t, from, to, "-- @migrate rename public.t -> app.t", false)
 }
+
+// --- partitioning (brief-partition-pg.md / brief-partition-common.md) --------------------
+
+// A brand-new partitioned table with its partitions: pg_dump (and so this plan's always-
+// canonical inputs) never spells a partition as a single CREATE TABLE ... PARTITION OF ...
+// FOR VALUES ...; it is a plain CREATE TABLE plus a later ALTER TABLE ... ATTACH PARTITION
+// naming the *parent*. Replaying that ALTER inline with the parent's own CREATE TABLE (the
+// schema.Relation.Alters it was recorded under) ran before the child's own CREATE TABLE
+// existed (42P01, measured) -- migrate.go now synthesizes ATTACH PARTITION itself, once
+// every new table exists.
+func TestProbeNewPartitionedTableAttachOrder(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `CREATE TABLE keep (id integer PRIMARY KEY);`)
+	to := mustCanonical(t, `
+CREATE TABLE keep (id integer PRIMARY KEY);
+CREATE TABLE p (id integer NOT NULL) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
+CREATE TABLE p_default PARTITION OF p DEFAULT;
+`)
+	roundTrip(t, from, to, "-- @migrate drop p\n-- @migrate drop p_1\n-- @migrate drop p_default", false)
+}
+
+// A partition's bound moved, and another partition detached in the same plan: every
+// DETACH in the plan must precede every ATTACH, not just the same partition's own -- an
+// incoming bound can overlap another partition's outgoing one otherwise (23514 "would
+// overlap", measured, when a wider bound landed before the sibling's own DETACH).
+func TestProbePartitionBoundMoveAndDetachOrdering(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
+CREATE TABLE p_2 PARTITION OF p FOR VALUES FROM (10) TO (20);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (15);
+CREATE TABLE p_2 (id integer NOT NULL);
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// A new partition attached to a parent that already has a PRIMARY KEY and an index:
+// PostgreSQL's own ATTACH PARTITION immediately builds and attaches a matching PRIMARY
+// KEY and index on the incoming partition (unlike attaching to a parent created fresh in
+// the same plan, which has neither yet) -- the plan's own explicit ADD CONSTRAINT /
+// CREATE INDEX for the same shape is then 42P16 "multiple primary keys" (measured).
+func TestProbeAttachPartitionUnderKeyedParent(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL PRIMARY KEY) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
+CREATE TABLE p_new (id integer NOT NULL PRIMARY KEY);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL PRIMARY KEY) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
+CREATE TABLE p_new PARTITION OF p FOR VALUES FROM (10) TO (20);
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// A column dropped from a table that survives, and that no longer-owned column happened
+// to own a standalone sequence which the target still keeps (unowned): PostgreSQL drops
+// a column-owned sequence along with the column itself (measured, not merely clearing its
+// ownership) -- the plan's own ALTER SEQUENCE ... OWNED BY NONE, unconditionally emitted
+// whenever a surviving sequence's OwnedBy differs, then found nothing left (42P01). The
+// sequence needs recreating instead once its owning column is genuinely dropped, not
+// renamed (ownerColumnStatus's ownerColumnGoneNotTable case).
+func TestProbeSequenceRecreatedAfterOwningColumnDropped(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, r integer);
+CREATE SEQUENCE sq;
+ALTER SEQUENCE sq OWNED BY t.r;
+`)
+	to := mustCanonical(t, `
+-- @migrate drop t.r
+CREATE TABLE t (id integer PRIMARY KEY);
+CREATE SEQUENCE sq;
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// A sequence reassigned to a new owner while its old owning *table* is dropped in the same
+// plan: drops() already clears the sequence's OWNED BY (ALTER SEQUENCE ... OWNED BY NONE)
+// ahead of that table's own DROP TABLE, since alters() only reaches surviving tables --
+// but alters() then left it at NONE rather than the target's actual new owner, since it
+// saw the sequence's own OWNED BY change and assumed nothing needed doing once the old
+// owning table was gone.
+func TestProbeSequenceReownedWhileOldOwnerTableDrops(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE keep (id integer PRIMARY KEY, c integer);
+CREATE TABLE gone (id integer PRIMARY KEY, r integer);
+CREATE SEQUENCE sq;
+ALTER SEQUENCE sq OWNED BY gone.r;
+`)
+	to := mustCanonical(t, `
+-- @migrate drop gone
+CREATE TABLE keep (id integer PRIMARY KEY, c integer);
+CREATE SEQUENCE sq;
+ALTER SEQUENCE sq OWNED BY keep.c;
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// pg_dump attaches a partition's own index to the parent's partitioned index with
+// ALTER INDEX ... ATTACH PARTITION, an AlterTableStmt whose Objtype is OBJECT_INDEX
+// (schema.go's generic ALTER TABLE dispatch looked up the *index* name as if it were a
+// relation and refused it as "does not exist", measured) rather than OBJECT_TABLE; a
+// partitioned schema's own dump could not even load.
+func TestProbeAlterIndexAttachPartitionLoads(t *testing.T) {
+	requirePgDump(t)
+	// no roundTrip: this is a loader-only regression (mustCanonical itself is the
+	// assertion -- it fails the test if the schema does not load).
+	mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, n integer) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
+CREATE INDEX p_n_idx ON p (n);
+`)
+}

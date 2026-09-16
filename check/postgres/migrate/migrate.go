@@ -102,6 +102,13 @@ type planner struct {
 	// declared label mapping; the tables whose columns carry them, and the views over
 	// those tables (dropped first, created anew)
 	enumRecreate map[string]diff.UserType
+	// pendingAttach: partitions alterTable() found reattaching (a new parent, or the same
+	// parent with a new bound) -- collected rather than emitted on the spot, so every
+	// DETACH PARTITION in the plan (alters(), run before adds()) precedes every ATTACH
+	// (emitted in adds(), alongside newly created partitions'): a partition's incoming
+	// bound can overlap another partition's outgoing one, which PostgreSQL refuses if the
+	// ATTACH runs before that other DETACH (23514 "would overlap", measured).
+	pendingAttach []pendingPartitionAttach
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -328,6 +335,14 @@ func (p *planner) drops() {
 		if tr == nil || r.Kind != schema.Table || tr.Kind != schema.Table {
 			continue
 		}
+		if r.IsPartition && tr.IsPartition {
+			// a partition's column list only ever changes because its parent's did (a
+			// dump-canonical schema repeats every column on each partition's own CREATE
+			// TABLE); the parent's own pass through this same loop already requires and
+			// emits the drop, and DROP COLUMN on the partition itself is refused (42P16,
+			// measured) once the parent's has already run.
+			continue
+		}
 		toCols := columnsOf(tr)
 		var gone []*schema.Column
 		for _, c := range r.Columns {
@@ -449,6 +464,7 @@ func (p *planner) alters() {
 		p.alterType(n, f, t)
 	}
 
+	fromRels, _ := relations(p.from)
 	_, toOrder := relations(p.to)
 	for _, r := range toOrder {
 		f := p.fromOf(r)
@@ -463,12 +479,33 @@ func (p *planner) alters() {
 			// replaced in adds, once every column the new definition may read exists
 		case schema.Sequence:
 			if f.OwnedBy != r.OwnedBy {
-				owner := "NONE"
-				if r.OwnedBy != "" {
-					parts := strings.Split(r.OwnedBy, ".")
-					owner = qdot(strings.Join(parts, "."))
+				switch ownerColumnStatus(p, fromRels, f) {
+				case ownerTableGone:
+					// drops() already cleared this sequence's OWNED BY (ALTER SEQUENCE
+					// ... OWNED BY NONE) before its then-owning table dropped (measured:
+					// redoing that same ALTER here is 42P01, the table already took the
+					// column that named it down) -- but the target may still want it
+					// owned by something else (a "set sequence owner" mutation drawn
+					// alongside the table's own drop), which that NONE does not give it.
+					if r.OwnedBy != "" {
+						p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(r), qdot(r.OwnedBy))
+					}
+				case ownerColumnGoneNotTable:
+					// the owning table survives; the column itself is really dropped
+					// (not renamed). PostgreSQL drops a column-owned sequence along with
+					// the column itself (measured: no DROP SEQUENCE needed, or possible
+					// -- 42P07 "already exists" if adds() is not told this sequence needs
+					// recreating, or 42P01 if this ALTER SEQUENCE ... OWNED BY runs
+					// instead, against an object dropCcolumn already took with it).
+					p.recreated[r.FullName()] = true
+				default: // renamed, or newly (un)owned: the sequence itself never went away
+					owner := "NONE"
+					if r.OwnedBy != "" {
+						parts := strings.Split(r.OwnedBy, ".")
+						owner = qdot(strings.Join(parts, "."))
+					}
+					p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(r), owner)
 				}
-				p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(r), owner)
 			}
 		}
 	}
@@ -592,6 +629,18 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 
 func (p *planner) alterTable(f, r *schema.Relation) {
 	p.rowSecurity(f, r)
+	p.partitionAttach(f, r)
+	if r.IsPartition {
+		// a partition's own columns are never ALTERed directly: PostgreSQL propagates the
+		// parent's ADD / DROP / ALTER COLUMN to every partition itself and refuses the same
+		// change repeated on the partition (42P16 "cannot add column to a partition" /
+		// "cannot drop column from only the partition", measured) -- and a dump-canonical
+		// schema always shows the partition's full, current column list (pg_dump repeats
+		// every column verbatim on each partition's own CREATE TABLE), so without this the
+		// differ would see the very same column change twice, once on the parent (which
+		// alterTable(parent, ...) already emits) and once here.
+		return
+	}
 	fromCols := columnsOf(f)
 	rewritten := map[string]bool{}
 	for _, c := range r.Columns {
@@ -708,10 +757,54 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 		}
 	}
 	fromProps, toProps := diff.Props(p.from, f), diff.Props(p.to, r)
-	for _, k := range []string{"inherits", "partition of", "partition key", "of type"} {
+	for _, k := range []string{"inherits", "of type"} {
 		if fromProps[k] != toProps[k] {
 			p.note("table %s: %s %q -> %q cannot be altered by the plan", r.FullName(), k, fromProps[k], toProps[k])
 		}
+	}
+	if fromProps["partition key"] != toProps["partition key"] {
+		// no lossless DDL exists for repartitioning a table already holding data under a
+		// different key or strategy (measured: PostgreSQL has no ALTER ... PARTITION BY);
+		// a problem rather than a note, so apply stops instead of leaving verify-schema
+		// reporting the same difference forever.
+		p.problem("table %s: partition key %q -> %q has no lossless DDL (drop and recreate the table)", r.FullName(), fromProps["partition key"], toProps["partition key"])
+	}
+}
+
+// pendingPartitionAttach is a partition (re)attachment partitionAttach found but did not
+// emit yet (see pendingAttach's doc comment on planner).
+type pendingPartitionAttach struct {
+	parent, part *schema.Relation
+	bound        string
+}
+
+// partitionAttach handles the ways a table's own attachment to a partitioned parent can
+// change: newly detached (a partition becomes a standalone table), newly attached (a
+// standalone table -- or a partition of a different parent -- becomes one), or the same
+// parent with a different bound (FOR VALUES ... moved, measured to require DETACH +
+// ATTACH: PostgreSQL has no ALTER ... FOR VALUES). A table both was and stays a partition
+// of the very same parent with the very same bound is the common case and does nothing
+// here. Moving straight from one parent to another combines the "gone" and "new" cases
+// below into one DETACH now, ATTACH later (pendingAttach).
+func (p *planner) partitionAttach(f, r *schema.Relation) {
+	var fromParent, toParent *schema.Relation
+	if f.IsPartition && len(f.Parents) > 0 {
+		fromParent = p.toOf(f.Parents[0])
+	}
+	if r.IsPartition && len(r.Parents) > 0 {
+		toParent = r.Parents[0]
+	}
+	switch {
+	case fromParent == nil && toParent == nil:
+		return
+	case fromParent != nil && toParent != nil && fromParent.FullName() == toParent.FullName() && f.PartBound == r.PartBound:
+		return // unchanged
+	}
+	if fromParent != nil {
+		p.emit("ALTER TABLE %s DETACH PARTITION %s", qrel(fromParent), qrel(r))
+	}
+	if toParent != nil {
+		p.pendingAttach = append(p.pendingAttach, pendingPartitionAttach{parent: toParent, part: r, bound: r.PartBound})
 	}
 }
 
@@ -763,6 +856,29 @@ func sameStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// hasMatchingConstraint reports whether parent already carries a constraint of the same
+// kind and columns as c (see stableAttachParent): PostgreSQL's own constraint name on the
+// partition never matches the parent's, so this compares shape rather than name.
+func hasMatchingConstraint(parent *schema.Relation, c *schema.Constraint) bool {
+	for _, pc := range parent.Constraints {
+		if pc.Kind == c.Kind && sameStrings(pc.Columns, c.Columns) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMatchingIndex reports whether parent already carries an index over the same columns
+// as i (see stableAttachParent), by the same reasoning as hasMatchingConstraint.
+func hasMatchingIndex(parent *schema.Relation, i *schema.Index) bool {
+	for _, pi := range parent.Indexes {
+		if sameStrings(pi.Columns, i.Columns) {
+			return true
+		}
+	}
+	return false
 }
 
 // renamedExpr is a from-side expression text with f's declared column renames applied:
@@ -894,6 +1010,48 @@ func hasString(list []string, s string) bool {
 // survives is not implicitly handled by any column-level DROP and needs its own DROP
 // SEQUENCE (measured: an unowned-by-drop sequence otherwise never appeared in the plan
 // at all).
+// ownerColumnReallyGone reports whether the column that used to own seq (a surviving
+// sequence, since the caller already knows it is not itself dropped) is truly gone in the
+// target -- its owning table dropped, or the column itself dropped -- as opposed to
+// merely renamed (ownerColumnGone's own "goes with its column" also covers a rename,
+// which does not cascade-drop the sequence and so must not be treated the same way here:
+// see alters()'s Sequence case).
+// ownerColumnState is ownerColumnStatus's verdict on a surviving sequence's previous
+// owning column.
+type ownerColumnState int
+
+const (
+	// ownerColumnRenamed: the owning table survives and so does the column (under its
+	// declared name, if renamed) -- the sequence itself was never touched.
+	ownerColumnRenamed ownerColumnState = iota
+	// ownerTableGone: the owning table itself does not survive; drops() already cleared
+	// this sequence's OWNED BY ahead of that table's own DROP TABLE (see its own comment).
+	ownerTableGone
+	// ownerColumnGoneNotTable: the owning table survives, but the column itself is truly
+	// dropped (not renamed) -- PostgreSQL drops a column-owned sequence along with the
+	// column (measured), so the sequence needs recreating, not an ALTER ... OWNED BY.
+	ownerColumnGoneNotTable
+)
+
+func ownerColumnStatus(p *planner, fromRels map[string]*schema.Relation, seq *schema.Relation) ownerColumnState {
+	owner, col := ownerRelation(seq.OwnedBy), ownerColumn(seq.OwnedBy)
+	fr := fromRels[owner]
+	if fr == nil || fr.Column(col) == nil {
+		return ownerTableGone // defensive: nothing on the from-side to check against
+	}
+	tr := p.toOf(fr)
+	if tr == nil || tr.Kind != fr.Kind {
+		return ownerTableGone
+	}
+	if fr.Column(col).Identity != 0 {
+		return ownerColumnRenamed // an IDENTITY column's sequence is the server's own
+	}
+	if tr.Column(p.toCol(fr, col)) == nil {
+		return ownerColumnGoneNotTable
+	}
+	return ownerColumnRenamed
+}
+
 func ownerColumnGone(p *planner, fromRels map[string]*schema.Relation, seq *schema.Relation) bool {
 	owner, col := ownerRelation(seq.OwnedBy), ownerColumn(seq.OwnedBy)
 	fr := fromRels[owner]
@@ -1086,6 +1244,11 @@ func (p *planner) adds() {
 		inlineSeq[seq.FullName()] = true
 	}
 	// relations in declaration order, with their columns
+	// newPartitions: partitions newly created (or recreated) in this plan, whose ATTACH
+	// PARTITION is emitted once every new table exists (see below) -- a child can precede
+	// its parent in toOrder, or the other way around, so the ATTACH cannot go inline with
+	// either one's own CREATE TABLE.
+	var newPartitions []*schema.Relation
 	for _, r := range toOrder {
 		f := p.fromOf(r)
 		if p.recreated[r.FullName()] {
@@ -1126,6 +1289,9 @@ func (p *planner) adds() {
 				for _, a := range r.Alters {
 					p.emit("%s", a)
 				}
+				if r.IsPartition {
+					newPartitions = append(newPartitions, r)
+				}
 			}
 			continue
 		}
@@ -1136,6 +1302,9 @@ func (p *planner) adds() {
 		}
 		if r.Kind != schema.Table {
 			continue
+		}
+		if r.IsPartition && f.IsPartition {
+			continue // see alterTable's same skip: the parent's own ADD COLUMN reaches it
 		}
 		fromCols := columnsOf(f)
 		var fresh []*schema.Column
@@ -1173,6 +1342,43 @@ func (p *planner) adds() {
 		}
 		p.backfillsLeft(r, nil)
 	}
+	// ATTACH PARTITION for every partition created above (parent and child alike may be
+	// brand new here, in either order in toOrder): the parent must exist, and so must the
+	// child, which a partition's own CREATE TABLE never declares by itself (unlike a
+	// hand-written schema.sql's single-statement CREATE TABLE ... PARTITION OF ... FOR
+	// VALUES ..., pg_dump -- and so this plan's inputs, always canonical -- spells it as a
+	// plain CREATE TABLE plus this ALTER, measured); together with alterTable's
+	// pendingAttach (a surviving table reattached, possibly with a new bound), so every
+	// DETACH in the plan (alters(), above) precedes every ATTACH.
+	for _, part := range newPartitions {
+		p.emit("ALTER TABLE ONLY %s ATTACH PARTITION %s %s", qrel(part.Parents[0]), qrel(part), part.PartBound)
+	}
+	for _, pa := range p.pendingAttach {
+		p.emit("ALTER TABLE ONLY %s ATTACH PARTITION %s %s", qrel(pa.parent), qrel(pa.part), pa.bound)
+	}
+	// stableAttachParent: a partition attached in this plan (above) to a parent that
+	// already existed, unchanged -- PostgreSQL's ATTACH PARTITION immediately builds and
+	// attaches a matching constraint / index for every one the parent already carries
+	// (measured: attaching a plain table under an already-keyed, already-indexed parent
+	// and then also explicitly ADD CONSTRAINT / CREATE INDEX-ing the same shape on the
+	// partition is 42P16 "multiple primary keys"), so those two loops below skip a
+	// constraint / index of matching shape on such a partition. A parent created fresh in
+	// this same plan (both parties new) has nothing yet at ATTACH time -- PostgreSQL
+	// builds nothing automatically, and every partition gets its own explicit ADD
+	// CONSTRAINT / CREATE INDEX, the pg_dump form measured in the first partitioning round
+	// trip -- so this only applies when the parent was not itself just created.
+	stableAttachParent := map[string]*schema.Relation{}
+	for _, part := range newPartitions {
+		parent := part.Parents[0]
+		if f := p.fromOf(parent); f != nil && f.Kind == parent.Kind {
+			stableAttachParent[part.FullName()] = parent
+		}
+	}
+	for _, pa := range p.pendingAttach {
+		if f := p.fromOf(pa.parent); f != nil && f.Kind == pa.parent.Kind {
+			stableAttachParent[pa.part.FullName()] = pa.parent
+		}
+	}
 	// constraints (keys before foreign keys), indexes, triggers, rules
 	for pass := 0; pass < 2; pass++ {
 		for _, r := range toOrder {
@@ -1192,6 +1398,9 @@ func (p *planner) adds() {
 				if f == nil && c.Definition == "" {
 					continue // declared inside the CREATE TABLE just emitted
 				}
+				if parent := stableAttachParent[r.FullName()]; parent != nil && hasMatchingConstraint(parent, c) {
+					continue // ATTACH PARTITION already built this one (see stableAttachParent)
+				}
 				if c.Definition != "" {
 					p.emit("%s", c.Definition)
 				} else {
@@ -1210,6 +1419,9 @@ func (p *planner) adds() {
 			i := indexes(r)[n]
 			if fi := fromIdx[n]; fi != nil && same(p.from, p.to, fi, i) || p.restored[r.FullName()+"."+n] {
 				continue
+			}
+			if parent := stableAttachParent[r.FullName()]; parent != nil && hasMatchingIndex(parent, i) {
+				continue // ATTACH PARTITION already built this one (see stableAttachParent)
 			}
 			p.emit("%s", i.Definition)
 		}

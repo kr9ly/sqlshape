@@ -206,6 +206,17 @@ type Relation struct {
 	// PartKeyFuncs: the functions the key expressions call (DROP FUNCTION CASCADE takes
 	// the table).
 	PartKey, PartKeyFuncs []string
+	// PartStrategy (partitioned tables): "RANGE" / "LIST" / "HASH", the PARTITION BY word.
+	// PartKeyText is the key's own text as PARTITION BY <PartStrategy> (<PartKeyText>)
+	// reads, columns and expressions alike, in declaration order (unlike PartKey, which is
+	// only the columns referenced, for the "cannot drop" checks).
+	PartStrategy, PartKeyText string
+	// PartBound (partitions): the bound FOR VALUES ... / DEFAULT reads after ATTACH
+	// PARTITION / PARTITION OF, empty for a relation that is not a partition. Set from
+	// either a direct CREATE TABLE ... PARTITION OF ... FOR VALUES ... (Partbound on the
+	// CreateStmt) or a later ALTER TABLE ... ATTACH PARTITION ... FOR VALUES ... (the form
+	// pg_dump always uses); cleared by DETACH PARTITION.
+	PartBound string
 	// QualifiedRules (views): write commands that have a conditional DO INSTEAD rule
 	// (WHERE ...), which does not make the view take the write but does stop it from
 	// being auto-updatable.
@@ -1114,6 +1125,9 @@ func (s *Schema) createTable(st *pgparse.CreateStmt, loc int32) {
 			continue
 		}
 		s.inherit(rel, parent, st.Partbound != nil, loc)
+		if st.Partbound != nil {
+			rel.PartBound = partitionBoundText(st.Partbound)
+		}
 	}
 	s.pendingUsed = true
 	for _, d := range s.pending {
@@ -1159,17 +1173,82 @@ func (s *Schema) createTable(st *pgparse.CreateStmt, loc int32) {
 			s.removeRelation(rel)
 			return
 		}
+		var keyParts []string
 		for _, pn := range ps.PartParams {
 			pe := pn.GetPartitionElem()
 			switch {
 			case pe == nil:
 			case pe.Name != "":
 				rel.PartKey = append(rel.PartKey, pe.Name)
+				keyParts = append(keyParts, pe.Name)
 			case pe.Expr != nil:
 				rel.PartKey = append(rel.PartKey, ColumnRefs(pe.Expr)...)
 				rel.PartKeyFuncs = append(rel.PartKeyFuncs, funcNamesIn(pe.Expr)...)
+				keyParts = append(keyParts, "("+Deparse(pe.Expr)+")")
 			}
 		}
+		rel.PartStrategy = partitionStrategyWord(ps.Strategy)
+		rel.PartKeyText = strings.Join(keyParts, ", ")
+	}
+}
+
+// partitionStrategyWord is the PARTITION BY word for a strategy (RANGE / LIST / HASH).
+func partitionStrategyWord(st pgparse.PartitionStrategy) string {
+	switch st {
+	case pgparse.PartitionStrategy_PARTITION_STRATEGY_LIST:
+		return "LIST"
+	case pgparse.PartitionStrategy_PARTITION_STRATEGY_HASH:
+		return "HASH"
+	default:
+		return "RANGE"
+	}
+}
+
+// partitionBoundText renders a PartitionBoundSpec the way PostgreSQL's own ATTACH
+// PARTITION / PARTITION OF prints it: `FOR VALUES FROM (...) TO (...)` (RANGE),
+// `FOR VALUES IN (...)` (LIST), `FOR VALUES WITH (MODULUS m, REMAINDER n)` (HASH), or
+// `DEFAULT`. Measured against pg_dump 17, which always spells ATTACH this way (never the
+// single-statement CREATE TABLE ... PARTITION OF ... form) -- the loader's canonical
+// round trip depends on matching this text exactly.
+func partitionBoundText(b *pgparse.PartitionBoundSpec) string {
+	if b == nil {
+		return ""
+	}
+	if b.IsDefault {
+		return "DEFAULT"
+	}
+	datum := func(n *pgparse.Node) string {
+		rd := n.GetPartitionRangeDatum()
+		if rd == nil {
+			return Deparse(n)
+		}
+		switch rd.Kind {
+		case pgparse.PartitionRangeDatumKind_PARTITION_RANGE_DATUM_MINVALUE:
+			return "MINVALUE"
+		case pgparse.PartitionRangeDatumKind_PARTITION_RANGE_DATUM_MAXVALUE:
+			return "MAXVALUE"
+		default:
+			return Deparse(rd.Value)
+		}
+	}
+	switch b.Strategy {
+	case "l":
+		var vals []string
+		for _, n := range b.Listdatums {
+			vals = append(vals, Deparse(n))
+		}
+		return "FOR VALUES IN (" + strings.Join(vals, ", ") + ")"
+	case "h":
+		return fmt.Sprintf("FOR VALUES WITH (MODULUS %d, REMAINDER %d)", b.Modulus, b.Remainder)
+	default: // "r", RANGE
+		var lo, hi []string
+		for _, n := range b.Lowerdatums {
+			lo = append(lo, datum(n))
+		}
+		for _, n := range b.Upperdatums {
+			hi = append(hi, datum(n))
+		}
+		return "FOR VALUES FROM (" + strings.Join(lo, ", ") + ") TO (" + strings.Join(hi, ", ") + ")"
 	}
 }
 
@@ -1479,6 +1558,15 @@ func (s *Schema) createMatView(st *pgparse.CreateTableAsStmt, loc int32) {
 }
 
 func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
+	if st.Objtype == pgparse.ObjectType_OBJECT_INDEX {
+		// ALTER INDEX ... ATTACH PARTITION child_idx: pg_dump's way of tying a partition's
+		// own index to the parent's partitioned index (both already loaded as ordinary,
+		// separately named indexes with their own definitions -- the attachment carries no
+		// property this model diffs), and the other ALTER INDEX forms (SET/RESET storage
+		// parameters, tablespace) this loader does not model either. A no-op rather than
+		// "unsupported statement", so it does not block loading a partitioned schema.
+		return
+	}
 	schema, name := s.lookupRangeVar(st.Relation)
 	rel := s.relByName[schema+"."+name]
 	if rel == nil {
@@ -1489,7 +1577,15 @@ func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
 	}
 	shaping := false
 	for _, cn := range st.Cmds {
-		if cmd := cn.GetAlterTableCmd(); cmd.GetSubtype() != pgparse.AlterTableType_AT_AddConstraint {
+		switch cmd := cn.GetAlterTableCmd(); cmd.GetSubtype() {
+		case pgparse.AlterTableType_AT_AddConstraint:
+		case pgparse.AlterTableType_AT_AttachPartition, pgparse.AlterTableType_AT_DetachPartition:
+			// migrate.go synthesizes ATTACH / DETACH PARTITION itself (Relation.Parents /
+			// PartBound), rather than replaying this verbatim: the statement names the
+			// *parent* (st.Relation here is the parent), so replaying it as one of the
+			// parent's own Alters -- right after the parent's CREATE TABLE -- would run
+			// before a brand-new partition's own CREATE TABLE exists (42P01, measured).
+		default:
 			shaping = true
 		}
 	}
@@ -1657,6 +1753,7 @@ func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
 			if cmd.Subtype == pgparse.AlterTableType_AT_AttachPartition {
 				part.Parents = append(part.Parents, rel)
 				part.IsPartition = true
+				part.PartBound = partitionBoundText(pc.GetBound())
 				// a partition's identity columns are the parent's
 				for _, pc := range rel.Columns {
 					if c := part.Column(pc.Name); c != nil && pc.Identity != 0 && pc.Identity != 's' {
@@ -1672,6 +1769,7 @@ func (s *Schema) alterTable(st *pgparse.AlterTableStmt, loc int32) {
 				}
 				part.Parents = kept
 				part.IsPartition = false // a detached partition stands on its own
+				part.PartBound = ""
 				for _, c := range part.Columns {
 					if c.Identity != 0 && c.Identity != 's' {
 						c.Identity = 0 // detaching removes the identity property

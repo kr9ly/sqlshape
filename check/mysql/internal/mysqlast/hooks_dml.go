@@ -176,8 +176,12 @@ func init() {
 		l, _ := kids[0].(List)
 		return append(l, refPart(n, kids[2])), nil
 	})
-	// ident_string_list: ident -> [ident]
+	// ident_string_list: ident -> [ident]; ident_string_list ',' ident -> the list extended
+	// (DROP PARTITION p0, p1, a plain comma list this rule's only other alternative parsegen
+	// already read; only the recursive one needed a hand-written hook, measured: ALTER TABLE
+	// t DROP PARTITION p0, p1 failed to build without it)
 	register("ident_string_list", "ident", listOf(1))
+	register("ident_string_list", "ident_string_list ',' ident", appendTo(1, 3))
 	// xid: text_string -> XID(gtrid)
 	register("xid", "text_string", build("XID", 1))
 	// insert_stmt: INSERT ... SET update_list ... -> PT_insert with the SET pairs as one row

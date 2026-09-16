@@ -178,9 +178,12 @@ CREATE TABLE p_2024 PARTITION OF p FOR VALUES FROM ('2024-01-01') TO ('2025-01-0
 		if props["partition of"] != "p" {
 			t.Errorf("partition of = %q, want %q", props["partition of"], "p")
 		}
+		if got := props["partition bound"]; got != "FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')" {
+			t.Errorf("partition bound = %q, want %q", got, "FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')")
+		}
 		parent := s.Relation("", "p")
-		if got := relProps(s, parent)["partition key"]; got != "d" {
-			t.Errorf("partition key = %q, want %q", got, "d")
+		if got := relProps(s, parent)["partition key"]; got != "RANGE (d)" {
+			t.Errorf("partition key = %q, want %q", got, "RANGE (d)")
 		}
 	})
 	t.Run("inherits", func(t *testing.T) {

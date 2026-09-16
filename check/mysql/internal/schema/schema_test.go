@@ -151,7 +151,7 @@ func TestProblems(t *testing.T) {
 			t.Errorf("problem %d: %q, want %q", i, msgs[i], want[i])
 		}
 	}
-	if u := s.Table("u"); u == nil || !u.Partitioned {
+	if u := s.Table("u"); u == nil || u.Partitioning == nil || u.Partitioning.Kind != "HASH" || u.Partitioning.Num != 2 {
 		t.Error("partitioned table")
 	}
 }
