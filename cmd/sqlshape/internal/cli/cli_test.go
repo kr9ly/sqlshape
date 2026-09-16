@@ -13,6 +13,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
 	"github.com/kr9ly/sqlshape/check/postgres/v2/pgparse"
+	"github.com/kr9ly/sqlshape/mysqltest/v2"
 )
 
 // one embedded server for every command of the test binary (each command would boot
@@ -34,7 +35,7 @@ func TestMain(m *testing.M) {
 		shared = srv
 		newServer = func(context.Context, pgparse.Version) (server, error) { return sharedServer{srv}, nil }
 	}
-	code := m.Run()
+	code := mysqltest.Main(m) // the MySQL tests share a mysqld the same way
 	if shared != nil {
 		shared.Close()
 	}

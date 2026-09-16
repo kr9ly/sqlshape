@@ -112,7 +112,7 @@ func StartVersion(ctx context.Context, v pgparse.Version, schemaSQL string) (*Or
 	if err != nil {
 		return nil, err
 	}
-	runtimePath, err := os.MkdirTemp("", "sqlshape-oracle-")
+	runtimePath, err := os.MkdirTemp(scratchRoot(), "sqlshape-oracle-")
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +168,26 @@ func config(v pgparse.Version, cache, runtimePath, dataPath string, port int) em
 		}
 	}
 	return cfg
+}
+
+// scratchRoot is where a server's runtime and data directories go: SQLSHAPE_ORACLE_DIR when
+// set, else /dev/shm when it is a writable directory (tmpfs on Linux: the copy of the
+// template data directory and the server's own writes stay off the disk), else the system
+// temp directory. TMPDIR alone does not opt out, since nix-shell and other wrappers set it
+// to a disk path as a matter of course. The directory is removed on Close either way.
+func scratchRoot() string {
+	if d := os.Getenv("SQLSHAPE_ORACLE_DIR"); d != "" {
+		return d
+	}
+	const shm = "/dev/shm"
+	if st, err := os.Stat(shm); err == nil && st.IsDir() {
+		if f, err := os.CreateTemp(shm, "sqlshape-probe-"); err == nil {
+			f.Close()
+			os.Remove(f.Name())
+			return shm
+		}
+	}
+	return ""
 }
 
 // cacheDir is where the extracted binaries and the template data directory live:

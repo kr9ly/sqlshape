@@ -23,8 +23,10 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
@@ -129,6 +131,43 @@ func TestMigrateProbe18(t *testing.T) {
 	runMigrateProbe(t, server18, muts, true, "postgres18", *probeSeed, *probeN)
 }
 
+// probeWorkers is how many pairs judge at once. Every pair has a database of its own on
+// the one server (dump.Server.Canonical is safe for concurrent use), so the draw stays
+// sequential -- the PRNG's stream, and with it the report, is the same as it was when the
+// pairs were judged one after another -- and only the judging fans out.
+var probeWorkers = min(8, runtime.GOMAXPROCS(0))
+
+// parallel runs fn over items on probeWorkers goroutines and returns when all are done.
+func parallel[T any](items []T, fn func(T)) {
+	var wg sync.WaitGroup
+	next := make(chan T)
+	for w := 0; w < probeWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for it := range next {
+				fn(it)
+			}
+		}()
+	}
+	for _, it := range items {
+		next <- it
+	}
+	close(next)
+	wg.Wait()
+}
+
+// pair is one random draw of the probe: a source schema, the recipe applied to it, and
+// after judging its verdict (recipe and verdict shrunk together when it found something).
+type pair struct {
+	i       int
+	src     *pSchema
+	target  *pSchema
+	recipe  []step
+	applied []string
+	v       verdict
+}
+
 func runMigrateProbe(t *testing.T, srv *dump.Server, muts []mutation, pg18 bool, reportName string, seed int64, n int) {
 	ctx := context.Background()
 	r := rand.New(rand.NewSource(seed))
@@ -136,6 +175,7 @@ func runMigrateProbe(t *testing.T, srv *dump.Server, muts []mutation, pg18 bool,
 	byMutation := map[string]int{}
 	hit := map[string]bool{}
 	var findings []verdict
+	var pairs []*pair
 	for i := 0; i < n; i++ {
 		src := generate(r, pg18)
 		nmut := 1 + r.Intn(5)
@@ -147,8 +187,33 @@ func runMigrateProbe(t *testing.T, srv *dump.Server, muts []mutation, pg18 bool,
 		if len(applied) == 0 {
 			continue
 		}
-		v := judge(ctx, srv, src, target, applied)
-		for _, a := range applied {
+		pairs = append(pairs, &pair{i: i, src: src, target: target, recipe: recipe, applied: applied})
+	}
+	parallel(pairs, func(p *pair) {
+		p.v = judge(ctx, srv, p.src, p.target, p.applied)
+		if p.v.kind == "" || strings.HasPrefix(p.v.kind, "generator") {
+			return
+		}
+		// a finding: drop mutations while the failure stands
+		recipe, v := p.recipe, p.v
+		for j := 0; j < len(recipe); {
+			shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
+			tgt, app := mutate(muts, p.src, shorter)
+			if len(app) == 0 {
+				j++
+				continue
+			}
+			if w := judge(ctx, srv, p.src, tgt, app); w.kind == v.kind {
+				recipe, v = shorter, w
+				continue
+			}
+			j++
+		}
+		p.recipe, p.v = recipe, v
+	})
+	for _, p := range pairs {
+		v := p.v
+		for _, a := range p.applied {
 			byMutation[a]++
 		}
 		tallyHit(hit, v.changes)
@@ -159,24 +224,11 @@ func runMigrateProbe(t *testing.T, srv *dump.Server, muts []mutation, pg18 bool,
 		if strings.HasPrefix(v.kind, "generator") {
 			counts[v.kind]++
 			if counts[v.kind] <= 3 {
-				t.Logf("%s (pair %d, %s): %s\n%s", v.kind, i, strings.Join(applied, "; "), v.detail, v.aSQL)
+				t.Logf("%s (pair %d, %s): %s\n%s", v.kind, p.i, strings.Join(p.applied, "; "), v.detail, v.aSQL)
 			}
 			continue
 		}
 		counts["finding"]++
-		for j := 0; j < len(recipe); {
-			shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
-			tgt, app := mutate(muts, src, shorter)
-			if len(app) == 0 {
-				j++
-				continue
-			}
-			if w := judge(ctx, srv, src, tgt, app); w.kind == v.kind {
-				recipe, v = shorter, w
-				continue
-			}
-			j++
-		}
 		findings = append(findings, v)
 	}
 	randomHit := len(hit)

@@ -9,7 +9,9 @@
 // ~/.cache/sqlshape/mysqld-<version>/template (--initialize-insecure, a few seconds); every
 // Start copies it to a temporary directory and runs mysqld there on a unix socket, with
 // networking off, then loads the schema into a database named sqlshape. Close stops the
-// server and removes the directory.
+// server and removes the directory. A package whose TestMain runs its tests through Main
+// boots one server per set of settings instead and hands it from test to test (Close drops
+// the database): a start is over a second, a CREATE DATABASE milliseconds.
 //
 // The server runs as the schema declares it: every `-- sqlshape: server <variable> =
 // <value>` line becomes a --<variable>=<value> option of mysqld (a variable mysqld does not
@@ -30,7 +32,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
+	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -48,14 +52,60 @@ type DB struct {
 	Version string // the server's version, as SELECT VERSION() reports it
 	db      *sql.DB
 	cfg     *mysql.Config
-	cmd     *exec.Cmd
-	exited  chan struct{} // closed when mysqld has exited (cmd.Wait returned)
-	dir     string
+	srv     *server
+	owned   bool // Close stops the server; otherwise it hands the server back to the pool
+}
+
+// server is one mysqld process: its options, socket and data directory.
+type server struct {
+	key    string // the options it was started with, joined; two Starts share a server only when these agree
+	cfg    *mysql.Config
+	cmd    *exec.Cmd
+	exited chan struct{} // closed when mysqld has exited (cmd.Wait returned)
+	dir    string
+	busy   bool // a DB is using it (the pool's, under pool.mu)
+}
+
+// pool is the process's shared servers, in effect after Main. A Start finds a free server
+// started with the same options, or boots one and adds it; Close hands the server back with
+// its database dropped. Servers never stop until Main's m.Run returns.
+var pool struct {
+	mu      sync.Mutex
+	sharing bool
+	servers []*server
+}
+
+// Main is m.Run with servers shared across the package's tests: from TestMain,
+//
+//	func TestMain(m *testing.M) { os.Exit(mysqltest.Main(m)) }
+//
+// Without it every Start boots a mysqld of its own (copying the template data directory
+// and waiting for InnoDB, over a second), and Close stops it. Under Main the first Start of
+// a given set of `-- sqlshape: server` settings boots one, and every later Start with the
+// same settings takes it over once its previous user has Closed (Close drops the database,
+// so the schema starts from nothing each time); a Start while that server is in use, or with
+// other settings, boots another. Server-global state a test changes (SET GLOBAL, users) is
+// visible to the tests after it, which is what the tests give up for the shared process.
+// Every server stops, its directory removed, when m.Run returns.
+func Main(m *testing.M) int {
+	pool.mu.Lock()
+	pool.sharing = true
+	pool.mu.Unlock()
+	code := m.Run()
+	pool.mu.Lock()
+	servers := pool.servers
+	pool.servers, pool.sharing = nil, false
+	pool.mu.Unlock()
+	for _, s := range servers {
+		s.stop()
+	}
+	return code
 }
 
 // Start boots a mysqld and loads schemaSQL into it. schemaSQL may hold any number of
 // statements; it is sent as one multi-statement script, so a compound statement (a trigger
-// body with `;` inside) needs no DELIMITER.
+// body with `;` inside) needs no DELIMITER. Under Main (see there) the server may be one an
+// earlier test already booted.
 func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	mysqld, err := exec.LookPath("mysqld")
 	if err != nil {
@@ -77,6 +127,63 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 			lctn = s.Value
 		}
 	}
+	srv, owned, err := acquire(ctx, mysqld, version, options, lctn)
+	if err != nil {
+		return nil, err
+	}
+	d := &DB{Version: version, srv: srv, owned: owned, cfg: srv.cfg.Clone()}
+	if err := d.load(ctx, schemaSQL); err != nil {
+		d.Close()
+		return nil, err
+	}
+	return d, nil
+}
+
+// acquire is a server started with options: a free one of the pool when sharing (owned
+// false), else a new one (owned true when not sharing; a new shared server is added to the
+// pool and marked busy).
+func acquire(ctx context.Context, mysqld, version string, options []string, lctn string) (*server, bool, error) {
+	key := strings.Join(options, "\x00")
+	pool.mu.Lock()
+	sharing := pool.sharing
+	if sharing {
+		for _, s := range pool.servers {
+			if s.key == key && !s.busy {
+				s.busy = true
+				pool.mu.Unlock()
+				return s, false, nil
+			}
+		}
+	}
+	pool.mu.Unlock()
+	// a shared server outlives the Start that booted it, so it is not tied to ctx (which the
+	// caller cancels when its test ends)
+	cmdCtx := ctx
+	if sharing {
+		cmdCtx = context.Background()
+	}
+	s, err := boot(ctx, cmdCtx, mysqld, version, options, lctn)
+	if err != nil {
+		return nil, false, err
+	}
+	s.key = key
+	if !sharing {
+		return s, true, nil
+	}
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	if !pool.sharing { // Main returned meanwhile: nobody will stop it for us
+		return s, true, nil
+	}
+	s.busy = true
+	pool.servers = append(pool.servers, s)
+	return s, false, nil
+}
+
+// boot copies the template data directory and starts mysqld on it, returning once the
+// socket answers and lower_case_table_names is what the schema declared. ctx bounds the
+// wait; cmdCtx bounds the process.
+func boot(ctx, cmdCtx context.Context, mysqld, version string, options []string, lctn string) (*server, error) {
 	template, err := ensureTemplate(ctx, mysqld, version, lctn)
 	if err != nil {
 		return nil, err
@@ -91,30 +198,32 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 		return nil, err
 	}
 	sock := filepath.Join(dir, "mysql.sock")
-	cmd := exec.CommandContext(ctx, mysqld, append([]string{"--no-defaults", "--datadir=" + data, "--socket=" + sock,
+	cmd := exec.CommandContext(cmdCtx, mysqld, append([]string{"--no-defaults", "--datadir=" + data, "--socket=" + sock,
 		"--skip-networking", "--mysqlx=OFF", "--pid-file=" + filepath.Join(dir, "mysqld.pid"),
 		"--log-error=" + filepath.Join(dir, "error.log"), "--secure-file-priv=", "--skip-log-bin",
 		"--innodb-buffer-pool-size=32M", "--innodb-redo-log-capacity=8M", "--performance-schema=OFF"}, options...)...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.SysProcAttr = sysProcAttr()
 	if err := cmd.Start(); err != nil {
 		os.RemoveAll(dir)
 		return nil, err
 	}
-	d := &DB{Version: version, cmd: cmd, dir: dir, exited: make(chan struct{})}
-	go func() { cmd.Wait(); close(d.exited) }()
-	d.cfg = mysql.NewConfig()
-	d.cfg.User, d.cfg.Net, d.cfg.Addr = "root", "unix", sock
-	d.cfg.ParseTime = true
-	d.cfg.MultiStatements = true
-	conn, err := mysql.NewConnector(d.cfg)
+	s := &server{cmd: cmd, dir: dir, exited: make(chan struct{})}
+	go func() { cmd.Wait(); close(s.exited) }()
+	s.cfg = mysql.NewConfig()
+	s.cfg.User, s.cfg.Net, s.cfg.Addr = "root", "unix", sock
+	s.cfg.ParseTime = true
+	s.cfg.MultiStatements = true
+	conn, err := mysql.NewConnector(s.cfg)
 	if err != nil {
-		d.Close()
+		s.stop()
 		return nil, err
 	}
-	d.db = sql.OpenDB(conn)
-	if err := d.wait(ctx); err != nil {
+	admin := sql.OpenDB(conn)
+	defer admin.Close()
+	if err := s.wait(ctx, admin); err != nil {
 		log := errorLog(filepath.Join(dir, "error.log"))
-		d.Close()
+		s.stop()
 		return nil, fmt.Errorf("mysqltest: mysqld did not come up: %w%s", err, log)
 	}
 	// lower_case_table_names = 2 is only honored on a case-insensitive filesystem: on a
@@ -123,32 +232,28 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 	// filesystem needs to know its tests are not actually exercising 2, not a server that
 	// silently answers as 0.
 	var gotLCTN string
-	if err := d.db.QueryRowContext(ctx, "SELECT @@GLOBAL.lower_case_table_names").Scan(&gotLCTN); err != nil {
-		d.Close()
+	if err := admin.QueryRowContext(ctx, "SELECT @@GLOBAL.lower_case_table_names").Scan(&gotLCTN); err != nil {
+		s.stop()
 		return nil, fmt.Errorf("mysqltest: reading lower_case_table_names: %w", err)
 	}
 	if gotLCTN != lctn {
-		d.Close()
+		s.stop()
 		return nil, fmt.Errorf("mysqltest: schema declares lower_case_table_names = %s, but the running mysqld started with %s (2 needs a case-insensitive filesystem)", lctn, gotLCTN)
 	}
-	if err := d.load(ctx, schemaSQL); err != nil {
-		d.Close()
-		return nil, err
-	}
-	return d, nil
+	return s, nil
 }
 
 // wait pings until the socket answers, or mysqld has exited (an option it rejects, a data
 // directory it cannot use), or a minute has passed.
-func (d *DB) wait(ctx context.Context) error {
+func (s *server) wait(ctx context.Context, admin *sql.DB) error {
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		err := d.db.PingContext(ctx)
+		err := admin.PingContext(ctx)
 		if err == nil {
 			return nil
 		}
 		select {
-		case <-d.exited:
+		case <-s.exited:
 			return fmt.Errorf("mysqld exited: %w", err)
 		default:
 		}
@@ -158,11 +263,55 @@ func (d *DB) wait(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-d.exited:
+		case <-s.exited:
 			return fmt.Errorf("mysqld exited: %w", err)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// stop ends the process and removes its directory.
+func (s *server) stop() {
+	if s.cmd != nil && s.cmd.Process != nil {
+		s.cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-s.exited:
+		case <-time.After(30 * time.Second):
+			s.cmd.Process.Kill()
+			<-s.exited
+		}
+	}
+	if s.dir != "" {
+		os.RemoveAll(s.dir)
+	}
+}
+
+// release drops the schema's database and marks the server free for the next Start. A
+// server whose database will not drop (a connection still holding its tables) is stopped
+// and taken out of the pool instead, so the next Start boots a clean one.
+func (s *server) release() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := errors.New("mysqltest: no connector")
+	if conn, cerr := mysql.NewConnector(s.cfg); cerr == nil {
+		admin := sql.OpenDB(conn)
+		_, err = admin.ExecContext(ctx, "DROP DATABASE IF EXISTS "+Database)
+		admin.Close()
+	}
+	pool.mu.Lock()
+	if err == nil {
+		s.busy = false
+		pool.mu.Unlock()
+		return
+	}
+	for i, t := range pool.servers {
+		if t == s {
+			pool.servers = append(pool.servers[:i], pool.servers[i+1:]...)
+			break
+		}
+	}
+	pool.mu.Unlock()
+	s.stop()
 }
 
 // errorLog is the [ERROR] lines of mysqld's log, for the message of a server that did not
@@ -186,15 +335,21 @@ func errorLog(path string) string {
 
 // load creates the database and applies the schema.
 func (d *DB) load(ctx context.Context, schemaSQL string) error {
-	if _, err := d.db.ExecContext(ctx, "CREATE DATABASE "+Database); err != nil {
-		return err
-	}
-	d.cfg.DBName = Database
 	conn, err := mysql.NewConnector(d.cfg)
 	if err != nil {
 		return err
 	}
-	d.db.Close()
+	admin := sql.OpenDB(conn)
+	_, err = admin.ExecContext(ctx, "CREATE DATABASE "+Database)
+	admin.Close()
+	if err != nil {
+		return err
+	}
+	d.cfg.DBName = Database
+	conn, err = mysql.NewConnector(d.cfg)
+	if err != nil {
+		return err
+	}
 	d.db = sql.OpenDB(conn)
 	if text := strings.TrimSpace(schemaSQL); text != "" {
 		if _, err := d.db.ExecContext(ctx, text); err != nil {
@@ -214,23 +369,22 @@ func (d *DB) DSN() string {
 	return cfg.FormatDSN()
 }
 
-// Close stops the server and removes its directory.
+// Close stops the server and removes its directory; under Main, drops the database and
+// hands the server back for the next Start.
 func (d *DB) Close() {
 	if d.db != nil {
 		d.db.Close()
+		d.db = nil
 	}
-	if d.cmd != nil && d.cmd.Process != nil {
-		d.cmd.Process.Signal(syscall.SIGTERM)
-		select {
-		case <-d.exited:
-		case <-time.After(30 * time.Second):
-			d.cmd.Process.Kill()
-			<-d.exited
-		}
+	if d.srv == nil {
+		return
 	}
-	if d.dir != "" {
-		os.RemoveAll(d.dir)
+	if d.owned {
+		d.srv.stop()
+	} else {
+		d.srv.release()
 	}
+	d.srv = nil
 }
 
 var reVersion = regexp.MustCompile(`Ver (\d+\.\d+\.\d+)`)

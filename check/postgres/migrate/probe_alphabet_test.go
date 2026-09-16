@@ -82,26 +82,37 @@ const directedAttempts = 30
 // unlike a random pair (up to 7 mutations), a directed pair is already minimal, so there is
 // nothing to shrink if it turns up a finding.
 func directedCoverage(t *testing.T, ctx context.Context, srv *dump.Server, muts []mutation, pg18 bool, seed int64, counts, byMutation map[string]int, hit map[string]bool, findings *[]verdict) []string {
-	var stuck []string
-	for mi, m := range muts {
+	// every mutation draws from a PRNG of its own, so the mutations are independent and
+	// are judged side by side (see parallel); the tally below runs in their order
+	type directed struct {
+		applied []string
+		v       verdict
+	}
+	results := make([]directed, len(muts))
+	indices := make([]int, len(muts))
+	for i := range indices {
+		indices[i] = i
+	}
+	parallel(indices, func(mi int) {
 		r := rand.New(rand.NewSource(seed*100003 + int64(mi)))
-		var src, target *pSchema
-		var applied []string
-		ok := false
 		for attempt := 0; attempt < directedAttempts; attempt++ {
-			src = generate(r, pg18)
-			target, applied = mutate(muts, src, []step{{m: mi, seed: r.Int63()}})
+			src := generate(r, pg18)
+			target, applied := mutate(muts, src, []step{{m: mi, seed: r.Int63()}})
 			if len(applied) > 0 {
-				ok = true
-				break
+				results[mi] = directed{applied: applied, v: judge(ctx, srv, src, target, applied)}
+				return
 			}
 		}
-		if !ok {
+	})
+	var stuck []string
+	for mi, m := range muts {
+		res := results[mi]
+		if len(res.applied) == 0 {
 			stuck = append(stuck, m.name)
 			continue
 		}
-		v := judge(ctx, srv, src, target, applied)
-		for _, a := range applied {
+		v := res.v
+		for _, a := range res.applied {
 			byMutation[a]++
 		}
 		tallyHit(hit, v.changes)

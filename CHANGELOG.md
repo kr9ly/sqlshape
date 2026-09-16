@@ -35,7 +35,9 @@ release it is a candidate for.
 - The MySQL runtime, `github.com/kr9ly/sqlshape/mysql/v2` (`Run`, `Collect`, `First`, `Exec`,
   `Get` / `Find` / `ExecOne`, `ConstraintError`, `Violates`) over `database/sql`, and
   `github.com/kr9ly/sqlshape/mysqltest/v2`, which boots the `mysqld` on `PATH` with the
-  application's schema. `examples/5-mysql` shows the whole path.
+  application's schema; a package whose `TestMain` runs through `mysqltest.Main` boots one
+  server per set of declared settings and hands it from test to test instead of booting one
+  per `Start`. `examples/5-mysql` shows the whole path.
 - `sqlshape diff`, `apply` and `verify-schema` on MySQL: both sides are read as the server's own
   `SHOW CREATE` output, the target canonicalized in a scratch database on the same server, and
   the plan written in MySQL's own DDL, statement by statement. Tables with their options,

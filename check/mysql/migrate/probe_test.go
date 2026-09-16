@@ -28,8 +28,10 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,48 +123,46 @@ func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, appl
 	return v
 }
 
-// runPair mutates src with recipe, judges the result against a real server, and tallies the
-// pair: byMutation for every step that actually applied, hit for the (Op, Kind, Field)
-// alphabet triples the pair's diff exercised (whatever judge made of it afterward), and
-// counts/findings the same way TestMigrateProbe's own loop always has (a bad pairing the
-// generator itself produced is logged and dropped, a real finding is minimized and kept). It
-// returns the zero verdict, unmodified, when no step in recipe found anything to apply --
-// the caller's cue that this attempt did not exercise its mutation(s) at all and, for a
-// directed attempt, should be retried against a freshly generated schema.
-func runPair(ctx context.Context, scratch dump.Canonicalizer, label string, src *pSchema, recipe []step,
-	counts map[string]int, byMutation map[string]int, hit map[string]bool, findings *[]verdict, t *testing.T) verdict {
+// probeWorkers is how many pairs judge at once. Every Canonical runs in a scratch database
+// of its own on the one server, so the draw stays sequential -- the PRNG's stream, and with
+// it the report, is what it was when the pairs were judged one after another -- and only
+// the judging fans out.
+var probeWorkers = min(8, runtime.GOMAXPROCS(0))
+
+// parallel runs fn over items on probeWorkers goroutines and returns when all are done.
+func parallel[T any](items []T, fn func(T)) {
+	var wg sync.WaitGroup
+	next := make(chan T)
+	for w := 0; w < probeWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for it := range next {
+				fn(it)
+			}
+		}()
+	}
+	for _, it := range items {
+		next <- it
+	}
+	close(next)
+	wg.Wait()
+}
+
+// judgePair applies recipe to src and judges the pair; a real finding is minimized (steps
+// dropped while the failure stands). applied is what the recipe changed before minimizing,
+// nil when no step found anything to apply -- the caller's cue that this attempt did not
+// exercise its mutation(s) at all and, for a directed attempt, should be retried against a
+// freshly generated schema.
+func judgePair(ctx context.Context, scratch dump.Canonicalizer, src *pSchema, recipe []step) (v verdict, applied []string) {
 	target, applied := mutate(src, recipe)
 	if len(applied) == 0 {
-		return verdict{}
+		return verdict{}, nil
 	}
-	v := judge(ctx, scratch, src, target, applied)
-	for _, a := range applied {
-		byMutation[a]++
+	v = judge(ctx, scratch, src, target, applied)
+	if v.kind == "" || strings.HasPrefix(v.kind, "generator") {
+		return v, applied
 	}
-	// tally which (Op, Kind, Field) triples (diff.Alphabet) this pair exercised, whatever
-	// judge made of it afterward.
-	for _, ch := range v.changes {
-		if ch.Op == diff.Alter {
-			for _, f := range ch.Fields {
-				hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: f.Name}.String()] = true
-			}
-			continue
-		}
-		hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
-	}
-	if v.kind == "" {
-		counts["pass"]++
-		return v
-	}
-	if strings.HasPrefix(v.kind, "generator") {
-		counts[v.kind]++
-		if counts[v.kind] <= 3 {
-			t.Logf("%s (%s, %s): %s\n%s", v.kind, label, strings.Join(applied, "; "), v.detail, v.aSQL)
-		}
-		return v
-	}
-	counts["finding"]++
-	// minimize: drop steps while the failure stands
 	for j := 0; j < len(recipe); {
 		shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
 		tgt, app := mutate(src, shorter)
@@ -176,7 +176,48 @@ func runPair(ctx context.Context, scratch dump.Canonicalizer, label string, src 
 		}
 		j++
 	}
-	*findings = append(*findings, v)
+	return v, applied
+}
+
+// tally records a judged pair: byMutation by what it applied, hit by which (Op, Kind,
+// Field) triples (diff.Alphabet) it exercised whatever judge made of it afterward, counts by
+// the verdict; a failure the generator itself produced is logged (the first three) and
+// dropped, a real finding kept.
+func tally(t *testing.T, label string, v verdict, applied []string, counts, byMutation map[string]int, hit map[string]bool, findings *[]verdict) {
+	for _, a := range applied {
+		byMutation[a]++
+	}
+	for _, ch := range v.changes {
+		if ch.Op == diff.Alter {
+			for _, f := range ch.Fields {
+				hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: f.Name}.String()] = true
+			}
+			continue
+		}
+		hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
+	}
+	switch {
+	case v.kind == "":
+		counts["pass"]++
+	case strings.HasPrefix(v.kind, "generator"):
+		counts[v.kind]++
+		if counts[v.kind] <= 3 {
+			t.Logf("%s (%s, %s): %s\n%s", v.kind, label, strings.Join(applied, "; "), v.detail, v.aSQL)
+		}
+	default:
+		counts["finding"]++
+		*findings = append(*findings, v)
+	}
+}
+
+// runPair is judgePair followed by tally; the zero verdict, untallied, when nothing applied.
+func runPair(ctx context.Context, scratch dump.Canonicalizer, label string, src *pSchema, recipe []step,
+	counts map[string]int, byMutation map[string]int, hit map[string]bool, findings *[]verdict, t *testing.T) verdict {
+	v, applied := judgePair(ctx, scratch, src, recipe)
+	if applied == nil {
+		return verdict{}
+	}
+	tally(t, label, v, applied, counts, byMutation, hit, findings)
 	return v
 }
 
@@ -200,6 +241,14 @@ func TestMigrateProbe(t *testing.T) {
 	byMutation := map[string]int{}
 	hit := map[string]bool{}
 	var findings []verdict
+	type pair struct {
+		i       int
+		src     *pSchema
+		recipe  []step
+		applied []string
+		v       verdict
+	}
+	var pairs []*pair
 	for i := 0; i < *probeN; i++ {
 		src := generate(r)
 		n := 1 + r.Intn(5)
@@ -207,7 +256,14 @@ func TestMigrateProbe(t *testing.T) {
 		for j := 0; j < n; j++ {
 			recipe = append(recipe, step{m: r.Intn(len(mutations)), seed: r.Int63()})
 		}
-		runPair(ctx, scratch, fmt.Sprintf("pair %d", i), src, recipe, counts, byMutation, hit, &findings, t)
+		pairs = append(pairs, &pair{i: i, src: src, recipe: recipe})
+	}
+	parallel(pairs, func(p *pair) { p.v, p.applied = judgePair(ctx, scratch, p.src, p.recipe) })
+	for _, p := range pairs {
+		if p.applied == nil {
+			continue
+		}
+		tally(t, fmt.Sprintf("pair %d", p.i), p.v, p.applied, counts, byMutation, hit, &findings)
 	}
 	hitRandom := len(hit)
 
