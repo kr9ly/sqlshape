@@ -501,7 +501,13 @@ func (c *checker) viaForeignKey(sc *facts.Scope, i int, rel Relation, col string
 				}
 			}
 			if joined && containsRef(sc.Fixed, facts.ColRef{Leaf: j, Column: con.RefColumns[at]}) {
-				return true
+				// the propagated column itself must be non-NULL for the row: a NULL in any
+				// column of a foreign key exempts the row from the constraint (MATCH
+				// SIMPLE, measured on MySQL 8.4: items(order_id = 1, tenant_id = NULL) is
+				// accepted under a composite key onto orders(id, tenant_id)), so such a
+				// row joins the parent on the other columns while agreeing on nothing
+				// here. The joined columns are non-NULL already, equal to a fixed value.
+				return rel.NotNull(col) || containsRef(sc.NotNull, facts.ColRef{Leaf: i, Column: col})
 			}
 		}
 	}

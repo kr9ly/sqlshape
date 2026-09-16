@@ -129,8 +129,9 @@ A write through a view declared `WITH CHECK OPTION` discharges `require pinned(<
 base table (`Discharge.Path` `ByView`):
 
 - when the view's own `WHERE` fixes the column by equality; a plain `WITH CHECK OPTION` is
-  CASCADED, so an underlying view's `WHERE` counts too, `WITH LOCAL CHECK OPTION` stops at the
-  view itself;
+  CASCADED, so every underlying view's `WHERE` counts too (behind a join as well, measured);
+  `WITH LOCAL CHECK OPTION` stops at the view itself except for an underlying view that
+  declares a check option of its own, which the server keeps enforcing (measured);
 - the 1369 above is what makes the pin genuine: a view without the clause never discharges it
   (a write through it moves the row out of the view's `WHERE` silently);
 - for `UPDATE` only so far: `INSERT` and `DELETE` through a view are not analyzed yet, a gap
@@ -187,6 +188,8 @@ What the server itself refuses when the body is created is an error here too:
 | `COMMIT` / `START TRANSACTION` / a DDL statement inside a body | 1422 |
 | a trigger that writes its own table | 1442, on every one of the 18 timing x event x write combinations (measured): always a failure, reported on the trigger's own definition rather than on a statement that fires it |
 | two `DECLARE`s of the same variable name in one block | 1331 |
+| two `DECLARE ... CONDITION`s or two `DECLARE ... CURSOR`s of one name in one block (a variable and a cursor of one name are different namespaces) | 1332 / 1333 |
+| two `HANDLER`s of one block naming the same condition value (handlers that merely overlap, `SQLEXCEPTION` next to `SQLSTATE '45000'`, are accepted) | 1413 |
 | dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) in a trigger or FUNCTION (a PROCEDURE is exempt) | 1336 |
 | a bare `RESIGNAL` reached outside any `HANDLER` | 1645, certain every time |
 | a routine that `CALL`s itself | 1456 on every recursive invocation (`max_sp_recursion_depth` defaults to 0, not a setting this package reads); direct self-recursion only, not a routine reaching itself through another |

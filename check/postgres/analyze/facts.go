@@ -260,7 +260,7 @@ func (a *analyzer) scopeFacts(p *prover, waived map[string][]string) *facts.Scop
 		if view == nil || view.CheckOption == 0 {
 			continue
 		}
-		for _, pr := range facts.LiftThroughView(lf, i, view.CheckOption == 'c') {
+		for _, pr := range facts.LiftThroughView(lf, i) {
 			if pr.Op == facts.Eq {
 				fs.Preds = append(fs.Preds, pr)
 			}
@@ -304,6 +304,14 @@ func (a *analyzer) leafFacts(l *rte, waived map[string][]string, i int) facts.Le
 		lf.Outputs = outputFacts(l, a.factOutBySel[l.sub.sel])
 	case l.rel == nil:
 		lf.Kind = facts.Function
+	}
+	if l.viewRel != nil {
+		switch l.viewRel.CheckOption {
+		case 'l':
+			lf.CheckOption = facts.LocalCheckOption
+		case 'c':
+			lf.CheckOption = facts.CascadedCheckOption
+		}
 	}
 	if rel == nil {
 		return lf

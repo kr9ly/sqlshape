@@ -90,7 +90,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 `WITH CHECK OPTION`を宣言したビュー経由の書き込みは、基底表の`require pinned(<列>)`を履行する（`Discharge.Path`は`ByView`）:
 
-- ビュー自身のWHEREがその列を等値で固定しているとき。`WITH CHECK OPTION`と書くだけならCASCADEDなので下位ビューのWHEREも数え、`WITH LOCAL CHECK OPTION`はそのビュー自身で止まる
+- ビュー自身のWHEREがその列を等値で固定しているとき。`WITH CHECK OPTION`と書くだけならCASCADEDなので下位の全ビューのWHEREも数える（結合の向こうにあっても。測定済み）。`WITH LOCAL CHECK OPTION`はそのビュー自身で止まるが、自前のCHECK OPTIONを宣言した下位ビューはサーバが検査し続けるので数える（測定済み）
 - 裏付けは上の1369そのもの。CHECK OPTIONを宣言していないビューはこの経路を持たない（そこを経由した書き込みは行をビューから静かに外すだけで、サーバは拒まない）
 - 今のところ`UPDATE`だけ。ビュー経由の`INSERT`と`DELETE`はアナライザーがまだ読まない（この機能より前からある穴）
 
@@ -123,6 +123,8 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 | 本体内の`COMMIT` / `START TRANSACTION` / DDL文 | 1422 |
 | トリガが自分の表に書く | 1442。タイミング×イベント×書き込みの18通り全部で（測定済み）。常に失敗するので、発火する文にではなくトリガの定義に報告する |
 | 同じブロック内で同名の変数を2回`DECLARE`する | 1331 |
+| 同じブロック内で同名の`DECLARE ... CONDITION`か`DECLARE ... CURSOR`を2回（変数とカーソルの同名は名前空間が別で許される） | 1332 / 1333 |
+| 同じブロック内の2つの`HANDLER`が同じ条件値を名指す（`SQLEXCEPTION`と`SQLSTATE '45000'`のように重なるだけなら許される） | 1413 |
 | トリガまたはFUNCTION内の動的SQL（`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`。PROCEDUREは対象外） | 1336 |
 | どの`HANDLER`の外でも届く値の無い`RESIGNAL` | 1645。常に失敗する |
 | 自分自身を`CALL`するルーチン | 再帰呼び出しのたびに1456（`max_sp_recursion_depth`の既定は0。この仕組みが読む設定ではない）。直接の自己再帰だけで、別ルーチン経由で自身に戻るものは対象外 |

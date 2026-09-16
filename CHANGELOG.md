@@ -90,11 +90,18 @@ release it is a candidate for.
   `[]T` for an array whose Go element cannot be NULL; `interval` into `time.Duration` carries a
   Lossy note; `paired` requires the write, not matching values; `RETURNING` a `sensitive` column
   is reading it.
-- MySQL verdicts after two adversarial rounds: `USING` / `NATURAL` joins coalesce their common
+- MySQL verdicts after three adversarial rounds: `USING` / `NATURAL` joins coalesce their common
   columns; `WITH ROLLUP` makes non-aggregated result columns nullable; `ON DUPLICATE KEY UPDATE`
   and `REPLACE` count as the writes they are; a `HAVING` conjunct over `GROUP BY` columns is a
   fact; a string column compared to a numeric literal fixes nothing; an expression the server
-  rejects in an INSERT's or UPDATE's value is that error, not an unknown type.
+  rejects in an INSERT's or UPDATE's value is that error, not an unknown type; two `DECLARE`s
+  of one condition, cursor or handler condition in a block are the server's own 1332 / 1333 /
+  1413.
+- Obligations on both databases: `pinned` propagates across a composite foreign key only into a
+  `NOT NULL` column (a NULL in a foreign-key column exempts the row from the constraint, so
+  such a row joins the parent while agreeing on nothing); `WITH CHECK OPTION` follows every
+  view of a chain the servers enforce -- an underlying view behind a join, and an underlying
+  view with its own check option under a `LOCAL` one.
 - Migrations refuse what they cannot do losslessly instead of noting it: a change of `INHERITS`,
   `OF type`, a domain's base type, a range's subtype, or a composite type's attribute type while
   a column uses it stops `apply` as a problem. `pgtest` and `mysqltest` are sqlshape's own test

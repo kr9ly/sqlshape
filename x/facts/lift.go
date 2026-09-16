@@ -7,11 +7,15 @@ package facts
 // OPTION cannot be satisfied through a computed column either, since it cannot be
 // assigned. The lifted predicates carry Origin FromView.
 //
-// cascaded also lifts a nested view's own conjuncts (a view defined over another view),
-// the way PostgreSQL's CASCADED check option and MySQL's default (plain WITH CHECK OPTION,
-// or WITH CASCADED CHECK OPTION) follow the whole chain down to the base table; false
-// (PostgreSQL's WITH LOCAL CHECK OPTION) stops after this level.
-func LiftThroughView(l Leaf, at int, cascaded bool) []Pred {
+// Which levels of a view chain (a view defined over another view, possibly joined to
+// other relations) are lifted follows both servers' own rule for WITH CHECK OPTION,
+// measured on each: the written-through view's own WHERE always; an underlying view's
+// WHERE when the view above it is CASCADED (l.CheckOption, or an intermediate view's own
+// CascadedCheckOption once reached), and otherwise only when that underlying view carries
+// a check option of its own -- LOCAL stops the cascade but does not switch off what a
+// nested view enforces by itself. Every view leaf of a body is followed, not only a sole
+// one: a CASCADED view over `v1 JOIN meta` still enforces v1's WHERE (measured, MySQL 8.4).
+func LiftThroughView(l Leaf, at int) []Pred {
 	translate := func(col ColRef) (ColRef, bool) {
 		for _, o := range l.Outputs {
 			if o.Col == col {
@@ -20,13 +24,14 @@ func LiftThroughView(l Leaf, at int, cascaded bool) []Pred {
 		}
 		return ColRef{}, false
 	}
-	return liftPreds(l.Body, translate, at, cascaded)
+	return liftPreds(l.Body, translate, at, l.CheckOption == CascadedCheckOption)
 }
 
 // liftPreds walks one level of a view's own body, translating its FromStatement
 // conjuncts through translate (a view leaf's own numbering onto the enclosing statement's
-// leaf at) and, when cascaded, recursing into a nested view's body one level further down
-// by composing translate with the intermediate leaf's own Outputs.
+// leaf at) and recursing into each nested view's body that the rule above reaches, by
+// composing translate with the intermediate leaf's own Outputs. cascaded: a view above
+// this body's leaves is CASCADED, so every nested view is followed.
 func liftPreds(body *Scope, translate func(ColRef) (ColRef, bool), at int, cascaded bool) []Pred {
 	if body == nil {
 		return nil
@@ -69,17 +74,20 @@ func liftPreds(body *Scope, translate func(ColRef) (ColRef, bool), at int, casca
 		np.Origin = FromView
 		out = append(out, np)
 	}
-	if cascaded && len(body.Leaves) == 1 && body.Leaves[0].Body != nil {
-		nested := body.Leaves[0]
+	for j := range body.Leaves {
+		nested := body.Leaves[j]
+		if nested.Body == nil || !(cascaded || nested.CheckOption != NoCheckOption) {
+			continue
+		}
 		nestedTranslate := func(r ColRef) (ColRef, bool) {
 			for _, o := range nested.Outputs {
 				if o.Col == r {
-					return translate(ColRef{Leaf: 0, Column: o.Name})
+					return translate(ColRef{Leaf: j, Column: o.Name})
 				}
 			}
 			return ColRef{}, false
 		}
-		out = append(out, liftPreds(nested.Body, nestedTranslate, at, cascaded)...)
+		out = append(out, liftPreds(nested.Body, nestedTranslate, at, cascaded || nested.CheckOption == CascadedCheckOption)...)
 	}
 	return out
 }

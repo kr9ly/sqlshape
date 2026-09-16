@@ -14,6 +14,7 @@ func (r fakeRel) Name() string                                 { return string(r
 func (r fakeRel) FullName() string                             { return string(r) }
 func (r fakeRel) Kind() facts.RelKind                          { return facts.Table }
 func (r fakeRel) HasColumn(col string) bool                    { return true }
+func (r fakeRel) NotNull(col string) bool                      { return true }
 func (r fakeRel) Directives() []string                         { return nil }
 func (r fakeRel) ForeignKeys() []ForeignKey                    { return nil }
 func (r fakeRel) ViewSource(col string) (string, string, bool) { return "", "", false }

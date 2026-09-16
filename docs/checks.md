@@ -1015,10 +1015,14 @@ An obligation is discharged one of six ways, and `-strict` reports the ones that
 3. by a row-level security policy whose USING establishes it, for roles subject to row security
    (`-strict` notes the owner caveat unless the table has `FORCE ROW LEVEL SECURITY`);
 4. across a composite foreign key: with `FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`,
-   a join on `order_id = orders.id` where `orders.tenant_id` is pinned pins `order_items.tenant_id` too;
+   a join on `order_id = orders.id` where `orders.tenant_id` is pinned pins `order_items.tenant_id` too,
+   provided `order_items.tenant_id` is `NOT NULL` (or the statement proves it so): a NULL in any
+   column of a foreign key exempts the row from the constraint on both databases, so such a row
+   joins the parent while agreeing on nothing;
 5. the write-side counterpart of 2: a write through an auto-updatable view declared
-   `WITH CHECK OPTION` is pinned by whatever the view's own WHERE fixes (CASCADED also by an
-   underlying view's) -- the server refuses any row that would not satisfy it, so `pinned` is
+   `WITH CHECK OPTION` is pinned by whatever the view's own WHERE fixes (CASCADED also by every
+   underlying view's, joined or not; LOCAL only by an underlying view that declares a check
+   option of its own) -- the server refuses any row that would not satisfy it, so `pinned` is
    discharged even where the statement's own WHERE never mentions the column (PostgreSQL's
    SQLSTATE 44000, MySQL's 1369 `ER_VIEW_CHECK_FAILED`; a view with no CHECK OPTION at all never
    discharges this way);

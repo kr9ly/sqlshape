@@ -97,7 +97,7 @@ func (a *analyzer) checkOptionFacts(sc *scope, fs *facts.Scope) {
 		if v == nil || v.CheckOption == "" || v.CheckOption == "NONE" {
 			continue
 		}
-		for _, pr := range facts.LiftThroughView(fs.Leaves[i], i, v.CheckOption == "CASCADED") {
+		for _, pr := range facts.LiftThroughView(fs.Leaves[i], i) {
 			if pr.Op == facts.Eq {
 				fs.Preds = append(fs.Preds, pr)
 			}
@@ -267,6 +267,16 @@ func (a *analyzer) leafFacts(r relation) facts.Leaf {
 		}
 	} else if r.view != "" {
 		lf.Table, lf.Kind = r.view, facts.View
+	}
+	if r.view != "" {
+		if v := a.s.View(r.view); v != nil {
+			switch v.CheckOption {
+			case "LOCAL":
+				lf.CheckOption = facts.LocalCheckOption
+			case "CASCADED":
+				lf.CheckOption = facts.CascadedCheckOption
+			}
+		}
 	}
 	if r.table == nil && r.body != nil {
 		lf.Body = r.body

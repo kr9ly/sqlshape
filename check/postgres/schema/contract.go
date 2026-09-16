@@ -72,6 +72,15 @@ func (c contractRel) HasColumn(col string) bool {
 	return false
 }
 
+// NotNull: a table column declared NOT NULL; a view's output never counts.
+func (c contractRel) NotNull(col string) bool {
+	if c.r.Kind != Table {
+		return false
+	}
+	cc := c.r.Column(col)
+	return cc != nil && cc.NotNull
+}
+
 func (c contractRel) Directives() []string { return c.r.Directives }
 
 // ForeignKeys lists the REFERENCES constraints; a key with no column list references the

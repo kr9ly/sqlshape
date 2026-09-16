@@ -829,8 +829,8 @@ var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 1. 文自身のWHERE / ON / SET
 2. ビュー経由。ビューの定義はスキーマ読み込み時にそれ自身が判定され、ビューの読み手はその中の表について再度判定されない（関数の本体も同じ扱いで、トリガー関数も含む。vetはスキーマの問題として、`sqlshape check`は発見として報告する）
 3. 行レベルセキュリティのポリシー。USINGがそれを成り立たせていれば、行セキュリティの対象ロールについて履行される（表が`FORCE ROW LEVEL SECURITY`でなければ`-strict`が所有者への注記を出す）
-4. 複合外部キーをまたいで。`FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`があれば、`order_id = orders.id`で結合し`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている
-5. 2の書き込み側の対称形。自動更新可能なビューに`WITH CHECK OPTION`が付いていれば、そのビュー経由の書き込みはビュー自身のWHERE（CASCADEDなら下位のビューのWHEREも）が固定する値で`pinned`を履行する。サーバ自身がそれを満たさない行を拒む（PostgreSQLのSQLSTATE 44000、MySQLの1369`ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを何も宣言していないビューはこの経路を持たない
+4. 複合外部キーをまたいで。`FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`があれば、`order_id = orders.id`で結合し`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている。ただし`order_items.tenant_id`が`NOT NULL`（か、文がそう証明している）ときに限る。外部キーのどれか1列がNULLの行はどちらのデータベースでも制約の検査対象外で、親と結合できても値を揃えていない
+5. 2の書き込み側の対称形。自動更新可能なビューに`WITH CHECK OPTION`が付いていれば、そのビュー経由の書き込みはビュー自身のWHERE（CASCADEDなら結合の有無を問わず下位の全ビューのWHEREも、LOCALなら自前のCHECK OPTIONを宣言した下位ビューのWHEREだけ）が固定する値で`pinned`を履行する。サーバ自身がそれを満たさない行を拒む（PostgreSQLのSQLSTATE 44000、MySQLの1369`ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを何も宣言していないビューはこの経路を持たない
 6. 文側のopt-out。`-- sqlshape: unfiltered orders`（述語型の義務）か`-- sqlshape: waive orders pinned(tenant_id)`（宣言どおりの綴りで1つ。`waive orders`だけならその表の義務を全部）。opt-outは`-strict`で報告される
 
 表の出現ごとに判定する。自己結合やサブクエリでもう一度その表を読めば、そこでも義務を負う。`RETURNING`は判定しない。ビューに付けた義務はビューの読み手への義務で、ビューの定義文は中の表の義務を自分で履行する側。

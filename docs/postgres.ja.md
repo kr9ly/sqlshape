@@ -92,7 +92,7 @@ type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
 
 自動更新可能ビューで`WITH CHECK OPTION`を宣言したものへの`UPDATE` / `INSERT`は、基底表の`require pinned(<列>)`を履行する（`Discharge.Path`は`ByView`）:
 
-- ビュー自身のWHEREがその列を等値で固定しているとき。`WITH CHECK OPTION`単独ならCASCADEDなので下位ビューのWHEREも数え、`WITH LOCAL CHECK OPTION`はそのビュー自身で止まる
+- ビュー自身のWHEREがその列を等値で固定しているとき。`WITH CHECK OPTION`単独ならCASCADEDなので下位の全ビューのWHEREも数える。`WITH LOCAL CHECK OPTION`はそのビュー自身で止まるが、自前のCHECK OPTIONを宣言した下位ビューはPostgreSQLが検査し続けるので数える
 - 裏付けは上の44000そのもの。CHECK OPTIONを宣言していないビューはこの経路を持たない
 
 ## ランタイム: pgx

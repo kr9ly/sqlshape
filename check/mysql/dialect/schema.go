@@ -313,8 +313,12 @@ func (c contractTable) Name() string              { return c.t.Name }
 func (c contractTable) FullName() string          { return c.t.Name }
 func (c contractTable) Kind() facts.RelKind       { return facts.Table }
 func (c contractTable) HasColumn(col string) bool { return c.t.Column(col) != nil }
-func (c contractTable) Directives() []string      { return c.t.Directives }
-func (c contractTable) ForceRowSecurity() bool    { return false }
+func (c contractTable) NotNull(col string) bool {
+	cc := c.t.Column(col)
+	return cc != nil && cc.NotNull
+}
+func (c contractTable) Directives() []string   { return c.t.Directives }
+func (c contractTable) ForceRowSecurity() bool { return false }
 
 func (c contractTable) ViewSource(col string) (string, string, bool) { return "", "", false }
 
@@ -346,6 +350,7 @@ func (c contractView) FullName() string                     { return c.v.Name }
 func (c contractView) Kind() facts.RelKind                  { return facts.View }
 func (c contractView) Directives() []string                 { return c.v.Directives }
 func (c contractView) ForeignKeys() []obligation.ForeignKey { return nil }
+func (c contractView) NotNull(col string) bool              { return false }
 func (c contractView) ForceRowSecurity() bool               { return false }
 
 // HasColumn: one of the view's output columns.

@@ -2051,22 +2051,96 @@ func bodyRefusalProblem(v mysqlast.Value, dynamicSQL bool) string {
 // DECLARE of the same name is ordinary shadowing, not a duplicate, so this never looks past
 // decls' own top level (bodyRefusalProblem's own recursion finds a nested block's decls in
 // turn, as its own sp_block_content).
+//
+// The same block-level rule holds for the block's other declarations, each in its own
+// namespace (measured on 8.4): two DECLARE ... CONDITIONs of one name are 1332 ("Duplicate
+// condition: x"), two DECLARE ... CURSORs 1333 ("Duplicate cursor: x"), and two HANDLERs
+// naming the same condition value -- a SQLSTATE, an error number, one of the three
+// classes, or a named condition resolved to its value -- 1413 ("Duplicate handler declared
+// in the same block"); a variable and a cursor of one name coexist.
 func duplicateVariableProblem(decls mysqlast.Value) string {
 	names, _ := decls.(mysqlast.List)
 	seen := map[string]bool{}
+	conds := map[string]bool{}
+	condValues := map[string]string{} // named condition -> its value's key, this block's own
+	cursors := map[string]bool{}
+	var handled []string // every condition value key an earlier HANDLER of the block names
 	for _, d := range names {
 		dn, ok := d.(*mysqlast.Node)
-		if !ok || dn.Class != "sp_decl_var" {
+		if !ok {
 			continue
 		}
-		for _, nm := range list(dn.Arg("names")) {
-			name := str(nm)
-			key := strings.ToLower(name)
-			if seen[key] {
-				return fmt.Sprintf("Duplicate variable: %s", name)
+		switch dn.Class {
+		case "sp_decl_var":
+			for _, nm := range list(dn.Arg("names")) {
+				name := str(nm)
+				key := strings.ToLower(name)
+				if seen[key] {
+					return fmt.Sprintf("Duplicate variable: %s", name)
+				}
+				seen[key] = true
 			}
-			seen[key] = true
+		case "sp_decl_condition":
+			name := str(dn.Arg("name"))
+			key := strings.ToLower(name)
+			if conds[key] {
+				return fmt.Sprintf("Duplicate condition: %s", name)
+			}
+			conds[key] = true
+			if vn, ok := dn.Arg("value").(*mysqlast.Node); ok {
+				condValues[key] = conditionKey(vn, condValues)
+			}
+		case "sp_decl_cursor":
+			name := str(dn.Arg("name"))
+			key := strings.ToLower(name)
+			if cursors[key] {
+				return fmt.Sprintf("Duplicate cursor: %s", name)
+			}
+			cursors[key] = true
+		case "sp_decl_handler":
+			var mine []string
+			for _, c := range list(dn.Arg("conditions")) {
+				cn, ok := c.(*mysqlast.Node)
+				if !ok {
+					continue
+				}
+				k := conditionKey(cn, condValues)
+				if k == "" {
+					continue
+				}
+				for _, h := range handled {
+					if h == k {
+						return "Duplicate handler declared in the same block"
+					}
+				}
+				mine = append(mine, k)
+			}
+			handled = append(handled, mine...)
 		}
+	}
+	return ""
+}
+
+// conditionKey spells one HANDLER FOR / DECLARE CONDITION FOR value so that two values the
+// server treats as the same compare equal: a SQLSTATE upper-cased, an error number, one of
+// the three classes by its keyword, and a named condition by the value it was declared
+// with in this block (an outer block's name resolves to nothing here, so it never collides
+// -- analyze/body.go raises the exact error on the resolved chain).
+func conditionKey(n *mysqlast.Node, named map[string]string) string {
+	switch n.Class {
+	case "sp_condition_value":
+		switch x := n.Arg("_mysqlerr").(type) {
+		case int:
+			return fmt.Sprintf("number:%d", x)
+		case mysqlast.Number:
+			return fmt.Sprintf("number:%d", int(x))
+		case string:
+			return "value:" + strings.ToUpper(x)
+		case mysqlast.Const:
+			return "value:" + strings.ToUpper(string(x))
+		}
+	case "sp_condition_name":
+		return named[strings.ToLower(str(n.Arg("name")))]
 	}
 	return ""
 }

@@ -15,7 +15,7 @@ func TestLiftThroughView_DirectColumn(t *testing.T) {
 		},
 		Outputs: []Output{{Name: "tid", Col: ColRef{Leaf: 0, Column: "tenant_id"}}},
 	}
-	got := LiftThroughView(l, 3, false)
+	got := LiftThroughView(l, 3)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1: %+v", len(got), got)
 	}
@@ -37,7 +37,7 @@ func TestLiftThroughView_UnprojectedColumnSkipped(t *testing.T) {
 		},
 		Outputs: []Output{{Name: "v", Col: ColRef{Leaf: 0, Column: "v"}}}, // tenant_id not projected
 	}
-	if got := LiftThroughView(l, 0, false); len(got) != 0 {
+	if got := LiftThroughView(l, 0); len(got) != 0 {
 		t.Errorf("got %+v, want none: tenant_id is not a projected column", got)
 	}
 }
@@ -56,7 +56,7 @@ func TestLiftThroughView_NonStatementOriginSkipped(t *testing.T) {
 		},
 		Outputs: []Output{{Name: "tenant_id", Col: ColRef{Leaf: 0, Column: "tenant_id"}}},
 	}
-	if got := LiftThroughView(l, 0, false); len(got) != 0 {
+	if got := LiftThroughView(l, 0); len(got) != 0 {
 		t.Errorf("got %+v, want none", got)
 	}
 }
@@ -90,7 +90,8 @@ func TestLiftThroughView_Cascaded(t *testing.T) {
 		Outputs: []Output{{Name: "tid", Col: ColRef{Leaf: 0, Column: "tenant_id"}}}, // v2 exposes v1's tenant_id as tid
 	}
 
-	cascaded := LiftThroughView(l, 5, true)
+	l.CheckOption = CascadedCheckOption
+	cascaded := LiftThroughView(l, 5)
 	found := false
 	for _, p := range cascaded {
 		if p.Col == (ColRef{Leaf: 5, Column: "tid"}) && p.Term.Const == "1" {
@@ -101,10 +102,40 @@ func TestLiftThroughView_Cascaded(t *testing.T) {
 		t.Errorf("cascaded lift did not reach v1's WHERE tenant_id = 1 through v2's own tid: %+v", cascaded)
 	}
 
-	local := LiftThroughView(l, 5, false)
+	l.CheckOption = LocalCheckOption
+	local := LiftThroughView(l, 5)
 	for _, p := range local {
 		if p.Term.Const == "1" {
-			t.Errorf("LOCAL (cascaded=false) must not reach the nested view's WHERE: %+v", local)
+			t.Errorf("LOCAL must not reach a nested view's WHERE when that view has no check option of its own: %+v", local)
 		}
+	}
+
+	// LOCAL over a nested view that is itself CASCADED: the nested view enforces its own
+	// WHERE regardless of what the view above asks for (both servers' rule, measured)
+	outerBody.Leaves[0].CheckOption = CascadedCheckOption
+	found = false
+	for _, p := range LiftThroughView(l, 5) {
+		if p.Col == (ColRef{Leaf: 5, Column: "tid"}) && p.Term.Const == "1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("LOCAL over a CASCADED nested view must still lift the nested view's own WHERE")
+	}
+	outerBody.Leaves[0].CheckOption = NoCheckOption
+
+	// a CASCADED view whose body joins the nested view to another relation still
+	// enforces the nested view's WHERE (the nested leaf is not the body's only one)
+	outerBody.Leaves = append([]Leaf{{Kind: Table}}, outerBody.Leaves...) // meta JOIN v1
+	l.Outputs = []Output{{Name: "tid", Col: ColRef{Leaf: 1, Column: "tenant_id"}}}
+	l.CheckOption = CascadedCheckOption
+	found = false
+	for _, p := range LiftThroughView(l, 5) {
+		if p.Col == (ColRef{Leaf: 5, Column: "tid"}) && p.Term.Const == "1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("CASCADED lift must follow a nested view that is joined to another leaf")
 	}
 }

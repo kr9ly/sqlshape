@@ -783,7 +783,22 @@ func (a *analyzer) walkBlock(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	var handlers []pendingHandler
 	for _, d := range decls {
 		if dn, ok := d.(*mysqlast.Node); ok && dn.Class == "sp_decl_handler" {
-			handlers = append(handlers, pendingHandler{conds: a.resolveHandlerConditions(dn.Arg("conditions")), body: dn.Arg("body")})
+			h := pendingHandler{conds: a.resolveHandlerConditions(dn.Arg("conditions")), body: dn.Arg("body")}
+			// two handlers of one block naming the same condition value (the same
+			// SQLSTATE, error number or class, a named condition resolved to its value)
+			// are refused at CREATE time: 1413 "Duplicate handler declared in the same
+			// block" (measured on 8.4). Handlers whose sets merely overlap in what they
+			// would catch (SQLEXCEPTION next to SQLSTATE '45000') are accepted.
+			for _, prev := range handlers {
+				for _, pc := range prev.conds {
+					for _, c := range h.conds {
+						if pc == c {
+							return &Error{Message: "Duplicate handler declared in the same block", Code: 1413, Position: a.ph.Back(dn.Start)}
+						}
+					}
+				}
+			}
+			handlers = append(handlers, h)
 			continue
 		}
 		if err := a.walkOne(sc, d, br); err != nil {
@@ -880,7 +895,16 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		return nil
 	case "sp_decl_condition":
 		if ref, ok := a.resolveCondValue(n.Arg("value")); ok {
-			a.declareCondition(str(n.Arg("name")), ref)
+			name := str(n.Arg("name"))
+			if a.vars != nil {
+				if _, dup := a.vars.conds[strings.ToLower(name)]; dup {
+					// the CONDITION sibling of 1331: two DECLARE ... CONDITION FORs of the
+					// same name in the same block are refused at CREATE time (1332
+					// "Duplicate condition: x", measured on 8.4)
+					return &Error{Message: fmt.Sprintf("Duplicate condition: %s", name), Code: 1332, Position: a.ph.Back(n.Start)}
+				}
+			}
+			a.declareCondition(name, ref)
 		}
 		// defensive when !ok: DECLARE ... CONDITION FOR's own value is always a bare
 		// sp_condition_value (sp_cond's grammar, not sp_condition_name), whose
@@ -889,6 +913,14 @@ func (a *analyzer) walkDecl(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	case "sp_decl_handler":
 		return a.walkOne(sc, n.Arg("body"), br)
 	case "sp_decl_cursor":
+		if a.vars != nil {
+			if _, dup := a.vars.cursors[strings.ToLower(str(n.Arg("name")))]; dup {
+				// the CURSOR sibling of 1331 (1333 "Duplicate cursor: x", measured on 8.4).
+				// A variable and a cursor of one name live in different namespaces and
+				// are accepted (measured), as the two maps already say.
+				return &Error{Message: fmt.Sprintf("Duplicate cursor: %s", str(n.Arg("name"))), Code: 1333, Position: a.ph.Back(n.Start)}
+			}
+		}
 		a.resetStatement()
 		a.facts = &facts.Facts{Kind: facts.Select}
 		cols, err := a.queryExpression(queryExprOf(n.Arg("query")), nil)

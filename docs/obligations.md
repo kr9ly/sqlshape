@@ -68,7 +68,7 @@ opt-outは今と同じで文側に置く。`-- sqlshape: unfiltered memos`は`--
 1. 文自身がWHERE・ON・SETで満たす
 2. ビュー経由: ビュー定義の事実を継承して満たす（`visible where`をビューが運ぶ、の一般化）
 3. ポリシー経由: RLSのUSINGが満たす。所有者への注記は今と同じ
-4. FK伝播: 結合先で満たされた義務が、複合FKの等値を通してこの表にも届く（`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている）
+4. FK伝播: 結合先で満たされた義務が、複合FKの等値を通してこの表にも届く（`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている）。届く先の列は`NOT NULL`（宣言か、文の述語による証明）に限る。外部キーのどれか1列がNULLの行は制約の検査対象外（MATCH SIMPLE。両サーバとも）で、親と結合できても揃っていない（裁定2026-09-16）
 5. opt-out
 
 証明できなければエラー。証明できないのは、義務が強すぎるか、スキーマに一意性・FKが足りていないかの発見になる（`One`と同じ）。
@@ -228,7 +228,7 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - **opt-outの名前と粒度** → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）。`unfiltered`は述語型だけを外す別名として残す
 - **関数本体の中の文** → ビューと同じ扱い。本体はschema読み込み時に自身が判定され（PL/pgSQLは行番号つき）、呼び出し側はその関数の中の表について判定されない。`via view`は関数呼び出しを直接参照と数えない（`-no-tables`が関数を許してきたのと同じ線。「DBがAPIを出す」路線ではビューと関数が出口）
 - **ビューに付けた義務** → ビューの**読み手**への義務。ビューの定義文は、中の表の義務を自分で履行する側。`require pinned(tenant_id)`をビューに付ければ読み手が固定し、`require via view`を表に付ければビューの定義文が履行経路になる。両方が同時に成り立つ
-- **`WITH CHECK OPTION`を宣言したビューへの書き込み** → 上の対称形（読み手ではなく**書き手**側）。ビューのWHEREが保証する等値を、その書き込みの`pinned`履行として使う（`Discharge.Path`は`ByView`）。CASCADED（PostgreSQLの、およびMySQLの既定）は下位ビューのWHEREまで届き、LOCAL（PostgreSQLのみ）はそのビュー自身のWHEREで止まる。履行できるのはサーバ自身がCHECK OPTION違反を拒む（PostgreSQL SQLSTATE 44000、MySQL 1369 `ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを宣言していないビューへの書き込みはこの経路を持たない（行がビューから見えなくなるだけで、サーバは拒まない）。`x/facts`の`LiftThroughView`がビュー本体のWHERE（`Origin`が`FromStatement`のもの）を書き込み文のleafへ列名を介して写像し、`x/obligation`の`pinned`が`FromView`起源の等値を`FromPolicy`と同じ形で見る
+- **`WITH CHECK OPTION`を宣言したビューへの書き込み** → 上の対称形（読み手ではなく**書き手**側）。ビューのWHEREが保証する等値を、その書き込みの`pinned`履行として使う（`Discharge.Path`は`ByView`）。CASCADED（PostgreSQLの、およびMySQLの既定）は結合の向こうも含めて下位の全ビューのWHEREまで届き、LOCALはそのビュー自身のWHEREで止まる — ただし自前のCHECK OPTIONを宣言した下位ビューはどちらのサーバも検査し続けるので数える（裁定2026-09-16、3巡目）。履行できるのはサーバ自身がCHECK OPTION違反を拒む（PostgreSQL SQLSTATE 44000、MySQL 1369 `ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを宣言していないビューへの書き込みはこの経路を持たない（行がビューから見えなくなるだけで、サーバは拒まない）。`x/facts`の`LiftThroughView`がビュー本体のWHERE（`Origin`が`FromStatement`のもの）を書き込み文のleafへ列名を介して写像し、`x/obligation`の`pinned`が`FromView`起源の等値を`FromPolicy`と同じ形で見る
 - **文をまたぐ規則** → 持たない。分析の単位は文で、これは核の裁定（「核はSQLしか見ない」）と同じ根。トランザクション内の対（accountsのUPDATEとledgerのINSERT）は、書き込みCTEで1文にまとめる形に変換できるものだけ扱う（ロードマップの`paired`）。Go側で`pgx.Tx`上の呼び出し集合を集める層は作らない
 - **FK伝播をNULL性と`One`の証明に使うか** → 義務の外。`prover`の話で、design.mdのRLSの項「未対応」に残す。義務側は複合FKで`pinned`を運ぶところまで
 - **「掘り先」の優先順位** → 1.1.0には入れない。次は状態機械とoutbox（`paired`）。下記ロードマップ

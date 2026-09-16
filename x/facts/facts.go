@@ -126,6 +126,10 @@ type Leaf struct {
 	// an expression is absent. The cardinality proof seeds the body with the outputs the
 	// enclosing level fixes.
 	Outputs []Output
+	// CheckOption is a view leaf's WITH [LOCAL | CASCADED] CHECK OPTION, as the producer
+	// read it from the view's definition; NoCheckOption for a table, a subquery, a CTE or
+	// a view without one. LiftThroughView reads it at every level of a view chain.
+	CheckOption CheckOption
 	// Single: the leaf is at most one row on its own (a scalar function in FROM).
 	Single bool
 	// Keys are the enforced unique keys of a table leaf (the primary key, the UNIQUE
@@ -135,6 +139,19 @@ type Leaf struct {
 	// vouch for.
 	Keys []Key
 }
+
+// CheckOption is a view's WITH CHECK OPTION kind.
+type CheckOption byte
+
+const (
+	NoCheckOption CheckOption = iota
+	// LocalCheckOption: the view's own WHERE is enforced on rows written through it; an
+	// underlying view's only when that view carries a check option of its own.
+	LocalCheckOption
+	// CascadedCheckOption: every view down the chain has its WHERE enforced (MySQL's
+	// plain WITH CHECK OPTION, and WITH CASCADED CHECK OPTION on both dialects).
+	CascadedCheckOption
+)
 
 // Key is one unique key of a table leaf.
 type Key struct {

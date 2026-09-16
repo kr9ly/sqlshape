@@ -162,6 +162,11 @@ type Relation interface {
 	Kind() facts.RelKind
 	// HasColumn: a table's column, or a view's output column.
 	HasColumn(col string) bool
+	// NotNull: the column is declared NOT NULL (a table's column; false for a view's
+	// output or an unknown column). Foreign-key propagation needs it: with MATCH SIMPLE,
+	// both servers' only behaviour, a row whose foreign-key column is NULL is not checked
+	// against the parent at all.
+	NotNull(col string) bool
 	// Directives are the `-- sqlshape: ...` lines written above the CREATE, normalized.
 	Directives() []string
 	ForeignKeys() []ForeignKey

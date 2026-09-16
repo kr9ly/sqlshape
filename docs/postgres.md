@@ -138,8 +138,9 @@ An UPDATE / INSERT through an auto-updatable view declared `WITH CHECK OPTION` d
 a base table's `require pinned(<col>)` (`Discharge.Path` `ByView`):
 
 - when the view's own WHERE fixes the column by equality; `WITH CHECK OPTION` alone is
-  CASCADED, so an underlying view's WHERE counts too, `WITH LOCAL CHECK OPTION` stops at the
-  view itself;
+  CASCADED, so every underlying view's WHERE counts too; `WITH LOCAL CHECK OPTION` stops at the
+  view itself except for an underlying view with a check option of its own, which PostgreSQL
+  keeps enforcing;
 - the 44000 above is what makes the pin genuine: a view with no CHECK OPTION never discharges
   it.
 
