@@ -127,6 +127,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 | 同じブロック内で同名の`DECLARE ... CONDITION`か`DECLARE ... CURSOR`を2回（変数とカーソルの同名は名前空間が別で許される） | 1332 / 1333 |
 | 同じブロック内の2つの`HANDLER`が同じ条件値を名指す（`SQLEXCEPTION`と`SQLSTATE '45000'`のように重なるだけなら許される） | 1413 |
 | トリガまたはFUNCTION内の動的SQL（`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`）と`FLUSH`（PROCEDUREは対象外） | 1336 |
+| 本体内の`LOCK TABLES` / `UNLOCK TABLES`・`LOAD DATA`・`ALTER VIEW`（PROCEDUREも対象。`SELECT ... INTO OUTFILE`は結果集合を返さないのでトリガや関数の中でも許される） | 1314 |
 | 5文字でないSQLSTATEリテラル（`SIGNAL SQLSTATE '4500'`、それを名指す`CONDITION`や`HANDLER`） | CREATE時に1407。5文字ならどんな文字でも受理する（測定済み） |
 | `MYSQL_ERRNO = 0`を設定する`SIGNAL` / `RESIGNAL` | 1231。常に失敗する |
 | どの`HANDLER`の外でも届く値の無い`RESIGNAL` | 1645。常に失敗する |
@@ -194,7 +195,15 @@ SELECT name, count(*) FROM users GROUP BY id            -- OK: id は主キー
 
 ### ビュー
 
-ビューは、`ALGORITHM=TEMPTABLE`と書かれているか、問い合わせがマージできない形（`GROUP BY`・`HAVING`・`DISTINCT`・`LIMIT`・集合演算・ウィンドウ関数・選択リスト内のサブクエリ）でない限り、読む側の問い合わせにマージされる（サーバ自身の`is_mergeable`）。マージされるビュー経由の書き込みは基底表に届き、それ以外のビューへの書き込みは1288になる。サーバがマージしないビューに付けた`WITH CHECK OPTION`は、サーバが`CREATE`を拒む（1368）のと同じくスキーマの読み込み時に拒む。`CREATE OR REPLACE VIEW`は前の定義を置き換える。
+ビューは、`ALGORITHM=TEMPTABLE`と書かれているか、問い合わせがマージできない形（`GROUP BY`・`HAVING`・`DISTINCT`・`LIMIT`・集合演算・ウィンドウ関数・選択リスト内のサブクエリ）でない限り、読む側の問い合わせにマージされる（サーバ自身の`is_mergeable`）。マージされるビュー経由の書き込みは基底表に届き、それ以外のビューへの書き込みは1288になる。サーバがマージしないビューに付けた`WITH CHECK OPTION`は、サーバが`CREATE`を拒む（1368）のと同じくスキーマの読み込み時に拒む。`CREATE OR REPLACE VIEW`は前の定義を置き換える。`ALTER VIEW`も同じく置き換える（ビューが存在しなければ1146、その名前が表なら1347）。
+
+### 結果集合を返さない文
+
+`SELECT` / `INSERT` / `UPDATE` / `DELETE` / `CALL`のほかに、検査器は次の文を読む（`Exec`で実行するもの）。
+
+- `LOAD DATA [LOCAL] INFILE ... INTO TABLE t`はファイルの行のINSERTである。対象は基底表でなければならず（ビューは1288）、列リストはその表で解決し（`@var`はフィールドを受け取るだけで列には代入しない）、`SET`の代入は式を列に対して型付けし、その中のプレースホルダは列の型を取る。失敗モードはINSERTのもの——埋める列にかかるキー・外部キー・CHECK（1062 / 1452 / 3819）、`IGNORE`が警告に変えること、`REPLACE`が衝突する行を先に消すこと——だが、サーバが変える点が2つある（実測）。`NOT NULL`列のフィールドがNULLになりうることは1048でなく1263（`SET col = NULL`は1048のまま）、列リストから外した`NOT NULL`列は1364でなく型の暗黙の既定値を取る。
+- `LOCK TABLES`が名指す表は存在しなければならず（1146。ビューもロックできる）、別名は重複してはならない（1066）。`UNLOCK TABLES`は何も解決しない。どちらにもパラメータは無い。
+- `SELECT ... INTO OUTFILE` / `INTO DUMPFILE`は、`INTO`の位置がどちらでも包んでいる`SELECT`と同じく型付けするが、列は返さない。行はサーバ上のファイルに書かれる。末尾の`FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`は`SELECT`の列をそのまま残す。
 
 ### MySQLに無いもの
 

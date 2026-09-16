@@ -57,6 +57,7 @@ const (
 	codeForeignKeyRow  = 1452 // "Cannot add or update a child row"
 	codeForeignKeyRef  = 1451 // "Cannot delete or update a parent row"
 	codeNotNull        = 1048
+	codeNullToNotNull  = 1263 // "NULL supplied to NOT NULL column": a LOAD DATA field (SQLSTATE 22004)
 	codeCheckViolation = 3819
 	code1442           = 1442 // a trigger writing its own table: always fails (measured)
 	code1172           = 1172 // SELECT ... INTO with more than one row
@@ -269,7 +270,7 @@ func triggerViolations(s *schema.Schema, t *schema.Table, event string, inUse ma
 			// table already in the chain is 1442 too, the same certain way a further write
 			// back into it is (measured: TestAdv3ChainSelectForUpdateInsideTriggerIs1442 --
 			// a plain SELECT or a subquery read does not collide, only a locking one; see
-			// walkSelect's own resolveLockingSelect, body.go, for how st.LockedReads is
+			// walkSelect's own markLastLockedReads, body.go, for how st.LockedReads is
 			// populated).
 			for _, lr := range st.LockedReads {
 				if chained[strings.ToLower(lr)] {
@@ -308,6 +309,8 @@ func constraintSQLState(code int) string {
 		return "HY000"
 	case code1172:
 		return "42000"
+	case codeNullToNotNull:
+		return "22004"
 	}
 	return "HY000"
 }
@@ -369,7 +372,9 @@ func (a *analyzer) insertViolations(w *write) []Violation {
 	notNull := a.strictFor(t) || w.rows == 1
 	if notNull {
 		out = append(out, notNullViolations(t, w.values)...)
-		out = append(out, omittedNotNullViolations(t, w.inserted)...)
+		if !w.load {
+			out = append(out, omittedNotNullViolations(t, w.inserted)...)
+		}
 	}
 	if w.onDuplicate != nil {
 		out = append(out, a.updateViolations(t, w.onDuplicate, nil, notNull)...)
@@ -470,7 +475,11 @@ func notNullViolations(t *schema.Table, values []assignment) []Violation {
 			continue
 		}
 		seen[as.col] = true
-		out = append(out, Violation{Code: codeNotNull, Table: t.Name, Columns: []string{as.col.Name}, Param: as.param})
+		code := codeNotNull
+		if as.fromFile {
+			code = codeNullToNotNull
+		}
+		out = append(out, Violation{Code: code, Table: t.Name, Columns: []string{as.col.Name}, Param: as.param})
 	}
 	return out
 }

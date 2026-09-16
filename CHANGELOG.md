@@ -26,6 +26,11 @@ release it is a candidate for.
   and the server's own refusals (a trigger writing its own table, 1442, among them) are
   reported. `-- sqlshape: error <code> = <Name>` names a raised error, as on PostgreSQL;
   `-- sqlshape: not null` above a `CREATE FUNCTION` declares it never returns NULL.
+- On MySQL the checker also reads `LOAD DATA` (an INSERT of the file's rows, with the server's
+  own 1263 for a NULL field in a `NOT NULL` column), `LOCK TABLES` / `UNLOCK TABLES`,
+  `SELECT ... INTO OUTFILE` / `DUMPFILE` (no result set) and a `SELECT` with a trailing
+  `FOR UPDATE` / `FOR SHARE`; the loader applies `ALTER VIEW`. Inside a routine or trigger body
+  the first three are the server's own 1314.
 - `sqlshape.Error(code)` declares a schema's named error in Go (`var OrderTooLarge =
   sqlshape.Error("30001")`); `go vet` checks the declaration against the schema both ways, an
   expect line may use the Name, and `Violates` accepts the value.

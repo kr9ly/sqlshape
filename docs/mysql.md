@@ -194,6 +194,7 @@ What the server itself refuses when the body is created is an error here too:
 | two `DECLARE ... CONDITION`s or two `DECLARE ... CURSOR`s of one name in one block (a variable and a cursor of one name are different namespaces) | 1332 / 1333 |
 | two `HANDLER`s of one block naming the same condition value (handlers that merely overlap, `SQLEXCEPTION` next to `SQLSTATE '45000'`, are accepted) | 1413 |
 | dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) or `FLUSH` in a trigger or FUNCTION (a PROCEDURE is exempt) | 1336 |
+| `LOCK TABLES` / `UNLOCK TABLES`, `LOAD DATA` or `ALTER VIEW` in any body, a PROCEDURE's included (`SELECT ... INTO OUTFILE` is allowed, even in a trigger or function: it returns no result set) | 1314 |
 | a SQLSTATE literal that is not five characters (`SIGNAL SQLSTATE '4500'`, a `CONDITION` or `HANDLER` naming one) | 1407 at CREATE; five characters of any kind are accepted (measured) |
 | a `SIGNAL` or `RESIGNAL` setting `MYSQL_ERRNO = 0` | 1231, certain every time |
 | a bare `RESIGNAL` reached outside any `HANDLER` | 1645, certain every time |
@@ -326,7 +327,28 @@ query cannot be merged (`GROUP BY`, `HAVING`, `DISTINCT`, `LIMIT`, a set operati
 function or a subquery in the select list) -- the server's own `is_mergeable`. A write through a
 merged view lands on its base table; through any other view it is 1288. `WITH CHECK OPTION` on
 a view the server would not merge is refused when the schema loads, as the server refuses the
-`CREATE` (1368). `CREATE OR REPLACE VIEW` replaces the earlier definition.
+`CREATE` (1368). `CREATE OR REPLACE VIEW` replaces the earlier definition, and so does `ALTER
+VIEW` (the view must exist, 1146, and be a view, 1347).
+
+### Statements without a result set
+
+Besides `SELECT` / `INSERT` / `UPDATE` / `DELETE` / `CALL`, the checker reads these, run with
+`Exec`:
+
+- `LOAD DATA [LOCAL] INFILE ... INTO TABLE t` is an INSERT of the file's rows: the target must be a
+  base table (a view is 1288), the column list resolves against it (a `@var` takes its field and
+  assigns nothing), a `SET` assignment types its expression against the column, and a
+  placeholder in one takes the column's type. Its failure modes are the INSERT's -- the keys,
+  foreign keys and checks of the columns it fills (1062 / 1452 / 3819), `IGNORE` turning them
+  into warnings, `REPLACE` deleting the colliding row first -- with two differences the server
+  makes (measured): a field for a `NOT NULL` column may be NULL, which is 1263 rather than 1048
+  (a `SET col = NULL` stays 1048), and a `NOT NULL` column the column list leaves out takes its
+  type's implicit default rather than 1364.
+- `LOCK TABLES` names tables that must exist (1146, a view may be locked) under distinct aliases
+  (1066); `UNLOCK TABLES` resolves nothing. Neither has parameters.
+- `SELECT ... INTO OUTFILE` / `INTO DUMPFILE`, in either position of the `INTO`, is typed like the
+  `SELECT` it wraps but returns no columns: the rows go to a file on the server. A trailing `FOR
+  UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE` leaves a `SELECT`'s columns as they are.
 
 ### Not on MySQL
 

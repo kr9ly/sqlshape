@@ -2,14 +2,12 @@ package analyze
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
-	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlparse"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 	"github.com/kr9ly/sqlshape/v2/x/cardinality"
 	"github.com/kr9ly/sqlshape/v2/x/facts"
@@ -62,8 +60,8 @@ type BodyStatement struct {
 	// IN SHARE MODE) this statement is names: a further hop in the trigger chain writing
 	// back into one of them is 1442, the same certain way a further write is (measured:
 	// TestAdv3ChainSelectForUpdateInsideTriggerIs1442 -- a plain SELECT or a subquery read
-	// does not collide, only a locking one). Populated by walkSelect's own
-	// resolveLockingSelect, read back by violations.go's triggerViolations.
+	// does not collide, only a locking one). Populated by walkSelect for a statement with
+	// a trailing locking clause, read back by violations.go's triggerViolations.
 	LockedReads []string
 }
 
@@ -779,6 +777,11 @@ func (a *analyzer) walkNode(sc scope, n *mysqlast.Node, br *BodyResult) error {
 		return a.commitCheck("SQLCOM_FLUSH", n.Start)
 	case "sp_proc_stmt_fetch":
 		return a.walkFetch(n)
+	case "lock_tables", "unlock", "PT_load_table", "Sql_cmd_alter_view":
+		// refused by the server's grammar inside any body (lex->sphead): 1314 "<X> is not
+		// allowed in stored procedures", measured for a PROCEDURE, a FUNCTION and a
+		// TRIGGER alike (unlike commitCheck's 1422 / 1336, a PROCEDURE is not exempt)
+		return &Error{Message: badStatementName(n.Class) + " is not allowed in stored procedures", Code: 1314, Position: a.ph.Back(n.Start)}
 	case "PT_select_stmt":
 		return a.walkSelect(sc, n, br)
 	case "PT_insert":
@@ -1425,9 +1428,24 @@ func (a *analyzer) selectIntoTarget(v mysqlast.Value) (bool, error) {
 // variable target must be declared (1327).
 func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error {
 	a.resetStatement()
-	n, locking := a.resolveLockingSelect(n)
+	// a trailing FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE (mysqlast folds the clauses
+	// beside the query): the read locks every table the query names, absent an "OF
+	// <tables>" narrowing it, which this does not read
+	locking := n.Arg("locking") != nil
 	if err := a.selectStmt(n); err != nil {
 		return err
+	}
+	if selectIntoFile(n) {
+		// INTO OUTFILE / DUMPFILE: no result set (a trigger or function may run one,
+		// measured) and no variable to match the columns against
+		if err := a.finishCalls(br, true); err != nil {
+			return err
+		}
+		a.appendStatement(br, n.Start)
+		if locking {
+			a.markLastLockedReads(br)
+		}
+		return nil
 	}
 	into := selectInto(n)
 	if len(into) == 0 {
@@ -1476,7 +1494,7 @@ func (a *analyzer) walkSelect(sc scope, n *mysqlast.Node, br *BodyResult) error 
 
 // markLastLockedReads records a.refRels (the tables the just-appended locking SELECT
 // references -- FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE lock every table the query
-// reads, absent an "OF <tables>" narrowing it, which resolveLockingSelect does not attempt)
+// reads, absent an "OF <tables>" narrowing it, which walkSelect does not read)
 // on the BodyStatement walkSelect just appended.
 func (a *analyzer) markLastLockedReads(br *BodyResult) {
 	if len(br.Statements) == 0 {
@@ -1489,56 +1507,20 @@ func (a *analyzer) markLastLockedReads(br *BodyResult) {
 	br.Statements[len(br.Statements)-1].LockedReads = tables
 }
 
-// lockingClauseSuffix matches a locking read's own trailing clause -- FOR UPDATE, FOR
-// SHARE, or LOCK IN SHARE MODE, each with an optional NOWAIT/SKIP LOCKED, with no "OF
-// <tables>" naming a subset (out of this milestone's scope: resolveLockingSelect falls back
-// to the pre-existing gap for that shape, below).
-var lockingClauseSuffix = regexp.MustCompile(`(?is)\s+(FOR\s+UPDATE|FOR\s+SHARE|LOCK\s+IN\s+SHARE\s+MODE)(\s+(NOWAIT|SKIP\s+LOCKED))?\s*$`)
-
-// resolveLockingSelect reparses n's own source span (a.text[n.Start:n.End]) with its
-// trailing locking clause stripped (see lockingClauseSuffix) and returns the corrected
-// node, when n has one: this framework's own generic action-shape builder
-// (mysqlast.Builder.constant) folds a query bearing a trailing locking_clause_list to an
-// unevaluated action-text constant instead of a real PT_query_expression (measured: the
-// shapes.go "query_expression locking_clause_list" production's own qe Arg is {Text:
-// "NEW_PTNPT_locking(@$,$1,$2)"}, never a Child reference -- TestDumpForUpdateAST,
-// scratchpad/adv3), discarding the query, including which table(s) it reads, entirely
-// (walkSelect's own a.selectStmt(n) would otherwise fail with "query expression not
-// understood"). Reparsing the clause-stripped source recovers the ordinary PT_select_stmt
-// the grammar builds for every other read, which the rest of walkSelect types normally
-// (INTO targets, cardinality, columns); markLastLockedReads reads a.refRels once that
-// typing is done for the table(s) the lock reads.
-//
-// ok is false (n unchanged) when n has no such clause, or the stripped statement does not
-// parse/type on its own (defensive: not observed in practice -- every locking read is
-// otherwise an ordinary SELECT). Position values a later Error computes from the corrected
-// node are relative to the reparsed, clause-stripped text, not a.text: a known imprecision
-// specific to this narrow workaround, immaterial to a Violation (which carries no Position
-// at all).
-func (a *analyzer) resolveLockingSelect(n *mysqlast.Node) (*mysqlast.Node, bool) {
-	if n.Start < 0 || n.End > len(a.text) || n.Start > n.End {
-		return n, false // defensive: every PT_select_stmt's own span is within a.text
+// badStatementName is the name the server's 1314 message gives a statement its grammar
+// refuses inside a body.
+func badStatementName(class string) string {
+	switch class {
+	case "lock_tables":
+		return "LOCK"
+	case "unlock":
+		return "UNLOCK"
+	case "PT_load_table":
+		return "LOAD DATA"
+	case "Sql_cmd_alter_view":
+		return "ALTER VIEW"
 	}
-	raw := a.text[n.Start:n.End]
-	loc := lockingClauseSuffix.FindStringIndex(raw)
-	if loc == nil {
-		return n, false
-	}
-	stripped := raw[:loc[0]]
-	mode := a.s.Settings.ParseMode()
-	cst, err := mysqlparse.Parse(stripped, mode)
-	if err != nil {
-		return n, false
-	}
-	root, err := mysqlast.BuildMode(stripped, cst, mode)
-	if err != nil {
-		return n, false
-	}
-	rn, ok := root.(*mysqlast.Node)
-	if !ok || rn.Class != "PT_select_stmt" {
-		return n, false
-	}
-	return rn, true
+	return class
 }
 
 // selectInto digs a SELECT's own INTO target list out (nil when there is none).

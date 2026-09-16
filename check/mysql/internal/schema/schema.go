@@ -617,6 +617,8 @@ func (s *Schema) apply(st mysqlparse.Statement) {
 		s.createIndex(n, st, at)
 	case "Sql_cmd_create_view":
 		s.createView(n, st)
+	case "Sql_cmd_alter_view":
+		s.alterView(n, st)
 	case "trigger_tail":
 		s.createTrigger(n, st, at)
 	case "event_tail":
@@ -1389,6 +1391,48 @@ func (s *Schema) createIndex(n *mysqlast.Node, st mysqlparse.Statement, at func(
 }
 
 func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
+	v, ok := s.viewOf(n, st, "CREATE VIEW")
+	if !ok {
+		return
+	}
+	if old := s.View(v.Name); old != nil {
+		if n.Arg("replace") == nil {
+			s.problem(st.Offset, "CREATE VIEW %s: view already exists", v.Name)
+			return
+		}
+		*old = *v
+		return
+	}
+	if s.Table(v.Name) != nil {
+		s.problem(st.Offset, "CREATE VIEW %s: a table of that name exists", v.Name)
+		return
+	}
+	s.Views = append(s.Views, v)
+}
+
+// alterView applies an ALTER VIEW (Sql_cmd_alter_view, the CREATE's own shape): the view's
+// definition is replaced whole, the way OR REPLACE replaces it. The view must exist (1146
+// "Table 'x' doesn't exist", measured) and be a view, not a table (1347 "'x' is not VIEW",
+// measured); the CHECK OPTION rule is CREATE's (1368, measured for ALTER too).
+func (s *Schema) alterView(n *mysqlast.Node, st mysqlparse.Statement) {
+	v, ok := s.viewOf(n, st, "ALTER VIEW")
+	if !ok {
+		return
+	}
+	if old := s.View(v.Name); old != nil {
+		*old = *v
+		return
+	}
+	if s.Table(v.Name) != nil {
+		s.problem(st.Offset, "ALTER VIEW %s: '%s' is not VIEW (1347)", v.Name, v.Name)
+		return
+	}
+	s.problem(st.Offset, "ALTER VIEW %s: Table '%s' doesn't exist (1146)", v.Name, v.Name)
+}
+
+// viewOf reads a CREATE VIEW / ALTER VIEW node into a View: its name, column list, query,
+// algorithm, check option and directives. what names the statement in a problem.
+func (s *Schema) viewOf(n *mysqlast.Node, st mysqlparse.Statement, what string) (*View, bool) {
 	name := s.tableKey(tableName(n.Arg("name")))
 	v := &View{Name: name, Query: n.Arg("query"), Definition: st.SQL,
 		Algorithm: strings.TrimPrefix(str(n.Arg("algorithm")), "VIEW_ALGORITHM_"), CheckOption: strings.TrimPrefix(str(n.Arg("check_option")), "VIEW_CHECK_")}
@@ -1401,23 +1445,11 @@ func (s *Schema) createView(n *mysqlast.Node, st mysqlparse.Statement) {
 		// select list, ALGORITHM=TEMPTABLE) -- at CREATE time: 1368 "CHECK OPTION on
 		// non-updatable view" (measured on 8.4). The analyzer's own merge test is the
 		// server's is_mergeable, so the two agree on which views these are.
-		s.problem(st.Offset, "CREATE VIEW %s: CHECK OPTION on non-updatable view (1368)", name)
-		return
+		s.problem(st.Offset, "%s %s: CHECK OPTION on non-updatable view (1368)", what, name)
+		return nil, false
 	}
 	s.viewDirectives(v, st.SQL, st.Offset)
-	if old := s.View(name); old != nil {
-		if n.Arg("replace") == nil {
-			s.problem(st.Offset, "CREATE VIEW %s: view already exists", name)
-			return
-		}
-		*old = *v
-		return
-	}
-	if s.Table(name) != nil {
-		s.problem(st.Offset, "CREATE VIEW %s: a table of that name exists", name)
-		return
-	}
-	s.Views = append(s.Views, v)
+	return v, true
 }
 
 // dropTable drops the table, and with it every trigger declared on it (a trigger has no
@@ -2053,6 +2085,13 @@ func bodyRefusalProblem(v mysqlast.Value, dynamicSQL bool) string {
 			}
 		}
 	case *mysqlast.Node:
+		switch x.Class {
+		case "lock_tables", "unlock", "PT_load_table", "Sql_cmd_alter_view":
+			// refused by the grammar itself inside any body, a PROCEDURE included (1314
+			// "<X> is not allowed in stored procedures", measured for all three routine
+			// kinds); mirrors analyze/body.go's walkNode
+			return map[string]string{"lock_tables": "LOCK", "unlock": "UNLOCK", "PT_load_table": "LOAD DATA", "Sql_cmd_alter_view": "ALTER VIEW"}[x.Class] + " is not allowed in stored procedures"
+		}
 		if dynamicSQL && x.Class == "execute" {
 			return "Dynamic SQL is not allowed in stored function or trigger"
 		}

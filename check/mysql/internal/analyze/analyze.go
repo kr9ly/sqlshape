@@ -293,6 +293,9 @@ type write struct {
 	// replace: REPLACE INTO -- a colliding row is deleted first, so no key is violated
 	// but the rows referring to the replaced one are (1451)
 	replace bool
+	// load: LOAD DATA -- a NOT NULL column the column list leaves out takes its type's
+	// implicit default, not 1364 (measured)
+	load bool
 	// more are the further tables a multi-table UPDATE assigns or a multi-table DELETE
 	// deletes from, each with its own assignments; table / values are the first's
 	more []moreTarget
@@ -320,6 +323,8 @@ type assignment struct {
 	col      *schema.Column
 	nullable bool
 	param    int // the bare placeholder stored ($n), 0 otherwise
+	// fromFile: a LOAD DATA field, whose NULL for a NOT NULL column is 1263, not 1048
+	fromFile bool
 }
 
 // relation is a table in scope, under its alias: a base table, or a derived one (a
@@ -508,6 +513,12 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 		return a.delete(n)
 	case "PT_call":
 		return a.callStmt(n)
+	case "lock_tables":
+		return a.lockTables(n)
+	case "unlock":
+		return a.unlockTables(n)
+	case "PT_load_table":
+		return a.loadData(n)
 	}
 	return fmt.Errorf("analyze: %s is not supported yet", strings.TrimPrefix(n.Class, "PT_"))
 }
@@ -521,6 +532,11 @@ func (a *analyzer) selectStmt(n *mysqlast.Node) error {
 	a.columns = cols
 	if qe, ok := n.Arg("qe").(*mysqlast.Node); ok && limitOne(qe.Arg("limit")) {
 		a.facts.AtMostOne = true
+	}
+	if selectIntoFile(n) {
+		// INTO OUTFILE / DUMPFILE: the rows go to a file on the server, none to the
+		// client (measured: the statement returns no result set)
+		a.columns = nil
 	}
 	return nil
 }

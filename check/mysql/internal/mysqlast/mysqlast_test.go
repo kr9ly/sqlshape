@@ -121,6 +121,13 @@ func TestCorpus(t *testing.T) {
 	if rate := float64(dmlBuilt) / float64(max(dml, 1)); rate < 0.97 {
 		t.Errorf("the statements sqlshape reads build at %.1f%%, below the 97%% held so far", rate*100)
 	}
+	// constructs a hook covers on purpose (hooks_load.go): the corpus must not report them
+	// missing again
+	for _, k := range []string{"table_lock/0", "opt_field_term/0", "field_term/0", "line_term/0", "fields_or_vars/0", "load_data_set_elem/0"} {
+		if n := missing[k]; n > 0 {
+			t.Errorf("%s is missing in %d statements: %s", k, n, example[k])
+		}
+	}
 	for i, kv := range top {
 		if i >= 40 {
 			break
