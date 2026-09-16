@@ -106,7 +106,14 @@ func Main(m *testing.M) int {
 // statements; it is sent as one multi-statement script, so a compound statement (a trigger
 // body with `;` inside) needs no DELIMITER. Under Main (see there) the server may be one an
 // earlier test already booted.
-func Start(ctx context.Context, schemaSQL string) (*DB, error) {
+func Start(ctx context.Context, schemaSQL string) (*DB, error) { return start(ctx, schemaSQL, false) }
+
+// StartOwn is Start on a server of its own even under Main: for a test that changes what a
+// shared server would carry over to the next test (accounts, global variables, other
+// databases). Close stops it.
+func StartOwn(ctx context.Context, schemaSQL string) (*DB, error) { return start(ctx, schemaSQL, true) }
+
+func start(ctx context.Context, schemaSQL string, own bool) (*DB, error) {
 	mysqld, err := exec.LookPath("mysqld")
 	if err != nil {
 		return nil, ErrNoServer
@@ -127,7 +134,7 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 			lctn = s.Value
 		}
 	}
-	srv, owned, err := acquire(ctx, mysqld, version, options, lctn)
+	srv, owned, err := acquire(ctx, mysqld, version, options, lctn, own)
 	if err != nil {
 		return nil, err
 	}
@@ -140,12 +147,12 @@ func Start(ctx context.Context, schemaSQL string) (*DB, error) {
 }
 
 // acquire is a server started with options: a free one of the pool when sharing (owned
-// false), else a new one (owned true when not sharing; a new shared server is added to the
-// pool and marked busy).
-func acquire(ctx context.Context, mysqld, version string, options []string, lctn string) (*server, bool, error) {
+// false), else a new one (owned true when not sharing, or when the caller wants its own; a
+// new shared server is added to the pool and marked busy).
+func acquire(ctx context.Context, mysqld, version string, options []string, lctn string, own bool) (*server, bool, error) {
 	key := strings.Join(options, "\x00")
 	pool.mu.Lock()
-	sharing := pool.sharing
+	sharing := pool.sharing && !own
 	if sharing {
 		for _, s := range pool.servers {
 			if s.key == key && !s.busy {

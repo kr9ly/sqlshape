@@ -53,6 +53,16 @@ release it is a candidate for.
   write before the event), `SET NEW.col` / `SET OLD.col` outside a trigger is 1193, and a
   FUNCTION with no `RETURN` is a schema problem (1320) even when the checker stops at an
   earlier run-time certainty of the same body.
+- MySQL's own test corpus (mysql-test/t: 1,281 files, 137,000 statements) replays against a
+  running mysqld and the analyzer side by side (`check/mysql/internal/analyze`'s corpus probe,
+  the counterpart of PostgreSQL's regress probe): each file on a server of its own, the
+  analyzer's schema rebuilt from `SHOW CREATE` after every DDL under the session's `sql_mode`,
+  a SELECT's columns compared by name, type family and nullability, an error by number. The
+  first run agrees on 44,342 statements and lists 4,605 disagreements as the baseline the next
+  rounds work down; two analyzer crashes it found (a routine variable shadowing the column an
+  INSERT or UPDATE in the body assigns) are fixed.
+- `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
+  changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run
   outside `Run` / `Exec` the wrapping `Violates` judges.
 - `sqlshape.Error(code)` declares a schema's named error in Go (`var OrderTooLarge =

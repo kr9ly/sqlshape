@@ -792,6 +792,23 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		if err != nil {
 			return err
 		}
+		if col.rel == nil {
+			// the name resolved to a routine variable of the same name: a SET target is a
+			// column, which the server resolves against the tables (the analyzer used to
+			// fall over on the missing relation -- found by the corpus probe)
+			name := identName(c)
+			var found *relation
+			for j := range sc.rels {
+				if sc.rels[j].table != nil && sc.rels[j].table.Column(name) != nil {
+					found = &sc.rels[j]
+					break
+				}
+			}
+			if found == nil {
+				return &Error{Message: fmt.Sprintf("Unknown column '%s' in 'field list'", name), Code: 1054, Position: a.ph.Back(nodeStart(c))}
+			}
+			col = colRef{rel: found, col: found.table.Column(name)}
+		}
 		if col.col == nil {
 			return &Error{Message: fmt.Sprintf("The target table %s of the UPDATE is not updatable", col.rel.alias), Code: 1288, Position: a.ph.Back(nodeStart(c))}
 		}
@@ -1235,7 +1252,33 @@ func (a *analyzer) targetColumn(rel *relation, v mysqlast.Value, where string) (
 	if err != nil {
 		return nil, err
 	}
+	if ref.col == nil {
+		// resolved to something other than a column of the target table: a routine
+		// variable of the same name (a body's INSERT INTO t (v) names the column, which the
+		// server resolves against the table; the analyzer's lookup let the variable shadow
+		// it and used to fall over on the nil column -- found by the corpus probe)
+		if rel.table != nil {
+			if c := rel.table.Column(identName(v)); c != nil {
+				return c, nil
+			}
+		}
+		return nil, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", identName(v), where), Code: 1054, Position: a.ph.Back(nodeStart(v))}
+	}
 	return ref.col, nil
+}
+
+// identName is the bare name a column reference node spells (its last part).
+func identName(v mysqlast.Value) string {
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return str(v)
+	}
+	for _, k := range []string{"field", "ident"} {
+		if s := str(n.Arg(k)); s != "" {
+			return s
+		}
+	}
+	return mysqlast.Sprint(v)
 }
 
 // colRef is a resolved column reference: the relation, the schema column when the
