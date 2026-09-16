@@ -675,7 +675,8 @@ func (s *Schema) createTable(n *mysqlast.Node, st mysqlparse.Statement, at func(
 // partitioning reads v, a PT_partition node (CREATE TABLE's own, or an ALTER TABLE
 // PARTITION BY's), into the model. Text is always captured (see Partitioning's own doc
 // comment for why); Kind, Expr, Num and Parts only when the clause is simple enough this
-// package tells apart -- a single-column, non-LINEAR RANGE or HASH, no subpartitions.
+// package tells apart -- a single-column, non-LINEAR RANGE, LIST or HASH, no subpartitions
+// (RANGE/LIST COLUMNS' multi-column value lists are Text-only, same as KEY and LINEAR).
 func (s *Schema) partitioning(v mysqlast.Value) *Partitioning {
 	n, ok := v.(*mysqlast.Node)
 	if !ok || n.Start < 0 || n.End > len(s.cur) || n.Start >= n.End {
@@ -698,8 +699,11 @@ func (s *Schema) partitioning(v mysqlast.Value) *Partitioning {
 				return p // LINEAR HASH: Text-only fallback
 			}
 			p.Kind, p.Expr = "HASH", s.exprText(hx.Expr())
+		case "PT_part_type_def_list_expr":
+			lx, _ := mysqlast.AsPTPartTypeDefListExpr(d)
+			p.Kind, p.Expr = "LIST", s.exprText(lx.Expr())
 		default:
-			return p // RANGE/LIST COLUMNS, LIST, KEY: Text-only fallback
+			return p // RANGE/LIST COLUMNS, KEY: Text-only fallback
 		}
 	default:
 		return p
@@ -716,7 +720,9 @@ func (s *Schema) partitioning(v mysqlast.Value) *Partitioning {
 		}
 		return p
 	}
-	// RANGE: every partition definition names its own upper bound (or MAXVALUE)
+	// RANGE: every partition definition names its own upper bound (or MAXVALUE); LIST: every
+	// partition definition names its own value list (partitionDef tells the two apart by the
+	// class OptPartValues() itself carries).
 	for _, el := range defs {
 		pd, ok := el.(*mysqlast.Node)
 		if !ok {
@@ -731,9 +737,13 @@ func (s *Schema) partitioning(v mysqlast.Value) *Partitioning {
 	return p
 }
 
-// partitionDef reads one PT_part_definition of a RANGE Partitioning; ok is false for
-// anything this package does not break down (a LIST partition's VALUES IN, a multi-column
-// RANGE COLUMNS value list, subpartitions), the caller's cue to fall back to Text alone.
+// partitionDef reads one PT_part_definition of a RANGE or LIST Partitioning: a RANGE
+// partition names its own upper bound (Bound) or none at all (MaxValue, VALUES LESS THAN
+// MAXVALUE or no VALUES clause at all); a LIST partition names its own value list, joined
+// into Bound as the grammar had it, comma-separated. ok is false for anything this package
+// does not break down (a multi-column RANGE COLUMNS or LIST COLUMNS value list, MAXVALUE
+// inside a LIST partition's own list -- not valid SQL but the grammar admits it, subpartitions),
+// the caller's cue to fall back to Text alone.
 func (s *Schema) partitionDef(n *mysqlast.Node) (Partition, bool) {
 	x, _ := mysqlast.AsPTPartDefinition(n)
 	if x.OptSubPartitions() != nil {
@@ -746,25 +756,50 @@ func (s *Schema) partitionDef(n *mysqlast.Node) (Partition, bool) {
 		return part, true
 	}
 	vn, ok := values.(*mysqlast.Node)
-	if !ok || vn.Class != "PT_part_value_item_list_paren" {
-		return Partition{}, false // PT_part_values_in_list: a LIST partition's VALUES IN
+	if !ok {
+		return Partition{}, false
 	}
-	items := list(vn.Arg("values"))
-	if len(items) != 1 {
-		return Partition{}, false // a multi-column RANGE COLUMNS value list
-	}
-	switch item := items[0].(type) {
-	case *mysqlast.Node:
-		switch item.Class {
-		case "PT_part_value_item_expr":
-			part.Bound = s.exprText(item.Arg("expr"))
-		case "PT_part_value_item_max":
-			part.MaxValue = true
+	switch vn.Class {
+	case "PT_part_value_item_list_paren":
+		// RANGE's own single-column VALUES LESS THAN (expr): part_func_max folds straight
+		// to this class (measured against the grammar's own shapes.go), not wrapped in
+		// anything naming it as RANGE's.
+		items := list(vn.Arg("values"))
+		if len(items) != 1 {
+			return Partition{}, false // a multi-column RANGE COLUMNS value list
+		}
+		switch item := items[0].(type) {
+		case *mysqlast.Node:
+			switch item.Class {
+			case "PT_part_value_item_expr":
+				part.Bound = s.exprText(item.Arg("expr"))
+			case "PT_part_value_item_max":
+				part.MaxValue = true
+			default:
+				return Partition{}, false
+			}
 		default:
 			return Partition{}, false
 		}
+	case "PT_part_values_in_item":
+		// LIST's own single-column VALUES IN (v1, v2, ...): wrapped one level deeper than
+		// RANGE's (measured), the same PT_part_value_item_list_paren underneath.
+		ix, _ := mysqlast.AsPTPartValuesInItem(vn)
+		inner, ok := ix.Item().(*mysqlast.Node)
+		if !ok || inner.Class != "PT_part_value_item_list_paren" {
+			return Partition{}, false
+		}
+		var vals []string
+		for _, el := range list(inner.Arg("values")) {
+			item, ok := el.(*mysqlast.Node)
+			if !ok || item.Class != "PT_part_value_item_expr" {
+				return Partition{}, false // MAXVALUE inside a LIST partition, or anything else
+			}
+			vals = append(vals, s.exprText(item.Arg("expr")))
+		}
+		part.Bound = strings.Join(vals, ", ")
 	default:
-		return Partition{}, false
+		return Partition{}, false // PT_part_values_in_list: a multi-column LIST COLUMNS value list
 	}
 	return part, true
 }
@@ -1145,11 +1180,11 @@ func copyTable(dst, src *Table) {
 	// LIKE copies no foreign keys, and (measured against mysqld 8.4) no partitioning either
 }
 
-// addPartitions applies an ADD PARTITION (...) def_list to t's RANGE Partitioning; the
-// whole clause falls back to Text-only tracking if any of the new definitions is not one
+// addPartitions applies an ADD PARTITION (...) def_list to t's RANGE or LIST Partitioning;
+// the whole clause falls back to Text-only tracking if any of the new definitions is not one
 // this package breaks down (see partitionDef).
 func (t *Table) addPartitions(defs []mysqlast.Value, s *Schema) {
-	if t.Partitioning == nil || t.Partitioning.Kind != "RANGE" {
+	if t.Partitioning == nil || (t.Partitioning.Kind != "RANGE" && t.Partitioning.Kind != "LIST") {
 		return
 	}
 	var added []Partition
@@ -1437,7 +1472,7 @@ func (s *Schema) alterTable(n *mysqlast.Node, st mysqlparse.Statement, at func(m
 			}
 		case "PT_alter_table_reorganize_partition_into":
 			x, _ := mysqlast.AsPTAlterTableReorganizePartitionInto(an)
-			if t.Partitioning != nil && t.Partitioning.Kind == "RANGE" {
+			if t.Partitioning != nil && (t.Partitioning.Kind == "RANGE" || t.Partitioning.Kind == "LIST") {
 				names := map[string]bool{}
 				for _, nm := range list(x.PartitionNames()) {
 					names[str(nm)] = true

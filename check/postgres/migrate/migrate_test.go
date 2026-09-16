@@ -6,7 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
@@ -27,6 +30,55 @@ type canonical struct {
 // costs seconds; a database on it, milliseconds).
 var server *dump.Server
 
+// server18 is a second, PostgreSQL 18 instance, started lazily (server18Once) only by
+// TestMigrateProbe18 -- every other test in the package stays on the 17 server, and
+// nothing pays embedded-postgres's PG18 download / boot cost unless that test actually
+// runs (brief-holes-pg.md item E).
+var (
+	server18     *dump.Server
+	server18Once sync.Once
+	server18Err  error
+)
+
+// pgDumpMajor is dump.Binary()'s own major version ("pg_dump (PostgreSQL) 18.0" -> 18),
+// which must be at least the server's (dump/dump.go's own doc comment: pg_dump can't dump
+// a server newer than itself) -- nix-shell -p postgresql_18 on PATH, not postgresql_17.
+func pgDumpMajor() (int, error) {
+	out, err := exec.Command(dump.Binary(), "--version").Output()
+	if err != nil {
+		return 0, err
+	}
+	m := regexp.MustCompile(`\)\s+(\d+)`).FindSubmatch(out)
+	if m == nil {
+		return 0, fmt.Errorf("%s --version: unrecognized output %q", dump.Binary(), out)
+	}
+	n, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func requirePgDump18(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath(dump.Binary()); err != nil {
+		t.Skipf("%s not found", dump.Binary())
+	}
+	major, err := pgDumpMajor()
+	if err != nil {
+		t.Skipf("%s --version: %v", dump.Binary(), err)
+	}
+	if major < 18 {
+		t.Skipf("%s is PostgreSQL %d, need at least 18 (nix-shell -p postgresql_18)", dump.Binary(), major)
+	}
+	server18Once.Do(func() {
+		server18, server18Err = dump.NewServer(context.Background(), pgparse.PG18)
+	})
+	if server18Err != nil {
+		t.Fatalf("start PostgreSQL 18: %v", server18Err)
+	}
+}
+
 func TestMain(m *testing.M) {
 	if _, err := exec.LookPath(dump.Binary()); err == nil {
 		srv, err := dump.NewServer(context.Background(), pgparse.Default)
@@ -39,6 +91,9 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if server != nil {
 		server.Close()
+	}
+	if server18 != nil {
+		server18.Close()
 	}
 	os.Exit(code)
 }

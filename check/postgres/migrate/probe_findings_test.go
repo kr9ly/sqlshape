@@ -5,8 +5,11 @@ package migrate
 // cleanly and reads back as the target.
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
 )
 
 // A table that goes takes its triggers with it, but not their function: DROP FUNCTION must
@@ -535,4 +538,310 @@ CREATE TABLE p (id integer NOT NULL, n integer) PARTITION BY RANGE (id);
 CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
 CREATE INDEX p_n_idx ON p (n);
 `)
+}
+
+// A brand-new standalone sequence owned by a column that already exists (only "ALTER
+// SEQUENCE ... OWNED BY" changes, not "ADD COLUMN") was wrongly folded into the
+// new-column-with-its-own-sequence path (adds()'s seqForNewColumn): that path only ever
+// emits a sequence from orderNewColumns(fresh), which never visits an existing column, so
+// the sequence's CREATE + OWNED BY were silently dropped from the plan (measured: the
+// plan came back empty even though the target held one more sequence).
+func TestProbeNewSequenceOwnedByExistingColumn(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, c integer);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, c integer);
+CREATE SEQUENCE sq;
+ALTER SEQUENCE sq OWNED BY t.c;
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// Two sequences legitimately can be OWNED BY the same column (PostgreSQL only refuses two
+// sequences with the same fully-qualified name, not the same OwnedBy): adds()'s
+// sequenceFollowsRename matched a brand-new sequence's OwnedBy against any from-side
+// sequence sharing it, even one whose own ownership never changed -- so a second, new
+// sequence declared OWNED BY a column an existing, untouched sequence already owns was
+// mistaken for that existing sequence's rename and never got its own CREATE SEQUENCE
+// (measured: DROP SEQUENCE for the source's spare unowned sequence, no matching CREATE).
+func TestProbeTwoSequencesOwnTheSameColumn(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, c integer);
+CREATE SEQUENCE sq1;
+ALTER SEQUENCE sq1 OWNED BY t.c;
+CREATE SEQUENCE sq2;
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, c integer);
+CREATE SEQUENCE sq1;
+ALTER SEQUENCE sq1 OWNED BY t.c;
+CREATE SEQUENCE sq2;
+ALTER SEQUENCE sq2 OWNED BY t.c;
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// A partition's bound moving (DETACH + ATTACH, PostgreSQL has no ALTER ... FOR VALUES) can
+// leave rows that no longer satisfy the new bound: PostgreSQL checks every row against a
+// bound at ATTACH time and refuses the whole statement (23514) the moment even one is out
+// of range. The plan now moves such rows back to the parent before ATTACH
+// (partitionMovePredicate + the WITH moved AS (DELETE ... RETURNING *) INSERT step,
+// migrate.go), letting the parent's own router place them (here, in DEFAULT) --
+// roundTrip's schema-only canonical round trip cannot carry rows for a plain (non-seed)
+// table, so this checks the actual counts itself via a DO block Verify has no equivalent
+// of.
+func TestProbePartitionBoundMoveMovesOutOfRangeRows(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, n integer) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (10);
+CREATE TABLE p_default PARTITION OF p DEFAULT;
+`)
+	to := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, n integer) PARTITION BY RANGE (id);
+CREATE TABLE p_1 PARTITION OF p FOR VALUES FROM (1) TO (5);
+CREATE TABLE p_default PARTITION OF p DEFAULT;
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO p_1 (id, n) VALUES (1, 1), (2, 2), (8, 3);\n" // id=8 no longer fits [1, 5)
+	assert := `DO $$ BEGIN
+  IF (SELECT count(*) FROM p) <> 3 THEN RAISE EXCEPTION 'p count: %', (SELECT count(*) FROM p); END IF;
+  IF (SELECT count(*) FROM p_1) <> 2 THEN RAISE EXCEPTION 'p_1 count: %', (SELECT count(*) FROM p_1); END IF;
+  IF (SELECT count(*) FROM p_default) <> 1 THEN RAISE EXCEPTION 'p_default count: %', (SELECT count(*) FROM p_default); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// Attaching a previously-independent table under an existing keyed parent: rows already in
+// it that do not satisfy the bound it is about to take on move to the parent first, same as
+// a bound move (partitionMovePredicate does not care whether the table was ever a
+// partition).
+func TestProbeAttachIndependentTableMovesOutOfRangeRows(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, n integer) PARTITION BY LIST (id);
+CREATE TABLE p_default PARTITION OF p DEFAULT;
+CREATE TABLE spare (id integer NOT NULL, n integer);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, n integer) PARTITION BY LIST (id);
+CREATE TABLE p_default PARTITION OF p DEFAULT;
+CREATE TABLE spare PARTITION OF p FOR VALUES IN (1, 2);
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO spare (id, n) VALUES (1, 1), (2, 2), (3, 3);\n" // id=3 does not fit IN (1, 2)
+	assert := `DO $$ BEGIN
+  IF (SELECT count(*) FROM p) <> 3 THEN RAISE EXCEPTION 'p count: %', (SELECT count(*) FROM p); END IF;
+  IF (SELECT count(*) FROM spare) <> 2 THEN RAISE EXCEPTION 'spare count: %', (SELECT count(*) FROM spare); END IF;
+  IF (SELECT count(*) FROM p_default) <> 1 THEN RAISE EXCEPTION 'p_default count: %', (SELECT count(*) FROM p_default); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// A column-owned sequence's schema cascades along with an ALTER TABLE ... SET SCHEMA on
+// its owning table, automatically, the moment that statement runs -- before this plan's
+// own ALTER SEQUENCE ... OWNED BY (clearing, or otherwise changing, that same ownership)
+// gets a chance to run. alters()'s Sequence case (migrate.go) referenced the sequence by
+// its target-schema name, which is wrong once the ownership itself is what is changing in
+// that very statement (42P01 "does not exist", measured): the owning table's schema move
+// (renames(), which runs first) already carried it somewhere else.
+func TestProbeSequenceCascadesWithOwnerSchemaMove(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, r integer NOT NULL);
+CREATE SEQUENCE sq;
+ALTER SEQUENCE sq OWNED BY t.r;
+`)
+	to := mustCanonical(t, `
+-- @migrate rename public.t -> app.t
+CREATE SCHEMA app;
+CREATE TABLE app.t (id integer PRIMARY KEY, r integer NOT NULL);
+CREATE SEQUENCE sq;
+`)
+	roundTrip(t, from, to, "-- @migrate rename app.t -> public.t", true)
+}
+
+// A plain table becoming a partitioned one, keeping its rows (brief-holes-pg.md item D,
+// "empty -> X"): PostgreSQL has no ALTER ... PARTITION BY, so the plan renames the table
+// aside, creates the target's own partitioned shape (and its declared partitions) fresh
+// under the old name, and moves every row across with a plain INSERT -- the partition
+// router decides where each one goes (repartitionTable, migrate.go).
+func TestProbeRepartitionEmptyToRange(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer NOT NULL, kind text NOT NULL);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+CREATE TABLE t_default PARTITION OF t DEFAULT;
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO t (id, kind) VALUES (1, 'a'), (2, 'b'), (3, 'c');\n"
+	assert := `DO $$ BEGIN
+  IF (SELECT count(*) FROM t) <> 3 THEN RAISE EXCEPTION 't count: %', (SELECT count(*) FROM t); END IF;
+  IF (SELECT count(*) FROM t_a) <> 1 THEN RAISE EXCEPTION 't_a count: %', (SELECT count(*) FROM t_a); END IF;
+  IF (SELECT count(*) FROM t_b) <> 1 THEN RAISE EXCEPTION 't_b count: %', (SELECT count(*) FROM t_b); END IF;
+  IF (SELECT count(*) FROM t_default) <> 1 THEN RAISE EXCEPTION 't_default count: %', (SELECT count(*) FROM t_default); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+	// a second plan against the result must be empty (idempotent)
+	again, err := Plan(got, to.s, nil)
+	if err != nil || len(again) > 0 {
+		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
+	}
+}
+
+// The reverse of repartitioning: a partitioned table's key going away entirely
+// ("X -> empty"). Every row across its partitions comes back into one plain table (the
+// same repartitionTable path, generalized: it does not special-case which side is
+// partitioned).
+func TestProbeRepartitionRangeToEmpty(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+CREATE TABLE t_default PARTITION OF t DEFAULT;
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer NOT NULL, kind text NOT NULL);
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO t_a (id, kind) VALUES (1, 'a');\n" +
+		"INSERT INTO t_b (id, kind) VALUES (2, 'b');\n" +
+		"INSERT INTO t_default (id, kind) VALUES (3, 'c');\n"
+	assert := `DO $$ BEGIN
+  IF (SELECT count(*) FROM t) <> 3 THEN RAISE EXCEPTION 't count: %', (SELECT count(*) FROM t); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+	again, err := Plan(got, to.s, nil)
+	if err != nil || len(again) > 0 {
+		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
+	}
+}
+
+// Re-partitioning: one key/strategy directly to another ("X -> Y") -- the same
+// repartitionTable path again, since it diffs on "partition key" alone, not on which
+// side (if either) is unpartitioned.
+func TestProbeRepartitionRangeToList(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer NOT NULL, kind text NOT NULL) PARTITION BY RANGE (id);
+CREATE TABLE t_1 PARTITION OF t FOR VALUES FROM (1) TO (10);
+CREATE TABLE t_2 PARTITION OF t FOR VALUES FROM (10) TO (20);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+CREATE TABLE t_default PARTITION OF t DEFAULT;
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO t_1 (id, kind) VALUES (1, 'a');\n" +
+		"INSERT INTO t_2 (id, kind) VALUES (11, 'b');\n"
+	assert := `DO $$ BEGIN
+  IF (SELECT count(*) FROM t) <> 2 THEN RAISE EXCEPTION 't count: %', (SELECT count(*) FROM t); END IF;
+  IF (SELECT count(*) FROM t_a) <> 1 THEN RAISE EXCEPTION 't_a count: %', (SELECT count(*) FROM t_a); END IF;
+  IF (SELECT count(*) FROM t_b) <> 1 THEN RAISE EXCEPTION 't_b count: %', (SELECT count(*) FROM t_b); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+	again, err := Plan(got, to.s, nil)
+	if err != nil || len(again) > 0 {
+		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
+	}
 }

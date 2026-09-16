@@ -397,3 +397,66 @@ PARTITION BY HASH (c) PARTITIONS 2;
 `)
 	plan(t, ctx, "primary key onto a new column the target also partitions by", base, to)
 }
+
+// A table's DEFAULT CHARSET / COLLATE changing while it still holds a plain (no explicit
+// per-column COLLATE) varchar column: the column's real encoding is the table's own default
+// at the moment it was last touched (ALTER TABLE ... DEFAULT CHARSET= alone never
+// retroactively converts an existing column, measured), so alterTable's MODIFY COLUMN over
+// it (implicitCharsetChange) is what makes the column actually converge on the new default,
+// not only the table option itself -- without it a second Plan from the applied result is
+// not empty (SHOW CREATE TABLE starts spelling the column's now-mismatched charset out
+// explicitly, which the target's own canonical, authored fresh under the new default, never
+// does). A column that already spells its own COLLATE (b) is untouched either way.
+func TestProbeTableCharsetConvergesImplicitColumn(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, a VARCHAR(20) NOT NULL, b VARCHAR(20) COLLATE utf8mb4_bin NOT NULL)
+  ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+`)
+	to := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, a VARCHAR(20) NOT NULL, b VARCHAR(20) COLLATE utf8mb4_bin NOT NULL)
+  ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+`)
+	plan(t, ctx, "table charset over a plain column", base, to)
+}
+
+// LIST partitioning, structured the same way RANGE already is (schema.Partitioning.Kind
+// "LIST", Partition.Bound its own VALUES IN list): adding a partition, dropping one declared
+// (`-- @migrate drop partition`), and a value moving from one named partition to another
+// (both partitions kept, migrate.go's alterListPartitioning reorganizing them together in
+// one REORGANIZE PARTITION so the row in between never has nowhere to go).
+func TestProbeListPartitionAddDropMove(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY LIST (id)
+(PARTITION p0 VALUES IN (1,2), PARTITION p1 VALUES IN (3));
+`)
+	rows := "\nINSERT INTO t (id, a) VALUES (1,1),(2,2),(3,3);\n"
+
+	// add: a partition covering values no row holds yet
+	toAdd := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY LIST (id)
+(PARTITION p0 VALUES IN (1,2), PARTITION p1 VALUES IN (3), PARTITION p2 VALUES IN (4,5));
+`)
+	plan(t, ctx, "list partition: add", canonical{s: base.s, text: base.text + rows, intents: base.intents}, toAdd)
+
+	// drop: the added partition again, declared (no row of the source above ever lands there)
+	toDrop := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+-- @migrate drop partition t.p2
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY LIST (id)
+(PARTITION p0 VALUES IN (1,2), PARTITION p1 VALUES IN (3));
+`)
+	addedRows := "\nINSERT INTO t (id, a) VALUES (1,1),(2,2),(3,3);\n"
+	plan(t, ctx, "list partition: drop", canonical{s: toAdd.s, text: toAdd.text + addedRows, intents: toAdd.intents}, toDrop)
+
+	// move: id 2's own value moves from p0 to p1, both partitions kept, one REORGANIZE
+	toMove := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY LIST (id)
+(PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (2,3));
+`)
+	plan(t, ctx, "list partition: value moves between two named partitions", canonical{s: base.s, text: base.text + rows, intents: base.intents}, toMove)
+}

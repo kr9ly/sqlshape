@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/diff"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/dump"
 )
 
 var (
@@ -55,8 +56,19 @@ type pSchema struct {
 	seedTable  *pSeedTable // at most one, for simplicity: see its own doc comment
 	extensions []string
 	intents    []string
-	seq        int
-	mutating   bool // set on a clone: the tables that exist are the source's, and hold rows
+	// checks are extra DO $$ ... $$ assertions a mutation wants run right after the plan's
+	// own DDL, against the same live database, before judge() compares schemas -- so far
+	// only "shrink partition bound" uses this, to confirm a partitioned table's total row
+	// count survives a row actually being moved between partitions (diff.Compare alone
+	// only ever sees schema shape, never data).
+	checks   []string
+	seq      int
+	mutating bool // set on a clone: the tables that exist are the source's, and hold rows
+	// pg18: this schema targets PostgreSQL 18 (TestMigrateProbe18), so render() declares
+	// `-- sqlshape: postgres 18` (schema.DeclaredVersion defaults to 17 otherwise, which
+	// analyze.Load -- Canonical's own seeds path when called with nil, judge()'s case --
+	// would use to parse this text, refusing any PG18-only syntax a mutation wrote).
+	pg18 bool
 }
 
 // pRange is a standalone range type over integer (CREATE TYPE name AS RANGE (subtype =
@@ -188,17 +200,18 @@ type pTable struct {
 }
 
 type pCol struct {
-	name     string
-	typ      string // integer, bigint, text, varchar(50), numeric(10,2), ..., or an enum type's name
-	notNull  bool
-	def      string
-	pk       bool
-	identity bool
-	serial   bool   // bigserial: a sequence and a nextval default
-	gen      string // the column this generated (STORED) column reads
-	fresh    bool   // added by a mutation: not in the source, so its drop needs no declaration
-	comment  string
-	idAlways bool // GENERATED ALWAYS (else BY DEFAULT) AS IDENTITY, when identity is set
+	name       string
+	typ        string // integer, bigint, text, varchar(50), numeric(10,2), ..., or an enum type's name
+	notNull    bool
+	def        string
+	pk         bool
+	identity   bool
+	serial     bool   // bigserial: a sequence and a nextval default
+	gen        string // the column this generated column reads
+	genVirtual bool   // VIRTUAL instead of STORED (PostgreSQL 18 only; mutations18 alone sets this)
+	fresh      bool   // added by a mutation: not in the source, so its drop needs no declaration
+	comment    string
+	idAlways   bool // GENERATED ALWAYS (else BY DEFAULT) AS IDENTITY, when identity is set
 }
 
 type pKey struct {
@@ -215,22 +228,27 @@ type pKey struct {
 	opNE bool // WITH <> instead of =: cols[0] must then be a column every row shares one
 	// value in (a fresh column's own default), since <> forbids any two rows differing
 	usingGist bool // USING gist instead of btree (needs the btree_gist extension)
+	// withoutOverlaps (unique only): the last column (a range type) is WITHOUT OVERLAPS,
+	// a temporal UNIQUE (PostgreSQL 18 only; mutations18 alone sets this).
+	withoutOverlaps bool
 }
 
 type pFK struct {
-	name     string
-	cols     []string
-	refTable string
-	refCols  []string
-	onDelete string
-	onUpdate string
-	defer_   bool // DEFERRABLE INITIALLY DEFERRED
+	name        string
+	cols        []string
+	refTable    string
+	refCols     []string
+	onDelete    string
+	onUpdate    string
+	defer_      bool // DEFERRABLE INITIALLY DEFERRED
+	notEnforced bool // NOT ENFORCED (PostgreSQL 18 only; mutations18 alone sets this)
 }
 
 type pCheck struct {
-	name string
-	col  string
-	ge   bool // col >= 0 rather than col > 0 (both hold for every generated row)
+	name        string
+	col         string
+	ge          bool // col >= 0 rather than col > 0 (both hold for every generated row)
+	notEnforced bool // NOT ENFORCED (PostgreSQL 18 only; mutations18 alone sets this)
 }
 
 // pComposite is a composite type, CREATE TYPE name AS (attrs...). Kept out of every table's
@@ -298,10 +316,9 @@ type pFunc struct {
 	volatility string // "IMMUTABLE" or "STABLE"
 	argDefault bool   // the sole argument gets " DEFAULT 1" (arguments text changes; same signature)
 	lang       string // "sql" or "plpgsql", plain functions only
-	kind       string // "" (plain function), "procedure" or "aggregate": both keep the
-	// same signature (a single integer argument) as a plain function, so converting one
-	// into another is a same-name Alter, not a drop-and-recreate. Not "window": see
-	// alphabetKnownUnreached's "~ function window" entry for why that one stays out.
+	kind       string // "" (plain function), "procedure", "aggregate" or "window": all
+	// keep the same signature (a single integer argument) as a plain function, so
+	// converting one into another is a same-name Alter, not a drop-and-recreate.
 }
 
 func (s *pSchema) next(prefix string) string {
@@ -310,7 +327,7 @@ func (s *pSchema) next(prefix string) string {
 }
 
 func (s *pSchema) clone() *pSchema {
-	c := &pSchema{seq: s.seq}
+	c := &pSchema{seq: s.seq, pg18: s.pg18}
 	for _, d := range s.domains {
 		nd := *d
 		c.domains = append(c.domains, &nd)
@@ -588,7 +605,11 @@ func (c *pCol) render() string {
 	}
 	b.WriteString(qi(c.name) + " " + typ)
 	if c.gen != "" {
-		b.WriteString(" GENERATED ALWAYS AS (" + qi(c.gen) + " + 1) STORED")
+		kind := "STORED"
+		if c.genVirtual {
+			kind = "VIRTUAL"
+		}
+		b.WriteString(" GENERATED ALWAYS AS (" + qi(c.gen) + " + 1) " + kind)
 		return b.String()
 	}
 	if c.notNull {
@@ -620,7 +641,15 @@ func (t *pTable) render(s *pSchema) string {
 			if k.notDist {
 				u += " NULLS NOT DISTINCT"
 			}
-			u += " (" + qilist(k.cols) + ")"
+			cols := qilist(k.cols)
+			if k.withoutOverlaps && len(k.cols) > 0 {
+				cols = qilist(k.cols[:len(k.cols)-1])
+				if cols != "" {
+					cols += ", "
+				}
+				cols += qi(k.cols[len(k.cols)-1]) + " WITHOUT OVERLAPS"
+			}
+			u += " (" + cols + ")"
 			if k.defer_ {
 				u += " DEFERRABLE INITIALLY DEFERRED"
 			}
@@ -654,6 +683,9 @@ func (t *pTable) render(s *pSchema) string {
 		if fk.defer_ {
 			s += " DEFERRABLE INITIALLY DEFERRED"
 		}
+		if fk.notEnforced {
+			s += " NOT ENFORCED"
+		}
 		parts = append(parts, s)
 	}
 	for _, ck := range t.checks {
@@ -666,7 +698,11 @@ func (t *pTable) render(s *pSchema) string {
 		if !isNumeric(c.typ) {
 			expr = "(length(" + qi(ck.col) + ") > 0)"
 		}
-		parts = append(parts, "  CONSTRAINT "+qi(ck.name)+" CHECK "+expr)
+		s := "  CONSTRAINT " + qi(ck.name) + " CHECK " + expr
+		if ck.notEnforced {
+			s += " NOT ENFORCED"
+		}
+		parts = append(parts, s)
 	}
 	var b strings.Builder
 	b.WriteString("CREATE TABLE " + t.ref() + " (\n" + strings.Join(parts, ",\n") + "\n);\n")
@@ -822,6 +858,14 @@ func (f *pFunc) render() string {
 		// keeps the same (integer) signature as a plain function: sfunc / stype only,
 		// no LANGUAGE or body -- CREATE AGGREGATE's own grammar
 		return fmt.Sprintf("CREATE AGGREGATE %s(integer) (sfunc = int4pl, stype = integer);\n", qi(f.name))
+	case "window":
+		// LANGUAGE internal WINDOW binds to a real builtin fmgr symbol (window_row_number,
+		// the C function behind row_number()); PostgreSQL does not check the declared
+		// signature against the C function it names ("there is no built-in function named
+		// row_number": the SQL-visible row_number() and its underlying fmgr symbol are
+		// spelled differently), so the usual single-integer-argument shape still applies
+		// and this stays a same-name Alter like procedure / aggregate
+		return fmt.Sprintf("CREATE FUNCTION %s(%s) RETURNS %s LANGUAGE internal WINDOW AS 'window_row_number';\n", qi(f.name), arg, f.retType)
 	}
 	switch f.lang {
 	case "plpgsql":
@@ -835,6 +879,9 @@ func (f *pFunc) render() string {
 
 func (s *pSchema) render() string {
 	var b strings.Builder
+	if s.pg18 {
+		b.WriteString("-- sqlshape: postgres 18\n")
+	}
 	for _, in := range s.intents {
 		b.WriteString(in + "\n")
 	}
@@ -1383,8 +1430,8 @@ func (s *pSchema) addTriggerOn(r *rand.Rand, t *pTable) bool {
 	return true
 }
 
-func generate(r *rand.Rand) *pSchema {
-	s := &pSchema{}
+func generate(r *rand.Rand, pg18 bool) *pSchema {
+	s := &pSchema{pg18: pg18}
 	n := 1 + r.Intn(3)
 	for i := 0; i < n; i++ {
 		s.tables = append(s.tables, s.newTable(r))
@@ -1393,6 +1440,38 @@ func generate(r *rand.Rand) *pSchema {
 	// spare "drop partition" / "detach partition" needs a candidate that isn't only one a
 	// same-recipe "add partitioned table" step happened to leave behind
 	s.partTables = append(s.partTables, s.newPartTable(r))
+	// a spare already-detached partition from pair 0 too: "attach partition" alone
+	// (directed coverage) needs one already standing apart, not only one a same-recipe
+	// "detach partition" step happened to leave behind. Bound-picking mirrors "add
+	// partition"'s own (a LIST value / RANGE bound the other children don't already use).
+	{
+		pt0 := s.partTables[0]
+		name := s.next(pt0.name + "_")
+		if pt0.strategy == "LIST" {
+			used := map[string]bool{}
+			for _, c := range pt0.parts {
+				for _, v := range c.values {
+					used[v] = true
+				}
+			}
+			letter := "d"
+			for _, cand := range []string{"d", "e", "f", "g", "h"} {
+				if !used[cand] {
+					letter = cand
+					break
+				}
+			}
+			pt0.parts = append(pt0.parts, &pPartChild{name: name, orig: "public." + name, values: []string{letter}, detached: true})
+		} else {
+			hi := 0
+			for _, c := range pt0.parts {
+				if !c.isDefault && c.hi > hi {
+					hi = c.hi
+				}
+			}
+			pt0.parts = append(pt0.parts, &pPartChild{name: name, orig: "public." + name, lo: hi, hi: hi + 10, detached: true})
+		}
+	}
 	if r.Intn(2) == 0 {
 		s.addViewKind(r, false) // a spare plain view, so "drop view" has one from pair 0
 	}
@@ -1432,6 +1511,10 @@ func generate(r *rand.Rand) *pSchema {
 			}
 		}
 	}
+	// a second, unowned standalone sequence from pair 0 too: "set sequence owner" alone
+	// (directed coverage) needs one with no owner yet, not only one a same-recipe "clear
+	// sequence owner" step happened to leave behind.
+	s.seqs = append(s.seqs, &pSeq{name: s.next("sq")})
 	// a seed table from pair 0 too, so "change" / "drop seed row" have rows to act on
 	s.seedTable = &pSeedTable{name: s.next("lk"), rows: []pSeedRow{
 		{code: s.next("code"), label: "a"},
@@ -1972,7 +2055,14 @@ var mutations = []mutation{
 		old := t.pk()
 		var cands []*pCol
 		for _, c := range t.cols {
-			if !c.pk && c.gen == "" && isInteger(c.typ) && !touched[t.name+"."+c.name] && !t.inFK(c.name) {
+			// c.fresh is excluded: a column another mutation just added carries whatever
+			// single literal DEFAULT that mutation gave it (shared by every row, not the
+			// base generator's per-row-distinct value), so becoming the primary key
+			// without its own backfill risks a duplicate key on apply (measured: "toggle
+			// exclude constraint operator"'s "ne" column, shared default 1 so its WITH <>
+			// exclude always holds, moved onto as a PK loses that assumption -- !c.notNull
+			// alone missed it, since that column was already NOT NULL)
+			if !c.pk && c.gen == "" && isInteger(c.typ) && !c.fresh && !touched[t.name+"."+c.name] && !t.inFK(c.name) {
 				cands = append(cands, c)
 			}
 		}
@@ -2320,7 +2410,10 @@ var mutations = []mutation{
 		return true
 	}},
 	{"add enum type", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		s.enums = append(s.enums, &pEnum{name: s.next("e"), labels: []string{"a", "b", "c"}[:2+r.Intn(2)]})
+		// fresh: true, or a same-recipe "drop enum label" (unaware this enum has no
+		// from-side of its own) can pick it and declare `-- @migrate enum <new>: drop ...`
+		// against an enum "no such enum in the current schema" refuses (42704, measured).
+		s.enums = append(s.enums, &pEnum{name: s.next("e"), labels: []string{"a", "b", "c"}[:2+r.Intn(2)], fresh: true})
 		return true
 	}},
 	{"add domain type", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
@@ -2411,9 +2504,20 @@ var mutations = []mutation{
 			return false
 		}
 		t := pick(r, ts)
+		owned := map[string]bool{} // a column two sequences both claim OWNED BY is not
+		// a shape any real schema author would declare, and adds()/renames() only expect
+		// one from-side sequence to ever forward onto a given owner (sequenceFollowsRename,
+		// migrate.go): picking a column another sequence already owns can match this
+		// mutation's own new sequence to that unrelated one by coincidence and lose its
+		// CREATE SEQUENCE entirely (measured).
+		for _, sq := range s.seqs {
+			if sq.table != "" {
+				owned[sq.table+"."+sq.col] = true
+			}
+		}
 		var cols []*pCol
 		for _, c := range t.cols {
-			if isInteger(c.typ) && !c.pk && !c.identity && !c.serial && !c.fresh && c.gen == "" {
+			if isInteger(c.typ) && !c.pk && !c.identity && !c.serial && !c.fresh && c.gen == "" && !owned[t.name+"."+c.name] {
 				cols = append(cols, c)
 			}
 		}
@@ -2666,6 +2770,24 @@ var mutations = []mutation{
 		}
 		f := pick(r, cands)
 		f.kind = "aggregate"
+		touched["function:"+f.name] = true
+		return true
+	}},
+	{"convert function to window", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// migrate.go's functions() only drops a LANGUAGE internal function that is a
+		// range/multirange constructor (isRangeConstructor); a user-declared internal
+		// WINDOW function like this one is tracked and its "window" property diffed
+		var cands []*pFunc
+		for _, f := range s.funcs {
+			if f.kind == "" && !touched["function:"+f.name] {
+				cands = append(cands, f)
+			}
+		}
+		if len(cands) == 0 {
+			return false
+		}
+		f := pick(r, cands)
+		f.kind = "window"
 		touched["function:"+f.name] = true
 		return true
 	}},
@@ -3558,6 +3680,156 @@ var mutations = []mutation{
 		}
 		return false
 	}},
+	{"shrink partition bound", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// unlike "move partition bound" (which only ever widens, so the row already
+		// sitting at a child's own bound -- see pPartTable.rows -- always keeps fitting),
+		// this one narrows a child's bound past that very row, so it no longer belongs and
+		// the plan (partitionMovePredicate, migrate.go) has to move it back to the parent
+		// before DETACH + ATTACH runs, into the DEFAULT partition (brief-holes-pg.md item
+		// C). The row is not lost -- appends a DO $$ check confirming the parent's total
+		// count still holds it, since diff.Compare (judge's usual check) never looks at
+		// data.
+		for _, pt := range untouchedPartTables(s, touched) {
+			var live []*pPartChild
+			for _, c := range pt.parts {
+				if !c.gone && !c.detached && !c.isDefault {
+					live = append(live, c)
+				}
+			}
+			if len(live) == 0 {
+				continue
+			}
+			c := pick(r, live)
+			switch pt.strategy {
+			case "LIST":
+				used := map[string]bool{}
+				for _, o := range pt.parts {
+					for _, v := range o.values {
+						used[v] = true
+					}
+				}
+				letter := ""
+				for _, cand := range []string{"m", "n", "o", "p", "q"} {
+					if !used[cand] {
+						letter = cand
+						break
+					}
+				}
+				if letter == "" {
+					continue
+				}
+				c.values = []string{letter} // the row's own kind (c's former values[0]) no longer matches
+			default: // RANGE
+				if c.hi-c.lo < 2 {
+					continue // no room to raise lo past the row sitting at the old lo and stay a valid bound
+				}
+				c.lo++ // the row sits exactly at the old lo (pPartTable.rows), now excluded
+			}
+			total := 0 // one row per part from pt.rows() that is neither gone nor detached
+			for _, o := range pt.parts {
+				if !o.gone && !o.detached {
+					total++
+				}
+			}
+			s.checks = append(s.checks, fmt.Sprintf(
+				"DO $$ BEGIN IF (SELECT count(*) FROM %s) <> %d THEN RAISE EXCEPTION 'partition %s row count: %%', (SELECT count(*) FROM %s); END IF; END $$;",
+				qi(pt.name), total, pt.name, qi(pt.name)))
+			touched[pt.name] = true
+			return true
+		}
+		return false
+	}},
+}
+
+// mutations18 is PostgreSQL-18-only vocabulary (brief-holes-pg.md item E), added to
+// mutations for TestMigrateProbe18 alone: VIRTUAL generated columns, and NOT ENFORCED on
+// a CHECK or a foreign key. WITHOUT OVERLAPS (a temporal PRIMARY KEY / UNIQUE, needing a
+// range-typed column pTable's own vocabulary does not otherwise carry) and PERIOD foreign
+// keys are measured by hand instead (see alphabetKnownUnreached's own entries for why).
+var mutations18 = []mutation{
+	{"add virtual generated column", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		t := pick(r, ts)
+		x := &pCol{name: s.next("c"), typ: pick(r, []string{"integer", "numeric(10,2)", "smallint"})}
+		g := &pCol{name: s.next("g"), typ: "bigint", gen: x.name, genVirtual: true}
+		x.fresh, g.fresh = true, true
+		insertCol(r, t, g)
+		insertCol(r, t, x)
+		touched[t.name+"."+x.name], touched[t.name+"."+g.name] = true, true
+		return true
+	}},
+	{"toggle generated kind", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			var cands []*pCol
+			for _, c := range t.cols {
+				if c.gen != "" && !c.fresh && !touched[t.name+"."+c.name] {
+					cands = append(cands, c)
+				}
+			}
+			if len(cands) == 0 {
+				continue
+			}
+			c := pick(r, cands)
+			c.genVirtual = !c.genVirtual
+			touched[t.name+"."+c.name] = true
+			return true
+		}
+		return false
+	}},
+	{"toggle check not enforced", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			if len(t.checks) == 0 {
+				continue
+			}
+			ck := pick(r, t.checks)
+			ck.notEnforced = !ck.notEnforced
+			touched[t.name] = true
+			return true
+		}
+		return false
+	}},
+	{"toggle foreign key not enforced", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			if len(t.fks) == 0 {
+				continue
+			}
+			fk := pick(r, t.fks)
+			fk.notEnforced = !fk.notEnforced
+			touched[t.name] = true
+			return true
+		}
+		return false
+	}},
+	{"add without overlaps key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		t := pick(r, ts)
+		pk := t.pk()
+		if pk == nil || !isInteger(pk.typ) {
+			return false
+		}
+		// a fresh integer scalar column and a fresh daterange column, the range last
+		// (WITHOUT OVERLAPS requires it there); both backfilled from the table's own
+		// primary key so every row's span is [pk, pk+1) -- distinct integers make
+		// distinct, non-overlapping ranges, whatever pk's own values are.
+		scalar := &pCol{name: s.next("c"), typ: pk.typ, notNull: true, fresh: true}
+		span := &pCol{name: s.next("span"), typ: "daterange", notNull: true, fresh: true}
+		insertCol(r, t, scalar)
+		insertCol(r, t, span)
+		s.intents = append(s.intents,
+			fmt.Sprintf("-- @migrate backfill %s.%s = %s", t.full(), scalar.name, qi(pk.name)),
+			fmt.Sprintf("-- @migrate backfill %s.%s = daterange('2024-01-01'::date + %s::integer, '2024-01-02'::date + %s::integer)",
+				t.full(), span.name, qi(pk.name), qi(pk.name)))
+		t.keys = append(t.keys, &pKey{name: s.next("k"), unique: true, cols: []string{scalar.name, span.name}, withoutOverlaps: true})
+		s.ensureExtension("btree_gist")
+		touched[t.name+"."+scalar.name], touched[t.name+"."+span.name] = true, true
+		return true
+	}},
 }
 
 // untouchedPartTables is untouched's counterpart for pPartTable: candidates a mutation may
@@ -3592,15 +3864,15 @@ type step struct {
 	seed int64
 }
 
-func mutate(src *pSchema, recipe []step) (*pSchema, []string) {
+func mutate(muts []mutation, src *pSchema, recipe []step) (*pSchema, []string) {
 	s := src.clone()
 	s.mutating = true
 	touched := map[string]bool{}
 	var applied []string
 	for _, st := range recipe {
 		r := rand.New(rand.NewSource(st.seed))
-		if mutations[st.m].apply(r, s, touched) {
-			applied = append(applied, mutations[st.m].name)
+		if muts[st.m].apply(r, s, touched) {
+			applied = append(applied, muts[st.m].name)
 		}
 	}
 	return s, applied
@@ -3621,14 +3893,14 @@ type verdict struct {
 	changes []diff.Change
 }
 
-func judge(ctx context.Context, src, target *pSchema, applied []string) verdict {
+func judge(ctx context.Context, srv *dump.Server, src, target *pSchema, applied []string) verdict {
 	v := verdict{aSQL: src.render(), bSQL: target.render(), applied: applied}
-	a, aText, err := server.Canonical(ctx, v.aSQL, nil)
+	a, aText, err := srv.Canonical(ctx, v.aSQL, nil)
 	if err != nil {
 		v.kind, v.detail = "generator (source)", err.Error()
 		return v
 	}
-	b, _, err := server.Canonical(ctx, v.bSQL, nil)
+	b, _, err := srv.Canonical(ctx, v.bSQL, nil)
 	if err != nil {
 		v.kind, v.detail = "generator (target)", err.Error()
 		return v
@@ -3651,9 +3923,18 @@ func judge(ctx context.Context, src, target *pSchema, applied []string) verdict 
 	}
 	// the source database holds rows: what apply runs against is never empty
 	loaded := aText + "\nRESET search_path;\n" + src.rows()
-	got, _, err := server.Canonical(ctx, loaded+"\n"+strings.Join(ddl, "\n"), b)
+	script := loaded + "\n" + strings.Join(ddl, "\n")
+	if len(target.checks) > 0 {
+		// a mutation's own data assertions (so far: a partition bound shrinking past a
+		// row it used to hold, "shrink partition bound") run in the same script, right
+		// after the plan's DDL and before judge() ever compares schemas -- a RAISE
+		// EXCEPTION here surfaces as a plain Canonical error below, same as a bad DDL
+		// statement would.
+		script += "\n" + strings.Join(target.checks, "\n")
+	}
+	got, _, err := srv.Canonical(ctx, script, b)
 	if err != nil {
-		if _, _, rerr := server.Canonical(ctx, loaded, a); rerr != nil {
+		if _, _, rerr := srv.Canonical(ctx, loaded, a); rerr != nil {
 			v.kind, v.detail = "generator (rows)", rerr.Error()+"\n"+src.rows()
 			return v
 		}
@@ -3686,50 +3967,151 @@ func judge(ctx context.Context, src, target *pSchema, applied []string) verdict 
 // first place.
 var alphabetKnownUnreached = map[string]string{
 	"~ table inherits":              "migrate.go's alterTable only notes inherits/of type changes (\"cannot be altered by the plan\"); never DDL. Regular table INHERITS (distinct from PARTITION OF, now in this round's vocabulary) is still out of this probe's vocabulary",
-	"~ table partition key":         "no lossless DDL exists for repartitioning a table already holding data under a different key or strategy (PostgreSQL has no ALTER ... PARTITION BY, measured); migrate.go reports it as a problem (halts apply) rather than a note, so the generator never declares this mutation and no pair carries it -- brief-partition-pg.md item 7",
+	"~ table partition key":         "migrate.go's repartitionTable now has lossless DDL for this (rename aside, rebuild the target's own shape fresh, let the router move every row across, brief-holes-pg.md item D), but only for a table nothing else structurally depends on (repartitionEligible: no policy / rule / trigger / comment of its own, no identity column or sequence it owns, no other table's foreign key resting on it) -- pTable's own vocabulary deliberately keeps all of those (the same reason pPartTable never folds into pTable, see its doc comment), so the generator has no candidate that both carries this field and stays in scope; measured by hand instead (TestProbeRepartitionEmptyToRange / RangeToEmpty / RangeToList), empty -> X, X -> empty and X -> Y all pinned. A table outside repartitionEligible's scope still gets the old problem (halts apply) rather than an incomplete plan.",
 	"~ table of type":               "same note-only path as table inherits; typed tables (CREATE TABLE OF) are also not in this probe's vocabulary",
 	"~ domain base":                 "migrate.go's alterType domain case only notes a base type change (\"cannot be altered\"); never DDL",
 	"~ range subtype":               "migrate.go's alterType range case only notes any change (\"cannot be altered\"); never DDL. The generator also has no range type vocabulary",
-	"~ constraint without overlaps": "a PostgreSQL 18 constraint attribute (WITHOUT OVERLAPS); this probe's server is pinned to PostgreSQL 17 (brief-pg.md), which refuses the syntax outright, so no pair generated against it can ever carry the field",
-	"~ constraint period":           "a PostgreSQL 18 constraint attribute (FOREIGN KEY ... PERIOD); same PostgreSQL 17 server ceiling as \"without overlaps\"",
+	"~ constraint without overlaps": "a PostgreSQL 18 constraint attribute (WITHOUT OVERLAPS). Under the 17 gate the server refuses the syntax outright. mutations18's own \"add without overlaps key\" (TestMigrateProbe18) does add such a key -- but always a brand new one (+ constraint), never a change to an existing key's own WITHOUT OVERLAPS flag (the ~ field diff.Alphabet mines), since no table in this probe's vocabulary already carries a range-typed column to build one on before the mutation runs; toggling one in place, the way \"toggle foreign key not enforced\" toggles an existing key, needs a base table seeded with one from the start (like the partition tables' own spares) -- future work, not yet wired through generate()",
+	"~ constraint period":           "a PostgreSQL 18 constraint attribute (FOREIGN KEY ... PERIOD, needing a WITHOUT OVERLAPS primary key on the referenced side): under the 17 gate, the server itself refuses the syntax outright (same ceiling as \"without overlaps\"); brief-holes-pg.md item E calls it optional (\"時間があれば\") and mutations18 does not add it, so it stays an accepted excuse under the 18 gate too, unlike without overlaps / not enforced / generated kind",
 	"~ column generated kind":       "a PostgreSQL 18 generated-column form (VIRTUAL, versus this probe's STORED); same PostgreSQL 17 server ceiling as \"without overlaps\"",
 	"~ constraint not enforced":     "a PostgreSQL 18 constraint attribute (NOT ENFORCED); same PostgreSQL 17 server ceiling as \"without overlaps\"",
 	"~ index unique":                "structurally unreachable (measured): pg_dump always renders a named UNIQUE constraint as ALTER TABLE ... ADD CONSTRAINT, never a CREATE INDEX + ADD CONSTRAINT ... UNIQUE USING INDEX pair, so toggling a key between UNIQUE and a plain index changes its diff.Change Kind (constraint <-> index) rather than the same-named index's \"unique\" property -- no vocabulary addition reaches it, since the generator would have to reproduce a pg_dump form pg_dump itself never produces",
-	"~ function window":             "structurally unreachable as currently modeled (measured): migrate.go's functions() helper drops every LANGUAGE internal function from tracking outright (\"a range/multirange constructor: PostgreSQL creates and drops it with its type\"), which also hides a legitimate user-declared internal window function (CREATE FUNCTION ... LANGUAGE internal WINDOW AS 'window_row_number', the only SQL form that sets IsWindow) -- a mutation converting a plain function to one loses it silently (its own DROP FUNCTION comes from drops(), never a matching CREATE) rather than producing a usable pair; disambiguating a real range-type constructor from a user-declared internal function is a planner change out of scope for this round",
+}
+
+// pg18OnlyUnreached is the subset of alphabetKnownUnreached that stops being an accepted
+// excuse under TestMigrateProbe18 (brief-holes-pg.md item E): PostgreSQL 18 syntax
+// mutations18 exercises there, so alphabetKnownUnreached's own text (written for the 17
+// gate, where the server itself refuses the syntax) does not apply -- isKnownUnreached
+// reports these as needing an actual hit instead once pg18 is true.
+var pg18OnlyUnreached = map[string]bool{
+	"~ column generated kind":   true,
+	"~ constraint not enforced": true,
+}
+
+// isKnownUnreached is alphabetKnownUnreached's excuse for s, "" when none applies --
+// except a pg18OnlyUnreached entry under TestMigrateProbe18, whose whole excuse was the 17
+// server's syntax ceiling: gone once pg18 is true, so it must be hit like anything else.
+func isKnownUnreached(s string, pg18 bool) string {
+	if pg18 && pg18OnlyUnreached[s] {
+		return ""
+	}
+	return alphabetKnownUnreached[s]
+}
+
+// tallyHit folds one judged pair's diff.Compare output into the alphabet coverage set:
+// every Alter's Fields as their own (Op, Kind, Field) entries, every Add / Drop as one
+// (Op, Kind) entry with no Field (matching diff.Alphabet's own grouping for rows and
+// comment's single field, and for schema / extension which are never Alter).
+func tallyHit(hit map[string]bool, changes []diff.Change) {
+	for _, ch := range changes {
+		if ch.Op == diff.Alter {
+			for _, f := range ch.Fields {
+				hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: diff.NormalizeField(ch.Kind, f.Name)}.String()] = true
+			}
+			continue
+		}
+		hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
+	}
+}
+
+// directedAttempts bounds how many freshly generated schemas one mutation gets to find a
+// candidate against on its own, in directedCoverage, before it is reported unable to
+// apply alone.
+const directedAttempts = 30
+
+// directedCoverage runs one pair per mutation -- that mutation alone against a freshly
+// generated schema, retried against a new schema up to directedAttempts times if it finds
+// no candidate -- so the alphabet coverage gate no longer depends on TestMigrateProbe's
+// random pairs happening to draw every mutation at least once. That dependency is real:
+// adding a mutation shifts every later draw's position in the PRNG sequence, so a vocabulary
+// addition can silently stop a *different*, already-covered alphabet entry from being hit
+// by the random pairs at the same seed (brief-holes-common.md's whole reason for this
+// pass). judge and the finding / hit bookkeeping are exactly what the random loop does;
+// unlike a random pair (up to 7 mutations), a directed pair is already minimal, so there is
+// nothing to shrink if it turns up a finding.
+func directedCoverage(t *testing.T, ctx context.Context, srv *dump.Server, muts []mutation, pg18 bool, seed int64, counts, byMutation map[string]int, hit map[string]bool, findings *[]verdict) []string {
+	var stuck []string
+	for mi, m := range muts {
+		r := rand.New(rand.NewSource(seed*100003 + int64(mi)))
+		var src, target *pSchema
+		var applied []string
+		ok := false
+		for attempt := 0; attempt < directedAttempts; attempt++ {
+			src = generate(r, pg18)
+			target, applied = mutate(muts, src, []step{{m: mi, seed: r.Int63()}})
+			if len(applied) > 0 {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			stuck = append(stuck, m.name)
+			continue
+		}
+		v := judge(ctx, srv, src, target, applied)
+		for _, a := range applied {
+			byMutation[a]++
+		}
+		tallyHit(hit, v.changes)
+		switch {
+		case v.kind == "":
+			counts["pass"]++
+		case strings.HasPrefix(v.kind, "generator"):
+			counts[v.kind]++
+			if counts[v.kind] <= 3 {
+				t.Logf("%s (directed, %s): %s\n%s", v.kind, m.name, v.detail, v.aSQL)
+			}
+		default:
+			counts["finding"]++
+			*findings = append(*findings, v)
+		}
+	}
+	return stuck
 }
 
 func TestMigrateProbe(t *testing.T) {
 	requirePgDump(t)
+	runMigrateProbe(t, server, mutations, false, "postgres", *probeSeed, *probeN)
+}
+
+// TestMigrateProbe18 is TestMigrateProbe against an embedded PostgreSQL 18 instead of 17,
+// with mutations18 added to the vocabulary (brief-holes-pg.md item E): VIRTUAL generated
+// columns, NOT ENFORCED CHECK / FOREIGN KEY, WITHOUT OVERLAPS PRIMARY KEY / UNIQUE. Its own
+// gate, seed 1 / 200 pairs, same as the 17 one; run separately (-run TestMigrateProbe18).
+func TestMigrateProbe18(t *testing.T) {
+	requirePgDump18(t)
+	muts := append(append([]mutation(nil), mutations...), mutations18...)
+	runMigrateProbe(t, server18, muts, true, "postgres18", *probeSeed, *probeN)
+}
+
+// runMigrateProbe is TestMigrateProbe's body, shared with TestMigrateProbe18: srv is which
+// embedded server judge() applies DDL to, muts the vocabulary directedCoverage and the
+// random pairs draw from, pg18 whether generate() declares `-- sqlshape: postgres 18`
+// (schema.DeclaredVersion) and which alphabetKnownUnreached entries stop being an accepted
+// excuse (isKnownUnreached).
+func runMigrateProbe(t *testing.T, srv *dump.Server, muts []mutation, pg18 bool, reportName string, seed int64, n int) {
 	ctx := context.Background()
-	r := rand.New(rand.NewSource(*probeSeed))
+	r := rand.New(rand.NewSource(seed))
 	counts := map[string]int{}
 	byMutation := map[string]int{}
 	hit := map[string]bool{}
 	var findings []verdict
-	for i := 0; i < *probeN; i++ {
-		src := generate(r)
-		n := 1 + r.Intn(7)
+	for i := 0; i < n; i++ {
+		src := generate(r, pg18)
+		nmut := 1 + r.Intn(5)
 		var recipe []step
-		for j := 0; j < n; j++ {
-			recipe = append(recipe, step{m: r.Intn(len(mutations)), seed: r.Int63()})
+		for j := 0; j < nmut; j++ {
+			recipe = append(recipe, step{m: r.Intn(len(muts)), seed: r.Int63()})
 		}
-		target, applied := mutate(src, recipe)
+		target, applied := mutate(muts, src, recipe)
 		if len(applied) == 0 {
 			continue
 		}
-		v := judge(ctx, src, target, applied)
+		v := judge(ctx, srv, src, target, applied)
 		for _, a := range applied {
 			byMutation[a]++
 		}
-		for _, ch := range v.changes {
-			if ch.Op == diff.Alter {
-				for _, f := range ch.Fields {
-					hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: diff.NormalizeField(ch.Kind, f.Name)}.String()] = true
-				}
-				continue
-			}
-			hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
-		}
+		tallyHit(hit, v.changes)
 		if v.kind == "" {
 			counts["pass"]++
 			continue
@@ -3744,12 +4126,12 @@ func TestMigrateProbe(t *testing.T) {
 		counts["finding"]++
 		for j := 0; j < len(recipe); {
 			shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
-			tgt, app := mutate(src, shorter)
+			tgt, app := mutate(muts, src, shorter)
 			if len(app) == 0 {
 				j++
 				continue
 			}
-			if w := judge(ctx, src, tgt, app); w.kind == v.kind {
+			if w := judge(ctx, srv, src, tgt, app); w.kind == v.kind {
 				recipe, v = shorter, w
 				continue
 			}
@@ -3757,6 +4139,9 @@ func TestMigrateProbe(t *testing.T) {
 		}
 		findings = append(findings, v)
 	}
+	randomHit := len(hit)
+	stuck := directedCoverage(t, ctx, srv, muts, pg18, seed, counts, byMutation, hit, &findings)
+	combinedHit := len(hit)
 
 	var keys []string
 	for k := range counts {
@@ -3775,11 +4160,11 @@ func TestMigrateProbe(t *testing.T) {
 	for _, m := range ms {
 		fmt.Fprintf(&summary, "  %-45s %d\n", m, byMutation[m])
 	}
-	t.Logf("migrate probe, seed %d, %d pairs:\n%s", *probeSeed, *probeN, summary.String())
+	t.Logf("migrate probe (%s), seed %d, %d pairs:\n%s", reportName, seed, n, summary.String())
 
 	seen := map[string]bool{}
 	var report strings.Builder
-	fmt.Fprintf(&report, "# migrate probe (postgres), seed %d, %d pairs\n\n%s\n", *probeSeed, *probeN, summary.String())
+	fmt.Fprintf(&report, "# migrate probe (%s), seed %d, %d pairs\n\n%s\n", reportName, seed, n, summary.String())
 	distinct := 0
 	for _, v := range findings {
 		key := v.kind + "\n" + v.detail
@@ -3796,14 +4181,18 @@ func TestMigrateProbe(t *testing.T) {
 		t.Fatalf("diff.Alphabet: %v", err)
 	}
 	var missed []string
-	fmt.Fprintf(&report, "## alphabet coverage\n\n%d entries, %d hit\n\n", len(alphabet), len(hit))
+	fmt.Fprintf(&report, "## alphabet coverage\n\n%d entries, %d hit (%d by the random pairs alone, %d with directed coverage added)\n\n",
+		len(alphabet), len(hit), randomHit, combinedHit)
+	if len(stuck) > 0 {
+		fmt.Fprintf(&report, "%d mutation(s) never found a candidate alone in %d attempts: %s\n\n", len(stuck), directedAttempts, strings.Join(stuck, ", "))
+	}
 	for _, e := range alphabet {
 		s := e.String()
 		switch {
 		case hit[s]:
 			fmt.Fprintf(&report, "- [x] %s\n", s)
-		case alphabetKnownUnreached[s] != "":
-			fmt.Fprintf(&report, "- [ ] %s -- known unreached: %s\n", s, alphabetKnownUnreached[s])
+		case isKnownUnreached(s, pg18) != "":
+			fmt.Fprintf(&report, "- [ ] %s -- known unreached: %s\n", s, isKnownUnreached(s, pg18))
 		default:
 			fmt.Fprintf(&report, "- [ ] %s -- MISSED\n", s)
 			missed = append(missed, s)
@@ -3844,5 +4233,8 @@ func TestMigrateProbe(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		t.Errorf("%d stale alphabetKnownUnreached entries (not in diff.Alphabet): %s", len(stale), strings.Join(stale, ", "))
+	}
+	if len(stuck) > 0 {
+		t.Errorf("%d mutation(s) never found a candidate alone in %d directed attempts: %s", len(stuck), directedAttempts, strings.Join(stuck, ", "))
 	}
 }

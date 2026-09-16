@@ -82,20 +82,25 @@ type pTable struct {
 	partition *pPartitioning
 }
 
-// pPartitioning is a table's PARTITION BY clause: RANGE (id), an ordered list of parts, or
-// HASH (id) PARTITIONS n. Always over the id column (see pTable.partition's own comment).
+// pPartitioning is a table's PARTITION BY clause: RANGE (id), an ordered list of parts,
+// HASH (id) PARTITIONS n, or LIST (id), an unordered list of parts (each own value set, not
+// a boundary). Always over the id column (see pTable.partition's own comment).
 type pPartitioning struct {
-	kind  string  // "RANGE" or "HASH"
+	kind  string  // "RANGE", "HASH" or "LIST"
 	num   int     // HASH's PARTITIONS n
-	parts []pPart // RANGE's ordered partitions
+	parts []pPart // RANGE's ordered partitions, or LIST's own (order is cosmetic there)
 }
 
-// pPart is one partition of a RANGE pPartitioning: `VALUES LESS THAN (bound)`, or
-// `VALUES LESS THAN MAXVALUE` when maxValue (only the last partition may say this).
+// pPart is one partition of a RANGE pPartitioning (`VALUES LESS THAN (bound)`, or
+// `VALUES LESS THAN MAXVALUE` when maxValue -- only the last partition may say this) or of a
+// LIST pPartitioning (`VALUES IN (values...)`, always over the id column's own domain --
+// rows 1..3, or a value this schema's rows never take, so a mutation adding or moving one
+// never needs a declaration of its own the way dropping one still does).
 type pPart struct {
 	name     string
 	maxValue bool
 	bound    int
+	values   []int // LIST's own VALUES IN, nil for RANGE
 }
 
 type pCol struct {
@@ -204,7 +209,11 @@ func (s *pSchema) clone() *pSchema {
 			charset: t.charset, collation: t.collation, rowFormat: t.rowFormat, engine: t.engine}
 		if t.partition != nil {
 			np := *t.partition
-			np.parts = append([]pPart(nil), t.partition.parts...)
+			np.parts = make([]pPart, len(t.partition.parts))
+			for i, part := range t.partition.parts {
+				np.parts[i] = part
+				np.parts[i].values = append([]int(nil), part.values...)
+			}
 			nt.partition = &np
 		}
 		for _, col := range t.cols {
@@ -522,6 +531,13 @@ func (p *pPartitioning) render(col string) string {
 	if p.kind == "HASH" {
 		return fmt.Sprintf("PARTITION BY HASH (%s) PARTITIONS %d", q(col), p.num)
 	}
+	if p.kind == "LIST" {
+		defs := make([]string, len(p.parts))
+		for i, part := range p.parts {
+			defs[i] = fmt.Sprintf("PARTITION %s VALUES IN (%s)", q(part.name), intList(part.values))
+		}
+		return fmt.Sprintf("PARTITION BY LIST (%s)\n(%s)", q(col), strings.Join(defs, ",\n "))
+	}
 	defs := make([]string, len(p.parts))
 	for i, part := range p.parts {
 		if part.maxValue {
@@ -531,6 +547,15 @@ func (p *pPartitioning) render(col string) string {
 		}
 	}
 	return fmt.Sprintf("PARTITION BY RANGE (%s)\n(%s)", q(col), strings.Join(defs, ",\n "))
+}
+
+// intList renders a LIST partition's own value set, comma-separated.
+func intList(values []int) string {
+	strs := make([]string, len(values))
+	for i, v := range values {
+		strs[i] = fmt.Sprint(v)
+	}
+	return strings.Join(strs, ", ")
 }
 
 func (s *pSchema) render() string {
@@ -1846,32 +1871,14 @@ var mutations = []mutation{
 		return true
 	}},
 	{"table charset", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		var cands []*pTable
-		for _, t := range untouched(s, touched) {
-			// a plain (no explicit per-column COLLATE) text / varchar / enum column
-			// implicitly takes the table's own default charset at CREATE time; the
-			// planner only ever writes ALTER TABLE ... DEFAULT CHARSET= (never CONVERT
-			// TO, a deliberate design choice: it rewrites every row of every string
-			// column), which does not retroactively convert such a column, so its real
-			// encoding stays the table's *old* default even as the table's own default
-			// moves on -- a plain column's target (freshly authored under the new
-			// default) does not carry that mismatch, so the two can never converge
-			// (measured: SHOW CREATE TABLE only starts annotating the column explicitly
-			// once its charset no longer matches the table's, which the target's own
-			// canonical never does). Only a table where every such column already
-			// spells its own COLLATE explicitly (this generator's `collate` flag) is
-			// immune to its table's own default moving out from under it.
-			risky := false
-			for _, c := range t.cols {
-				if (c.typ == "text" || strings.HasPrefix(c.typ, "varchar") || c.typ == "enum") && !c.collate {
-					risky = true
-					break
-				}
-			}
-			if !risky {
-				cands = append(cands, t)
-			}
-		}
+		// a plain (no explicit per-column COLLATE) text / varchar / enum column implicitly
+		// takes the table's own default charset at CREATE time; migrate.go's alterTable
+		// re-issues such a column's own MODIFY COLUMN once the table's own default has
+		// moved out from under it (see its own doc comment for why: ALTER TABLE ... DEFAULT
+		// CHARSET= alone never retroactively converts it), so both a table where every
+		// string column already spells its own COLLATE explicitly (this generator's
+		// `collate` flag) and one where none do are candidates now.
+		cands := untouched(s, touched)
 		if len(cands) == 0 {
 			return false
 		}
@@ -2302,6 +2309,86 @@ var mutations = []mutation{
 		touched[t.name] = true
 		return true
 	}},
+	{"partition table by list", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			// the partitioning key's own domain must still be exactly 1..3 (every row):
+			// an earlier "move primary key" in this same recipe can give this table's
+			// current pk() a backfilled value (fill's own "9", measured -- Error 1526
+			// "Table has no partition for value 9") that RANGE's own wide bounds absorb
+			// but LIST's exact VALUES IN enumeration does not, so this generator only
+			// partitions by an untouched column.
+			return t.partition == nil && !touched[t.name+"."+t.pk().name]
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		// every row (id 1..3) split across the two partitions, so a later "add list
+		// partition" / "move list partition value" step never needs a declaration of its
+		// own the way dropping one still does.
+		t.partition = &pPartitioning{kind: "LIST", parts: []pPart{
+			{name: s.next("p"), values: []int{1, 2}},
+			{name: s.next("p"), values: []int{3}},
+		}}
+		touched[t.name] = true
+		return true
+	}},
+	{"add list partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := partitionCandidates(s, touched, func(t *pTable) bool { return t.partition != nil && t.partition.kind == "LIST" })
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		// s.seq is already a name counter unique across the whole schema; borrowing it as
+		// the value too keeps this partition's own VALUES IN clear of every row's id (1..3)
+		// and of any other "add list partition" step in the same recipe.
+		name := s.next("p")
+		t.partition.parts = append(t.partition.parts, pPart{name: name, values: []int{1000 + s.seq}})
+		touched[t.name] = true
+		return true
+	}},
+	{"drop list partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// only a partition an earlier "add list partition" step in this same recipe
+		// appended (parts[2:]): the generator's own first two partitions are what every row
+		// depends on to have somewhere to go, the same restriction "drop partition" (RANGE's
+		// own) already carries.
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			return t.partition != nil && t.partition.kind == "LIST" && len(t.partition.parts) >= 3
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		gone := t.partition.parts[len(t.partition.parts)-1]
+		t.partition.parts = t.partition.parts[:len(t.partition.parts)-1]
+		s.intents = append(s.intents, fmt.Sprintf("-- @migrate drop partition %s.%s", t.orig, gone.name))
+		touched[t.name] = true
+		return true
+	}},
+	{"move list partition value", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// moves one of the generator's own two base partitions' values to the other: both
+		// keep their name, so migrate.go's alterListPartitioning reorganizes them together,
+		// and no row's id ever goes missing (it only ever changes which named partition
+		// holds it).
+		cands := partitionCandidates(s, touched, func(t *pTable) bool {
+			return t.partition != nil && t.partition.kind == "LIST" && len(t.partition.parts) >= 2 &&
+				(len(t.partition.parts[0].values) > 0 || len(t.partition.parts[1].values) > 0)
+		})
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		src := 0
+		if len(t.partition.parts[0].values) == 0 {
+			src = 1
+		}
+		dst := 1 - src
+		v := t.partition.parts[src].values[0]
+		t.partition.parts[src].values = t.partition.parts[src].values[1:]
+		t.partition.parts[dst].values = append(t.partition.parts[dst].values, v)
+		touched[t.name] = true
+		return true
+	}},
 }
 
 // partitionCandidates: untouched tables a partitioning mutation may act on that also
@@ -2318,14 +2405,20 @@ func partitionCandidates(s *pSchema, touched map[string]bool, pred func(*pTable)
 		if !pred(t) || len(t.fks) > 0 || len(referencedByAny(s, t)) > 0 {
 			continue
 		}
-		unique := false
+		unique, fulltext := false, false
 		for _, k := range t.keys {
 			if k.unique {
 				unique = true
-				break
+			}
+			// InnoDB refuses FULLTEXT on a partitioned table (Error 1214, "The used table
+			// type doesn't support FULLTEXT indexes", measured); directed coverage is what
+			// actually surfaced this one, applying "partition table by hash" against a table
+			// a random draw had already given a FULLTEXT key.
+			if k.special == "FULLTEXT" {
+				fulltext = true
 			}
 		}
-		if unique {
+		if unique || fulltext {
 			continue
 		}
 		spatial := false
@@ -2463,6 +2556,65 @@ func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, appl
 	return v
 }
 
+// runPair mutates src with recipe, judges the result against a real server, and tallies the
+// pair: byMutation for every step that actually applied, hit for the (Op, Kind, Field)
+// alphabet triples the pair's diff exercised (whatever judge made of it afterward), and
+// counts/findings the same way TestMigrateProbe's own loop always has (a bad pairing the
+// generator itself produced is logged and dropped, a real finding is minimized and kept). It
+// returns the zero verdict, unmodified, when no step in recipe found anything to apply --
+// the caller's cue that this attempt did not exercise its mutation(s) at all and, for a
+// directed attempt, should be retried against a freshly generated schema.
+func runPair(ctx context.Context, scratch dump.Canonicalizer, label string, src *pSchema, recipe []step,
+	counts map[string]int, byMutation map[string]int, hit map[string]bool, findings *[]verdict, t *testing.T) verdict {
+	target, applied := mutate(src, recipe)
+	if len(applied) == 0 {
+		return verdict{}
+	}
+	v := judge(ctx, scratch, src, target, applied)
+	for _, a := range applied {
+		byMutation[a]++
+	}
+	// tally which (Op, Kind, Field) triples (diff.Alphabet) this pair exercised, whatever
+	// judge made of it afterward.
+	for _, ch := range v.changes {
+		if ch.Op == diff.Alter {
+			for _, f := range ch.Fields {
+				hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: f.Name}.String()] = true
+			}
+			continue
+		}
+		hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
+	}
+	if v.kind == "" {
+		counts["pass"]++
+		return v
+	}
+	if strings.HasPrefix(v.kind, "generator") {
+		counts[v.kind]++
+		if counts[v.kind] <= 3 {
+			t.Logf("%s (%s, %s): %s\n%s", v.kind, label, strings.Join(applied, "; "), v.detail, v.aSQL)
+		}
+		return v
+	}
+	counts["finding"]++
+	// minimize: drop steps while the failure stands
+	for j := 0; j < len(recipe); {
+		shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
+		tgt, app := mutate(src, shorter)
+		if len(app) == 0 {
+			j++
+			continue
+		}
+		if w := judge(ctx, scratch, src, tgt, app); w.kind == v.kind {
+			recipe, v = shorter, w
+			continue
+		}
+		j++
+	}
+	*findings = append(*findings, v)
+	return v
+}
+
 func TestMigrateProbe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -2490,53 +2642,43 @@ func TestMigrateProbe(t *testing.T) {
 		for j := 0; j < n; j++ {
 			recipe = append(recipe, step{m: r.Intn(len(mutations)), seed: r.Int63()})
 		}
-		target, applied := mutate(src, recipe)
-		if len(applied) == 0 {
-			continue
-		}
-		v := judge(ctx, scratch, src, target, applied)
-		for _, a := range applied {
-			byMutation[a]++
-		}
-		// tally which (Op, Kind, Field) triples (diff.Alphabet) this pair exercised,
-		// whatever judge made of it afterward.
-		for _, ch := range v.changes {
-			if ch.Op == diff.Alter {
-				for _, f := range ch.Fields {
-					hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: f.Name}.String()] = true
-				}
-				continue
-			}
-			hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
-		}
-		if v.kind == "" {
-			counts["pass"]++
-			continue
-		}
-		if strings.HasPrefix(v.kind, "generator") {
-			counts[v.kind]++
-			if counts[v.kind] <= 3 {
-				t.Logf("%s (pair %d, %s): %s\n%s", v.kind, i, strings.Join(applied, "; "), v.detail, v.aSQL)
-			}
-			continue
-		}
-		counts["finding"]++
-		// minimize: drop steps while the failure stands
-		for j := 0; j < len(recipe); {
-			shorter := append(append([]step(nil), recipe[:j]...), recipe[j+1:]...)
-			tgt, app := mutate(src, shorter)
-			if len(app) == 0 {
-				j++
-				continue
-			}
-			if w := judge(ctx, scratch, src, tgt, app); w.kind == v.kind {
-				recipe, v = shorter, w
-				continue
-			}
-			j++
-		}
-		findings = append(findings, v)
+		runPair(ctx, scratch, fmt.Sprintf("pair %d", i), src, recipe, counts, byMutation, hit, &findings, t)
 	}
+	hitRandom := len(hit)
+
+	// directed coverage: the random draw above is what an earlier round's gate relied on
+	// entirely (200 pairs of seed 1 "happening" to reach every alphabet entry), which breaks
+	// the moment a new mutation shifts the PRNG's draws out from under an existing one (measured:
+	// adding a mutation here once made an existing "~ domain check <name>" stop being hit at
+	// seed 1). This applies each mutation completely alone, against a schema fresh enough for
+	// it, at least once, regardless of what the random pairs above happened to draw -- so the
+	// gate's coverage no longer depends on chance. A mutation that finds nothing to apply to a
+	// given fresh schema (untouched candidates the generator did not happen to produce) just
+	// draws another; one that still finds nothing after directedTries schemas is reported as
+	// unable to run standalone and fails the gate below (as opposed to reachable only combined
+	// with another mutation first, which this loop does not claim to rule out).
+	const directedTries = 30
+	var unusable []string
+	for m, mut := range mutations {
+		ok := false
+		for try := 0; try < directedTries && !ok; try++ {
+			src := generate(r)
+			recipe := []step{{m: m, seed: r.Int63()}}
+			label := fmt.Sprintf("directed %q try %d", mut.name, try)
+			v := runPair(ctx, scratch, label, src, recipe, counts, byMutation, hit, &findings, t)
+			if v.applied == nil {
+				continue // this schema had no candidate for the mutation: draw another
+			}
+			if strings.HasPrefix(v.kind, "generator") {
+				continue // a bad pairing, not this mutation's fault: draw another
+			}
+			ok = true
+		}
+		if !ok {
+			unusable = append(unusable, mut.name)
+		}
+	}
+	sort.Strings(unusable)
 
 	var keys []string
 	for k := range counts {
@@ -2578,7 +2720,21 @@ func TestMigrateProbe(t *testing.T) {
 		t.Fatalf("diff.Alphabet: %v", err)
 	}
 	var missed []string
-	fmt.Fprintf(&report, "## alphabet coverage\n\n%d entries, %d hit\n\n", len(alphabet), len(hit))
+	fmt.Fprintf(&report, "## alphabet coverage\n\n%d entries, %d hit by the random pairs alone, %d hit once directed is added\n\n", len(alphabet), hitRandom, len(hit))
+	var newlyUnusable []string
+	fmt.Fprintf(&report, "### directed coverage: applying every mutation alone\n\n")
+	for _, name := range unusable {
+		if reason := directedKnownUnusable[name]; reason != "" {
+			fmt.Fprintf(&report, "- [ ] %s -- known unusable standalone: %s\n", name, reason)
+			continue
+		}
+		fmt.Fprintf(&report, "- [ ] %s -- MISSED (could not apply alone after %d fresh schemas)\n", name, directedTries)
+		newlyUnusable = append(newlyUnusable, name)
+	}
+	if len(unusable) == 0 {
+		fmt.Fprintf(&report, "every mutation applied standalone at least once\n")
+	}
+	fmt.Fprintln(&report)
 	for _, e := range alphabet {
 		s := e.String()
 		switch {
@@ -2608,6 +2764,23 @@ func TestMigrateProbe(t *testing.T) {
 	for _, s := range stale {
 		fmt.Fprintf(&report, "- stale known-unreached entry (not in the current alphabet): %s\n", s)
 	}
+	// a directedKnownUnusable entry this run's directed pass did apply standalone is stale
+	// the same way: the mutation (or a companion one earlier in mutations) changed and the
+	// allowance no longer describes reality.
+	unusableNow := map[string]bool{}
+	for _, name := range unusable {
+		unusableNow[name] = true
+	}
+	var staleUnusable []string
+	for name := range directedKnownUnusable {
+		if !unusableNow[name] {
+			staleUnusable = append(staleUnusable, name)
+		}
+	}
+	sort.Strings(staleUnusable)
+	for _, s := range staleUnusable {
+		fmt.Fprintf(&report, "- stale directedKnownUnusable entry (applied standalone this run): %s\n", s)
+	}
 
 	if *probeReport != "" {
 		if err := os.WriteFile(*probeReport, []byte(report.String()), 0o644); err != nil {
@@ -2627,6 +2800,13 @@ func TestMigrateProbe(t *testing.T) {
 	if len(stale) > 0 {
 		t.Errorf("%d stale alphabetKnownUnreached entries (not in diff.Alphabet): %s", len(stale), strings.Join(stale, ", "))
 	}
+	sort.Strings(newlyUnusable)
+	if len(newlyUnusable) > 0 {
+		t.Errorf("%d mutation(s) could not be applied standalone by directed coverage and are not in directedKnownUnusable: %s", len(newlyUnusable), strings.Join(newlyUnusable, ", "))
+	}
+	if len(staleUnusable) > 0 {
+		t.Errorf("%d stale directedKnownUnusable entries (applied standalone this run): %s", len(staleUnusable), strings.Join(staleUnusable, ", "))
+	}
 }
 
 // alphabetKnownUnreached is diff.Alphabet's entries the gate (seed 1, 200 pairs) does not
@@ -2636,3 +2816,25 @@ func TestMigrateProbe(t *testing.T) {
 // migrate.go), or this probe's real server can never produce a pair carrying it in the
 // first place.
 var alphabetKnownUnreached = map[string]string{}
+
+// directedKnownUnusable is mutations directed coverage cannot ever apply completely alone
+// (see TestMigrateProbe's own directed-coverage loop), each with why: every one of these
+// edits a partitioning this package's generate() never produces on a fresh schema (only
+// another mutation earlier in the same recipe -- "partition table by range" or "partition
+// table by hash" -- creates one), so a schema fresh enough for these to have a candidate
+// straight from generate() does not exist to draw. The random pairs above still reach every
+// one of them in combination (a "partition table by ..." step ahead of it in the same
+// recipe), which is what the alphabet coverage this file's TestMigrateProbe gate cares about
+// actually depends on -- this map only accepts the standalone case as impossible instead of
+// papering over a mutation the probe genuinely cannot exercise at all.
+var directedKnownUnusable = map[string]string{
+	"add partition":                               "needs a table already partitioned by RANGE with no MAXVALUE tail yet",
+	"drop partition":                              "needs a table already partitioned by RANGE with a tail an earlier step of the same recipe added",
+	"remove partitioning":                         "needs a table already partitioned (RANGE, HASH or LIST)",
+	"reorganize partition boundary":               "needs a table already partitioned by RANGE with no MAXVALUE tail yet",
+	"reorganize partition insert before maxvalue": "needs a table already partitioned by RANGE with a MAXVALUE tail",
+	"change hash partition count":                 "needs a table already partitioned by HASH",
+	"add list partition":                          "needs a table already partitioned by LIST",
+	"drop list partition":                         "needs a table already partitioned by LIST with a partition an earlier step of the same recipe added",
+	"move list partition value":                   "needs a table already partitioned by LIST",
+}

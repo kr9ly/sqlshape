@@ -302,11 +302,12 @@ func TableProps(t *schema.Table) map[string]string {
 
 // PartitioningProps is a table's PARTITION BY clause, canonicalized to one comparable
 // string: "" for an unpartitioned table (nil), Partitioning.Text for a clause too complex
-// for this package's Kind to say more about (RANGE/LIST COLUMNS, KEY, LINEAR, LIST,
-// subpartitions), else the pieces alterTable itself decides DDL from -- kind, expression
-// and, in order, every partition's own name and boundary -- so two clauses this package
-// tells apart the same way (an ADD PARTITION reordering nothing, say) never look changed
-// on account of some detail alterTable does not look at either.
+// for this package's Kind to say more about (RANGE/LIST COLUMNS, KEY, LINEAR, subpartitions),
+// else the pieces alterTable itself decides DDL from -- kind, expression and, in order,
+// every partition's own name and boundary (RANGE's own bound or LIST's own value list, joined
+// the same way partitionDef captured it) -- so two clauses this package tells apart the same
+// way (an ADD PARTITION reordering nothing, say) never look changed on account of some detail
+// alterTable does not look at either.
 func PartitioningProps(p *schema.Partitioning) string {
 	if p == nil {
 		return ""

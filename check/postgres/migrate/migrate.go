@@ -43,6 +43,7 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.readIntents(list)
 	p.enumRecreates()
 	p.generatedRecreates()
+	p.detectRepartitions()
 	p.drops()
 	p.createSchemas()
 	p.renames()
@@ -109,6 +110,28 @@ type planner struct {
 	// bound can overlap another partition's outgoing one, which PostgreSQL refuses if the
 	// ATTACH runs before that other DETACH (23514 "would overlap", measured).
 	pendingAttach []pendingPartitionAttach
+	// pendingRepartition: a table repartitionTable renamed aside, waiting for its new,
+	// partitioned self (and every partition it declares) to exist before its rows can
+	// come back (adds(), after the ATTACH loops).
+	pendingRepartition []pendingRepartition
+	// repartitioning: a from-side table (by FullName) detectRepartitions found eligible
+	// for repartitionTable, worked out ahead of drops() so it can tell the table's own
+	// old partitions apart from an ordinary undeclared drop (see repartitionChild).
+	repartitioning map[string]*repartitionPlan
+	// repartitionChild: a from-side relation (by FullName) that is a current partition of
+	// a table detectRepartitions found eligible -- it has no target counterpart of its
+	// own (the target's declared children, if any, are unrelated new objects under the
+	// rebuilt parent) and goes down with its old parent's temporary name once
+	// repartitionTable's rows have safely moved out of it, not on its own and not
+	// requiring a `-- @migrate drop` declaration.
+	repartitionChild map[string]bool
+}
+
+// repartitionPlan is what detectRepartitions works out for one table whose partition key
+// is changing, ahead of drops(): repartitionTable (alters()) only has to act on it.
+type repartitionPlan struct {
+	from, to *schema.Relation
+	tempName string
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -158,13 +181,29 @@ func functions(s *schema.Schema) (map[string]*schema.Function, []*schema.Functio
 	m := map[string]*schema.Function{}
 	var order []*schema.Function
 	for _, f := range s.Functions {
-		if f.Language == "internal" {
+		if f.Language == "internal" && isRangeConstructor(s, f) {
 			continue // a range/multirange constructor: PostgreSQL creates and drops it with its type
 		}
 		m[diff.Signature(s, f)] = f
 		order = append(order, f)
 	}
 	return m, order
+}
+
+// isRangeConstructor reports whether f is one of the constructor functions PostgreSQL
+// stamps out alongside CREATE TYPE ... AS RANGE (schema/ddl.go's createRange: name(sub,
+// sub), name(sub, sub, text) for the range itself and multi(), multi(range),
+// multi(range[]) for its paired multirange) rather than a user-declared LANGUAGE
+// internal function. Both share prorettype = their own range/multirange type and a
+// name equal to that type's; a legitimate user function (e.g. a custom internal WINDOW
+// function) practically never collides with a type name it doesn't return, so it stays
+// tracked instead of being dropped along with the real constructors.
+func isRangeConstructor(s *schema.Schema, f *schema.Function) bool {
+	t := s.Types.ByOID(f.RetType.OID)
+	if t == nil || t.Name != f.Name {
+		return false
+	}
+	return t.Kind == 'r' || t.Kind == 'm'
 }
 
 func triggers(s *schema.Schema) map[string]*schema.Trigger {
@@ -390,6 +429,9 @@ func (p *planner) drops() {
 		if r.Kind == schema.Sequence && r.OwnedBy != "" && ownerColumnGone(p, fromRels, r) {
 			continue // goes with its column (or the column's table)
 		}
+		if p.repartitionChild[r.FullName()] {
+			continue // goes with its old parent's temporary name (repartitionTable), not on its own
+		}
 		if tr := p.toOf(r); tr == nil || tr.Kind != r.Kind {
 			gone = append(gone, r)
 		}
@@ -488,7 +530,7 @@ func (p *planner) alters() {
 					// owned by something else (a "set sequence owner" mutation drawn
 					// alongside the table's own drop), which that NONE does not give it.
 					if r.OwnedBy != "" {
-						p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(r), qdot(r.OwnedBy))
+						p.emit("ALTER SEQUENCE %s OWNED BY %s", currentSeqName(p, f), qdot(r.OwnedBy))
 					}
 				case ownerColumnGoneNotTable:
 					// the owning table survives; the column itself is really dropped
@@ -504,7 +546,16 @@ func (p *planner) alters() {
 						parts := strings.Split(r.OwnedBy, ".")
 						owner = qdot(strings.Join(parts, "."))
 					}
-					p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(r), owner)
+					cur := currentSeqSchema(p, f)
+					p.emit("ALTER SEQUENCE %s OWNED BY %s", q(cur)+"."+q(f.Name), owner)
+					if cur != r.Schema {
+						// OWNED BY NONE / a different owner does not undo the schema
+						// cascade its old owner's SET SCHEMA already gave it (renames(),
+						// which ran before this): move it the rest of the way to where
+						// the target actually declares it (measured: without this, the
+						// plan reads back with the sequence still in cur's schema).
+						p.emit("ALTER SEQUENCE %s SET SCHEMA %s", q(cur)+"."+q(f.Name), q(r.Schema))
+					}
 				}
 			}
 		}
@@ -640,6 +691,14 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 		// differ would see the very same column change twice, once on the parent (which
 		// alterTable(parent, ...) already emits) and once here.
 		return
+	}
+	if diff.Props(p.from, f)["partition key"] != diff.Props(p.to, r)["partition key"] {
+		if p.repartitionTable(f, r) {
+			return
+		}
+		// out of scope for repartitionTable (see its own doc comment): falls through to
+		// the ordinary column diffing below, and to this function's own problem report
+		// for the partition key itself, near the bottom, unchanged.
 	}
 	fromCols := columnsOf(f)
 	rewritten := map[string]bool{}
@@ -806,6 +865,214 @@ func (p *planner) partitionAttach(f, r *schema.Relation) {
 	if toParent != nil {
 		p.pendingAttach = append(p.pendingAttach, pendingPartitionAttach{parent: toParent, part: r, bound: r.PartBound})
 	}
+}
+
+var (
+	rePartListBound  = regexp.MustCompile(`^FOR VALUES IN \((.*)\)$`)
+	rePartRangeBound = regexp.MustCompile(`^FOR VALUES FROM \((.*)\) TO \((.*)\)$`)
+)
+
+// partitionMovePredicate is the boolean expression a row must satisfy to belong under
+// bound, so pendingAttach's ATTACH PARTITION can be preceded by moving any row already in
+// part that would violate it back to parent -- PostgreSQL checks every row against bound
+// at ATTACH time and refuses the whole statement (23514) the moment even one is out of
+// range, whether part is independent already or was just DETACHed from a different bound
+// or parent. Built from PartBound's own canonical text (measured stable: schema/schema.go's
+// partitionBoundText is the only way PostgreSQL ever prints an ATTACH bound), over a single
+// partition key column. ok is false for anything this does not build a predicate for: a
+// composite key (a row-value comparison, out of scope for now), HASH (satisfies_hash_
+// partition, not a plain predicate), or DEFAULT (accepts every row, so needs no predicate
+// and no move) -- the caller does not move rows in that case, and an actual mismatch still
+// surfaces as the server's own 23514 on ATTACH, exactly as before this existed.
+func partitionMovePredicate(keyCols []string, strategy, bound string) (pred string, ok bool) {
+	if bound == "" || bound == "DEFAULT" || len(keyCols) != 1 {
+		return "", false
+	}
+	col := q(keyCols[0])
+	switch strategy {
+	case "LIST":
+		m := rePartListBound.FindStringSubmatch(bound)
+		if m == nil {
+			return "", false
+		}
+		return fmt.Sprintf("%s IN (%s)", col, m[1]), true
+	case "RANGE":
+		m := rePartRangeBound.FindStringSubmatch(bound)
+		if m == nil {
+			return "", false
+		}
+		lo, hi := m[1], m[2]
+		var parts []string
+		if lo != "MINVALUE" {
+			parts = append(parts, fmt.Sprintf("%s >= %s", col, lo))
+		}
+		if hi != "MAXVALUE" {
+			parts = append(parts, fmt.Sprintf("%s < %s", col, hi))
+		}
+		if len(parts) == 0 {
+			return "", false // MINVALUE to MAXVALUE: every row already belongs, nothing to move
+		}
+		return strings.Join(parts, " AND "), true
+	}
+	return "", false
+}
+
+// pendingRepartition is a table repartitionTable renamed aside, queued for its rows to
+// come back once its new partitioned self and every declared partition exist (adds(),
+// after the ATTACH loops -- a partitioned parent can only receive rows once it has
+// somewhere to route them to).
+type pendingRepartition struct {
+	table    *schema.Relation // the target's own definition (the new partitioned parent)
+	old      *schema.Relation // the source's version, about to be renamed aside
+	tempName string
+}
+
+// detectRepartitions finds every table whose partition key is changing and is in scope
+// for repartitionTable (repartitionEligible), before drops() decides what to do about its
+// old partitions: they have no target counterpart of their own (the target's declared
+// children, if any, are unrelated new objects under the rebuilt parent) and must not go
+// through the ordinary "-- @migrate drop" requirement or get their own DROP TABLE there --
+// they go down together with their old parent's temporary name, once repartitionTable's
+// own rows have safely moved out of them (adds(), pendingRepartition). Called before
+// drops(), alongside generatedRecreates() (a similar "work this out before drops() has to
+// know about it" pre-pass).
+func (p *planner) detectRepartitions() {
+	fromRels, _ := relations(p.from)
+	for _, name := range sortedKeys(fromRels) {
+		f := fromRels[name]
+		if f.Kind != schema.Table || f.IsPartition {
+			continue
+		}
+		r := p.toOf(f)
+		if r == nil || r.Kind != f.Kind {
+			continue
+		}
+		if diff.Props(p.from, f)["partition key"] == diff.Props(p.to, r)["partition key"] {
+			continue
+		}
+		if !p.repartitionEligible(f) {
+			continue
+		}
+		if p.repartitioning == nil {
+			p.repartitioning = map[string]*repartitionPlan{}
+			p.repartitionChild = map[string]bool{}
+		}
+		p.repartitioning[f.FullName()] = &repartitionPlan{from: f, to: r, tempName: p.freeRelName(f.Schema, "z_migrate_"+f.Name)}
+		for _, child := range p.from.Relations {
+			if len(child.Parents) > 0 && child.Parents[0].FullName() == f.FullName() {
+				p.repartitionChild[child.FullName()] = true
+			}
+		}
+	}
+}
+
+// repartitionEligible is repartitionTable's scope check on its own (see its doc comment),
+// usable before the RENAME itself is due (detectRepartitions, ahead of drops()).
+func (p *planner) repartitionEligible(f *schema.Relation) bool {
+	if len(f.Policies) > 0 || len(f.Rules()) > 0 {
+		return false
+	}
+	for _, t := range p.from.Triggers {
+		if t.Table == f.FullName() {
+			return false
+		}
+	}
+	for _, other := range p.from.Relations {
+		if other.FullName() == f.FullName() {
+			continue
+		}
+		for _, c := range other.Constraints {
+			if c.Kind == schema.ForeignKey && c.RefTable == f.FullName() {
+				return false
+			}
+		}
+	}
+	for k := range p.from.Comments {
+		// a comment attaches to the object's OID, gone the moment the old (renamed
+		// aside) table is dropped; adds()'s ordinary comment diffing (end of adds())
+		// would see the same text before and after and skip re-emitting it entirely,
+		// since nothing about the comment's own text changed here -- out of scope for
+		// the same reason as a policy / rule / trigger above.
+		if k == f.FullName() || strings.HasPrefix(k, f.FullName()+".") {
+			return false
+		}
+	}
+	for _, c := range f.Columns {
+		if c.Identity != 0 {
+			// an identity column's sequence is the server's own, tied to this exact
+			// column (attnum): DROP TABLE on the old (renamed-aside) table takes it down
+			// regardless of OWNED BY, and there is no ALTER ... OWNED BY to give the new
+			// column that value continuity back the way a plain serial's sequence can
+			// (measured elsewhere in this file). Out of scope for now.
+			return false
+		}
+	}
+	for _, seq := range p.from.Relations {
+		if seq.Kind == schema.Sequence && seq.OwnedBy != "" && ownerRelation(seq.OwnedBy) == f.FullName() {
+			// a plain (bigserial-style) sequence owned by a column of f: unlike a policy /
+			// rule / trigger / comment, the sequence itself survives its old owner's DROP
+			// TABLE only if detached first (ALTER SEQUENCE ... OWNED BY NONE) and
+			// re-pointed at the new column after -- doable, but not yet wired through
+			// detectRepartitions / repartitionTable. Out of scope for now.
+			return false
+		}
+	}
+	return true
+}
+
+// freeRelName is base, or base prefixed with enough "z_" to name nothing already declared
+// in either schema (schemaName's, or public's short form) -- the temporary name
+// repartitionTable renames a table aside to on its way to being rebuilt under its own
+// name, chosen so it can never collide with an existing or a target-declared relation.
+func (p *planner) freeRelName(schemaName, base string) string {
+	full := func(n string) string {
+		if schemaName == "" || schemaName == "public" {
+			return n
+		}
+		return schemaName + "." + n
+	}
+	from, _ := relations(p.from)
+	to, _ := relations(p.to)
+	name := base
+	for from[full(name)] != nil || to[full(name)] != nil {
+		name = "z_" + name
+	}
+	return name
+}
+
+// repartitionTable turns f (a plain table) into r (partitioned), the reverse, or from one
+// partition key / strategy to another, keeping every row: PostgreSQL has no
+// ALTER ... PARTITION BY. Instead, this renames the table aside, lets the target's own
+// shape (r.Definition, PK / indexes / checks included) get created fresh under the old
+// name and its declared partitions attach under it -- both through the ordinary "new
+// object" path adds() already takes for a genuinely new table and its partitions, once
+// p.recreated below routes r there too -- and only after every partition exists moves
+// every row across with a plain INSERT (adds(), pendingRepartition): PostgreSQL's own
+// partition router decides where each one goes, and refuses the whole statement (23514)
+// if even one fits nowhere, correctly, since the target schema does not cover every row
+// the source table held.
+//
+// Scoped to a table nothing else structurally depends on (repartitionEligible,
+// brief-holes-pg.md item D): no policy / rule / trigger / comment of its own, and no other
+// table's foreign key resting on it -- reattaching all of those "around" the rename the
+// way generatedRecreates() already does for a column rewrite is future work. detectRepar
+// titions (ahead of drops()) already decided eligibility; this only has to consult it and
+// emit. Returns false (the caller's existing "problem", halting apply) for a table out of
+// scope, rather than risk an incomplete plan.
+func (p *planner) repartitionTable(f, r *schema.Relation) bool {
+	rp := p.repartitioning[f.FullName()]
+	if rp == nil {
+		return false
+	}
+	p.emit("ALTER TABLE %s RENAME TO %s", qrel(f), q(rp.tempName))
+	p.recreated[r.FullName()] = true
+	for _, v := range p.from.DependentViews(f) {
+		if tv := p.toOf(v); tv != nil {
+			p.recreated[tv.FullName()] = true
+		}
+	}
+	p.pendingRepartition = append(p.pendingRepartition, pendingRepartition{table: r, old: f, tempName: rp.tempName})
+	return true
 }
 
 // orderNewColumns orders cols (the columns a table gains) so a generated column comes after
@@ -1033,6 +1300,35 @@ const (
 	ownerColumnGoneNotTable
 )
 
+// currentSeqName is the qualified name a from-side sequence f (still owned by its column
+// at this point in the plan -- alters() runs after renames()) actually has in the live
+// database right now, which is not always qrel of its target-schema counterpart:
+// PostgreSQL moves a column-owned sequence's schema along with an ALTER TABLE ... SET
+// SCHEMA on its owning table automatically, whatever the target eventually does with that
+// ownership afterward (rename it elsewhere, clear it to NONE, drop it) -- so by the time
+// this ALTER SEQUENCE runs, a sequence whose owner already moved schema in renames() is
+// no longer where its own (still-public, say) from/to names would suggest (42P01,
+// measured: TestProbeSequenceCascadesWithOwnerSchemaMove). A sequence's own name never
+// moves this way on its own, only its schema.
+func currentSeqName(p *planner, f *schema.Relation) string {
+	return q(currentSeqSchema(p, f)) + "." + q(f.Name)
+}
+
+// currentSeqSchema is currentSeqName's schema half on its own, so a caller that also
+// needs to move the sequence on to its target schema (an explicit ALTER SEQUENCE ... SET
+// SCHEMA: clearing OWNED BY does not undo the cascade -- the sequence stays wherever its
+// owner's move already put it) can compare it against the target's.
+func currentSeqSchema(p *planner, f *schema.Relation) string {
+	if f.OwnedBy != "" {
+		if owner := p.rels(p.from)[ownerRelation(f.OwnedBy)]; owner != nil {
+			if to := p.toOf(owner); to != nil {
+				return to.Schema
+			}
+		}
+	}
+	return f.Schema
+}
+
 func ownerColumnStatus(p *planner, fromRels map[string]*schema.Relation, seq *schema.Relation) ownerColumnState {
 	owner, col := ownerRelation(seq.OwnedBy), ownerColumn(seq.OwnedBy)
 	fr := fromRels[owner]
@@ -1175,6 +1471,49 @@ func (p *planner) emitConstraint(r *schema.Relation, c *schema.Constraint) {
 	p.emit("ALTER TABLE %s ADD CONSTRAINT %s %s", qrel(r), q(c.Name), constraintText(p.to, c))
 }
 
+// sequenceFollowsRename reports whether seq (a target-schema sequence) is the renamed
+// continuation of some from-side serial sequence: renames() (intents.go) already emits
+// its ALTER SEQUENCE ... RENAME TO for a serial column's sequence when the column or its
+// table is renamed, without recording that in p.in.relFrom / relTo (only explicit
+// `-- @migrate rename` declarations go there), so p.fromOf(seq) alone cannot tell adds()
+// this sequence already exists under its old name -- it would otherwise emit a second
+// CREATE SEQUENCE + ALTER SEQUENCE ... OWNED BY for it (42P07 "already exists", measured:
+// TestProbeSerialSequenceFollowsRename). Mirrors the match renames() itself makes: a
+// from-side sequence whose owning column, carried through any declared rename, lands on
+// seq's own OwnedBy.
+func (p *planner) sequenceFollowsRename(seq *schema.Relation) bool {
+	for _, name := range sortedKeys(p.rels(p.from)) {
+		fseq := p.rels(p.from)[name]
+		if fseq.Kind != schema.Sequence || fseq.OwnedBy == "" {
+			continue
+		}
+		owner, col := ownerRelation(fseq.OwnedBy), ownerColumn(fseq.OwnedBy)
+		toOwner, toCol := p.toName(owner), col
+		if m := p.in.colTo[owner]; m != nil {
+			if c, ok := m[col]; ok {
+				toCol = c
+			}
+		}
+		if toOwner == owner && toCol == col {
+			// nothing about fseq's ownership changed, so it is not "following a rename"
+			// at all -- matching it here on OwnedBy alone would also catch an unrelated,
+			// stationary sequence that happens to already own the very column seq is
+			// newly declared OWNED BY (two sequences legitimately can name the same
+			// column), losing seq's own CREATE SEQUENCE as if it were that other
+			// sequence's rename (measured: TestProbeTwoSequencesOwnTheSameColumn)
+			continue
+		}
+		want := toOwner + "." + toCol
+		if !strings.Contains(toOwner, ".") {
+			want = "public." + want
+		}
+		if want == seq.OwnedBy {
+			return true
+		}
+	}
+	return false
+}
+
 // --- adds ----------------------------------------------------------------------------
 
 func (p *planner) adds() {
@@ -1233,12 +1572,27 @@ func (p *planner) adds() {
 		if f := p.fromOf(seq); f != nil && f.Kind == seq.Kind {
 			continue // the sequence already exists
 		}
+		if p.sequenceFollowsRename(seq) {
+			continue // renames() already carries it forward under its old name
+		}
 		owner := toRels[ownerRelation(seq.OwnedBy)]
 		if owner == nil || fromRels[owner.FullName()] == nil {
 			continue // no owner, or the owning table is itself new (handled with its creation)
 		}
-		if tc := owner.Column(ownerColumn(seq.OwnedBy)); tc == nil || tc.Identity != 0 {
+		tc := owner.Column(ownerColumn(seq.OwnedBy))
+		if tc == nil || tc.Identity != 0 {
 			continue // IDENTITY creates its own sequence
+		}
+		if columnsOf(fromRels[owner.FullName()])[p.fromCol(owner, tc.Name)] != nil {
+			// the owning column already existed (only "set sequence owner" onto it, not
+			// "add column"): the general per-relation pass below emits this standalone
+			// sequence's CREATE + OWNED BY directly (its "+ sequence" branch), since there
+			// is no ADD COLUMN here for it to precede -- treating it as seqForNewColumn
+			// would mark it inlineSeq and skip the general pass, but orderNewColumns(fresh)
+			// never visits an existing column, so the sequence's DDL would never be
+			// emitted at all (measured: "add sequence; set sequence owner" onto an
+			// existing column produced an empty plan)
+			continue
 		}
 		seqForNewColumn[owner.FullName()+"."+ownerColumn(seq.OwnedBy)] = seq
 		inlineSeq[seq.FullName()] = true
@@ -1258,6 +1612,9 @@ func (p *planner) adds() {
 			if r.Kind == schema.Sequence && r.OwnedBy != "" {
 				if inlineSeq[r.FullName()] {
 					continue // emitted right before its new column, in the surviving table's own loop below
+				}
+				if p.sequenceFollowsRename(r) {
+					continue // renames() already carries it forward under its old name
 				}
 				if owner := toRels[ownerRelation(r.OwnedBy)]; owner != nil {
 					switch tc := owner.Column(ownerColumn(r.OwnedBy)); {
@@ -1354,6 +1711,10 @@ func (p *planner) adds() {
 		p.emit("ALTER TABLE ONLY %s ATTACH PARTITION %s %s", qrel(part.Parents[0]), qrel(part), part.PartBound)
 	}
 	for _, pa := range p.pendingAttach {
+		if pred, ok := partitionMovePredicate(pa.parent.PartKey, pa.parent.PartStrategy, pa.bound); ok {
+			p.emit("WITH moved AS (DELETE FROM %s WHERE NOT (%s) RETURNING *) INSERT INTO %s SELECT * FROM moved",
+				qrel(pa.part), pred, qrel(pa.parent))
+		}
 		p.emit("ALTER TABLE ONLY %s ATTACH PARTITION %s %s", qrel(pa.parent), qrel(pa.part), pa.bound)
 	}
 	// stableAttachParent: a partition attached in this plan (above) to a parent that
@@ -1370,12 +1731,12 @@ func (p *planner) adds() {
 	stableAttachParent := map[string]*schema.Relation{}
 	for _, part := range newPartitions {
 		parent := part.Parents[0]
-		if f := p.fromOf(parent); f != nil && f.Kind == parent.Kind {
+		if f := p.fromOf(parent); f != nil && f.Kind == parent.Kind && !p.recreated[parent.FullName()] {
 			stableAttachParent[part.FullName()] = parent
 		}
 	}
 	for _, pa := range p.pendingAttach {
-		if f := p.fromOf(pa.parent); f != nil && f.Kind == pa.parent.Kind {
+		if f := p.fromOf(pa.parent); f != nil && f.Kind == pa.parent.Kind && !p.recreated[pa.parent.FullName()] {
 			stableAttachParent[pa.part.FullName()] = pa.parent
 		}
 	}
@@ -1490,6 +1851,28 @@ func (p *planner) adds() {
 		if t := commentText(p.to, k, ""); t != "" {
 			p.emit("%s", t)
 		}
+	}
+	// repartitionTable's rows come back last, once everything else about the new
+	// partitioned table (itself, its declared partitions attached, constraints, indexes,
+	// comments) is fully in place: a plain INSERT lets PostgreSQL's own partition router
+	// place every row, refusing the whole statement (23514) if even one fits nowhere.
+	for _, pr := range p.pendingRepartition {
+		temp := q(pr.old.Schema) + "." + q(pr.tempName)
+		fromCols := columnsOf(pr.old)
+		var insCols, selCols []string
+		for _, c := range pr.table.Columns {
+			if c.Generated != nil {
+				continue // never settable directly; the router fills it in from what it reads
+			}
+			fc := fromCols[p.fromCol(pr.table, c.Name)]
+			if fc == nil {
+				continue // a column gained alongside the repartition: out of pendingRepartition's scope, its own default applies
+			}
+			insCols = append(insCols, q(c.Name))
+			selCols = append(selCols, q(fc.Name))
+		}
+		p.emit("INSERT INTO %s (%s) SELECT %s FROM %s", qrel(pr.table), strings.Join(insCols, ", "), strings.Join(selCols, ", "), temp)
+		p.emit("DROP TABLE %s", temp)
 	}
 }
 

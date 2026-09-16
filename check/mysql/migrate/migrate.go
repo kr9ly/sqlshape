@@ -742,7 +742,8 @@ func (p *planner) alterTable(f, t *schema.Table) {
 	if fp["engine"] != tp["engine"] && t.Engine != "" {
 		opts = append(opts, "ENGINE="+t.Engine)
 	}
-	if fp["charset"] != tp["charset"] || fp["collation"] != tp["collation"] {
+	tableCharsetChanged := fp["charset"] != tp["charset"] || fp["collation"] != tp["collation"]
+	if tableCharsetChanged {
 		if t.Charset != "" {
 			opts = append(opts, "DEFAULT CHARSET="+t.Charset)
 		}
@@ -787,7 +788,22 @@ func (p *planner) alterTable(f, t *schema.Table) {
 			}
 		}
 		_ = i
-		if diff.Definition(fc.Text, fc.Name) == diff.Definition(c.Text, c.Name) || p.earlyMods[t.Name+"."+c.Name] {
+		// a plain (no explicit per-column COLLATE) string column's real encoding is the
+		// table's own default at the moment it was last touched, not whatever the table's
+		// default has since moved on to: the table option ALTER above never rewrites it
+		// (measured against mysqld 8.4 -- ALTER TABLE ... DEFAULT CHARSET= alone leaves every
+		// existing column exactly as encoded, only SHOW CREATE TABLE begins spelling it out
+		// explicitly once it no longer matches, which the target's own canonical -- authored
+		// fresh under the new default, so never explicit -- does not do either, so the two
+		// would otherwise never converge). A MODIFY COLUMN naming no charset of its own picks
+		// up the table's *current* default (also measured), so re-issuing the target's own
+		// text once the table option above has run converges it, the same as any other
+		// column definition change; it costs the same row rewrite CONVERT TO CHARACTER SET
+		// would (every byte of the column re-encoded), but only for the columns that actually
+		// need it -- an explicit-COLLATE column is unaffected either way, so CONVERT TO would
+		// rewrite it for nothing.
+		implicitCharsetChange := tableCharsetChanged && c.Type.IsString() && fc.Collation == "" && c.Collation == ""
+		if (diff.Definition(fc.Text, fc.Name) == diff.Definition(c.Text, c.Name) && !implicitCharsetChange) || p.earlyMods[t.Name+"."+c.Name] {
 			continue // the position, if it differs, is settled once every column exists (reorder)
 		}
 		if !fc.NotNull && c.NotNull {
@@ -843,6 +859,8 @@ func (p *planner) alterPartitioning(f, t *schema.Table) {
 		case to.Num < from.Num:
 			p.emit("ALTER TABLE %s COALESCE PARTITION %d;", q(t.Name), from.Num-to.Num)
 		}
+	case from.Kind == "LIST":
+		p.alterListPartitioning(f, t, from, to)
 	default: // RANGE
 		p.alterRangePartitioning(f, t, from, to)
 	}
@@ -871,7 +889,7 @@ func (p *planner) alterRangePartitioning(f, t *schema.Table, from, to *schema.Pa
 	case len(fromTail) == 0 && !(k > 0 && from.Parts[k-1].MaxValue):
 		p.emit("ALTER TABLE %s ADD PARTITION (%s);", q(t.Name), renderPartitionDefs(toTail))
 	case len(toTail) == 0:
-		p.dropRangePartitions(f, t, fromTail)
+		p.dropNamedPartitions(f, t, fromTail)
 	default:
 		toNames := map[string]bool{}
 		for _, part := range toTail {
@@ -890,13 +908,85 @@ func (p *planner) alterRangePartitioning(f, t *schema.Table, from, to *schema.Pa
 	}
 }
 
-// dropRangePartitions emits DROP PARTITION for parts (fromTail's own, a table's whole
-// tail lost), once every one of them is declared.
-func (p *planner) dropRangePartitions(f, t *schema.Table, parts []schema.Partition) {
+// dropNamedPartitions emits DROP PARTITION for parts (a RANGE table's whole tail lost, or
+// any of a LIST table's own named partitions gone), once every one of them is declared.
+func (p *planner) dropNamedPartitions(f, t *schema.Table, parts []schema.Partition) {
 	if !p.checkPartitionsDroppable(f.Name, parts) {
 		return
 	}
 	p.emit("ALTER TABLE %s DROP PARTITION %s;", q(t.Name), partitionNameList(parts))
+}
+
+// alterListPartitioning writes the DDL for a LIST Partitioning that stays LIST over the same
+// expression. Unlike RANGE, a LIST partition's own name carries no order (nothing above or
+// below it), so this compares the two partition lists by name rather than by a common
+// leading run: a name only the from side carries is dropped (declared, the same requirement
+// dropRangePartitions itself already carries), a name only the to side carries is added, and
+// a name both sides carry whose own value list differs is reorganized -- every such name
+// together in one REORGANIZE PARTITION ... INTO, so a value moving from one named partition
+// to another (both keeping their name, each losing or gaining only that value) is one
+// statement recreating both from their target definitions, not two that would fight over the
+// value in between (a value in neither yet and both after, momentarily, is not a state VALUES
+// IN accepts).
+func (p *planner) alterListPartitioning(f, t *schema.Table, from, to *schema.Partitioning) {
+	toByName := map[string]schema.Partition{}
+	for _, part := range to.Parts {
+		toByName[part.Name] = part
+	}
+	var dropped, changed []schema.Partition
+	for _, part := range from.Parts {
+		tp, ok := toByName[part.Name]
+		switch {
+		case !ok:
+			dropped = append(dropped, part)
+		case tp.Bound != part.Bound:
+			changed = append(changed, part)
+		}
+	}
+	fromByName := map[string]bool{}
+	for _, part := range from.Parts {
+		fromByName[part.Name] = true
+	}
+	var added []schema.Partition
+	for _, part := range to.Parts {
+		if !fromByName[part.Name] {
+			added = append(added, part)
+		}
+	}
+	if len(dropped) > 0 {
+		p.dropNamedPartitions(f, t, dropped)
+	}
+	if len(changed) > 0 {
+		changedNames := map[string]bool{}
+		for _, part := range changed {
+			changedNames[part.Name] = true
+		}
+		var into []schema.Partition
+		for _, part := range to.Parts { // the to side's own order, for the changed names only
+			if changedNames[part.Name] {
+				into = append(into, part)
+			}
+		}
+		names := make([]string, len(changed))
+		for i, part := range changed {
+			names[i] = q(part.Name)
+		}
+		p.emit("ALTER TABLE %s REORGANIZE PARTITION %s INTO (%s);", q(t.Name), strings.Join(names, ","), renderListPartitionDefs(into))
+	}
+	if len(added) > 0 {
+		p.emit("ALTER TABLE %s ADD PARTITION (%s);", q(t.Name), renderListPartitionDefs(added))
+	}
+}
+
+// renderListPartitionDefs spells parts the way ADD PARTITION / REORGANIZE ... INTO takes a
+// LIST partition: this package's own rendering (see renderPartitionDefs, RANGE's own), from
+// Bound as partitionDef captured it (already a comma-separated list, verbatim).
+func renderListPartitionDefs(parts []schema.Partition) string {
+	defs := make([]string, len(parts))
+	for i, part := range parts {
+		defs[i] = fmt.Sprintf("PARTITION %s VALUES IN (%s)", q(part.Name), part.Bound)
+	}
+	return strings.Join(defs, ", ")
 }
 
 // checkPartitionsDroppable reports whether every one of parts (fromTable's own) is
