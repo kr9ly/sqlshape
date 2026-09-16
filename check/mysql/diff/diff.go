@@ -301,33 +301,59 @@ func TableProps(t *schema.Table) map[string]string {
 }
 
 // PartitioningProps is a table's PARTITION BY clause, canonicalized to one comparable
-// string: "" for an unpartitioned table (nil), Partitioning.Text for a clause too complex
-// for this package's Kind to say more about (RANGE/LIST COLUMNS, KEY, LINEAR, subpartitions),
-// else the pieces alterTable itself decides DDL from -- kind, expression and, in order,
-// every partition's own name and boundary (RANGE's own bound or LIST's own value list, joined
-// the same way partitionDef captured it) -- so two clauses this package tells apart the same
-// way (an ADD PARTITION reordering nothing, say) never look changed on account of some detail
-// alterTable does not look at either.
+// string: "" for an unpartitioned table (nil), else every piece alterTable itself decides
+// DDL from -- LINEAR, kind, COLUMNS-ness, expression or column list, KEY's own ALGORITHM,
+// the partition count (HASH/KEY) or every partition's own name, boundary and comment (RANGE/
+// LIST, in order), and the SUBPARTITION BY clause the same way -- so two clauses this
+// package tells apart the same way (an ADD PARTITION reordering nothing, say) never look
+// changed on account of some detail alterTable does not look at either. ENGINE is not a
+// piece: SHOW CREATE TABLE writes it on every partition regardless of what the statement
+// declared (measured), so comparing it would make a plan that changed nothing else look
+// changed.
 func PartitioningProps(p *schema.Partitioning) string {
 	if p == nil {
 		return ""
 	}
-	if p.Kind == "" {
-		return p.Text
-	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s (%s)", p.Kind, p.Expr)
-	if p.Kind == "HASH" {
-		fmt.Fprintf(&b, " PARTITIONS %d", p.Num)
-		return b.String()
+	if p.Linear {
+		b.WriteString("LINEAR ")
 	}
-	for _, part := range p.Parts {
-		b.WriteString(" " + part.Name + ":")
-		if part.MaxValue {
-			b.WriteString("MAXVALUE")
+	b.WriteString(p.Kind)
+	switch p.Kind {
+	case "KEY":
+		fmt.Fprintf(&b, " ALGORITHM=%d (%s) PARTITIONS %d", p.Algorithm, strings.Join(p.Cols, ","), p.Num)
+	case "HASH":
+		fmt.Fprintf(&b, " (%s) PARTITIONS %d", p.Expr, p.Num)
+	case "RANGE", "LIST":
+		if p.Columns {
+			fmt.Fprintf(&b, " COLUMNS (%s)", strings.Join(p.Cols, ","))
 		} else {
-			b.WriteString(part.Bound)
+			fmt.Fprintf(&b, " (%s)", p.Expr)
 		}
+		for _, part := range p.Parts {
+			b.WriteString(" " + part.Name + ":")
+			if part.MaxValue {
+				b.WriteString("MAXVALUE")
+			} else {
+				b.WriteString(part.Bound)
+			}
+			if part.Comment != "" {
+				b.WriteString("/*" + part.Comment + "*/")
+			}
+		}
+	}
+	if p.Sub != nil {
+		b.WriteString(" SUB ")
+		if p.Sub.Linear {
+			b.WriteString("LINEAR ")
+		}
+		b.WriteString(p.Sub.Kind)
+		if p.Sub.Kind == "KEY" {
+			fmt.Fprintf(&b, " ALGORITHM=%d (%s)", p.Sub.Algorithm, strings.Join(p.Sub.Cols, ","))
+		} else {
+			fmt.Fprintf(&b, " (%s)", p.Sub.Expr)
+		}
+		fmt.Fprintf(&b, " SUBPARTITIONS %d", p.Sub.Num)
 	}
 	return b.String()
 }

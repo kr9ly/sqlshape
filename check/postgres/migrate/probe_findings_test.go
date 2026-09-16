@@ -845,3 +845,160 @@ END $$;`
 		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
 	}
 }
+
+// A repartitioned table's own bigserial (owned sequence) column keeps its current value:
+// unlike IDENTITY (the server's own, tied to the column's attnum -- see
+// TestProbeRepartitionIdentityAlways), the sequence a bigserial column's DEFAULT
+// nextval(...) names is the very object the new table's own definition still refers to
+// (pg_dump's canonical <table>_<column>_seq name, unchanged whichever side is partitioned),
+// so repartitionTable only has to detach it (ALTER SEQUENCE ... OWNED BY NONE) before the
+// old, renamed-aside table's DROP TABLE and re-own it once the new one exists -- never
+// recreating the sequence itself, so a row inserted afterward with no explicit id continues
+// exactly where the old table left off (brief-pg-repartition-seq.md item 1).
+func TestProbeRepartitionBigserialOwnedSequence(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE t (id bigserial NOT NULL, kind text NOT NULL);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id bigserial NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+CREATE TABLE t_default PARTITION OF t DEFAULT;
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO t (kind) VALUES ('a'), ('b'), ('c');\n" // id: 1, 2, 3 (nextval)
+	assert := `DO $$ BEGIN
+  IF (SELECT max(id) FROM t) <> 3 THEN RAISE EXCEPTION 'max id before continuation: %', (SELECT max(id) FROM t); END IF;
+END $$;
+INSERT INTO t (kind) VALUES ('a');
+DO $$ BEGIN
+  IF (SELECT max(id) FROM t) <> 4 THEN RAISE EXCEPTION 'sequence did not continue: %', (SELECT max(id) FROM t); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+	again, err := Plan(got, to.s, nil)
+	if err != nil || len(again) > 0 {
+		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
+	}
+}
+
+// A repartitioned table's own GENERATED ALWAYS AS IDENTITY column: its sequence is the
+// server's own, tied to the column's attnum, so it cannot survive the old (renamed-aside)
+// table's DROP TABLE the way a bigserial's owned sequence does -- the new table's own
+// ADD GENERATED ... AS IDENTITY (r.Definition, adds()) creates a fresh one, oblivious to the
+// old values. pendingRepartition's INSERT carries OVERRIDING SYSTEM VALUE so the old rows'
+// explicit ids still fit under GENERATED ALWAYS (428C9 without it, measured), and a
+// setval() afterward resumes the fresh sequence from the highest value actually inserted,
+// so a further row (no explicit id) continues from there instead of colliding at 1.
+func TestProbeRepartitionIdentityAlways(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer GENERATED ALWAYS AS IDENTITY, kind text NOT NULL);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer GENERATED ALWAYS AS IDENTITY, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+CREATE TABLE t_default PARTITION OF t DEFAULT;
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO t (kind) VALUES ('a'), ('b'), ('c');\n" // id: 1, 2, 3
+	assert := `DO $$ BEGIN
+  IF (SELECT max(id) FROM t) <> 3 THEN RAISE EXCEPTION 'max id before continuation: %', (SELECT max(id) FROM t); END IF;
+END $$;
+INSERT INTO t (kind) VALUES ('a');
+DO $$ BEGIN
+  IF (SELECT max(id) FROM t) <> 4 THEN RAISE EXCEPTION 'sequence did not continue: %', (SELECT max(id) FROM t); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+	again, err := Plan(got, to.s, nil)
+	if err != nil || len(again) > 0 {
+		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
+	}
+}
+
+// The BY DEFAULT half of TestProbeRepartitionIdentityAlways: OVERRIDING SYSTEM VALUE is not
+// required for GENERATED BY DEFAULT AS IDENTITY to accept the old rows' explicit ids
+// (unlike ALWAYS), but pendingRepartition emits it unconditionally whenever the target
+// column is IDENTITY at all -- harmless here, measured -- and the fresh sequence still
+// needs its own setval() to resume past the old values instead of colliding at 1.
+func TestProbeRepartitionIdentityByDefault(t *testing.T) {
+	requirePgDump(t)
+	ctx := context.Background()
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer GENERATED BY DEFAULT AS IDENTITY, kind text NOT NULL);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer GENERATED BY DEFAULT AS IDENTITY, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+CREATE TABLE t_default PARTITION OF t DEFAULT;
+`)
+	ddl, err := Plan(from.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	t.Logf("plan:\n%s", strings.Join(ddl, "\n"))
+	rows := "INSERT INTO t (kind) VALUES ('a'), ('b'), ('c');\n" // id: 1, 2, 3
+	assert := `DO $$ BEGIN
+  IF (SELECT max(id) FROM t) <> 3 THEN RAISE EXCEPTION 'max id before continuation: %', (SELECT max(id) FROM t); END IF;
+END $$;
+INSERT INTO t (kind) VALUES ('a');
+DO $$ BEGIN
+  IF (SELECT max(id) FROM t) <> 4 THEN RAISE EXCEPTION 'sequence did not continue: %', (SELECT max(id) FROM t); END IF;
+END $$;`
+	script := from.text + "\nRESET search_path;\n" + rows + "\n" + strings.Join(ddl, "\n") + "\n" + assert
+	got, _, err := server.Canonical(ctx, script, to.s)
+	if err != nil {
+		t.Fatalf("apply: %v\nplan:\n%s", err, strings.Join(ddl, "\n"))
+	}
+	var lines []string
+	for _, c := range diff.Compare(got, to.s) {
+		if !c.OrderOnly() {
+			lines = append(lines, c.String())
+		}
+	}
+	if len(lines) > 0 {
+		t.Errorf("plan does not reach the target:\n%s", strings.Join(lines, "\n"))
+	}
+	again, err := Plan(got, to.s, nil)
+	if err != nil || len(again) > 0 {
+		t.Errorf("a second plan is not empty: %v\n%s", err, strings.Join(again, "\n"))
+	}
+}

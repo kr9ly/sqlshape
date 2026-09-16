@@ -460,3 +460,104 @@ PARTITION BY LIST (id)
 `)
 	plan(t, ctx, "list partition: value moves between two named partitions", canonical{s: base.s, text: base.text + rows, intents: base.intents}, toMove)
 }
+
+// KEY partitioning, structured (schema.Partitioning.Kind "KEY", Cols the column list, no
+// Expr): PARTITIONS n changes the same ADD PARTITION PARTITIONS n / COALESCE PARTITION n as
+// HASH's own (migrate.go's alterPartitioning treats the two kinds alike), and LINEAR or
+// ALGORITHM changing is a whole rewrite (partitioningKeyChanged), not an incremental one.
+func TestProbeKeyPartitionCountAndAlgorithm(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY KEY (id) PARTITIONS 2;
+`)
+	rows := "\nINSERT INTO t (id, a) VALUES (1,1),(2,2),(3,3);\n"
+	base = canonical{s: base.s, text: base.text + rows, intents: base.intents}
+
+	// count: ADD PARTITION PARTITIONS n, the server redistributing every row
+	toMore := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY KEY (id) PARTITIONS 4;
+`)
+	plan(t, ctx, "key partition: count grows", base, toMore)
+
+	// LINEAR flips on: the clause's own whole rewrite, not an ADD PARTITION
+	toLinear := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY LINEAR KEY (id) PARTITIONS 4;
+`)
+	plan(t, ctx, "key partition: LINEAR", base, toLinear)
+
+	// ALGORITHM changes: also a whole rewrite (KEY's own hashing function itself changes)
+	toAlgo := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY KEY ALGORITHM=1 (id) PARTITIONS 4;
+`)
+	plan(t, ctx, "key partition: ALGORITHM", base, toAlgo)
+}
+
+// RANGE COLUMNS partitioning (schema.Partitioning.Columns true, Cols the column list):
+// spells VALUES LESS THAN a single-column bound the same way a plain RANGE does (measured),
+// so alterRangePartitioning's own ADD / DROP / REORGANIZE reach it unchanged; this pins that
+// the COLUMNS header itself round-trips and that an ADD PARTITION plans correctly over it.
+func TestProbeRangeColumnsPartitionAdd(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE COLUMNS (id)
+(PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN (100));
+`)
+	to := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE COLUMNS (id)
+(PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN (100), PARTITION p2 VALUES LESS THAN MAXVALUE);
+`)
+	plan(t, ctx, "range columns partition: add", base, to)
+}
+
+// A RANGE Partitioning's own SUBPARTITION BY HASH: ADD PARTITION / REORGANIZE PARTITION
+// take the same DDL this package already writes for a plain RANGE clause (the server splits
+// the new partition into the default subpartition count on its own, measured), so this pins
+// that alterRangePartitioning reaches a subpartitioned table unchanged, and that the
+// SUBPARTITION BY clause's own count changing, or going away entirely, is a whole rewrite
+// (subPartitioningChanged).
+func TestProbeSubpartitionedRangeAddAndRewrite(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+SUBPARTITION BY HASH (id)
+SUBPARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN (100));
+`)
+	rows := "\nINSERT INTO t (id, a) VALUES (1,1),(2,2),(3,3);\n"
+	base = canonical{s: base.s, text: base.text + rows, intents: base.intents}
+
+	// add: the new partition splits into 2 subpartitions by default, no explicit SUBPARTITION list
+	toAdd := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+SUBPARTITION BY HASH (id)
+SUBPARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN (100), PARTITION p2 VALUES LESS THAN MAXVALUE);
+`)
+	plan(t, ctx, "subpartitioned range: add partition", base, toAdd)
+
+	// the subpartition count itself changing: a whole rewrite, not an incremental one
+	toCount := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+SUBPARTITION BY HASH (id)
+SUBPARTITIONS 4
+(PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN (100));
+`)
+	plan(t, ctx, "subpartitioned range: subpartition count changes", base, toCount)
+
+	// SUBPARTITION BY dropped entirely: also a whole rewrite
+	toNone := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+(PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN (100));
+`)
+	plan(t, ctx, "subpartitioned range: SUBPARTITION BY removed", base, toNone)
+}

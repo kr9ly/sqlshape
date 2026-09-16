@@ -91,6 +91,17 @@ func identityWord(id byte) string {
 	return "BY DEFAULT"
 }
 
+// isIdentity reports whether a column's Identity byte is a genuine GENERATED ... AS
+// IDENTITY ('a' / 'd') -- as opposed to 's' (schema.go's own marker for a plain bigserial
+// column, "behaves like identity for who owns the value" but with a column-owned sequence
+// an ALTER SEQUENCE ... OWNED BY can still detach and re-point, unlike a true identity
+// sequence, the server's own) or 0 (no identity at all). repartitionTable's own scope
+// (migrate.go) needs this distinction: c.Identity != 0 alone also matches a bigserial
+// column, which would wrongly skip its owned sequence's OWNED BY NONE / re-own handling and
+// instead try to rename aside a sequence r.Definition never recreates in the first place
+// (measured: 42P07 "already exists").
+func isIdentity(id byte) bool { return id != 0 && id != 's' }
+
 // constraintText renders a table constraint body (after ADD CONSTRAINT name).
 func constraintText(s *schema.Schema, c *schema.Constraint) string {
 	switch c.Kind {
@@ -268,6 +279,19 @@ func commentRelation(key string) string {
 		return key[:i]
 	}
 	return key
+}
+
+// commentRelKey is key's relation part as a schema.Relation.FullName() ("schema.rel"),
+// whether key itself names a relation (a table/view/... comment, two dot-separated parts)
+// or a column of one (a column comment, three parts, schema names never containing a dot
+// themselves -- the same assumption splitRel makes): used to look up p.recreated, which is
+// keyed by FullName, from either kind of comment key.
+func commentRelKey(key string) string {
+	parts := strings.SplitN(key, ".", 3)
+	if len(parts) < 3 {
+		return key
+	}
+	return parts[0] + "." + parts[1]
 }
 
 func commentObjectSurvives(s *schema.Schema, key string) bool {

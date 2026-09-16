@@ -132,6 +132,13 @@ type planner struct {
 type repartitionPlan struct {
 	from, to *schema.Relation
 	tempName string
+	// ownedSeqs: from-side sequences OWNED BY one of from's columns (a plain bigserial-style
+	// column, not IDENTITY -- see repartitionTable's own doc comment). Detached (OWNED BY
+	// NONE) right after the RENAME so the old table's own eventual DROP TABLE does not take
+	// them down (42P01 otherwise, measured), and re-owned by pendingRepartition once the new
+	// table exists: the sequence itself is never recreated, so its current value survives
+	// the whole repartition unchanged, same as an ordinary column rename does today.
+	ownedSeqs []*schema.Relation
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -300,9 +307,23 @@ func (p *planner) drops() {
 			if c.Kind != schema.ForeignKey {
 				continue
 			}
-			if tc, ok := toCon[n]; !ok || !same(p.from, p.to, c, tc) {
+			tc, ok := toCon[n]
+			// a foreign key resting on a table repartitionTable is about to rename aside
+			// and rebuild fresh (detectRepartitions, migrate.go) breaks regardless of
+			// whether its own definition changed: the physical table it names goes with
+			// the temporary name's DROP TABLE, so it must be dropped ahead of that and
+			// redone (redoFK) once the rebuilt table exists, the same way a key the FK
+			// rests on being dropped outright already forces (below).
+			repartitioned := p.repartitioning[c.RefTable] != nil
+			if !ok || !same(p.from, p.to, c, tc) || repartitioned {
 				p.emit("ALTER TABLE %s DROP CONSTRAINT %s", qrel(r), q(n))
 				droppedFK[r.FullName()+"."+n] = true
+				if repartitioned && ok && p.toOf(r) != nil {
+					if p.redoFK == nil {
+						p.redoFK = map[string]bool{}
+					}
+					p.redoFK[p.toName(r.FullName())+"."+n] = true
+				}
 			}
 		}
 	}
@@ -635,7 +656,10 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 			}
 		}
 		if f.Props["base"] != t.Props["base"] {
-			p.note("domain %s: base type %s -> %s cannot be altered; drop and recreate it", name, f.Props["base"], t.Props["base"])
+			// no lossless DDL exists for this (measured: PostgreSQL has no ALTER DOMAIN
+			// ... TYPE); a problem rather than a note, same ruling as a partition key or
+			// table inherits/of type change.
+			p.problem("domain %s: base type %s -> %s has no lossless DDL (drop and recreate it)", name, f.Props["base"], t.Props["base"])
 		}
 		for _, k := range sortedKeys(f.Props) {
 			if strings.HasPrefix(k, "check ") && f.Props[k] != t.Props[k] {
@@ -674,7 +698,9 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 			}
 		}
 	case "range":
-		p.note("range %s: %v -> %v cannot be altered; drop and recreate it", name, f.Props, t.Props)
+		// no lossless DDL exists for this (measured: PostgreSQL has no ALTER TYPE ...
+		// SET SUBTYPE); a problem rather than a note, same ruling as a domain's base type.
+		p.problem("range %s: %v -> %v has no lossless DDL (drop and recreate it)", name, f.Props, t.Props)
 	}
 }
 
@@ -818,7 +844,14 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 	fromProps, toProps := diff.Props(p.from, f), diff.Props(p.to, r)
 	for _, k := range []string{"inherits", "of type"} {
 		if fromProps[k] != toProps[k] {
-			p.note("table %s: %s %q -> %q cannot be altered by the plan", r.FullName(), k, fromProps[k], toProps[k])
+			// no lossless DDL exists for this (measured: PostgreSQL has no ALTER TABLE
+			// ... INHERIT / NO INHERIT rewrite for a change of parents, nor an ALTER ...
+			// OF for changing a typed table's underlying type); a problem rather than a
+			// note (the same ruling this file already applies to a partition key change
+			// and to a composite attribute type change under a column that uses it), so
+			// apply stops here instead of leaving verify-schema reporting the same
+			// difference forever.
+			p.problem("table %s: %s %q -> %q has no lossless DDL", r.FullName(), k, fromProps[k], toProps[k])
 		}
 	}
 	if fromProps["partition key"] != toProps["partition key"] {
@@ -925,10 +958,13 @@ type pendingRepartition struct {
 	table    *schema.Relation // the target's own definition (the new partitioned parent)
 	old      *schema.Relation // the source's version, about to be renamed aside
 	tempName string
+	// ownedSeqs carries repartitionPlan's own list forward: OWNED BY NONE already ran
+	// (repartitionTable), and this is where it comes back, once pr.table itself exists.
+	ownedSeqs []*schema.Relation
 }
 
 // detectRepartitions finds every table whose partition key is changing and is in scope
-// for repartitionTable (repartitionEligible), before drops() decides what to do about its
+// for repartitionTable, before drops() decides what to do about its
 // old partitions: they have no target counterpart of their own (the target's declared
 // children, if any, are unrelated new objects under the rebuilt parent) and must not go
 // through the ordinary "-- @migrate drop" requirement or get their own DROP TABLE there --
@@ -950,74 +986,42 @@ func (p *planner) detectRepartitions() {
 		if diff.Props(p.from, f)["partition key"] == diff.Props(p.to, r)["partition key"] {
 			continue
 		}
-		if !p.repartitionEligible(f) {
-			continue
-		}
 		if p.repartitioning == nil {
 			p.repartitioning = map[string]*repartitionPlan{}
 			p.repartitionChild = map[string]bool{}
 		}
-		p.repartitioning[f.FullName()] = &repartitionPlan{from: f, to: r, tempName: p.freeRelName(f.Schema, "z_migrate_"+f.Name)}
+		rp := &repartitionPlan{from: f, to: r, tempName: p.freeRelName(f.Schema, "z_migrate_"+f.Name)}
+		// a plain (bigserial-style) sequence owned by one of f's columns: unlike an IDENTITY
+		// column's sequence (the server's own, tied to the column's attnum -- no ALTER ...
+		// OWNED BY reaches it, so it is simply left to go with the old table's own DROP
+		// TABLE and a fresh one comes from r.Definition/adds() the same as any new IDENTITY
+		// column's does), this one is the very sequence the new column's own DEFAULT
+		// nextval(...) still names (pg_dump gives it the same canonical
+		// <table>_<column>_seq name whether the table is plain or partitioned, measured) --
+		// repartitionTable detaches it (OWNED BY NONE) right after the RENAME so the old
+		// table's later DROP TABLE does not take it down, and pendingRepartition re-owns it
+		// once the new table exists. Its current value is never touched, so it is preserved
+		// across the repartition exactly as an ordinary column rename already leaves it.
+		for _, seq := range p.from.Relations {
+			if seq.Kind != schema.Sequence || seq.OwnedBy == "" || ownerRelation(seq.OwnedBy) != f.FullName() {
+				continue
+			}
+			if oc := f.Column(ownerColumn(seq.OwnedBy)); oc != nil && isIdentity(oc.Identity) {
+				// modeled the same OWNED BY way as a plain sequence's, but ALTER SEQUENCE
+				// ... OWNED BY NONE on an identity-owned one is 0A000 "cannot change
+				// ownership of identity sequence" regardless (measured) -- repartitionTable
+				// renames it aside instead, by its own assumed canonical name.
+				continue
+			}
+			rp.ownedSeqs = append(rp.ownedSeqs, seq)
+		}
+		p.repartitioning[f.FullName()] = rp
 		for _, child := range p.from.Relations {
 			if len(child.Parents) > 0 && child.Parents[0].FullName() == f.FullName() {
 				p.repartitionChild[child.FullName()] = true
 			}
 		}
 	}
-}
-
-// repartitionEligible is repartitionTable's scope check on its own (see its doc comment),
-// usable before the RENAME itself is due (detectRepartitions, ahead of drops()).
-func (p *planner) repartitionEligible(f *schema.Relation) bool {
-	if len(f.Policies) > 0 || len(f.Rules()) > 0 {
-		return false
-	}
-	for _, t := range p.from.Triggers {
-		if t.Table == f.FullName() {
-			return false
-		}
-	}
-	for _, other := range p.from.Relations {
-		if other.FullName() == f.FullName() {
-			continue
-		}
-		for _, c := range other.Constraints {
-			if c.Kind == schema.ForeignKey && c.RefTable == f.FullName() {
-				return false
-			}
-		}
-	}
-	for k := range p.from.Comments {
-		// a comment attaches to the object's OID, gone the moment the old (renamed
-		// aside) table is dropped; adds()'s ordinary comment diffing (end of adds())
-		// would see the same text before and after and skip re-emitting it entirely,
-		// since nothing about the comment's own text changed here -- out of scope for
-		// the same reason as a policy / rule / trigger above.
-		if k == f.FullName() || strings.HasPrefix(k, f.FullName()+".") {
-			return false
-		}
-	}
-	for _, c := range f.Columns {
-		if c.Identity != 0 {
-			// an identity column's sequence is the server's own, tied to this exact
-			// column (attnum): DROP TABLE on the old (renamed-aside) table takes it down
-			// regardless of OWNED BY, and there is no ALTER ... OWNED BY to give the new
-			// column that value continuity back the way a plain serial's sequence can
-			// (measured elsewhere in this file). Out of scope for now.
-			return false
-		}
-	}
-	for _, seq := range p.from.Relations {
-		if seq.Kind == schema.Sequence && seq.OwnedBy != "" && ownerRelation(seq.OwnedBy) == f.FullName() {
-			// a plain (bigserial-style) sequence owned by a column of f: unlike a policy /
-			// rule / trigger / comment, the sequence itself survives its old owner's DROP
-			// TABLE only if detached first (ALTER SEQUENCE ... OWNED BY NONE) and
-			// re-pointed at the new column after -- doable, but not yet wired through
-			// detectRepartitions / repartitionTable. Out of scope for now.
-			return false
-		}
-	}
-	return true
 }
 
 // freeRelName is base, or base prefixed with enough "z_" to name nothing already declared
@@ -1052,26 +1056,58 @@ func (p *planner) freeRelName(schemaName, base string) string {
 // if even one fits nowhere, correctly, since the target schema does not cover every row
 // the source table held.
 //
-// Scoped to a table nothing else structurally depends on (repartitionEligible,
-// brief-holes-pg.md item D): no policy / rule / trigger / comment of its own, and no other
-// table's foreign key resting on it -- reattaching all of those "around" the rename the
-// way generatedRecreates() already does for a column rewrite is future work. detectRepar
-// titions (ahead of drops()) already decided eligibility; this only has to consult it and
-// emit. Returns false (the caller's existing "problem", halting apply) for a table out of
-// scope, rather than risk an incomplete plan.
+// Scoped by repartitionEligible's original doc comment (brief-holes-pg.md item D, widened
+// twice since): a policy, a rule, a trigger, a comment of f's own, and another table's
+// foreign key resting on it are all in scope -- drops()/adds() already reattach or redo
+// every one of those around a p.recreated relation, the same bookkeeping
+// generatedRecreates() uses for a column rewrite. An IDENTITY column and a plain
+// (bigserial-style) owned sequence are in scope too now: an IDENTITY column's own sequence
+// is the server's, tied to the column's attnum, so it cannot be handed over the way an
+// owned sequence's OWNED BY can -- r.Definition (adds(), the same path a genuinely new
+// IDENTITY column takes) creates a fresh one under the canonical <table>_<column>_seq name,
+// which collides (42P07 via 0A000 "cannot change ownership of identity sequence" on the ADD
+// GENERATED itself, measured) with the *old* table's own identity sequence still standing
+// under that exact name -- ALTER TABLE ... RENAME TO does not rename a column's sequence
+// along with it (measured), identity or owned alike, so f's still carries its original,
+// pre-rename name even once f itself answers to rp.tempName. Renamed aside first (assumed
+// to still be PostgreSQL's own default <table>_<column>_seq naming -- true of every
+// identity column this planner or its probe ever creates, since neither ever asks for a
+// custom SEQUENCE NAME) so the fresh one can take the canonical name back; it goes down
+// regardless once f's old, renamed-aside self is finally dropped, whatever it is called by
+// then. pendingRepartition's INSERT then carries OVERRIDING SYSTEM VALUE so the old rows'
+// explicit ids still fit under GENERATED ALWAYS, and a setval() afterward resumes the fresh
+// sequence from the row with the highest value, since it otherwise starts at 1, oblivious
+// to what came before (measured). A bigserial-style owned sequence, unlike IDENTITY's, is
+// the very object r's own DEFAULT nextval(...) still names (same canonical name whichever
+// side is partitioned, and no ADD GENERATED to collide with in the first place) --
+// detectRepartitions already worked out which sequences these are
+// (repartitionPlan.ownedSeqs); this only has to detach them (OWNED BY NONE) before f's old,
+// renamed-aside self is eventually dropped (42P01 otherwise, measured), leaving their
+// current value untouched. pendingRepartition re-owns them once r itself exists.
 func (p *planner) repartitionTable(f, r *schema.Relation) bool {
 	rp := p.repartitioning[f.FullName()]
 	if rp == nil {
 		return false
 	}
 	p.emit("ALTER TABLE %s RENAME TO %s", qrel(f), q(rp.tempName))
+	for _, seq := range rp.ownedSeqs {
+		p.emit("ALTER SEQUENCE %s OWNED BY NONE", qrel(seq))
+	}
+	for _, c := range f.Columns {
+		if !isIdentity(c.Identity) {
+			continue
+		}
+		orig := q(f.Schema) + "." + q(f.Name+"_"+c.Name+"_seq")
+		fresh := p.freeRelName(f.Schema, "z_migrate_"+f.Name+"_"+c.Name+"_seq")
+		p.emit("ALTER SEQUENCE %s RENAME TO %s", orig, q(fresh))
+	}
 	p.recreated[r.FullName()] = true
 	for _, v := range p.from.DependentViews(f) {
 		if tv := p.toOf(v); tv != nil {
 			p.recreated[tv.FullName()] = true
 		}
 	}
-	p.pendingRepartition = append(p.pendingRepartition, pendingRepartition{table: r, old: f, tempName: rp.tempName})
+	p.pendingRepartition = append(p.pendingRepartition, pendingRepartition{table: r, old: f, tempName: rp.tempName, ownedSeqs: rp.ownedSeqs})
 	return true
 }
 
@@ -1565,6 +1601,19 @@ func (p *planner) adds() {
 	// name so the general per-relation pass below skips it.
 	seqForNewColumn := map[string]*schema.Relation{}
 	inlineSeq := map[string]bool{}
+	// repartitionedSeq: a bigserial-style owned sequence detectRepartitions already worked
+	// out (repartitionPlan.ownedSeqs, carried into pendingRepartition) as one to detach and
+	// re-own, not recreate -- p.recreated on a repartitioned table (below) would otherwise
+	// make its own "table is new" sub-loop treat this exact sequence as needing its own
+	// fresh CREATE SEQUENCE too, on top of the one already standing (42P07 "already
+	// exists", measured: it is the very object rp.ownedSeqs / pendingRepartition means to
+	// keep, current value included).
+	repartitionedSeq := map[string]bool{}
+	for _, pr := range p.pendingRepartition {
+		for _, seq := range pr.ownedSeqs {
+			repartitionedSeq[seq.FullName()] = true
+		}
+	}
 	for _, seq := range toOrder {
 		if seq.Kind != schema.Sequence || seq.OwnedBy == "" {
 			continue
@@ -1636,7 +1685,10 @@ func (p *planner) adds() {
 				// change ownership of identity sequence", measured)
 				for _, seq := range toOrder {
 					if seq.Kind == schema.Sequence && seq.OwnedBy != "" && ownerRelation(seq.OwnedBy) == r.FullName() {
-						if tc := r.Column(ownerColumn(seq.OwnedBy)); tc != nil && tc.Identity != 0 {
+						if repartitionedSeq[seq.FullName()] {
+							continue // pendingRepartition already re-owns this one; never recreated
+						}
+						if tc := r.Column(ownerColumn(seq.OwnedBy)); tc != nil && isIdentity(tc.Identity) {
 							continue
 						}
 						p.emit("%s", seq.Definition)
@@ -1803,7 +1855,11 @@ func (p *planner) adds() {
 		rules := r.Rules()
 		for _, n := range sortedKeys(rules) {
 			rd := rules[n]
-			if fr, ok := fromRules[n]; ok && same(p.from, p.to, fr, rd) {
+			// p.recreated (repartitionTable): the old rule perished with the old table
+			// under its temporary name, so an unchanged-looking rule still needs its
+			// CREATE RULE reissued against the rebuilt one -- same reasoning as the
+			// trigger loop just above and the policy loop just below.
+			if fr, ok := fromRules[n]; ok && same(p.from, p.to, fr, rd) && !p.recreated[r.FullName()] {
 				continue
 			}
 			p.emit("%s", schema.DeparseStmt(ruleNode(rd)))
@@ -1837,7 +1893,13 @@ func (p *planner) adds() {
 	}
 	for _, k := range sortedKeys(p.to.Comments) {
 		v := p.to.Comments[k]
-		if fv, ok := fromComments[k]; ok && fv == v {
+		// p.recreated (repartitionTable): a comment attaches to the object's OID, gone
+		// the moment the old (renamed-aside) table is dropped, so even identical text
+		// needs COMMENT ON reissued against the rebuilt table/column -- otherwise this
+		// generic "same text, nothing to do" skip would silently leave the new object
+		// with no comment at all (repartitionEligible's own doc comment once excluded
+		// any table carrying one for exactly this reason; now handled here instead).
+		if fv, ok := fromComments[k]; ok && fv == v && !p.recreated[commentRelKey(k)] {
 			continue
 		}
 		if t := commentText(p.to, k, v); t != "" {
@@ -1857,9 +1919,21 @@ func (p *planner) adds() {
 	// comments) is fully in place: a plain INSERT lets PostgreSQL's own partition router
 	// place every row, refusing the whole statement (23514) if even one fits nowhere.
 	for _, pr := range p.pendingRepartition {
+		// a bigserial-style owned sequence comes back onto its (possibly renamed) column
+		// once that column exists on the new table -- ahead of the INSERT below, though
+		// nothing requires that particular order (ownership does not gate DML). Skipped
+		// (not an error) if the owning column itself did not survive the repartition; some
+		// other declared mutation is then responsible for that sequence's own fate.
+		for _, seq := range pr.ownedSeqs {
+			col := p.toCol(pr.old, ownerColumn(seq.OwnedBy))
+			if pr.table.Column(col) == nil {
+				continue
+			}
+			p.emit("ALTER SEQUENCE %s OWNED BY %s", qrel(seq), q(pr.table.Schema)+"."+q(pr.table.Name)+"."+q(col))
+		}
 		temp := q(pr.old.Schema) + "." + q(pr.tempName)
 		fromCols := columnsOf(pr.old)
-		var insCols, selCols []string
+		var insCols, selCols, identityCols []string
 		for _, c := range pr.table.Columns {
 			if c.Generated != nil {
 				continue // never settable directly; the router fills it in from what it reads
@@ -1870,9 +1944,34 @@ func (p *planner) adds() {
 			}
 			insCols = append(insCols, q(c.Name))
 			selCols = append(selCols, q(fc.Name))
+			if isIdentity(c.Identity) {
+				// a bigserial column (c.Identity == 's') is excluded here: its sequence is
+				// never recreated (rp.ownedSeqs re-owns the very same object, current value
+				// untouched), so forcing it to max(column) risks moving it *backwards* if
+				// any row with a higher id was ever deleted -- unlike a fresh IDENTITY
+				// sequence, which starts at 1 with nothing yet to lose.
+				identityCols = append(identityCols, c.Name)
+			}
 		}
-		p.emit("INSERT INTO %s (%s) SELECT %s FROM %s", qrel(pr.table), strings.Join(insCols, ", "), strings.Join(selCols, ", "), temp)
+		// an IDENTITY column's own sequence is fresh (r.Definition's ADD GENERATED ... AS
+		// IDENTITY created it, oblivious to the old table's values): OVERRIDING SYSTEM VALUE
+		// lets the router still insert the old, explicit values under GENERATED ALWAYS
+		// (428C9 without it, measured; GENERATED BY DEFAULT accepts them either way, but
+		// this is harmless there too), and setval() afterward resumes the fresh sequence
+		// from the highest value actually inserted, so the very next nextval() continues
+		// where the old one left off instead of colliding at 1. Skipped when the table holds
+		// no rows for it to see (an empty derived table's own WHERE never lets setval() run
+		// at all, so is_called is left alone rather than forced true on nothing).
+		overriding := ""
+		if len(identityCols) > 0 {
+			overriding = " OVERRIDING SYSTEM VALUE"
+		}
+		p.emit("INSERT INTO %s (%s)%s SELECT %s FROM %s", qrel(pr.table), strings.Join(insCols, ", "), overriding, strings.Join(selCols, ", "), temp)
 		p.emit("DROP TABLE %s", temp)
+		for _, col := range identityCols {
+			p.emit("SELECT setval(pg_get_serial_sequence(%s, %s), m, true) FROM (SELECT max(%s) AS m FROM %s) s WHERE m IS NOT NULL",
+				lit(qrel(pr.table)), lit(col), q(col), qrel(pr.table))
+		}
 	}
 }
 

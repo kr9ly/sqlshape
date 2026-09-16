@@ -289,6 +289,44 @@ ALTER TABLE orders ALTER COLUMN status DROP DEFAULT; ALTER TABLE orders ALTER CO
 			t.Errorf("got %v\nwant a problem containing %q", err, want)
 		}
 	})
+	// A domain's base type, a range's subtype, and a table's INHERITS / PARTITION OF / OF
+	// type: none of these can be altered in place (no lossless DDL exists, same ruling as
+	// a partition key change and a composite attribute type change under a column that
+	// uses it -- apply stops instead of leaving verify-schema reporting the same
+	// difference forever). These operate on statically parsed schemas (schema.Load), no
+	// database needed.
+	load := func(sql string) *schema.Schema {
+		t.Helper()
+		s, err := schema.Load(sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	t.Run("domain base type", func(t *testing.T) {
+		from, to := load("CREATE DOMAIN d AS integer;"), load("CREATE DOMAIN d AS text;")
+		_, err := Plan(from, to, nil)
+		if want := "domain d: base type integer -> text has no lossless DDL"; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("got %v\nwant a problem containing %q", err, want)
+		}
+	})
+	t.Run("range subtype", func(t *testing.T) {
+		from := load("CREATE TYPE r1 AS RANGE (subtype = integer);")
+		to := load("CREATE TYPE r1 AS RANGE (subtype = numeric);")
+		_, err := Plan(from, to, nil)
+		if err == nil || !strings.Contains(err.Error(), "range r1:") || !strings.Contains(err.Error(), "has no lossless DDL") {
+			t.Errorf("got %v\nwant a problem about the range's subtype", err)
+		}
+	})
+	t.Run("table property the plan cannot alter", func(t *testing.T) {
+		composite := "CREATE TYPE point2 AS (x integer, y integer);\n"
+		from := load(composite + "CREATE TABLE p1 OF point2;")
+		to := load(composite + "CREATE TABLE p1 (x integer, y integer);")
+		_, err := Plan(from, to, nil)
+		if want := `table p1: of type "point2" -> "" has no lossless DDL`; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("got %v\nwant a problem containing %q", err, want)
+		}
+	})
 }
 
 func TestParseIntents(t *testing.T) {
@@ -495,63 +533,6 @@ func TestCommentHelpers(t *testing.T) {
 	if commentObjectSurvives(s, "nope") {
 		t.Error("nope should not survive")
 	}
-}
-
-// TestPlanNotes covers the "-- " notes the plan leaves for changes it cannot express as
-// DDL: a domain's base type, a range's subtype, and a table's INHERITS / PARTITION OF /
-// OF type - none of which can be altered in place. These operate on statically parsed
-// schemas (schema.Load), no database needed.
-func TestPlanNotes(t *testing.T) {
-	load := func(sql string) *schema.Schema {
-		t.Helper()
-		s, err := schema.Load(sql)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return s
-	}
-	t.Run("domain base type", func(t *testing.T) {
-		from, to := load("CREATE DOMAIN d AS integer;"), load("CREATE DOMAIN d AS text;")
-		plan, err := Plan(from, to, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ddl := strings.Join(plan, "\n")
-		if !strings.Contains(ddl, "-- domain d: base type integer -> text cannot be altered") {
-			t.Errorf("want a note about the domain's base type, got:\n%s", ddl)
-		}
-		if strings.Contains(ddl, "ALTER DOMAIN") {
-			t.Errorf("want no ALTER for an unalterable base type change:\n%s", ddl)
-		}
-	})
-	t.Run("range subtype", func(t *testing.T) {
-		from := load("CREATE TYPE r1 AS RANGE (subtype = integer);")
-		to := load("CREATE TYPE r1 AS RANGE (subtype = numeric);")
-		plan, err := Plan(from, to, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ddl := strings.Join(plan, "\n")
-		if !strings.Contains(ddl, "-- range r1:") || !strings.Contains(ddl, "cannot be altered") {
-			t.Errorf("want a note about the range's subtype, got:\n%s", ddl)
-		}
-	})
-	t.Run("table property the plan cannot alter", func(t *testing.T) {
-		composite := "CREATE TYPE point2 AS (x integer, y integer);\n"
-		from := load(composite + "CREATE TABLE p1 OF point2;")
-		to := load(composite + "CREATE TABLE p1 (x integer, y integer);")
-		plan, err := Plan(from, to, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ddl := strings.Join(plan, "\n")
-		if !strings.Contains(ddl, `-- table p1: of type "point2" -> "" cannot be altered by the plan`) {
-			t.Errorf("want a note about the unalterable \"of type\" property, got:\n%s", ddl)
-		}
-		if strings.Contains(ddl, "ALTER TABLE") {
-			t.Errorf("want no ALTER TABLE for a property the plan cannot change:\n%s", ddl)
-		}
-	})
 }
 
 // TestAlterTypeEnumAddValueBefore covers alterType's enum branch positioning a new label

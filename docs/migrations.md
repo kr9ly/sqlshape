@@ -72,8 +72,13 @@ since it takes its rows, needs a `-- @migrate drop` of that table; a table becom
 to be a partition is `ATTACH PARTITION` / `DETACH PARTITION`, a changed bound a detach and an
 attach (every detach in the plan runs before any attach, so a moving bound never overlaps a
 neighbour's), and the plan never alters a partition's own columns, which follow the parent's.
-Changing the partition key or strategy of a table that holds rows has no lossless DDL: the plan
-reports it as a problem and `apply` stops, rather than letting the difference stand as drift.
+A table that holds rows can be partitioned after the fact, unpartitioned, or moved to another
+key or strategy: the plan renames the table, creates the declared shape fresh with its
+partitions, inserts every row through the parent so PostgreSQL's router places it, carries the
+comments, triggers, policies, rules, inbound foreign keys and sequences over (a bigserial keeps
+its sequence, an identity column continues from the highest value), and drops the old table.
+Rows no partition takes are the server's error, so a `schema.sql` that does not cover the data
+stops `apply` rather than losing anything.
 
 Changes to a domain's base type, a range's subtype, `INHERITS` and `OF type` are printed as
 `-- ` notes for the operator rather than as DDL.
@@ -160,8 +165,11 @@ very server the migration targets, version and settings (`-- sqlshape: server`) 
 
 Compared, object by object:
 
-- tables: engine, charset, collation, row format, comment, and partitioning (`PARTITION BY
-  RANGE` / `HASH` structurally, the others as the text the server renders);
+- tables: engine, charset, collation, row format, comment, and partitioning (`RANGE`, `LIST`,
+  `RANGE COLUMNS`, `LIST COLUMNS`, `HASH`, `KEY`, `LINEAR`, `ALGORITHM`, subpartitioning by
+  `HASH` / `KEY`, each partition's bound and comment; a form the loader does not model, such as
+  a subpartition's own definition or a `TABLESPACE` option, is a problem rather than a
+  difference it cannot see);
 - columns: type, the whole definition as the server spells it, and their position (MySQL can
   reorder columns, so an order difference is a change the plan settles with
   `MODIFY COLUMN ... AFTER`);
@@ -196,7 +204,10 @@ The plan uses MySQL's own definitions:
 | a `RANGE` partition added at the end | `ADD PARTITION` |
 | a `RANGE` partition gone | `DROP PARTITION`, which takes its rows and so needs `-- @migrate drop partition orders.p0` |
 | a `RANGE` bound moved, or a partition inserted before `MAXVALUE` | `REORGANIZE PARTITION ... INTO (...)` (the server moves the rows) |
-| a `HASH` table's partition count | `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` |
+| a `LIST` partition added, gone, or its value list changed | `ADD PARTITION`, `DROP PARTITION` under the same declaration, and every changed value list in one `REORGANIZE PARTITION ... INTO` (a value moving between two kept partitions never floats between statements) |
+| a `HASH` or `KEY` table's partition count | `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` |
+| `LINEAR`, `KEY`'s columns or `ALGORITHM`, or the subpartitioning changed | `ALTER TABLE ... PARTITION BY ...`, the whole clause (the server redistributes the rows; none are lost) |
+| a partition's `COMMENT` | `REORGANIZE PARTITION ... INTO` with the new comment (no rows move, measured) |
 | a changed or removed trigger, procedure or function | a `DROP` and a `CREATE` (MySQL has no `CREATE OR REPLACE TRIGGER`) |
 | a changed or removed event | a `DROP EVENT` and a `CREATE EVENT`, the target's own text (a `STARTS` it omits starts the new event when the migration runs) |
 
@@ -214,6 +225,10 @@ MySQL, so `enum` names the column (`-- @migrate enum orders.status: drop 'cancel
 'cancelled'`), and the plan updates the rows before it narrows the type; and a partition is not
 a table, so dropping one is declared as `-- @migrate drop partition orders.p0`.
 
+A table's `DEFAULT CHARSET` / `COLLATE` change also re-issues `MODIFY COLUMN` for every string
+column without a collation of its own: the table option alone leaves such columns in the old
+encoding (measured), and the plan after `apply` would never be empty.
+
 `apply` runs the DDL statement by statement: MySQL's DDL commits implicitly, so a script is not a
 transaction and `-no-transaction` has no effect. When a statement fails, `apply` says which one
 and how many before it are applied; `sqlshape diff` from that state gives what remains.
@@ -227,7 +242,10 @@ times into a target (each mutation writes its own `-- @migrate` declaration), fi
 with three rows, and runs the plan on a server holding the source. A pair passes when the server
 refuses nothing, what it reads back afterwards is the target's canonical form (column order
 aside on PostgreSQL), and a second plan from there is empty. A failing pair is minimized and the
-fix is pinned as a regression test with the server's error (`probe_findings_test.go`).
+fix is pinned as a regression test with the server's error (`probe_findings_test.go`). Besides
+the random pairs, every mutation is applied alone once per run, so no kind of change depends on
+the draw. PostgreSQL's probe runs against 17 and against 18 (`TestMigrateProbe18`), each with
+that version's own vocabulary.
 
 What the generator has to reach is defined, not guessed: a plan's whole input is the diff, so
 every kind of change the diff can report (a table added, a column's type changed, a constraint
@@ -236,10 +254,11 @@ turning deferrable, ...) is enumerated from the diff's own comparison functions,
 unreachable with a reason. Only two reasons are accepted: the planner writes no DDL for that
 change and reports it instead (PostgreSQL's `INHERITS`, `OF type`, a domain's base type, a
 range's subtype, and the partition key of a table holding rows), or the change cannot appear
-(PostgreSQL 18 syntax against the PostgreSQL 17 the probe runs). Combinations and orderings are
-left to the random pairs. As of the fourth round, PostgreSQL reaches 92 of 103 kinds and MySQL
-all 48; the classes of planner bugs the probe found, all of them orderings a real server
-refuses, are the regression tests.
+(PostgreSQL 18 syntax against a PostgreSQL 17 server, or a change pg_dump never renders as
+such). Combinations and orderings are left to the random pairs. PostgreSQL reaches 94 of 103
+kinds on 17 and 98 on 18, MySQL all 48; every unreached kind is a problem the plan stops on or
+a change that cannot appear. The classes of planner bugs the probe found, most of them orderings
+a real server refuses, are the regression tests.
 
 What this does not reach: schema shapes outside the generator's model (legacy spellings,
 extension types, very large tables) and failures that depend on the data (a backfill's values,

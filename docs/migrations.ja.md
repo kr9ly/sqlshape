@@ -38,7 +38,7 @@ PostgreSQLでは両側とも`pg_dump`の出力として読むので、比較さ�
 
 renameは`RENAME TO` / `RENAME COLUMN`になる。renameした列を含む制約や外部キーは`DROP`して`ADD`する形で出る。正しい手順だが、制約の再検証が走る。enumのラベル削除は型の作り直しになる（PostgreSQLには`DROP VALUE`が無い）。旧型をrenameし、新型を作り、その型を使うすべての列に`ALTER COLUMN ... TYPE ... USING CASE ...`を当て、それらのテーブルに依存するビューを作り直し、旧型を落とす。enumの配列を持つ列があれば問題として報告する。`backfill`は移行後のスキーマで型検査され、列が作られた後に`UPDATE`として出力される。
 
-パーティションもほかと同じスキーマである。新しいパーティション表は`PARTITION BY`付きで作り、子ができてからATTACHする。既存の親への子の追加は`CREATE TABLE ... PARTITION OF ... FOR VALUES ...`、消える子は行を持っていくので`-- @migrate drop`の宣言を要求した上で`DROP TABLE`、表が子になる・子でなくなるのは`ATTACH PARTITION` / `DETACH PARTITION`、境界の変更はDETACHしてATTACHする（計画中の全DETACHを全ATTACHより前に出すので、動く境界が隣と重なることはない）。子の列は親に従うので、計画が子の列を直接ALTERすることはない。行を持つ表のパーティションキーや戦略の変更には無損失のDDLが無い。計画は問題として報告して`apply`を止める。差分をドリフトとして放置はしない。
+パーティションもほかと同じスキーマである。新しいパーティション表は`PARTITION BY`付きで作り、子ができてからATTACHする。既存の親への子の追加は`CREATE TABLE ... PARTITION OF ... FOR VALUES ...`、消える子は行を持っていくので`-- @migrate drop`の宣言を要求した上で`DROP TABLE`、表が子になる・子でなくなるのは`ATTACH PARTITION` / `DETACH PARTITION`、境界の変更はDETACHしてATTACHする（計画中の全DETACHを全ATTACHより前に出すので、動く境界が隣と重なることはない）。子の列は親に従うので、計画が子の列を直接ALTERすることはない。行を持つ表を後からパーティション化する、パーティション化をやめる、別のキーや戦略に移す、はどれもDDLになる。計画は表をRENAMEし、宣言された形をパーティションごと新しく作り、全行を親経由でINSERTしてPostgreSQLのrouterに配らせ、コメント・トリガ・ポリシー・RULE・被参照の外部キー・sequence（bigserialは同じsequenceを使い続け、identity列は最大値の続きから）を新しい表に付け直し、旧表を落とす。どのパーティションにも入らない行はサーバのエラーになるので、データを覆っていない`schema.sql`は何も失わずに`apply`を止める。
 
 ドメインの基底型、範囲型のサブタイプ、`INHERITS`、`OF type`の変更はDDLとしては出さず、`-- `で始まる注記として出力する。人が手順を決める必要がある変更である。
 
@@ -87,7 +87,7 @@ MySQLでは両側をサーバ自身の描き方で読む。全部の表とビュ
 
 比較はオブジェクトごとに行う。
 
-- 表: エンジン、文字集合、照合、行フォーマット、コメント、パーティショニング（`PARTITION BY RANGE` / `HASH`は構造として、それ以外はサーバが描くテキストとして）
+- 表: エンジン、文字集合、照合、行フォーマット、コメント、パーティショニング（`RANGE`、`LIST`、`RANGE COLUMNS`、`LIST COLUMNS`、`HASH`、`KEY`、`LINEAR`、`ALGORITHM`、`HASH` / `KEY`によるサブパーティション、各パーティションの境界とコメント。ローダーが構造にしない形——サブパーティションの個別定義や`TABLESPACE`オプション——は見えない差分ではなく問題として報告する）
 - 列: 型、サーバが綴った定義全体、位置（MySQLは列を並べ替えられるので、順序の違いは差分であり、計画は`MODIFY COLUMN ... AFTER`で直す）
 - キー、外部キー、CHECK制約
 - ビュー
@@ -109,7 +109,10 @@ MySQLでは両側をサーバ自身の描き方で読む。全部の表とビュ
 | `RANGE`の末尾に足すパーティション | `ADD PARTITION` |
 | 消える`RANGE`パーティション | `DROP PARTITION`。行を持っていくので`-- @migrate drop partition orders.p0`の宣言が要る |
 | `RANGE`の境界の移動、`MAXVALUE`の前への挿入 | `REORGANIZE PARTITION ... INTO (...)`（行の移動はサーバがやる） |
-| `HASH`のパーティション数 | `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` |
+| `LIST`パーティションの追加・消滅・値リストの変更 | `ADD PARTITION`、同じ宣言の下での`DROP PARTITION`、変わった値リストは全部まとめて1つの`REORGANIZE PARTITION ... INTO`（値が残る2つのパーティションの間を動くとき、文の間で行が浮かない） |
+| `HASH` / `KEY`のパーティション数 | `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` |
+| `LINEAR`、`KEY`の列や`ALGORITHM`、サブパーティションの変更 | `ALTER TABLE ... PARTITION BY ...`の全文（行の配り直しはサーバがやる。行は失わない） |
+| パーティションの`COMMENT` | 新しいコメントでの`REORGANIZE PARTITION ... INTO`（行は動かない、測定済み） |
 | 変わった、または消えるトリガ・プロシージャ・関数 | `DROP`してから`CREATE`（MySQLには`CREATE OR REPLACE TRIGGER`が無い） |
 | 変わった、または消えるイベント | `DROP EVENT`してから`CREATE EVENT`。目標のテキストそのまま（`STARTS`を省いていれば、新しいイベントはマイグレーションを実行した時刻から始まる） |
 
@@ -122,13 +125,15 @@ MySQLでは両側をサーバ自身の描き方で読む。全部の表とビュ
 
 `-- @migrate`の宣言は同じだが2点違う。MySQLではENUMは列の型なので、`enum`は列を名指す（`-- @migrate enum orders.status: drop 'canceled' using 'cancelled'`）。計画は型を狭める前に行を更新する。パーティションは表ではないので、落とす宣言は`-- @migrate drop partition orders.p0`と書く。
 
+表の`DEFAULT CHARSET` / `COLLATE`の変更は、自分の照合を持たない文字列列の全部に`MODIFY COLUMN`も出す。表オプションだけではそれらの列は旧エンコーディングのまま残り（測定済み）、`apply`の後の計画が空にならない。
+
 `apply`はDDLを1文ずつ実行する。MySQLのDDLは暗黙にコミットされるのでスクリプトはトランザクションにならず、`-no-transaction`は効かない。ある文が失敗したら、`apply`はどの文かと、その前の何文が適用済みかを言う。その状態から`sqlshape diff`をかければ残りが出る。
 
 ## 計画がどう検証されているか
 
-`diff`が書くDDLは、`apply`が実行するのと同じやり方で本物のサーバに判定させている。手で選んだ例ではなく生成器で（`check/postgres/migrate`と`check/mysql/migrate`の`TestMigrateProbe`）。計画器の語彙からスキーマを乱数で作り、変異を1〜5個重ねて目的のスキーマにし（変異は自分の`-- @migrate`宣言も書く）、全部の表に3行ずつ入れて、元のスキーマを持つサーバで計画を実行する。合格の条件は三つ。サーバが何も拒まない、実行後に読み返した正準形が目的のスキーマと一致する（PostgreSQLは列順を除く）、そこから再び計画すると空になる。落ちた組は最小化し、直したものはサーバのエラーとともに回帰テストとして固定する（`probe_findings_test.go`）。
+`diff`が書くDDLは、`apply`が実行するのと同じやり方で本物のサーバに判定させている。手で選んだ例ではなく生成器で（`check/postgres/migrate`と`check/mysql/migrate`の`TestMigrateProbe`）。計画器の語彙からスキーマを乱数で作り、変異を1〜5個重ねて目的のスキーマにし（変異は自分の`-- @migrate`宣言も書く）、全部の表に3行ずつ入れて、元のスキーマを持つサーバで計画を実行する。合格の条件は三つ。サーバが何も拒まない、実行後に読み返した正準形が目的のスキーマと一致する（PostgreSQLは列順を除く）、そこから再び計画すると空になる。落ちた組は最小化し、直したものはサーバのエラーとともに回帰テストとして固定する（`probe_findings_test.go`）。乱数の組に加えて、各変異を単独で適用した組を毎回1つずつ作るので、どの変更の種類も引きに依存しない。PostgreSQLのprobeは17と18（`TestMigrateProbe18`）の両方に対して、それぞれのバージョンの語彙で回す。
 
-生成器が届くべき範囲は、勘ではなく定義している。計画の入力はdiffの出力そのものなので、diffが報告し得る変更の全種（表の追加、列の型の変更、制約がDEFERRABLEになる、…）をdiff自身の比較関数から列挙し、ゲート（固定seedの200組）は、その全種が「どれかの組で現れる」か「理由付きで到達不能に挙げてある」かのどちらかでなければ落ちる。理由として認めるのは二つだけ。計画器がその変更にDDLを書かず注記か問題として返すもの（PostgreSQLの`INHERITS`、`OF type`、domainの基底型、rangeのサブタイプ、行を持つ表のパーティションキー）と、構造的に現れないもの（probeが動かすPostgreSQL 17に対するPostgreSQL 18の構文）。組み合わせと順序は乱数の組に任せる。4巡目の時点で、PostgreSQLは103種のうち92種、MySQLは48種全部に届いている。見つかった計画器の穴はどれも本物のサーバが拒む順序の問題で、全部が回帰テストになっている。
+生成器が届くべき範囲は、勘ではなく定義している。計画の入力はdiffの出力そのものなので、diffが報告し得る変更の全種（表の追加、列の型の変更、制約がDEFERRABLEになる、…）をdiff自身の比較関数から列挙し、ゲート（固定seedの200組）は、その全種が「どれかの組で現れる」か「理由付きで到達不能に挙げてある」かのどちらかでなければ落ちる。理由として認めるのは二つだけ。計画器がその変更にDDLを書かず注記か問題として返すもの（PostgreSQLの`INHERITS`、`OF type`、domainの基底型、rangeのサブタイプ、行を持つ表のパーティションキー）と、構造的に現れないもの（PostgreSQL 17のサーバに対するPostgreSQL 18の構文、pg_dumpがその形で描かない変更）。組み合わせと順序は乱数の組に任せる。PostgreSQLは103種のうち17で94種、18で98種、MySQLは48種全部に届いていて、未到達はどれも計画が問題として止めるものか、現れ得ないものである。見つかった計画器の穴の大半は本物のサーバが拒む順序の問題で、全部が回帰テストになっている。
 
 届かないもの。生成器のモデルの外にあるスキーマの形（レガシーな綴り、拡張の型、巨大な表）と、データに依存する失敗（backfillの値、ロック時間）。これらは利用者の`schema.sql`とともにやって来るもので、`apply`が実行前に行う終点の確認が受け止める。
 

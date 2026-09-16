@@ -827,13 +827,14 @@ func (p *planner) alterTable(f, t *schema.Table) {
 }
 
 // alterPartitioning writes the DDL for f's Partitioning becoming t's -- one of a whole
-// rewrite (PARTITION BY / REMOVE PARTITIONING, when either side is absent, the kind or
-// expression itself changes, or either clause is one this package's Kind does not break
-// down at all), a HASH partition count change (ADD PARTITION PARTITIONS n / COALESCE
-// PARTITION n), or a RANGE change at the tail alterRangePartitioning works out. Every
-// pattern here keeps to the rest of the plan's own style: a change that can only lose
-// rows (a partition dropped outright) is refused unless a `-- @migrate drop partition`
-// declares it, the same requirement dropParts already carries for a column.
+// rewrite (PARTITION BY / REMOVE PARTITIONING, when either side is absent, or the
+// partitioning key itself changes: kind, LINEAR, COLUMNS-ness, expression / column list,
+// KEY's own ALGORITHM, or the SUBPARTITION BY clause), a HASH/KEY partition count change
+// (ADD PARTITION PARTITIONS n / COALESCE PARTITION n), or a RANGE/LIST change
+// alterRangePartitioning / alterListPartitioning works out. Every pattern here keeps to the
+// rest of the plan's own style: a change that can only lose rows (a partition dropped
+// outright) is refused unless a `-- @migrate drop partition` declares it, the same
+// requirement dropParts already carries for a column.
 // alterPartitions writes the DDL for every table alterTable found a partitioning
 // difference on (partitionAlters' own doc comment says why this runs as its own late
 // phase, not inline in alterTable).
@@ -847,12 +848,12 @@ func (p *planner) alterPartitioning(f, t *schema.Table) {
 	from, to := f.Partitioning, t.Partitioning
 	switch {
 	case from == nil:
-		p.emit("ALTER TABLE %s %s;", q(t.Name), to.Text)
+		p.emit("ALTER TABLE %s %s;", q(t.Name), renderPartitioning(to))
 	case to == nil:
 		p.emit("ALTER TABLE %s REMOVE PARTITIONING;", q(t.Name))
-	case from.Kind == "" || to.Kind == "" || from.Kind != to.Kind || from.Expr != to.Expr:
-		p.emit("ALTER TABLE %s %s;", q(t.Name), to.Text)
-	case from.Kind == "HASH":
+	case partitioningKeyChanged(from, to) || subPartitioningChanged(from.Sub, to.Sub):
+		p.emit("ALTER TABLE %s %s;", q(t.Name), renderPartitioning(to))
+	case from.Kind == "HASH" || from.Kind == "KEY":
 		switch {
 		case to.Num > from.Num:
 			p.emit("ALTER TABLE %s ADD PARTITION PARTITIONS %d;", q(t.Name), to.Num-from.Num)
@@ -864,6 +865,108 @@ func (p *planner) alterPartitioning(f, t *schema.Table) {
 	default: // RANGE
 		p.alterRangePartitioning(f, t, from, to)
 	}
+}
+
+// partitioningKeyChanged reports whether the partitioning key itself changed between from
+// and to -- kind, LINEAR, COLUMNS-ness, the expression or column list, or KEY's own
+// ALGORITHM -- forcing alterPartitioning's whole rewrite rather than an incremental ADD /
+// DROP / REORGANIZE PARTITION or a plain count change.
+func partitioningKeyChanged(from, to *schema.Partitioning) bool {
+	if from.Kind != to.Kind || from.Linear != to.Linear || from.Columns != to.Columns ||
+		from.Expr != to.Expr || from.Algorithm != to.Algorithm {
+		return true
+	}
+	return !equalCols(from.Cols, to.Cols)
+}
+
+// subPartitioningChanged reports whether the table's own SUBPARTITION BY clause changed
+// (added, dropped, or any of its own fields): always a whole rewrite of the parent clause,
+// this package's own ADD PARTITION / REORGANIZE PARTITION never touching a subpartition's
+// own definition (see schema.SubPartitioning's own doc comment).
+func subPartitioningChanged(from, to *schema.SubPartitioning) bool {
+	switch {
+	case from == nil && to == nil:
+		return false
+	case from == nil || to == nil:
+		return true
+	}
+	return from.Kind != to.Kind || from.Linear != to.Linear || from.Expr != to.Expr ||
+		from.Algorithm != to.Algorithm || from.Num != to.Num || !equalCols(from.Cols, to.Cols)
+}
+
+func equalCols(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// qList renders a column list, backtick-quoted, comma-joined: KEY's own column list, or
+// RANGE/LIST COLUMNS' own.
+func qList(names []string) string {
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = q(n)
+	}
+	return strings.Join(parts, ",")
+}
+
+// renderPartitioning spells p's whole PARTITION BY clause (and its own SUBPARTITION BY,
+// when it has one) the way this package's own generated DDL rewrites it whole: every shape
+// schema.Partitioning accepts is rich enough to rebuild byte for byte in a form MySQL itself
+// accepts, so there is no captured Text to fall back to (see schema.Partitioning's own doc
+// comment).
+func renderPartitioning(p *schema.Partitioning) string {
+	var b strings.Builder
+	b.WriteString("PARTITION BY ")
+	if p.Linear {
+		b.WriteString("LINEAR ")
+	}
+	switch p.Kind {
+	case "KEY":
+		b.WriteString("KEY ")
+		if p.Algorithm != 0 {
+			fmt.Fprintf(&b, "ALGORITHM=%d ", p.Algorithm)
+		}
+		fmt.Fprintf(&b, "(%s)\nPARTITIONS %d", qList(p.Cols), p.Num)
+	case "HASH":
+		fmt.Fprintf(&b, "HASH (%s)\nPARTITIONS %d", p.Expr, p.Num)
+	case "RANGE", "LIST":
+		b.WriteString(p.Kind)
+		if p.Columns {
+			fmt.Fprintf(&b, " COLUMNS (%s)", qList(p.Cols))
+		} else {
+			fmt.Fprintf(&b, " (%s)", p.Expr)
+		}
+	}
+	if p.Sub != nil {
+		b.WriteString("\nSUBPARTITION BY ")
+		if p.Sub.Linear {
+			b.WriteString("LINEAR ")
+		}
+		switch p.Sub.Kind {
+		case "KEY":
+			b.WriteString("KEY ")
+			if p.Sub.Algorithm != 0 {
+				fmt.Fprintf(&b, "ALGORITHM=%d ", p.Sub.Algorithm)
+			}
+			fmt.Fprintf(&b, "(%s)", qList(p.Sub.Cols))
+		case "HASH":
+			fmt.Fprintf(&b, "HASH (%s)", p.Sub.Expr)
+		}
+		fmt.Fprintf(&b, "\nSUBPARTITIONS %d", p.Sub.Num)
+	}
+	if p.Kind == "RANGE" {
+		fmt.Fprintf(&b, "\n(%s)", renderPartitionDefs(p.Parts))
+	} else if p.Kind == "LIST" {
+		fmt.Fprintf(&b, "\n(%s)", renderListPartitionDefs(p.Parts))
+	}
+	return b.String()
 }
 
 // alterRangePartitioning writes the DDL for a RANGE Partitioning that stays RANGE over the
@@ -939,7 +1042,7 @@ func (p *planner) alterListPartitioning(f, t *schema.Table, from, to *schema.Par
 		switch {
 		case !ok:
 			dropped = append(dropped, part)
-		case tp.Bound != part.Bound:
+		case tp.Bound != part.Bound || tp.Comment != part.Comment:
 			changed = append(changed, part)
 		}
 	}
@@ -984,9 +1087,18 @@ func (p *planner) alterListPartitioning(f, t *schema.Table, from, to *schema.Par
 func renderListPartitionDefs(parts []schema.Partition) string {
 	defs := make([]string, len(parts))
 	for i, part := range parts {
-		defs[i] = fmt.Sprintf("PARTITION %s VALUES IN (%s)", q(part.Name), part.Bound)
+		defs[i] = fmt.Sprintf("PARTITION %s VALUES IN (%s)%s", q(part.Name), part.Bound, partitionOptions(part))
 	}
 	return strings.Join(defs, ", ")
+}
+
+// partitionOptions spells a partition's own COMMENT, when it has one (see schema.Partition's
+// own doc comment for why COMMENT is the one per-partition option this package models).
+func partitionOptions(part schema.Partition) string {
+	if part.Comment == "" {
+		return ""
+	}
+	return fmt.Sprintf(" COMMENT %s", lit(part.Comment))
 }
 
 // checkPartitionsDroppable reports whether every one of parts (fromTable's own) is
@@ -1004,7 +1116,7 @@ func (p *planner) checkPartitionsDroppable(fromTable string, parts []schema.Part
 }
 
 func samePartition(a, b schema.Partition) bool {
-	return a.Name == b.Name && a.MaxValue == b.MaxValue && a.Bound == b.Bound
+	return a.Name == b.Name && a.MaxValue == b.MaxValue && a.Bound == b.Bound && a.Comment == b.Comment
 }
 
 func partitionNameList(parts []schema.Partition) string {
@@ -1025,7 +1137,7 @@ func renderPartitionDefs(parts []schema.Partition) string {
 		if !part.MaxValue {
 			bound = "(" + part.Bound + ")"
 		}
-		defs[i] = fmt.Sprintf("PARTITION %s VALUES LESS THAN %s", q(part.Name), bound)
+		defs[i] = fmt.Sprintf("PARTITION %s VALUES LESS THAN %s%s", q(part.Name), bound, partitionOptions(part))
 	}
 	return strings.Join(defs, ", ")
 }
