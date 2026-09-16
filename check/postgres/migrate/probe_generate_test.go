@@ -353,11 +353,12 @@ func generate(r *rand.Rand, pg18 bool) *pSchema {
 	// spare "drop partition" / "detach partition" needs a candidate that isn't only one a
 	// same-recipe "add partitioned table" step happened to leave behind
 	s.partTables = append(s.partTables, s.newPartTable(r))
-	// pt0 stays plain-id: it is also the pre-detached spare right below, and "detach
-	// partition" itself already refuses a bigserial / IDENTITY pt (see its own comment) --
-	// pt0 keeping newPartTable's own random draw would just make this spare unusable
-	// whenever that draw came up non-plain, one attempt in four.
-	s.partTables[0].id = &pCol{name: "id", typ: "integer", notNull: true}
+	// pt0 keeps newPartTable's own random id draw (plain / bigserial / IDENTITY ALWAYS / BY
+	// DEFAULT): it is also the pre-detached spare right below, and "detach partition" /
+	// "attach partition" no longer refuse a non-plain pt (brief-pg-attach-seq.md --
+	// migrate.go's partitionAttach and detachedIDCol, just below, now know what each one
+	// does across a DETACH / ATTACH), so this spare exercises every id kind exactly as any
+	// other pt does.
 	// a spare already-detached partition from pair 0 too: "attach partition" alone
 	// (directed coverage) needs one already standing apart, not only one a same-recipe
 	// "detach partition" step happened to leave behind. Bound-picking mirrors "add

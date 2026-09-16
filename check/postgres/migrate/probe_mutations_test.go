@@ -2168,18 +2168,14 @@ var mutations = []mutation{
 		return false
 	}},
 	{"detach partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// pt's id kind (plain / bigserial / IDENTITY ALWAYS / BY DEFAULT, newPartTable's own
+		// draw) is unrestricted here (brief-pg-attach-seq.md): migrate.go's partitionAttach
+		// now knows what a real DETACH PARTITION does to each -- plain and bigserial are
+		// untouched (the detached child keeps its own column exactly, bigserial's DEFAULT
+		// still naming the parent's sequence), true IDENTITY loses it outright, and
+		// detachedIDCol (probe_model_test.go) renders the target to match either way, so
+		// this mutation never has to check id kind itself.
 		for _, pt := range untouchedPartTables(s, touched) {
-			if pt.idCol().serial || pt.idCol().identity {
-				// a detached child keeps pt's own id column, bigserial / IDENTITY included
-				// (render()'s own comment) -- consistent on its own, but "attach partition"
-				// reattaching it would have to carry its now-independent owned sequence back
-				// across the ATTACH, which detectRepartitions/repartitionTable's own widening
-				// (brief-pg-repartition-seq.md) never reaches: a standalone table joining a
-				// partitioned one, not a whole table's own partition key changing. Left to a
-				// plain-id pt so "attach partition" (the only side that would actually need
-				// this) never has to.
-				continue
-			}
 			var live []*pPartChild
 			for _, c := range pt.parts {
 				if !c.gone && !c.detached && !c.isDefault {
@@ -2189,18 +2185,36 @@ var mutations = []mutation{
 			if len(live) < 2 {
 				continue // keep at least one ordinary partition besides DEFAULT
 			}
+			oldMax := pt.maxRowID()
 			c := pick(r, live)
 			c.detached = true
+			// repartitionSeqCheck's own check (a fresh id-omitted row into pt continues
+			// past oldMax): a bigserial / IDENTITY pt's own sequence lives on the parent,
+			// not on any one child, so a sibling detaching never touches it -- exercises
+			// exactly the DETACH side of the "id omitted insert still continues" oracle the
+			// repartition mutations already use.
+			repartitionSeqCheck(s, pt, oldMax)
 			touched[pt.name] = true
 			return true
 		}
 		return false
 	}},
 	{"attach partition", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		// Reattaches a child already standing apart -- one "detach partition" left mid-
+		// recipe, or the pair-0 spare generate() always leaves pre-detached (also
+		// unrestricted in id kind now, see newPartTable/generate's own comments): from pt's
+		// perspective this child is exactly as "independent" as any standalone table with
+		// its own bigserial / IDENTITY column would be, PostgreSQL-side (its column already
+		// carries no identity of its own to begin with -- detachedIDCol never renders one --
+		// so partitionAttach's own DROP IDENTITY-before-ATTACH branch, for a genuinely
+		// external table that does carry one, is not what this exercises; that one is
+		// measured directly in probe_findings_test.go instead).
 		for _, pt := range untouchedPartTables(s, touched) {
 			for _, c := range pt.parts {
 				if c.detached && !c.gone {
+					oldMax := pt.maxRowID()
 					c.detached = false
+					repartitionSeqCheck(s, pt, oldMax)
 					touched[pt.name] = true
 					return true
 				}
@@ -2372,10 +2386,11 @@ var mutations = []mutation{
 		repartitionSeqCheck(s, pt, oldMax)
 		for _, c := range pt.parts {
 			if c.detached && !c.gone {
-				// render() gave this already-detached child pt's own id column (see its own
-				// comment) -- carried through here too, or departitioning pt would silently
-				// make this unrelated table's id column look changed (measured).
-				s.tables = append(s.tables, pTableFromPart(&pPartTable{name: c.name, orig: c.orig, id: pt.idCol()}))
+				// render() gave this already-detached child its own detachedIDCol (plain once
+				// identity, literal parent-sequence DEFAULT once bigserial -- see its own doc
+				// comment), never pt.idCol() itself: carried through here too, or departitioning
+				// pt would silently make this unrelated table's id column look changed (measured).
+				s.tables = append(s.tables, pTableFromPart(&pPartTable{name: c.name, orig: c.orig, id: pt.detachedIDCol()}))
 			}
 		}
 		touched[pt.name] = true

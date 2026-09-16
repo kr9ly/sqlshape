@@ -677,6 +677,74 @@ END $$;`
 	}
 }
 
+// A partition with a true GENERATED ... AS IDENTITY id (inherited from its parent, the only
+// way a partition ever gets one) loses it outright the moment it is detached (attidentity
+// clears along with the column's own default, measured) -- an explicit ALTER COLUMN ... DROP
+// IDENTITY on top of that is 55000 "column ... is not an identity column", which the plan
+// used to emit unconditionally whenever the target showed no identity at all
+// (partitionAttach's own doc comment on why it now reports whether it detached). The reverse
+// (backward direction here) needs nothing explicit either: ATTACH PARTITION grants the
+// parent's identity to a plain-columned incoming partition automatically (measured), so a
+// once-detached, now-plain child re-attaches with no ADD GENERATED of its own.
+func TestProbeDetachPartitionDropsIdentity(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer GENERATED ALWAYS AS IDENTITY, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer GENERATED ALWAYS AS IDENTITY, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b (id integer NOT NULL, kind text NOT NULL);
+`)
+	roundTrip(t, from, to, "", false)
+}
+
+// A bigserial-style id, unlike true IDENTITY just above, is unaffected by DETACH / ATTACH
+// either way: its DEFAULT nextval(...) always names the *parent's* own sequence (copied down
+// textually the moment the partition was created, never a sequence of the partition's own),
+// so a detached child keeps it working exactly as it did while attached, and re-attaching
+// needs nothing beyond the plain ATTACH PARTITION itself.
+func TestProbeDetachPartitionKeepsBigserialDefault(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id bigserial NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b PARTITION OF t FOR VALUES IN ('b');
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id bigserial NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE t_a PARTITION OF t FOR VALUES IN ('a');
+CREATE TABLE t_b (id bigint NOT NULL DEFAULT nextval('t_id_seq'::regclass), kind text NOT NULL);
+`)
+	roundTrip(t, from, to, "", false)
+}
+
+// An independent table carrying its own true IDENTITY column joining a partitioned parent
+// for the first time (as opposed to a former partition of the very same parent re-attaching,
+// just above): PostgreSQL refuses the ATTACH outright while the incoming table still has one
+// (55000 "table ... being attached contains an identity column", measured, regardless of
+// whether the parent has one of its own) -- partitionAttach now drops it first, whichever
+// parent it is joining. The reverse (backward direction) needs the ordinary ADD GENERATED
+// ... AS IDENTITY the per-column diff already emits for any standalone column gaining one,
+// unconditionally correct here too since detachedNow only ever suppresses the DROP IDENTITY
+// half.
+func TestProbeAttachDropsIdentityFirst(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE p_a PARTITION OF p FOR VALUES IN ('a');
+CREATE TABLE spare (id integer GENERATED ALWAYS AS IDENTITY, kind text NOT NULL);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE p (id integer NOT NULL, kind text NOT NULL) PARTITION BY LIST (kind);
+CREATE TABLE p_a PARTITION OF p FOR VALUES IN ('a');
+CREATE TABLE spare PARTITION OF p FOR VALUES IN ('b');
+`)
+	roundTrip(t, from, to, "", false)
+}
+
 // A column-owned sequence's schema cascades along with an ALTER TABLE ... SET SCHEMA on
 // its owning table, automatically, the moment that statement runs -- before this plan's
 // own ALTER SEQUENCE ... OWNED BY (clearing, or otherwise changing, that same ownership)

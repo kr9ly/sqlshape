@@ -706,7 +706,7 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 
 func (p *planner) alterTable(f, r *schema.Relation) {
 	p.rowSecurity(f, r)
-	p.partitionAttach(f, r)
+	detachedNow := p.partitionAttach(f, r)
 	if r.IsPartition {
 		// a partition's own columns are never ALTERed directly: PostgreSQL propagates the
 		// parent's ADD / DROP / ALTER COLUMN to every partition itself and refuses the same
@@ -819,8 +819,24 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 				p.emit("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL", qrel(r), q(c.Name))
 			}
 		}
-		if fp["identity"] != tp["identity"] {
+		// isIdentity on both sides, not a raw fp/tp compare: a bigserial-style column ('s')
+		// changing shape here (only ever seen with detachedNow below, never an ordinary
+		// column mutation -- no vocabulary flips .serial in place) is not real IDENTITY and
+		// PostgreSQL has no DROP/ADD/SET GENERATED for it in the first place (55000 "is not
+		// an identity column" measured); its own DEFAULT is diffed like any other column's,
+		// just below.
+		if (isIdentity(fc.Identity) || isIdentity(c.Identity)) && fp["identity"] != tp["identity"] {
 			switch {
+			case detachedNow && c.Identity == 0:
+				// partitionAttach's own DETACH PARTITION, just above, already stripped this
+				// column's identity on the server (measured): an explicit DROP IDENTITY on
+				// top of that is 55000 "column ... is not an identity column". Every
+				// generator-reachable target of a detach renders the now-standalone column
+				// plain (probe_model_test.go's detachedIDCol), so this is always the case in
+				// practice; a hand-written schema.sql that re-adds identity to a table this
+				// same plan just detached is out of scope (not generator-reachable, and this
+				// planner has no way to tell "identical identity" from "a fresh one wanted"
+				// once the letter matches -- see partitionAttach's own doc comment).
 			case c.Identity == 0:
 				p.emit("ALTER TABLE %s ALTER COLUMN %s DROP IDENTITY", qrel(r), q(c.Name))
 			case fc.Identity == 0:
@@ -877,8 +893,13 @@ type pendingPartitionAttach struct {
 // ATTACH: PostgreSQL has no ALTER ... FOR VALUES). A table both was and stays a partition
 // of the very same parent with the very same bound is the common case and does nothing
 // here. Moving straight from one parent to another combines the "gone" and "new" cases
-// below into one DETACH now, ATTACH later (pendingAttach).
-func (p *planner) partitionAttach(f, r *schema.Relation) {
+// below into one DETACH now, ATTACH later (pendingAttach). Reports whether it actually
+// emitted a DETACH (see alterTable's own identity handling right after this call): a real
+// DETACH PARTITION already strips a true IDENTITY column's identity server-side (attidentity
+// clears along with it, measured), so the ordinary per-column diff below must not also
+// emit its own ALTER COLUMN ... DROP IDENTITY once the target has none -- 55000 "column
+// ... is not an identity column" on a column that already is not one.
+func (p *planner) partitionAttach(f, r *schema.Relation) (detached bool) {
 	var fromParent, toParent *schema.Relation
 	if f.IsPartition && len(f.Parents) > 0 {
 		fromParent = p.toOf(f.Parents[0])
@@ -888,16 +909,35 @@ func (p *planner) partitionAttach(f, r *schema.Relation) {
 	}
 	switch {
 	case fromParent == nil && toParent == nil:
-		return
+		return false
 	case fromParent != nil && toParent != nil && fromParent.FullName() == toParent.FullName() && f.PartBound == r.PartBound:
-		return // unchanged
+		return false // unchanged
 	}
 	if fromParent != nil {
 		p.emit("ALTER TABLE %s DETACH PARTITION %s", qrel(fromParent), qrel(r))
+		detached = true
 	}
 	if toParent != nil {
+		if fromParent == nil {
+			// f joins a partitioned parent for the first time (as opposed to moving there
+			// from a different parent, already handled by the DETACH above): PostgreSQL
+			// refuses to ATTACH a table that carries its own true IDENTITY column outright
+			// (55000 "table ... being attached contains an identity column", measured,
+			// regardless of whether the parent itself has one) -- a plain default-carrying
+			// (bigserial-style) column needs nothing here, since its DEFAULT is an ordinary
+			// expression PostgreSQL never objects to, and it is not "identity" for this
+			// purpose (isIdentity excludes it). Dropped ahead of the ATTACH itself
+			// (pendingAttach, adds()), which every DETACH in the plan already precedes
+			// regardless (partitionAttach's own doc comment).
+			for _, c := range f.Columns {
+				if isIdentity(c.Identity) {
+					p.emit("ALTER TABLE %s ALTER COLUMN %s DROP IDENTITY", qrel(r), q(c.Name))
+				}
+			}
+		}
 		p.pendingAttach = append(p.pendingAttach, pendingPartitionAttach{parent: toParent, part: r, bound: r.PartBound})
 	}
+	return detached
 }
 
 var (
@@ -1764,8 +1804,23 @@ func (p *planner) adds() {
 	}
 	for _, pa := range p.pendingAttach {
 		if pred, ok := partitionMovePredicate(pa.parent.PartKey, pa.parent.PartStrategy, pa.bound); ok {
-			p.emit("WITH moved AS (DELETE FROM %s WHERE NOT (%s) RETURNING *) INSERT INTO %s SELECT * FROM moved",
-				qrel(pa.part), pred, qrel(pa.parent))
+			// OVERRIDING SYSTEM VALUE: this INSERT names every one of pa.part's columns via
+			// SELECT * (positionally, including a GENERATED ALWAYS AS IDENTITY parent's own
+			// id), which PostgreSQL treats as an explicit value for that column regardless
+			// of whether the moved set actually turns out to hold any rows (428C9
+			// "cannot insert a non-DEFAULT value", measured to fire even on an empty SELECT)
+			// -- the same reasoning pendingRepartition's own INSERT already carries this
+			// for. GENERATED BY DEFAULT accepts an explicit value either way, so this is
+			// harmless there too.
+			overriding := ""
+			for _, c := range pa.parent.Columns {
+				if c.Identity == 'a' {
+					overriding = " OVERRIDING SYSTEM VALUE"
+					break
+				}
+			}
+			p.emit("WITH moved AS (DELETE FROM %s WHERE NOT (%s) RETURNING *) INSERT INTO %s%s SELECT * FROM moved",
+				qrel(pa.part), pred, qrel(pa.parent), overriding)
 		}
 		p.emit("ALTER TABLE ONLY %s ATTACH PARTITION %s %s", qrel(pa.parent), qrel(pa.part), pa.bound)
 	}

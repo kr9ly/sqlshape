@@ -721,16 +721,10 @@ func (t *pTable) render(s *pSchema) string {
 // render is the parent's CREATE TABLE ... PARTITION BY ..., then each surviving
 // partition: PARTITION OF for one still attached, a plain CREATE TABLE for one detached
 // (pPartChild.detached); a gone one (dropped outright, declared) writes nothing. A detached
-// child keeps pt's own id column definition, matching a real DETACH PARTITION (which leaves
-// the child's column properties exactly as they were while attached, type and identity
-// included; 42804 "different type for column" / 55000 "not an identity column" otherwise,
-// measured, once "attach partition" / "detach partition" render it plain regardless).
-// "attach partition" and "detach partition" (probe_mutations_test.go) only ever pick a
-// plain-id pt to begin with, so this never has to carry a bigserial / IDENTITY column's own
-// owned sequence across a detach -- out of this round's scope (brief-pg-repartition-seq.md's
-// repartitionTable widening is about a whole table's own partition key changing, not a
-// standalone table with its own sequence joining or leaving one; measured to otherwise
-// leave a partition-attach plan's DROP SEQUENCE racing the row move, 2BP01).
+// child's own id column is detachedIDCol, not pt.idCol() itself -- a real DETACH PARTITION
+// does not leave every column property exactly as it was while attached (brief-pg-attach-
+// seq.md's own measurements; see detachedIDCol's doc comment for identity and bigserial
+// each).
 func (pt *pPartTable) render() string {
 	col, keyword := "id", "RANGE"
 	if pt.strategy == "LIST" {
@@ -743,12 +737,40 @@ func (pt *pPartTable) render() string {
 			continue
 		}
 		if c.detached {
-			b.WriteString("CREATE TABLE " + qi(c.name) + " (" + pt.idCol().render() + ", kind text NOT NULL);\n")
+			b.WriteString("CREATE TABLE " + qi(c.name) + " (" + pt.detachedIDCol().render() + ", kind text NOT NULL);\n")
 			continue
 		}
 		b.WriteString("CREATE TABLE " + qi(c.name) + " PARTITION OF " + qi(pt.name) + " " + c.bound() + ";\n")
 	}
 	return b.String()
+}
+
+// detachedIDCol is the "id" column a detached partition renders with. Plain is unchanged
+// (pt.idCol() itself): nothing about it was ever partition-specific. IDENTITY is not: a real
+// ALTER TABLE ... DETACH PARTITION strips it from the child outright (attidentity clears and
+// its GENERATED ... AS IDENTITY default disappears with it, measured), so the only form
+// that round-trips -- both back through "attach partition" (which needs the child to carry
+// no identity of its own; PostgreSQL refuses to ATTACH one that does, 55000, regardless of
+// the parent's own -- migrate.go's partitionAttach) and through judge()'s own comparison
+// against a real post-DETACH dump -- is a plain integer column, no identity, no default.
+// Bigserial is unchanged in kind but not in spelling: its DEFAULT nextval(...) survives
+// DETACH because it always named the *parent's* sequence to begin with (copied down
+// textually the moment the child was created, never its own -- a partition's bigserial
+// column is never separately OWNED BY it, measured), so this spells it out literally
+// (bigint + that exact DEFAULT) rather than as the "bigserial" pseudo-type, which the
+// loader would read as a *fresh*, separately owned sequence under the child's own name --
+// wrong on both counts, and, once "attach partition" re-attaches this very same child, a
+// stale one the diff would then try to drop out from under a still-live default (2BP01,
+// measured before this existed).
+func (pt *pPartTable) detachedIDCol() *pCol {
+	switch {
+	case pt.idCol().identity:
+		return &pCol{name: "id", typ: "integer", notNull: true}
+	case pt.idCol().serial:
+		return &pCol{name: "id", typ: "bigint", notNull: true, def: "nextval('" + pt.name + "_id_seq'::regclass)"}
+	default:
+		return pt.idCol()
+	}
 }
 
 // idCol is pt.id, defaulted to a plain "id integer NOT NULL" the first time it is asked for
