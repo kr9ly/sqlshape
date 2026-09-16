@@ -200,6 +200,33 @@ MySQL, so `enum` names the column (`-- @migrate enum orders.status: drop 'cancel
 transaction and `-no-transaction` has no effect. When a statement fails, `apply` says which one
 and how many before it are applied; `sqlshape diff` from that state gives what remains.
 
+## How the plan is tested
+
+The DDL `diff` writes is judged against a real server, the way `apply` would run it, by a
+generator rather than by hand-picked cases (`check/postgres/migrate` and `check/mysql/migrate`,
+`TestMigrateProbe`). From the planner's vocabulary it draws a schema, mutates it one to five
+times into a target (each mutation writes its own `-- @migrate` declaration), fills every table
+with three rows, and runs the plan on a server holding the source. A pair passes when the server
+refuses nothing, what it reads back afterwards is the target's canonical form (column order
+aside on PostgreSQL), and a second plan from there is empty. A failing pair is minimized and the
+fix is pinned as a regression test with the server's error (`probe_findings_test.go`).
+
+What the generator has to reach is defined, not guessed: a plan's whole input is the diff, so
+every kind of change the diff can report (a table added, a column's type changed, a constraint
+turning deferrable, ...) is enumerated from the diff's own comparison functions, and the gate
+(200 pairs of one fixed seed) fails unless each of them is produced by some pair or listed as
+unreachable with a reason. Only two reasons are accepted: the planner writes no DDL for that
+change and reports it instead (PostgreSQL's `INHERITS`, `PARTITION`, `OF type`, a domain's base
+type, a range's subtype; MySQL's partitioning), or the change cannot appear (PostgreSQL 18
+syntax against the PostgreSQL 17 the probe runs). Combinations and orderings are left to the
+random pairs. As of the third round, PostgreSQL reaches 90 of 102 kinds and MySQL 47 of 48; the classes of planner bugs the probe found, all of them orderings a real server
+refuses, are the regression tests.
+
+What this does not reach: schema shapes outside the generator's model (legacy spellings,
+extension types, very large tables) and failures that depend on the data (a backfill's values,
+lock time). Those arrive with your `schema.sql`, and `apply`'s end check before it runs anything
+is what catches them.
+
 ## Requirements
 
 PostgreSQL:

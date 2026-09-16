@@ -44,7 +44,9 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.enumRecreates()
 	p.generatedRecreates()
 	p.drops()
+	p.createSchemas()
 	p.renames()
+	p.dropSchemas()
 	p.alters()
 	p.adds()
 	p.seeds()
@@ -342,6 +344,27 @@ func (p *planner) drops() {
 			p.emit("ALTER TABLE %s DROP COLUMN %s", qrel(r), q(c.Name))
 		}
 	}
+	// a sequence that survives (with different, or no, ownership) needs its OWNED BY
+	// cleared before its current owning table drops: DROP TABLE cascades to a sequence
+	// still OWNED BY one of its columns (42P01 "does not exist" on the ALTER SEQUENCE
+	// alters() runs afterward for a surviving sequence, measured) -- alters() only
+	// reaches surviving *tables*, so a table that is itself gone needs this handled here.
+	for _, name := range sortedKeys(fromRels) {
+		seq := fromRels[name]
+		if seq.Kind != schema.Sequence || seq.OwnedBy == "" {
+			continue
+		}
+		owner := fromRels[ownerRelation(seq.OwnedBy)]
+		if owner == nil {
+			continue
+		}
+		if tr := p.toOf(owner); tr != nil && tr.Kind == owner.Kind {
+			continue // the owning table survives; alters() handles this sequence
+		}
+		if ts := p.toOf(seq); ts != nil && ts.Kind == schema.Sequence {
+			p.emit("ALTER SEQUENCE %s OWNED BY NONE", qrel(seq))
+		}
+	}
 	// tables and sequences: referencing tables before the tables they reference
 	var gone []*schema.Relation
 	for i := len(fromOrder) - 1; i >= 0; i-- {
@@ -349,8 +372,8 @@ func (p *planner) drops() {
 		if r.Kind != schema.Table && r.Kind != schema.Sequence {
 			continue
 		}
-		if r.Kind == schema.Sequence && r.OwnedBy != "" {
-			continue // goes with its column
+		if r.Kind == schema.Sequence && r.OwnedBy != "" && ownerColumnGone(p, fromRels, r) {
+			continue // goes with its column (or the column's table)
 		}
 		if tr := p.toOf(r); tr == nil || tr.Kind != r.Kind {
 			gone = append(gone, r)
@@ -377,13 +400,34 @@ func (p *planner) drops() {
 			p.emit("DROP %s %s", typeWord(fromTypes[n].Kind), n)
 		}
 	}
-	// extensions, schemas
+	// extensions
 	toExt := extensions(p.to)
 	for _, e := range p.from.Catalog.Extensions {
 		if !toExt[e.Name] {
 			p.emit("DROP EXTENSION %s", q(e.Name))
 		}
 	}
+}
+
+// createSchemas creates a schema the target newly declares, before renames(): a table
+// declared to move into it (-- @migrate rename public.t -> app.t) needs it to already
+// exist (3F000 "schema does not exist", measured) -- adds() (which otherwise creates
+// every new object, schemas included) runs too late for that ALTER TABLE ... SET SCHEMA.
+func (p *planner) createSchemas() {
+	fromSchemas := set(p.from.Schemas())
+	for _, n := range p.to.Schemas() {
+		if !fromSchemas[n] {
+			p.emit("CREATE SCHEMA %s", q(n))
+		}
+	}
+}
+
+// dropSchemas drops a schema the target no longer declares, after renames(): a table
+// declared to move out of it (-- @migrate rename app.t -> public.t) still reads as
+// belonging to the schema from drops()'s (from-side) point of view, and PostgreSQL
+// refuses to drop a schema anything still lives in (2BP01 "other objects depend on it",
+// measured) -- the ALTER TABLE ... SET SCHEMA that empties it has to run first.
+func (p *planner) dropSchemas() {
 	toSchemas := set(p.to.Schemas())
 	for _, n := range p.from.Schemas() {
 		if !toSchemas[n] {
@@ -438,8 +482,16 @@ func (p *planner) alters() {
 			continue
 		}
 		def := fn.Definition
-		if fnProps(p.from, f)["returns"] != fnProps(p.to, fn)["returns"] || len(f.Args) != len(fn.Args) {
-			// CREATE OR REPLACE cannot change the return type or the parameter list
+		if fnProps(p.from, f)["returns"] != fnProps(p.to, fn)["returns"] || len(f.Args) != len(fn.Args) ||
+			f.IsProc != fn.IsProc || f.IsAgg != fn.IsAgg || f.IsWindow != fn.IsWindow {
+			// CREATE OR REPLACE cannot change the return type, the parameter list, or
+			// the object's own kind (function / procedure / aggregate; a plain function
+			// turning into a window one is still CREATE FUNCTION, but PostgreSQL still
+			// refuses OR REPLACE to add WINDOW, 42P13 "cannot change routine kind" --
+			// simplest to always drop and recreate whenever any of these differ, same
+			// as a return type change; CREATE AGGREGATE has no OR REPLACE form at all,
+			// so leaving it to the "same returns/args" fallthrough re-declared it over
+			// the old function outright, 42723 "already exists", measured)
 			p.emit("DROP %s %s", fnWord(f), n)
 		} else {
 			def = strings.Replace(def, "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
@@ -508,6 +560,13 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 			}
 		}
 	case "composite":
+		// ADD / DROP ATTRIBUTE do not touch a using column's stored values and PostgreSQL
+		// allows them freely; ALTER ATTRIBUTE TYPE goes through the same path as ALTER
+		// COLUMN TYPE (find_composite_type_dependencies) and refuses while any column,
+		// anywhere, has the type (0A000 "cannot alter type ... because column ... uses it",
+		// measured) -- there is no rewrite to offer in its place (the column would need a
+		// DROP COLUMN / ADD COLUMN, which loses data), so this is a problem, not a DDL.
+		inUse := p.typeInUse(f.OID)
 		for _, k := range sortedKeys(f.Props) {
 			if strings.HasPrefix(k, "attribute ") && t.Props[k] == "" {
 				p.emit("ALTER TYPE %s DROP ATTRIBUTE %s", name, q(strings.TrimPrefix(k, "attribute ")))
@@ -519,6 +578,10 @@ func (p *planner) alterType(name string, f, t diff.UserType) {
 			case f.Props[k] == "":
 				p.emit("ALTER TYPE %s ADD ATTRIBUTE %s %s", name, q(a), t.Props[k])
 			case f.Props[k] != t.Props[k]:
+				if inUse {
+					p.problem("composite type %s: attribute %s changes type (%s -> %s) while a column uses the type; PostgreSQL refuses ALTER ATTRIBUTE TYPE there (0A000) and there is no lossless rewrite to offer", name, a, f.Props[k], t.Props[k])
+					continue
+				}
 				p.emit("ALTER TYPE %s ALTER ATTRIBUTE %s TYPE %s", name, q(a), t.Props[k])
 			}
 		}
@@ -550,9 +613,58 @@ func (p *planner) alterTable(f, r *schema.Relation) {
 					p.dropGenerated(r, g)
 				}
 			}
+			// PostgreSQL also refuses to alter the type of a column a row-level security
+			// policy's USING / WITH CHECK reads ("cannot alter type of a column used in a
+			// policy definition", 0A000, measured), whether or not the policy itself
+			// changes: it goes around the ALTER the same way.
+			var polDeps []*schema.Policy
+			for _, pol := range r.Policies {
+				if (pol.Using != nil && hasString(schema.ColumnRefs(pol.Using), c.Name)) ||
+					(pol.WithCheck != nil && hasString(schema.ColumnRefs(pol.WithCheck), c.Name)) {
+					polDeps = append(polDeps, pol)
+					p.emit("DROP POLICY %s ON %s", q(pol.Name), qrel(r))
+				}
+			}
+			// Same refusal for a rule that reads the column ("cannot alter type of a
+			// column used by a view or rule", 0A000, measured): its condition and
+			// actions are unanalyzed AST (unlike a policy's USING / WITH CHECK, held as
+			// schema.Expr), so this checks the deparsed rule text for the column's name
+			// at a word boundary (deparse writes it unquoted, often qualified as
+			// "new.id" / "old.id") rather than walking it -- a name that is also a
+			// substring of another identifier would false-positive into an unneeded
+			// drop/recreate, never a missed one; columnWordRe guards the same way.
+			// A rule already due its own DROP RULE / CREATE RULE elsewhere in the plan
+			// (drops() / adds(), because it differs from the from-side rule of the same
+			// name -- typically the table's own rename reads into the rule's deparsed
+			// definition) is left to that: dropping and recreating it here too is a
+			// second DROP RULE PostgreSQL refuses the moment the first already ran
+			// (42704 "rule ... does not exist", measured).
+			colRe := columnWordRe(c.Name)
+			fromRules := f.Rules()
+			var ruleDeps []string
+			for n, rd := range r.Rules() {
+				if fd, ok := fromRules[n]; !ok || !same(p.from, p.to, fd, rd) {
+					continue
+				}
+				if colRe.MatchString(schema.DeparseStmt(ruleNode(rd))) {
+					ruleDeps = append(ruleDeps, n)
+					p.emit("DROP RULE %s ON %s", q(n), qrel(r))
+				}
+			}
 			p.emit("ALTER TABLE %s ALTER COLUMN %s TYPE %s", qrel(r), q(c.Name), typeText(p.to, c))
 			for _, g := range deps {
 				p.addGenerated(r, g)
+			}
+			for _, pol := range polDeps {
+				p.emit("%s", pol.Definition)
+			}
+			toRules := r.Rules()
+			for _, n := range ruleDeps {
+				rd := toRules[n]
+				p.emit("%s", schema.DeparseStmt(ruleNode(rd)))
+				if !rd.Enabled {
+					p.emit("ALTER TABLE %s DISABLE RULE %s", qrel(r), q(n))
+				}
 			}
 			if typmodNarrows(p.to, fc, c) {
 				p.note("table %s: column %s type %s -> %s narrows precision; PostgreSQL runs this ALTER without a USING clause and rounds or truncates the existing values silently -- add a USING clause, or fix the data first", r.FullName(), c.Name, fp["type"], tp["type"])
@@ -776,6 +888,68 @@ func hasString(list []string, s string) bool {
 	return false
 }
 
+// ownerColumnGone reports whether seq's owning column (a bigserial / IDENTITY column's
+// sequence, or a standalone sequence's declared OWNED BY) is itself gone in the target --
+// dropped outright, or its table dropped or renamed away. A sequence whose owning column
+// survives is not implicitly handled by any column-level DROP and needs its own DROP
+// SEQUENCE (measured: an unowned-by-drop sequence otherwise never appeared in the plan
+// at all).
+func ownerColumnGone(p *planner, fromRels map[string]*schema.Relation, seq *schema.Relation) bool {
+	owner, col := ownerRelation(seq.OwnedBy), ownerColumn(seq.OwnedBy)
+	fr := fromRels[owner]
+	if fr == nil || fr.Column(col) == nil {
+		return true
+	}
+	if fr.Column(col).Identity != 0 {
+		// an IDENTITY column's sequence is the server's own: it goes (or is replaced)
+		// with ALTER COLUMN DROP IDENTITY / TYPE, emitted elsewhere, not a DROP SEQUENCE
+		return true
+	}
+	tr := p.toOf(fr)
+	if tr == nil || tr.Kind != fr.Kind {
+		// the owning table is itself gone: its own DROP TABLE (which drops the column
+		// and, with it, the column's DEFAULT nextval(...)) takes the sequence down too.
+		// A separate DROP SEQUENCE ahead of that DROP TABLE is 2BP01 "other objects
+		// depend on it" (measured) -- the column's own DEFAULT still names it.
+		return true
+	}
+	if tr.Column(p.toCol(fr, col)) == nil {
+		// the table survives but this column itself does not: its own DROP COLUMN
+		// (declared -- @migrate drop) takes the sequence down the same way, and a
+		// separate DROP SEQUENCE after it is 42P01 "does not exist" (measured).
+		return true
+	}
+	// the same match intents.go's sequence-follows-rename logic looks for: if some
+	// sequence in the target still claims this (possibly renamed) ownership, this one
+	// is not gone, just relocated or renamed -- that logic gets it there, and a table's
+	// own SET SCHEMA / RENAME (also emitted elsewhere) carries a same-schema owned
+	// sequence with it (measured) without this one needing to move separately.
+	toOwner, toCol := p.toName(owner), col
+	if m := p.in.colTo[owner]; m != nil {
+		if c, ok := m[col]; ok {
+			toCol = c
+		}
+	}
+	wantOwned := toOwner + "." + toCol
+	if !strings.Contains(toOwner, ".") {
+		wantOwned = "public." + wantOwned
+	}
+	toRels, _ := relations(p.to)
+	for _, r := range toRels {
+		if r.Kind == schema.Sequence && r.OwnedBy == wantOwned {
+			return true
+		}
+	}
+	return false
+}
+
+// columnWordRe matches name as a whole word (e.g. in "new.id" or "id", not inside
+// "identifier"): used to look for a column's name in text that is not walkable AST
+// (a rule's deparsed definition).
+func columnWordRe(name string) *regexp.Regexp {
+	return regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
+}
+
 // soleColumnConstraints are r's target-schema unique / primary key constraints over column
 // name (alone or with others) -- also taken down, silently, by the same rewrite (a
 // multi-column constraint goes with any of its columns, measured).
@@ -784,7 +958,7 @@ func (p *planner) soleColumnConstraints(r *schema.Relation, name string) []*sche
 	for _, n := range sortedKeys(constraints(r)) {
 		c := constraints(r)[n]
 		switch {
-		case (c.Kind == schema.PrimaryKey || c.Kind == schema.Unique) && hasString(c.Columns, name):
+		case (c.Kind == schema.PrimaryKey || c.Kind == schema.Unique || c.Kind == schema.Exclude) && hasString(c.Columns, name):
 			out = append(out, c)
 		case c.Kind == schema.Check && hasString(schema.ColumnRefs(c.Expr), name):
 			out = append(out, c) // a CHECK reading the column goes with it too (measured)
@@ -846,12 +1020,6 @@ func (p *planner) emitConstraint(r *schema.Relation, c *schema.Constraint) {
 // --- adds ----------------------------------------------------------------------------
 
 func (p *planner) adds() {
-	fromSchemas := set(p.from.Schemas())
-	for _, n := range p.to.Schemas() {
-		if !fromSchemas[n] {
-			p.emit("CREATE SCHEMA %s", q(n))
-		}
-	}
 	fromExt := extensions(p.from)
 	for _, e := range p.to.Catalog.Extensions {
 		if !fromExt[e.Name] {

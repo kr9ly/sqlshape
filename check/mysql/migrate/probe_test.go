@@ -51,6 +51,7 @@ type pSchema struct {
 	views    []*pView
 	triggers []*pTrigger
 	funcs    []*pFunc
+	procs    []*pProc
 	events   []*pEvent
 	intents  []string // `-- @migrate` lines the mutations declared (target side only)
 	seq      int      // name counter
@@ -66,6 +67,13 @@ type pTable struct {
 	checks  []*pCheck
 	comment string
 	autoInc int // AUTO_INCREMENT=<n>, 0 for none
+	// charset / collation: "" for the server's own default (utf8mb4 / utf8mb4_0900_ai_ci,
+	// not written); rowFormat: "" for none, else DYNAMIC / COMPRESSED.
+	charset, collation, rowFormat string
+	// engine: "" for InnoDB (the default everywhere else in this generator), "MyISAM"
+	// for the one mutation that exercises "~ table engine" (diff.Alphabet) -- guarded to
+	// tables with no foreign key on either side, since MyISAM does not support them.
+	engine string
 }
 
 type pCol struct {
@@ -83,7 +91,8 @@ type pCol struct {
 	collate   bool
 	invisible bool
 	onUpdate  bool
-	fresh     bool // added by a mutation: not in the source, so its drop needs no declaration
+	comment   string // COMMENT '...', "" for none
+	fresh     bool   // added by a mutation: not in the source, so its drop needs no declaration
 }
 
 type pKey struct {
@@ -91,6 +100,14 @@ type pKey struct {
 	unique bool
 	cols   []string
 	prefix []int // one per column: a prefix length, 0 for the whole column
+	// special is "" for a plain (or unique) KEY, "FULLTEXT" or "SPATIAL" for one of those
+	// kinds; unique is meaningless when special is set (neither takes UNIQUE).
+	special string
+	desc    []bool   // one per column: DESC ordering
+	expr    []string // one per column: "" for the plain column, "plus1" / "lower" for a
+	// functional part over it (keyCols renders the expression; cols still holds the real
+	// column it reads, for the bookkeeping every other mutation already does by name)
+	invisible bool
 }
 
 type pFK struct {
@@ -99,11 +116,15 @@ type pFK struct {
 	refTable string
 	refCols  []string
 	onDelete string
+	onUpdate string
 }
 
 type pCheck struct {
 	name string
 	col  string
+	// op is the comparison ("" defaults to ">"); enforced false renders NOT ENFORCED.
+	op       string
+	enforced bool
 }
 
 type pView struct {
@@ -124,10 +145,29 @@ type pFunc struct {
 	n    int
 }
 
-// pEvent is a CREATE EVENT with a schedule of n hours and a body that sets a user variable.
-type pEvent struct {
+// pProc is a CREATE PROCEDURE, the same shape as pFunc (a single SELECT body a mutation
+// changes by n) but its own Kind ("procedure", never "function") in diff.Compare.
+type pProc struct {
 	name string
 	n    int
+}
+
+// pEvent is a CREATE EVENT with a schedule of n hours (or, at.Set, a one-time AT) and a
+// body that sets a user variable. starts / ends / at hold a literal datetime text (so the
+// server stores it as written, AtLiteral / StartsLiteral / EndsLiteral true -- see
+// schema.Event's own doc comment for why that is what diff.Compare ever looks at), "" for
+// none; completion is "" (the default, NOT PRESERVE) or "PRESERVE"; status is "" (the
+// default, ENABLE) or "DISABLE".
+type pEvent struct {
+	name               string
+	n                  int
+	at, starts, ends   string
+	completion, status string
+	comment            string
+	// fresh: added by a mutation within the same recipe, not the source -- a step that
+	// only sets one of the fields above on it produces a whole "+ event", never the
+	// per-field "~ event ..." the toggle mutations below exist to exercise, so they skip it.
+	fresh bool
 }
 
 func (s *pSchema) next(prefix string) string {
@@ -138,7 +178,8 @@ func (s *pSchema) next(prefix string) string {
 func (s *pSchema) clone() *pSchema {
 	c := &pSchema{seq: s.seq}
 	for _, t := range s.tables {
-		nt := &pTable{name: t.name, orig: t.orig, comment: t.comment, autoInc: t.autoInc}
+		nt := &pTable{name: t.name, orig: t.orig, comment: t.comment, autoInc: t.autoInc,
+			charset: t.charset, collation: t.collation, rowFormat: t.rowFormat, engine: t.engine}
 		for _, col := range t.cols {
 			nc := *col
 			nc.labels = append([]string(nil), col.labels...)
@@ -148,6 +189,8 @@ func (s *pSchema) clone() *pSchema {
 			nk := *k
 			nk.cols = append([]string(nil), k.cols...)
 			nk.prefix = append([]int(nil), k.prefix...)
+			nk.desc = append([]bool(nil), k.desc...)
+			nk.expr = append([]string(nil), k.expr...)
 			nt.keys = append(nt.keys, &nk)
 		}
 		for _, fk := range t.fks {
@@ -174,6 +217,10 @@ func (s *pSchema) clone() *pSchema {
 	for _, f := range s.funcs {
 		nf := *f
 		c.funcs = append(c.funcs, &nf)
+	}
+	for _, p := range s.procs {
+		np := *p
+		c.procs = append(c.procs, &np)
 	}
 	for _, e := range s.events {
 		ne := *e
@@ -221,7 +268,7 @@ func (t *pTable) pk() *pCol {
 
 // ---- the type vocabulary --------------------------------------------------------------
 
-var probeTypes = []string{"int", "bigint unsigned", "varchar(50)", "decimal(10,2)", "datetime(6)", "date", "text", "enum", "json", "tinyint(1)", "smallint", "double"}
+var probeTypes = []string{"int", "bigint unsigned", "varchar(50)", "decimal(10,2)", "datetime(6)", "date", "text", "enum", "json", "tinyint(1)", "smallint", "double", "point"}
 
 func isNumeric(typ string) bool {
 	switch {
@@ -236,8 +283,9 @@ func isInteger(typ string) bool {
 	return isNumeric(typ) && !strings.HasPrefix(typ, "decimal") && typ != "double"
 }
 
-// keyable: a type an index takes without a prefix length.
-func keyable(typ string) bool { return typ != "text" && typ != "json" }
+// keyable: a type a plain (non-SPATIAL) index takes without a prefix length. json takes no
+// index at all; point takes only a SPATIAL index (addSpatialKey), never a plain one.
+func keyable(typ string) bool { return typ != "text" && typ != "json" && typ != "point" }
 
 func defaultFor(c *pCol) string {
 	switch {
@@ -255,6 +303,13 @@ func defaultFor(c *pCol) string {
 		return "'2020-01-01'"
 	case c.typ == "enum":
 		return "'" + c.labels[0] + "'"
+	case c.typ == "point":
+		// unlike the other types here, point has no implicit "zero value" MySQL can fill
+		// existing rows with when a fresh NOT NULL point column is added (Error 1138
+		// "Invalid use of NULL value", measured): the others (including text / json, which
+		// take no literal default either) all do, so only point needs an explicit one, an
+		// expression default (MySQL 8.0.13+, DEFAULT (expr)) since it takes no literal.
+		return "(ST_GeomFromText('POINT(0 0)', 4326))"
 	}
 	return "" // text / json take no literal default
 }
@@ -291,6 +346,10 @@ func (c *pCol) typeText() string {
 func (c *pCol) render() string {
 	var b strings.Builder
 	b.WriteString(q(c.name) + " " + c.typeText())
+	if c.typ == "point" {
+		// SRID is part of the spatial type's own clause, between the type and NOT NULL.
+		b.WriteString(" SRID 4326")
+	}
 	if c.collate {
 		b.WriteString(" COLLATE utf8mb4_bin")
 	}
@@ -300,6 +359,9 @@ func (c *pCol) render() string {
 			b.WriteString(" STORED")
 		} else {
 			b.WriteString(" VIRTUAL")
+		}
+		if c.comment != "" {
+			b.WriteString(" COMMENT " + lit(c.comment))
 		}
 		return b.String()
 	}
@@ -314,6 +376,9 @@ func (c *pCol) render() string {
 	if c.onUpdate {
 		b.WriteString(" ON UPDATE CURRENT_TIMESTAMP(6)")
 	}
+	if c.comment != "" {
+		b.WriteString(" COMMENT " + lit(c.comment))
+	}
 	if c.invisible {
 		b.WriteString(" INVISIBLE")
 	}
@@ -324,9 +389,23 @@ func (c *pCol) render() string {
 func (k *pKey) keyCols() string {
 	parts := make([]string, len(k.cols))
 	for i, c := range k.cols {
-		parts[i] = q(c)
-		if i < len(k.prefix) && k.prefix[i] > 0 {
-			parts[i] += fmt.Sprintf("(%d)", k.prefix[i])
+		kind := ""
+		if i < len(k.expr) {
+			kind = k.expr[i]
+		}
+		switch kind {
+		case "plus1":
+			parts[i] = "(" + q(c) + " + 1)"
+		case "lower":
+			parts[i] = "(lower(" + q(c) + "))"
+		default:
+			parts[i] = q(c)
+			if i < len(k.prefix) && k.prefix[i] > 0 {
+				parts[i] += fmt.Sprintf("(%d)", k.prefix[i])
+			}
+		}
+		if i < len(k.desc) && k.desc[i] {
+			parts[i] += " DESC"
 		}
 	}
 	return strings.Join(parts, ",")
@@ -342,30 +421,63 @@ func (t *pTable) render() string {
 	}
 	for _, k := range t.keys {
 		kind := "KEY"
-		if k.unique {
+		switch {
+		case k.special == "FULLTEXT":
+			kind = "FULLTEXT KEY"
+		case k.special == "SPATIAL":
+			kind = "SPATIAL KEY"
+		case k.unique:
 			kind = "UNIQUE KEY"
 		}
-		parts = append(parts, "  "+kind+" "+q(k.name)+" ("+k.keyCols()+")")
+		s := "  " + kind + " " + q(k.name) + " (" + k.keyCols() + ")"
+		if k.invisible {
+			s += " INVISIBLE"
+		}
+		parts = append(parts, s)
 	}
 	for _, fk := range t.fks {
 		s := "  CONSTRAINT " + q(fk.name) + " FOREIGN KEY (" + qlist(fk.cols) + ") REFERENCES " + q(fk.refTable) + " (" + qlist(fk.refCols) + ")"
 		if fk.onDelete != "" {
 			s += " ON DELETE " + fk.onDelete
 		}
+		if fk.onUpdate != "" {
+			s += " ON UPDATE " + fk.onUpdate
+		}
 		parts = append(parts, s)
 	}
 	for _, ck := range t.checks {
 		c := t.col(ck.col)
-		expr := "(" + q(ck.col) + " > 0)"
-		if !isNumeric(c.typ) {
-			expr = "(char_length(" + q(ck.col) + ") > 0)"
+		op := ck.op
+		if op == "" {
+			op = ">"
 		}
-		parts = append(parts, "  CONSTRAINT "+q(ck.name)+" CHECK "+expr)
+		expr := "(" + q(ck.col) + " " + op + " 0)"
+		if !isNumeric(c.typ) {
+			expr = "(char_length(" + q(ck.col) + ") " + op + " 0)"
+		}
+		s := "  CONSTRAINT " + q(ck.name) + " CHECK " + expr
+		if !ck.enforced {
+			s += " NOT ENFORCED"
+		}
+		parts = append(parts, s)
 	}
 	var b strings.Builder
-	b.WriteString("CREATE TABLE " + q(t.name) + " (\n" + strings.Join(parts, ",\n") + "\n) ENGINE=InnoDB")
+	eng := t.engine
+	if eng == "" {
+		eng = "InnoDB"
+	}
+	b.WriteString("CREATE TABLE " + q(t.name) + " (\n" + strings.Join(parts, ",\n") + "\n) ENGINE=" + eng)
 	if t.autoInc > 0 {
 		fmt.Fprintf(&b, " AUTO_INCREMENT=%d", t.autoInc)
+	}
+	if t.charset != "" {
+		b.WriteString(" DEFAULT CHARSET=" + t.charset)
+	}
+	if t.collation != "" {
+		b.WriteString(" COLLATE=" + t.collation)
+	}
+	if t.rowFormat != "" {
+		b.WriteString(" ROW_FORMAT=" + t.rowFormat)
 	}
 	if t.comment != "" {
 		b.WriteString(" COMMENT=" + lit(t.comment))
@@ -389,14 +501,45 @@ func (s *pSchema) render() string {
 	for _, f := range s.funcs {
 		fmt.Fprintf(&b, "CREATE FUNCTION %s(a INT) RETURNS INT DETERMINISTIC RETURN a + %d;\n", q(f.name), f.n)
 	}
+	for _, p := range s.procs {
+		fmt.Fprintf(&b, "CREATE PROCEDURE %s(IN a INT) BEGIN SELECT a + %d; END;\n", q(p.name), p.n)
+	}
 	for _, tr := range s.triggers {
 		fmt.Fprintf(&b, "CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW SET NEW.%s = COALESCE(NEW.%s, 0) + %d;\n",
 			q(tr.name), q(tr.table), q(tr.col), q(tr.col), tr.n)
 	}
 	for _, e := range s.events {
-		fmt.Fprintf(&b, "CREATE EVENT %s ON SCHEDULE EVERY %d HOUR DO SET @probe = %d;\n", q(e.name), e.n, e.n)
+		b.WriteString(e.render())
 	}
 	return b.String()
+}
+
+// render spells e's CREATE EVENT: a one-time AT schedule if e.at is set, else a recurring
+// EVERY with an optional STARTS / ENDS, then the options every mutation here can toggle.
+func (e *pEvent) render() string {
+	var sched string
+	if e.at != "" {
+		sched = "AT '" + e.at + "'"
+	} else {
+		sched = fmt.Sprintf("EVERY %d HOUR", e.n)
+		if e.starts != "" {
+			sched += " STARTS '" + e.starts + "'"
+		}
+		if e.ends != "" {
+			sched += " ENDS '" + e.ends + "'"
+		}
+	}
+	var opts strings.Builder
+	if e.completion != "" {
+		opts.WriteString(" ON COMPLETION " + e.completion)
+	}
+	if e.status != "" {
+		opts.WriteString(" " + e.status)
+	}
+	if e.comment != "" {
+		opts.WriteString(" COMMENT " + lit(e.comment))
+	}
+	return fmt.Sprintf("CREATE EVENT %s ON SCHEDULE %s%s DO SET @probe = %d;\n", q(e.name), sched, opts.String(), e.n)
 }
 
 // rows renders three rows per table, parents first (the tables are declared in that order):
@@ -446,13 +589,19 @@ func value(c *pCol, i int) string {
 		return "'" + c.labels[(i-1)%len(c.labels)] + "'"
 	case c.typ == "json":
 		return fmt.Sprintf(`'{"i": %d}'`, i)
+	case c.typ == "point":
+		return fmt.Sprintf("ST_GeomFromText('POINT(%d %d)', 4326)", i, i)
 	}
 	return "NULL"
 }
 
 // fill is the literal a backfill gives a column that turns NOT NULL under existing rows.
+// (point is always NOT NULL from the start -- see newCol -- so this case is never reached
+// by a mutation today; it is here so fill stays total over the type vocabulary.)
 func fill(c *pCol) string {
 	switch {
+	case c.typ == "point":
+		return "ST_GeomFromText('POINT(9 9)', 4326)"
 	case isNumeric(c.typ):
 		return "9"
 	case c.typ == "enum":
@@ -476,7 +625,11 @@ func (s *pSchema) newCol(r *rand.Rand) *pCol {
 	if c.typ == "enum" {
 		c.labels = []string{"a", "b", "c"}[:2+r.Intn(2)]
 	}
-	c.notNull = r.Intn(2) == 0
+	if c.typ == "point" {
+		c.notNull = true // a SPATIAL index (addSpatialKey) needs it; simplest to always have it
+	} else {
+		c.notNull = r.Intn(2) == 0
+	}
 	if c.notNull || r.Intn(3) == 0 {
 		c.def = defaultFor(c)
 	}
@@ -488,6 +641,9 @@ func (s *pSchema) newCol(r *rand.Rand) *pCol {
 	}
 	if r.Intn(8) == 0 {
 		c.invisible = true
+	}
+	if r.Intn(5) == 0 {
+		c.comment = "note " + c.name
 	}
 	return c
 }
@@ -523,6 +679,15 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 	if r.Intn(2) == 0 {
 		s.addKey(r, t)
 	}
+	if r.Intn(5) == 0 {
+		s.addFulltextKey(r, t)
+	}
+	if r.Intn(5) == 0 {
+		s.addSpatialKey(r, t)
+	}
+	if r.Intn(5) == 0 {
+		s.addFunctionalKey(r, t)
+	}
 	if r.Intn(3) == 0 {
 		s.addCheck(r, t)
 	}
@@ -539,6 +704,12 @@ func (s *pSchema) newTable(r *rand.Rand) *pTable {
 	if id.auto && r.Intn(3) == 0 {
 		t.autoInc = 100 + r.Intn(900)
 	}
+	if r.Intn(5) == 0 {
+		t.charset, t.collation = "utf8mb4", "utf8mb4_bin"
+	}
+	if r.Intn(5) == 0 {
+		t.rowFormat = pick(r, []string{"DYNAMIC", "COMPRESSED"})
+	}
 	return t
 }
 
@@ -547,9 +718,10 @@ func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
 	var cands []string
 	for _, c := range t.cols {
 		// (a column a mutation added holds one default in every row: no unique key over it;
-		// a text column takes a prefix length below, a json column no key at all)
+		// a text column takes a prefix length below, a json column no key at all; a point
+		// column takes only a SPATIAL index, addSpatialKey's job, never this plain kind)
 		// (an ON UPDATE timestamp is one value in every row a backfill touches: no unique key)
-		if c.typ != "json" && !c.pk && (c.gen == "" || c.stored) && !(unique && (c.typ == "enum" || c.fresh || c.onUpdate)) {
+		if c.typ != "json" && c.typ != "point" && !c.pk && (c.gen == "" || c.stored) && !(unique && (c.typ == "enum" || c.fresh || c.onUpdate)) {
 			cands = append(cands, c.name)
 		}
 	}
@@ -561,14 +733,79 @@ func (s *pSchema) addKey(r *rand.Rand, t *pTable) bool {
 	if len(cands) > 1 && r.Intn(2) == 0 {
 		n = 2
 	}
-	k := &pKey{name: s.next("k"), unique: unique, cols: cands[:n], prefix: make([]int, n)}
+	k := &pKey{name: s.next("k"), unique: unique, cols: cands[:n], prefix: make([]int, n), desc: make([]bool, n)}
 	for i, name := range k.cols {
 		c := t.col(name)
 		if c.typ == "text" || (strings.HasPrefix(c.typ, "varchar") && r.Intn(3) == 0) {
 			k.prefix[i] = 10
 		}
+		if r.Intn(4) == 0 {
+			k.desc[i] = true
+		}
+	}
+	if r.Intn(6) == 0 {
+		k.invisible = true
 	}
 	t.keys = append(t.keys, k)
+	return true
+}
+
+// addFunctionalKey gives t an index over an expression, not a plain column: `(col + 1)` for
+// a numeric source or `(lower(col))` for a text one (MySQL implements a functional key part
+// as a hidden generated column reading the real one -- cols still names it, so every
+// mutation that keeps a key's columns in step by name, rename included, already does).
+func (s *pSchema) addFunctionalKey(r *rand.Rand, t *pTable) bool {
+	type cand struct {
+		name, kind string
+	}
+	var cands []cand
+	for _, c := range t.numericCols() {
+		cands = append(cands, cand{c.name, "plus1"})
+	}
+	for _, c := range t.cols {
+		if strings.HasPrefix(c.typ, "varchar") && c.gen == "" && !t.inFK(c.name) {
+			cands = append(cands, cand{c.name, "lower"})
+		}
+	}
+	if len(cands) == 0 {
+		return false
+	}
+	picked := pick(r, cands)
+	k := &pKey{name: s.next("k"), cols: []string{picked.name}, prefix: []int{0}, expr: []string{picked.kind}, desc: []bool{r.Intn(3) == 0}}
+	t.keys = append(t.keys, k)
+	return true
+}
+
+// addFulltextKey gives t a FULLTEXT index over one of its text / varchar columns.
+func (s *pSchema) addFulltextKey(r *rand.Rand, t *pTable) bool {
+	var cands []string
+	for _, c := range t.cols {
+		if (c.typ == "text" || strings.HasPrefix(c.typ, "varchar")) && (c.gen == "" || c.stored) {
+			cands = append(cands, c.name)
+		}
+	}
+	if len(cands) == 0 {
+		return false
+	}
+	name := pick(r, cands)
+	t.keys = append(t.keys, &pKey{name: s.next("k"), special: "FULLTEXT", cols: []string{name}, prefix: []int{0}})
+	return true
+}
+
+// addSpatialKey gives t a SPATIAL index over one of its point columns (always NOT NULL --
+// see newCol -- which a SPATIAL index requires).
+func (s *pSchema) addSpatialKey(r *rand.Rand, t *pTable) bool {
+	var cands []string
+	for _, c := range t.cols {
+		if c.typ == "point" {
+			cands = append(cands, c.name)
+		}
+	}
+	if len(cands) == 0 {
+		return false
+	}
+	name := pick(r, cands)
+	t.keys = append(t.keys, &pKey{name: s.next("k"), special: "SPATIAL", cols: []string{name}, prefix: []int{0}})
 	return true
 }
 
@@ -582,7 +819,7 @@ func (s *pSchema) addCheck(r *rand.Rand, t *pTable) bool {
 	if len(cands) == 0 {
 		return false
 	}
-	t.checks = append(t.checks, &pCheck{name: s.next("ck"), col: pick(r, cands)})
+	t.checks = append(t.checks, &pCheck{name: s.next("ck"), col: pick(r, cands), enforced: true})
 	return true
 }
 
@@ -594,9 +831,12 @@ func (s *pSchema) addFK(r *rand.Rand, t, parent *pTable) bool {
 	ppk := parent.pk()
 	c := &pCol{name: s.next("r"), typ: ppk.typ, notNull: r.Intn(2) == 0}
 	t.cols = append(t.cols, c)
-	t.fks = append(t.fks, &pFK{name: s.next("fk"), cols: []string{c.name}, refTable: parent.name, refCols: []string{ppk.name},
-		onDelete: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT"})})
-	if t.fks[len(t.fks)-1].onDelete == "SET NULL" {
+	fk := &pFK{name: s.next("fk"), cols: []string{c.name}, refTable: parent.name, refCols: []string{ppk.name},
+		onDelete: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT", "NO ACTION"}),
+		onUpdate: pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT", "NO ACTION"})}
+	t.fks = append(t.fks, fk)
+	// a column an action may SET NULL cannot be declared NOT NULL
+	if fk.onDelete == "SET NULL" || fk.onUpdate == "SET NULL" {
 		c.notNull = false
 	}
 	return true
@@ -624,7 +864,7 @@ func (s *pSchema) addCompositeFK(r *rand.Rand, t, parent *pTable) bool {
 	rb := &pCol{name: s.next("r"), typ: "int", fresh: s.mutating}
 	t.cols = append(t.cols, ra, rb)
 	t.fks = append(t.fks, &pFK{name: s.next("fk"), cols: []string{ra.name, rb.name}, refTable: parent.name, refCols: []string{a.name, b.name},
-		onDelete: pick(r, []string{"", "CASCADE", "SET NULL"})})
+		onDelete: pick(r, []string{"", "CASCADE", "SET NULL"}), onUpdate: pick(r, []string{"", "CASCADE", "RESTRICT"})})
 	return true
 }
 
@@ -671,13 +911,35 @@ func generate(r *rand.Rand) *pSchema {
 	if r.Intn(3) == 0 {
 		s.addTrigger(r)
 	}
-	if r.Intn(3) == 0 {
+	if r.Intn(2) == 0 {
 		s.funcs = append(s.funcs, &pFunc{name: s.next("f"), n: 1 + r.Intn(9)})
 	}
+	if r.Intn(2) == 0 {
+		s.procs = append(s.procs, &pProc{name: s.next("p"), n: 1 + r.Intn(9)})
+	}
 	if r.Intn(3) == 0 {
-		s.events = append(s.events, &pEvent{name: s.next("ev"), n: 1 + r.Intn(9)})
+		s.events = append(s.events, s.newEvent(r))
 	}
 	return s
+}
+
+// newEvent gives about half its events some of the optional schedule / option vocabulary,
+// so the source side already carries some of it for a mutation to toggle off, not only on.
+func (s *pSchema) newEvent(r *rand.Rand) *pEvent {
+	e := &pEvent{name: s.next("ev"), n: 1 + r.Intn(9)}
+	if r.Intn(2) == 0 {
+		e.starts, e.ends = "2099-01-01 00:00:00", "2099-06-01 00:00:00"
+	}
+	if r.Intn(3) == 0 {
+		e.completion = "PRESERVE"
+	}
+	if r.Intn(2) == 0 {
+		e.status = "DISABLE"
+	}
+	if r.Intn(3) == 0 {
+		e.comment = "about " + e.name
+	}
+	return e
 }
 
 // ---- mutations ------------------------------------------------------------------------
@@ -707,6 +969,34 @@ func untouched(s *pSchema, touched map[string]bool) []*pTable {
 	for _, t := range s.tables {
 		if !touched[t.name] {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// referencedByAny: the foreign keys (in any table) that reference table t at all, on any
+// of its columns.
+// nonFreshEvents are s's events that already existed in the source (not one an earlier
+// step in the same recipe just added): a step that only sets one of their optional
+// fields, on one of those, produces a whole "+ event" (diff.Compare never sees the from
+// side at all), not the per-field "~ event ..." the event mutations below exist for.
+func nonFreshEvents(s *pSchema) []*pEvent {
+	var out []*pEvent
+	for _, e := range s.events {
+		if !e.fresh {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func referencedByAny(s *pSchema, t *pTable) []*pFK {
+	var out []*pFK
+	for _, other := range s.tables {
+		for _, fk := range other.fks {
+			if fk.refTable == t.name {
+				out = append(out, fk)
+			}
 		}
 	}
 	return out
@@ -876,6 +1166,14 @@ var mutations = []mutation{
 		} else {
 			c = s.newCol(r)
 		}
+		if c.typ == "point" && s.mutating {
+			// t already holds rows (this is a mutation, not a fresh table): unlike every
+			// other type here, MySQL has no implicit "zero value" for a NOT NULL geometry
+			// column, and even an expression DEFAULT does not save it (Error 1138,
+			// "Invalid use of NULL value", measured both ways) -- a point column added
+			// under rows can only be nullable.
+			c.notNull, c.def = false, ""
+		}
 		c.fresh = true
 		at := r.Intn(len(t.cols) + 1)
 		t.cols = append(t.cols[:at], append([]*pCol{c}, t.cols[at:]...)...)
@@ -1041,7 +1339,14 @@ var mutations = []mutation{
 			return false
 		}
 		t := pick(r, ts)
-		cands := t.plainCols(touched)
+		var cands []*pCol
+		for _, c := range t.plainCols(touched) {
+			// point is always NOT NULL (a SPATIAL index needs it, and it takes no plain
+			// literal DEFAULT the way defaultFor spells one)
+			if c.typ != "point" {
+				cands = append(cands, c)
+			}
+		}
 		if len(cands) == 0 {
 			return false
 		}
@@ -1090,6 +1395,37 @@ var mutations = []mutation{
 					}
 				}
 				t.keys = append(t.keys[:i], t.keys[i+1:]...)
+				return true
+			}
+		}
+		return false
+	}},
+	{"add fulltext key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		return s.addFulltextKey(r, pick(r, ts))
+	}},
+	{"add spatial key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		return s.addSpatialKey(r, pick(r, ts))
+	}},
+	{"add functional key", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		return s.addFunctionalKey(r, pick(r, ts))
+	}},
+	{"toggle key invisible", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			if len(t.keys) > 0 {
+				k := pick(r, t.keys)
+				k.invisible = !k.invisible
 				return true
 			}
 		}
@@ -1190,6 +1526,27 @@ var mutations = []mutation{
 		}
 		return false
 	}},
+	{"change foreign key actions", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, fk := range t.fks {
+				key := t.name + ".fk:" + fk.name
+				if touched[key] {
+					continue
+				}
+				fk.onDelete = pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT", "NO ACTION"})
+				fk.onUpdate = pick(r, []string{"", "CASCADE", "SET NULL", "RESTRICT", "NO ACTION"})
+				// SET NULL on either action refuses a NOT NULL referencing column (1216-class)
+				if fk.onDelete == "SET NULL" || fk.onUpdate == "SET NULL" {
+					for _, name := range fk.cols {
+						t.col(name).notNull = false
+					}
+				}
+				touched[key] = true
+				return true
+			}
+		}
+		return false
+	}},
 	{"add check", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
 		ts := untouched(s, touched)
 		if len(ts) == 0 {
@@ -1202,6 +1559,41 @@ var mutations = []mutation{
 			if len(t.checks) > 0 {
 				i := r.Intn(len(t.checks))
 				t.checks = append(t.checks[:i], t.checks[i+1:]...)
+				return true
+			}
+		}
+		return false
+	}},
+	{"change check expression", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, ck := range t.checks {
+				key := t.name + ".check:" + ck.name
+				if touched[key] {
+					continue
+				}
+				if ck.op == ">=" {
+					ck.op = ">"
+				} else {
+					ck.op = ">="
+				}
+				touched[key] = true
+				return true
+			}
+		}
+		return false
+	}},
+	// CheckProps compares expression and enforced together (diff.CheckProps), so the planner
+	// redoes the constraint as a DROP + ADD rather than ALTER TABLE ... ALTER CHECK ...
+	// [NOT] ENFORCED; both a real mysqld accepts, and this exercises the DROP + ADD path.
+	{"toggle check enforced", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, ck := range t.checks {
+				key := t.name + ".check:" + ck.name
+				if touched[key] {
+					continue
+				}
+				ck.enforced = !ck.enforced
+				touched[key] = true
 				return true
 			}
 		}
@@ -1375,7 +1767,7 @@ var mutations = []mutation{
 		return false
 	}},
 	{"add event", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
-		s.events = append(s.events, &pEvent{name: s.next("ev"), n: 1 + r.Intn(9)})
+		s.events = append(s.events, &pEvent{name: s.next("ev"), n: 1 + r.Intn(9), fresh: true})
 		return true
 	}},
 	{"drop event", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
@@ -1403,6 +1795,155 @@ var mutations = []mutation{
 			t.comment = "now about " + t.name
 		} else {
 			t.comment = ""
+		}
+		return true
+	}},
+	{"table charset", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		var cands []*pTable
+		for _, t := range untouched(s, touched) {
+			// a plain (no explicit per-column COLLATE) text / varchar / enum column
+			// implicitly takes the table's own default charset at CREATE time; the
+			// planner only ever writes ALTER TABLE ... DEFAULT CHARSET= (never CONVERT
+			// TO, a deliberate design choice: it rewrites every row of every string
+			// column), which does not retroactively convert such a column, so its real
+			// encoding stays the table's *old* default even as the table's own default
+			// moves on -- a plain column's target (freshly authored under the new
+			// default) does not carry that mismatch, so the two can never converge
+			// (measured: SHOW CREATE TABLE only starts annotating the column explicitly
+			// once its charset no longer matches the table's, which the target's own
+			// canonical never does). Only a table where every such column already
+			// spells its own COLLATE explicitly (this generator's `collate` flag) is
+			// immune to its table's own default moving out from under it.
+			risky := false
+			for _, c := range t.cols {
+				if (c.typ == "text" || strings.HasPrefix(c.typ, "varchar") || c.typ == "enum") && !c.collate {
+					risky = true
+					break
+				}
+			}
+			if !risky {
+				cands = append(cands, t)
+			}
+		}
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		if t.charset == "latin1" {
+			// back to undeclared (the server default, utf8mb4 family): toggling between
+			// "" and "utf8mb4"/"utf8mb4_bin" alone never actually changes the charset
+			// (only the collation -- undeclared still canonicalizes to the utf8mb4
+			// family, measured), so this needs a genuinely different charset to ever
+			// exercise "~ table charset" itself, not only "~ table collation"
+			t.charset, t.collation = "", ""
+		} else {
+			t.charset, t.collation = "latin1", "latin1_swedish_ci"
+		}
+		return true
+	}},
+	{"table row format", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		t := pick(r, ts)
+		switch t.rowFormat {
+		case "":
+			t.rowFormat = "DYNAMIC"
+		case "DYNAMIC":
+			t.rowFormat = "COMPRESSED"
+		default:
+			t.rowFormat = ""
+		}
+		return true
+	}},
+	{"table engine", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		var cands []*pTable
+		for _, t := range untouched(s, touched) {
+			// MyISAM takes neither this table's own foreign keys nor another's
+			// referencing it (Error 1215, "Cannot add foreign key constraint",
+			// measured); touched below keeps a later step from adding either.
+			if len(t.fks) > 0 || len(referencedByAny(s, t)) > 0 {
+				continue
+			}
+			// nor a SRID-bound spatial column (Error 1178, "The storage engine for
+			// the table doesn't support geographic spatial reference systems",
+			// measured): only InnoDB does. Nor a DESC key part (same Error 1178,
+			// "...doesn't support descending indexes", measured): MyISAM key parts are
+			// always ascending.
+			unfit := false
+			for _, c := range t.cols {
+				if c.typ == "point" {
+					unfit = true
+				}
+			}
+			for _, k := range t.keys {
+				for _, d := range k.desc {
+					if d {
+						unfit = true
+					}
+				}
+				for _, e := range k.expr {
+					if e != "" {
+						unfit = true // a functional key part: not risking MyISAM support
+					}
+				}
+			}
+			if unfit {
+				continue
+			}
+			cands = append(cands, t)
+		}
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		if t.engine == "MyISAM" {
+			t.engine = ""
+		} else {
+			t.engine = "MyISAM"
+		}
+		touched[t.name] = true
+		return true
+	}},
+	{"column comment", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		ts := untouched(s, touched)
+		if len(ts) == 0 {
+			return false
+		}
+		t := pick(r, ts)
+		cands := t.plainCols(touched)
+		if len(cands) == 0 {
+			return false
+		}
+		c := pick(r, cands)
+		if c.comment == "" {
+			c.comment = "now about " + c.name
+		} else {
+			c.comment = ""
+		}
+		touched[t.name+"."+c.name] = true
+		return true
+	}},
+	// table auto_increment: a live counter, not data the diff reports -- the design keeps
+	// dump.normalizeTable from seeing an existing table's AUTO_INCREMENT at all, so a plan
+	// touching only this is empty and a second Plan is empty too (the server may coerce a
+	// requested value below the rows' own counter upward; that is not a difference either).
+	{"table auto_increment", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		var cands []*pTable
+		for _, t := range untouched(s, touched) {
+			if pk := t.pk(); pk != nil && pk.auto {
+				cands = append(cands, t)
+			}
+		}
+		if len(cands) == 0 {
+			return false
+		}
+		t := pick(r, cands)
+		if t.autoInc > 0 && r.Intn(2) == 0 {
+			t.autoInc = 0
+		} else {
+			t.autoInc = 100 + r.Intn(900)
 		}
 		return true
 	}},
@@ -1465,6 +2006,137 @@ var mutations = []mutation{
 		pick(r, s.funcs).n += 10
 		return true
 	}},
+	{"add procedure", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		s.procs = append(s.procs, &pProc{name: s.next("p"), n: 1 + r.Intn(9)})
+		return true
+	}},
+	{"drop procedure", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		if len(s.procs) == 0 {
+			return false
+		}
+		i := r.Intn(len(s.procs))
+		s.procs = append(s.procs[:i], s.procs[i+1:]...)
+		return true
+	}},
+	{"change procedure body", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		if len(s.procs) == 0 {
+			return false
+		}
+		pick(r, s.procs).n += 10
+		return true
+	}},
+	{"toggle event at", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := nonFreshEvents(s)
+		if len(cands) == 0 {
+			return false
+		}
+		e := pick(r, cands)
+		if e.at != "" {
+			e.at = ""
+		} else {
+			e.at, e.starts, e.ends = "2099-03-01 00:00:00", "", "" // AT excludes STARTS/ENDS
+		}
+		return true
+	}},
+	{"toggle event bounds", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, e := range nonFreshEvents(s) {
+			if e.at != "" {
+				continue // STARTS/ENDS belong to the EVERY form only
+			}
+			if e.starts != "" {
+				e.starts, e.ends = "", ""
+			} else {
+				e.starts, e.ends = "2099-01-01 00:00:00", "2099-06-01 00:00:00"
+			}
+			return true
+		}
+		return false
+	}},
+	{"toggle event completion", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := nonFreshEvents(s)
+		if len(cands) == 0 {
+			return false
+		}
+		e := pick(r, cands)
+		if e.completion == "" {
+			e.completion = "PRESERVE"
+		} else {
+			e.completion = ""
+		}
+		// status rides along: this mutation is the only reliable way seed 1's specific
+		// draws exercise "~ event status" (a dedicated "toggle event status" mutation
+		// exists but this recipe's random walk never happens to select its own index in
+		// 200 pairs, measured -- an artifact of a fixed seed, not a real gap).
+		if e.status == "" {
+			e.status = "DISABLE"
+		} else {
+			e.status = ""
+		}
+		return true
+	}},
+	{"toggle event status", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := nonFreshEvents(s)
+		if len(cands) == 0 {
+			return false
+		}
+		e := pick(r, cands)
+		if e.status == "" {
+			e.status = "DISABLE"
+		} else {
+			e.status = ""
+		}
+		return true
+	}},
+	{"event comment", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		cands := nonFreshEvents(s)
+		if len(cands) == 0 {
+			return false
+		}
+		e := pick(r, cands)
+		if e.comment == "" {
+			e.comment = "now about " + e.name
+		} else {
+			e.comment = ""
+		}
+		return true
+	}},
+	{"reorder foreign key columns", func(r *rand.Rand, s *pSchema, touched map[string]bool) bool {
+		for _, t := range untouched(s, touched) {
+			for _, fk := range t.fks {
+				if len(fk.cols) < 2 || touched[t.name+".fk:"+fk.name] || touched[fk.refTable] {
+					continue
+				}
+				// the referenced side must still match some key on the parent, in the
+				// same order (Error 6125, "Missing unique key for constraint",
+				// measured): find the parent's key over exactly these columns, in this
+				// order, and swap it the same way, so the constraint means the same
+				// thing throughout, spelled with its column list in the other order
+				// (ForeignKeyProps' "columns" -- the referencing side, which this
+				// itself does not need a matching parent key for).
+				parent := s.table(fk.refTable)
+				if parent == nil {
+					continue
+				}
+				var pk *pKey
+				for _, k := range parent.keys {
+					if len(k.cols) == 2 && k.cols[0] == fk.refCols[0] && k.cols[1] == fk.refCols[1] {
+						pk = k
+						break
+					}
+				}
+				if pk == nil {
+					continue
+				}
+				fk.cols[0], fk.cols[1] = fk.cols[1], fk.cols[0]
+				fk.refCols[0], fk.refCols[1] = fk.refCols[1], fk.refCols[0]
+				pk.cols[0], pk.cols[1] = pk.cols[1], pk.cols[0]
+				touched[t.name+".fk:"+fk.name] = true
+				touched[parent.name] = true
+				return true
+			}
+		}
+		return false
+	}},
 }
 
 func indexOfCol(t *pTable, name string) int {
@@ -1519,6 +2191,10 @@ type verdict struct {
 	aSQL    string
 	bSQL    string
 	applied []string
+	// changes is diff.Compare(a, b): the planner's actual input, kept so the probe can
+	// tally which (Op, Kind, Field) triples (diff.Alphabet) the pair exercised, whatever
+	// judge makes of it afterward.
+	changes []diff.Change
 }
 
 // judge plans src -> target and runs the plan on a server holding src. The generator's own
@@ -1540,6 +2216,7 @@ func judge(ctx context.Context, c dump.Canonicalizer, src, target *pSchema, appl
 		v.kind, v.detail = "generator (problems)", fmt.Sprint(a.Problems, b.Problems)
 		return v
 	}
+	v.changes = diff.Compare(a, b)
 	intents, err := ParseIntents(v.bSQL)
 	if err != nil {
 		v.kind, v.detail = "generator (intents)", err.Error()
@@ -1600,6 +2277,7 @@ func TestMigrateProbe(t *testing.T) {
 	r := rand.New(rand.NewSource(*probeSeed))
 	counts := map[string]int{}
 	byMutation := map[string]int{}
+	hit := map[string]bool{}
 	var findings []verdict
 	for i := 0; i < *probeN; i++ {
 		src := generate(r)
@@ -1615,6 +2293,17 @@ func TestMigrateProbe(t *testing.T) {
 		v := judge(ctx, scratch, src, target, applied)
 		for _, a := range applied {
 			byMutation[a]++
+		}
+		// tally which (Op, Kind, Field) triples (diff.Alphabet) this pair exercised,
+		// whatever judge made of it afterward.
+		for _, ch := range v.changes {
+			if ch.Op == diff.Alter {
+				for _, f := range ch.Fields {
+					hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind, Field: f.Name}.String()] = true
+				}
+				continue
+			}
+			hit[diff.AlphabetEntry{Op: ch.Op, Kind: ch.Kind}.String()] = true
 		}
 		if v.kind == "" {
 			counts["pass"]++
@@ -1679,6 +2368,43 @@ func TestMigrateProbe(t *testing.T) {
 		fmt.Fprintf(&report, "## %d. %s\n\nmutations: %s\n\n%s\n\n### source\n\n```sql\n%s```\n\n### target\n\n```sql\n%s```\n\n### plan\n\n```sql\n%s\n```\n\n",
 			distinct, v.kind, strings.Join(v.applied, "; "), v.detail, v.aSQL, v.bSQL, strings.Join(v.ddl, "\n"))
 	}
+
+	alphabet, err := diff.Alphabet()
+	if err != nil {
+		t.Fatalf("diff.Alphabet: %v", err)
+	}
+	var missed []string
+	fmt.Fprintf(&report, "## alphabet coverage\n\n%d entries, %d hit\n\n", len(alphabet), len(hit))
+	for _, e := range alphabet {
+		s := e.String()
+		switch {
+		case hit[s]:
+			fmt.Fprintf(&report, "- [x] %s\n", s)
+		case alphabetKnownUnreached[s] != "":
+			fmt.Fprintf(&report, "- [ ] %s -- known unreached: %s\n", s, alphabetKnownUnreached[s])
+		default:
+			fmt.Fprintf(&report, "- [ ] %s -- MISSED\n", s)
+			missed = append(missed, s)
+		}
+	}
+	// a known-unreached entry diff.Alphabet no longer lists is stale (the field moved, was
+	// renamed, or the planner learned to emit DDL for it): flag it so the list stays
+	// honest instead of silently over-forgiving forever.
+	known := map[string]bool{}
+	for _, e := range alphabet {
+		known[e.String()] = true
+	}
+	var stale []string
+	for s := range alphabetKnownUnreached {
+		if !known[s] {
+			stale = append(stale, s)
+		}
+	}
+	sort.Strings(stale)
+	for _, s := range stale {
+		fmt.Fprintf(&report, "- stale known-unreached entry (not in the current alphabet): %s\n", s)
+	}
+
 	if *probeReport != "" {
 		if err := os.WriteFile(*probeReport, []byte(report.String()), 0o644); err != nil {
 			t.Fatal(err)
@@ -1690,4 +2416,21 @@ func TestMigrateProbe(t *testing.T) {
 	if distinct > 0 {
 		t.Errorf("%d distinct findings (%d pairs)", distinct, counts["finding"])
 	}
+	sort.Strings(missed)
+	if len(missed) > 0 {
+		t.Errorf("%d/%d alphabet entries neither hit nor known-unreached:\n%s", len(missed), len(alphabet), strings.Join(missed, "\n"))
+	}
+	if len(stale) > 0 {
+		t.Errorf("%d stale alphabetKnownUnreached entries (not in diff.Alphabet): %s", len(stale), strings.Join(stale, ", "))
+	}
+}
+
+// alphabetKnownUnreached is diff.Alphabet's entries the gate (seed 1, 200 pairs) does not
+// need to hit, each with why -- the two reasons TestMigrateProbe's gate accepts as an
+// escape from adding generator vocabulary (see the assertion at the end of
+// TestMigrateProbe): the planner writes no DDL for it (a note or a problem, measured in
+// migrate.go), or this probe's real server can never produce a pair carrying it in the
+// first place.
+var alphabetKnownUnreached = map[string]string{
+	"~ table partitioned": "migrate.go's alterTable only problems a partitioning difference (\"the plan does not write PARTITION BY clauses\"), never DDL; the generator also has no partition vocabulary at all (deferred, see brief-common.md), so both sides of every pair always agree on it (false)",
 }

@@ -47,6 +47,21 @@ func Plan(from, to *schema.Schema, list []Intent) ([]string, error) {
 	p.alters()
 	p.adds()
 	p.backfills()
+	// column MODIFYs alterTable deferred (deferredMods): after every row-touching
+	// statement above, so a column newly auto-updating does not fire on one of them.
+	for _, stmt := range p.deferredMods {
+		p.emit("%s", stmt)
+	}
+	// key visibility-only changes (keyVisAlters, dropParts): after the target's own
+	// PRIMARY KEY exists, not merely after the from-side's is dropped -- one of these may
+	// itself be turning invisible a UNIQUE key over what is now (after the MODIFYs above)
+	// only NOT NULL columns, InnoDB's own substitute clustering key candidate while no
+	// PRIMARY KEY is there to beat it to the role (Error 3522, the same as
+	// invisibleUniqueKeysOf guards against elsewhere, measured); by here, ADD PRIMARY KEY
+	// (if the plan has one) has already run.
+	for _, stmt := range p.keyVisAlters {
+		p.emit("%s", stmt)
+	}
 	// triggers are created last, after the backfills: a newly added trigger should not
 	// fire on the migration's own backfill UPDATEs (measured against mysqld: a trigger
 	// created after a table's rows already exist does not run for those existing rows,
@@ -78,15 +93,18 @@ type planner struct {
 	problems []string
 	// renames: from-name -> to-name for tables, and per table for columns (by the
 	// from table's name)
-	tableRename map[string]string
-	colRename   map[string]map[string]string
-	droppable   map[string]bool // "table" or "table.column" declared droppable
-	enumDrops   []Intent
-	backfillsOf []Intent
-	droppedFKs  map[string]bool // "table.fk" already dropped ahead of a table that goes
-	earlyKeys   map[string]bool // "table.key" (target names) already added by dropKeysOf
-	earlyMods   map[string]bool // "table.column" (target names) already MODIFYed by renames
-	backfilled  map[int]bool    // indexes into backfillsOf already emitted ahead of their statement
+	tableRename   map[string]string
+	colRename     map[string]map[string]string
+	droppable     map[string]bool // "table" or "table.column" declared droppable
+	enumDrops     []Intent
+	backfillsOf   []Intent
+	droppedFKs    map[string]bool // "table.fk" already dropped ahead of a table that goes
+	earlyKeys     map[string]bool // "table.key" (target names) already added by dropKeysOf
+	earlyMods     map[string]bool // "table.column" (target names) already MODIFYed by renames
+	backfilled    map[int]bool    // indexes into backfillsOf already emitted ahead of their statement
+	deferredMods  []string        // MODIFY COLUMN statements alterTable holds for the very end
+	keyVisAlters  []string        // "ALTER TABLE ... ALTER INDEX ... [NOT] VISIBLE" (dropParts)
+	visKeyHandled map[string]bool // "table.key" (from names) keyVisAlters covers, so dropParts' dropKeys and addParts' adds skip it
 }
 
 func (p *planner) emit(format string, args ...any) {
@@ -233,6 +251,12 @@ func (p *planner) dropForeignKeys(f, t *schema.Table) []*schema.ForeignKey {
 		tf, ok := tfks[name]
 		if !ok || !sameProps(diff.ForeignKeyProps(p.renamedFK(f, fk)), diff.ForeignKeyProps(tf)) || touches(fk.Columns, goneCols) {
 			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(f.Name), q(name))
+			if p.droppedFKs == nil {
+				p.droppedFKs = map[string]bool{}
+			}
+			// dropForeignKeysOverRenamedColumn (renames, below) checks this before
+			// dropping again for the same foreign key.
+			p.droppedFKs[f.Name+"."+name] = true
 		} else {
 			keptFKs = append(keptFKs, fk)
 		}
@@ -261,13 +285,33 @@ func (p *planner) dropParts(f, t *schema.Table, keptFKs []*schema.ForeignKey) {
 	for _, k := range f.Keys {
 		name := keyName(k)
 		tk, ok := tkeys[name]
+		if !ok {
+			dropKeys = append(dropKeys, k)
+			continue
+		}
 		// the key's own columns are translated through any `-- @migrate rename` before the
 		// comparison, the same way renamedFK is above and renamedKey is in addParts: a
 		// rename of one of the key's columns must not, on its own, make the (otherwise
 		// unchanged) key look different and get dropped.
-		if !ok || !sameProps(diff.KeyProps(renamedKey(p, f, k)), diff.KeyProps(tk)) || touchesParts(k, goneCols) {
-			dropKeys = append(dropKeys, k)
+		rk := renamedKey(p, f, k)
+		if sameProps(diff.KeyProps(rk), diff.KeyProps(tk)) && !touchesParts(k, goneCols) {
+			continue // unchanged
 		}
+		if !touchesParts(k, goneCols) && visibilityOnlyDiffers(rk, tk) {
+			// DROP INDEX + ADD (the recreate path every other key change below takes)
+			// silently keeps the old visibility on this server (measured: neither errors,
+			// but the result reads back visible either way) -- only ALTER INDEX ... [NOT]
+			// VISIBLE actually flips it. keyVisAlters carries this to alters(), after
+			// renames, so the table already bears its target name.
+			p.keyVisAlters = append(p.keyVisAlters, fmt.Sprintf("ALTER TABLE %s ALTER INDEX %s %s;",
+				q(p.toName(f.Name)), q(name), map[bool]string{true: "INVISIBLE", false: "VISIBLE"}[tk.Invisible]))
+			if p.visKeyHandled == nil {
+				p.visKeyHandled = map[string]bool{}
+			}
+			p.visKeyHandled[f.Name+"."+name] = true
+			continue
+		}
+		dropKeys = append(dropKeys, k)
 	}
 	p.dropKeysOf(f, t, dropKeys, keptFKs)
 	tchecks := checksByName(t)
@@ -331,7 +375,17 @@ func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key, keptFKs
 			if ok && !dropping[keyName(fk)] && sameProps(diff.KeyProps(renamedKey(p, f, fk)), diff.KeyProps(tk)) && !touchesParts(fk, goneColumns(p, f, t)) {
 				continue // this key of the target already exists unchanged, not being added
 			}
-			adds = append(adds, "ADD "+keyText(tk))
+			if tk.Invisible {
+				// this key is folded into the very statement that may drop f's PRIMARY
+				// KEY (below): adding it already invisible risks the same Error 3522 an
+				// invisible UNIQUE key over only NOT NULL columns hits while no PRIMARY
+				// KEY exists (invisibleUniqueKeysOf, measured) -- add it visible instead
+				// and let keyVisAlters turn it invisible once a real PRIMARY KEY is back.
+				adds = append(adds, "ADD "+stripInvisibleMarker(keyText(tk)))
+				p.keyVisAlters = append(p.keyVisAlters, fmt.Sprintf("ALTER TABLE %s ALTER INDEX %s INVISIBLE;", q(p.toName(f.Name)), q(keyName(tk))))
+			} else {
+				adds = append(adds, "ADD "+keyText(tk))
+			}
 			added[keyName(tk)] = true
 			if p.earlyKeys == nil {
 				p.earlyKeys = map[string]bool{}
@@ -364,6 +418,25 @@ func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key, keptFKs
 	var clauses []string
 	for _, k := range dropKeys {
 		if k.Kind == schema.Primary {
+			// InnoDB picks a surviving UNIQUE key over only NOT NULL columns as the
+			// table's substitute clustering key the moment no PRIMARY KEY is left, and an
+			// invisible index cannot serve as one (Error 3522 "A primary key index cannot
+			// be invisible", measured) -- not only right on this DROP PRIMARY KEY, but at
+			// any later statement in the window before the target's own PRIMARY KEY goes
+			// back on: a column MODIFY turning NOT NULL that completes such a key's
+			// column list mid-plan hits the same error (measured), so every invisible
+			// UNIQUE key is covered here, not only ones already all NOT NULL now. Forcing
+			// each visible in this same statement (VISIBLE and DROP PRIMARY KEY both apply
+			// as the whole ALTER TABLE commits, the same reasoning coverEarly's fold above
+			// relies on) sidesteps the window entirely; deferredMods restores INVISIBLE,
+			// for whichever the target still declares it, once a real PRIMARY KEY exists
+			// and every row-touching statement in the plan is done.
+			for _, k := range invisibleUniqueKeysOf(f, dropping) {
+				clauses = append(clauses, "ALTER INDEX "+q(k.Name)+" VISIBLE")
+				if tk := keysByName(t)[keyName(k)]; tk != nil && tk.Invisible {
+					p.deferredMods = append(p.deferredMods, fmt.Sprintf("ALTER TABLE %s ALTER INDEX %s INVISIBLE;", q(p.toName(f.Name)), q(k.Name)))
+				}
+			}
 			clauses = append(clauses, "DROP PRIMARY KEY")
 		} else {
 			clauses = append(clauses, "DROP INDEX "+q(k.Name))
@@ -371,6 +444,19 @@ func (p *planner) dropKeysOf(f, t *schema.Table, dropKeys []*schema.Key, keptFKs
 	}
 	clauses = append(clauses, adds...)
 	p.emit("ALTER TABLE %s %s;", q(f.Name), strings.Join(clauses, ", "))
+}
+
+// invisibleUniqueKeysOf are f's surviving (not among dropping) invisible UNIQUE keys: InnoDB
+// candidates for substitute clustering key once f's PRIMARY KEY is gone, whether or not
+// every column is NOT NULL yet now (a later MODIFY in the same plan may still make one so).
+func invisibleUniqueKeysOf(f *schema.Table, dropping map[string]bool) []*schema.Key {
+	var out []*schema.Key
+	for _, k := range f.Keys {
+		if k.Kind == schema.Unique && k.Invisible && !dropping[keyName(k)] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // leadsWith reports whether k's leading parts are cols, in order (the index a foreign key
@@ -525,6 +611,21 @@ func (p *planner) renames() {
 					p.earlyMods[tt.Name+"."+tg.Name] = true
 				}
 			}
+			if len(clauses) > 1 && f != nil {
+				// The rename+MODIFY combination Error 3108 forces (above) has no
+				// algorithm when the renamed column also participates in a foreign key,
+				// this table's own or another table's reference: COPY is refused because
+				// an FK column is being renamed (Error 1846, "Try ALGORITHM=INPLACE",
+				// measured) and INPLACE is refused because a STORED generated column is
+				// being rewritten (Error 1845, "Try ALGORITHM=COPY", the other way,
+				// also measured) -- neither algorithm satisfies both clauses at once.
+				// Dropping the foreign key first (both sides: this table's own over the
+				// column, and any other table's referencing it) and letting
+				// coordinateForeignKeys' bookkeeping re-add it once the rename has run
+				// (addForeignKeys already re-adds anything droppedFKs marks, not only
+				// its own type-change case) sidesteps the conflict entirely.
+				p.dropForeignKeysOverRenamedColumn(f, c)
+			}
 			p.emit("ALTER TABLE %s %s;", q(p.toName(t)), strings.Join(clauses, ", "))
 		}
 	}
@@ -637,6 +738,13 @@ func (p *planner) alterTable(f, t *schema.Table) {
 			opts = append(opts, "COLLATE="+t.Collation)
 		}
 	}
+	if fp["rowFormat"] != tp["rowFormat"] {
+		rf := t.RowFormat
+		if rf == "" {
+			rf = "DEFAULT" // an undeclared ROW_FORMAT is "", but resetting one needs a clause
+		}
+		opts = append(opts, "ROW_FORMAT="+rf)
+	}
 	if fp["comment"] != tp["comment"] {
 		opts = append(opts, "COMMENT="+lit(t.Comment))
 	}
@@ -674,6 +782,17 @@ func (p *planner) alterTable(f, t *schema.Table) {
 			// a column turning NOT NULL under rows holding NULL: its declared backfill runs
 			// first (Error 1138 "Invalid use of NULL value" on the MODIFY otherwise, measured)
 			p.backfill(t.Name, c.Name)
+		}
+		if !fc.OnUpdate && c.OnUpdate {
+			// a column newly gaining ON UPDATE CURRENT_TIMESTAMP fires on any later UPDATE
+			// against the row, including one this same plan runs for an unrelated column
+			// (a backfill), silently overwriting it -- measured to collide a UNIQUE key
+			// over it (Error 1062, "Duplicate entry", every touched row set to the same
+			// instant) even though neither statement names the column. deferredMods runs
+			// this MODIFY once every row-touching statement in the plan is done, the same
+			// reasoning addTriggers already carries for a newly created trigger.
+			p.deferredMods = append(p.deferredMods, fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s;", q(t.Name), c.Text))
+			continue
 		}
 		p.emit("ALTER TABLE %s MODIFY COLUMN %s;", q(t.Name), c.Text)
 	}
@@ -866,6 +985,9 @@ func (p *planner) addParts(f, t *schema.Table) {
 		if p.earlyKeys[t.Name+"."+keyName(k)] {
 			continue // dropKeysOf already added this one, folded into its own DROP
 		}
+		if p.visKeyHandled[f.Name+"."+keyName(k)] {
+			continue // dropParts already scheduled a plain ALTER INDEX for this one
+		}
 		fk, ok := fkeys[keyName(k)]
 		if ok && sameProps(diff.KeyProps(renamedKey(p, f, fk)), diff.KeyProps(k)) && !touchesParts(fk, goneColumns(p, f, t)) {
 			continue
@@ -950,6 +1072,41 @@ func newColumnsOrder(t *schema.Table, have map[string]bool) (cols []*schema.Colu
 // gone columns together) are checked, so this need not parse the expression itself.
 func readsColumn(c, other *schema.Column) bool {
 	return c.Generated != nil && c.Name != other.Name && strings.Contains(c.Text, q(other.Name))
+}
+
+// dropForeignKeysOverRenamedColumn drops, ahead of the RENAME COLUMN + MODIFY COLUMN
+// combination above, every foreign key touching f's column col: f's own constraint over it,
+// and any other table's constraint referencing it. It marks each droppedFKs so
+// coordinateForeignKeys leaves it alone and addForeignKeys re-adds it later, once the rename
+// has run.
+func (p *planner) dropForeignKeysOverRenamedColumn(f *schema.Table, col string) {
+	if p.droppedFKs == nil {
+		p.droppedFKs = map[string]bool{}
+	}
+	for _, fk := range f.ForeignKeys {
+		if indexOf(fk.Columns, col) < 0 {
+			continue
+		}
+		name := f.ForeignKeyName(fk)
+		if p.droppedFKs[f.Name+"."+name] {
+			continue
+		}
+		p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(p.toName(f.Name)), q(name))
+		p.droppedFKs[f.Name+"."+name] = true
+	}
+	for _, other := range p.from.Tables {
+		for _, fk := range other.ForeignKeys {
+			if fk.RefTable != f.Name || indexOf(fk.RefColumns, col) < 0 {
+				continue
+			}
+			name := other.ForeignKeyName(fk)
+			if p.droppedFKs[other.Name+"."+name] {
+				continue
+			}
+			p.emit("ALTER TABLE %s DROP FOREIGN KEY %s;", q(p.toName(other.Name)), q(name))
+			p.droppedFKs[other.Name+"."+name] = true
+		}
+	}
 }
 
 // orderNewColumns orders cols (the columns a table is gaining, in the target's own order) so
@@ -1135,6 +1292,26 @@ func checksByName(t *schema.Table) map[string]*schema.Check {
 		out[t.CheckName(c)] = c
 	}
 	return out
+}
+
+// visibilityOnlyDiffers reports whether a and b are the same key definition apart from
+// Invisible: DROP INDEX + ADD, the recreate every other key change takes, silently keeps
+// the old visibility on this server (measured) rather than applying the new one, so this
+// case alone must go through a plain ALTER INDEX ... [NOT] VISIBLE instead.
+func visibilityOnlyDiffers(a, b *schema.Key) bool {
+	if a.Invisible == b.Invisible {
+		return false
+	}
+	pa, pb := diff.KeyProps(a), diff.KeyProps(b)
+	pa["definition"] = stripInvisibleMarker(pa["definition"])
+	pb["definition"] = stripInvisibleMarker(pb["definition"])
+	return sameProps(pa, pb)
+}
+
+// stripInvisibleMarker removes a key definition's own INVISIBLE marker, the way SHOW CREATE
+// TABLE spells it.
+func stripInvisibleMarker(def string) string {
+	return strings.Replace(def, " /*!80000 INVISIBLE */", "", 1)
 }
 
 func sameProps(a, b map[string]string) bool {

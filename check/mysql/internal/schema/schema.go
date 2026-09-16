@@ -113,6 +113,9 @@ type Table struct {
 	Engine      string
 	Charset     string
 	Collation   string
+	// RowFormat is the table's own `ROW_FORMAT=...` option ("DYNAMIC", "COMPRESSED", ...),
+	// "" when the statement declares none (the server's own default, not written back).
+	RowFormat string
 	// AutoIncrementStart is the table's own `AUTO_INCREMENT=<n>` option as written, "" when
 	// the statement declares none. A live counter is data, not schema (dump.normalizeTable
 	// strips it from a canonicalized table read back from a server), but the value an
@@ -820,6 +823,18 @@ func (s *Schema) column(name string, fieldDef mysqlast.Value, at func(mysqlast.V
 			s.problem(at(an), "column %s: attribute %s not understood", name, an.Class)
 		}
 	}
+	if col.Collation != "" {
+		// col.Type.Charset carries no information a collation does not already (a
+		// collation names its charset uniquely in MySQL), and whether the raw SQL spells
+		// CHARACTER SET explicitly on the type alongside a column-level COLLATE is not
+		// stable: an ENUM / SET column under a table with its own DEFAULT CHARSET /
+		// COLLATE freshly created from declarative SQL omits it, but SHOW CREATE TABLE
+		// read back from an existing table (canonicalizing a second time) always spells
+		// it (measured against mysqld 8.4) -- canonicalizing would otherwise not be
+		// idempotent, and a plan comparing the two spellings of the same column (Type is
+		// what ColumnProps' "type" compares) would see one as changed forever.
+		col.Type.Charset = ""
+	}
 	return col, keys, nil, check
 }
 
@@ -840,9 +855,30 @@ func (s *Schema) tableOptions(t *Table, opts []mysqlast.Value, at func(mysqlast.
 			t.Comment = str(n.Arg("value"))
 		case "PT_create_auto_increment_option":
 			t.AutoIncrementStart = str(n.Arg("value"))
+		case "PT_create_row_format_option":
+			t.RowFormat = rowFormat(str(n.Arg("value")))
 		}
-		// every other option (ROW_FORMAT, STATS_*, ...) has no shape
+		// every other option (STATS_*, ...) has no shape
 	}
+}
+
+// rowFormat spells a row_types constant (ROW_TYPE_DYNAMIC, ...) the way ROW_FORMAT=... in a
+// CREATE / ALTER TABLE does; ROW_TYPE_DEFAULT is the server's own default, kept as "" the
+// same way an undeclared option is (SHOW CREATE TABLE never writes ROW_FORMAT=DEFAULT).
+func rowFormat(s string) string {
+	switch s {
+	case "ROW_TYPE_FIXED":
+		return "FIXED"
+	case "ROW_TYPE_DYNAMIC":
+		return "DYNAMIC"
+	case "ROW_TYPE_COMPRESSED":
+		return "COMPRESSED"
+	case "ROW_TYPE_REDUNDANT":
+		return "REDUNDANT"
+	case "ROW_TYPE_COMPACT":
+		return "COMPACT"
+	}
+	return ""
 }
 
 func (s *Schema) indexOptions(k *Key, opts []mysqlast.Value) {
@@ -958,7 +994,7 @@ func copyTable(dst, src *Table) {
 		cc := *c
 		dst.Checks = append(dst.Checks, &cc)
 	}
-	dst.Engine, dst.Charset, dst.Collation = src.Engine, src.Charset, src.Collation
+	dst.Engine, dst.Charset, dst.Collation, dst.RowFormat = src.Engine, src.Charset, src.Collation, src.RowFormat
 	// LIKE copies no foreign keys
 }
 
@@ -1193,7 +1229,7 @@ func (s *Schema) alterTable(n *mysqlast.Node, st mysqlparse.Statement, at func(m
 		case "PT_alter_table_convert_to_charset":
 			t.Charset = str(an.Arg("charset"))
 			t.Collation = str(an.Arg("opt_collation"))
-		case "PT_create_table_engine_option", "PT_create_table_default_charset", "PT_create_table_default_collation", "PT_create_commen_option":
+		case "PT_create_table_engine_option", "PT_create_table_default_charset", "PT_create_table_default_collation", "PT_create_commen_option", "PT_create_row_format_option":
 			s.tableOptions(t, []mysqlast.Value{an}, at)
 		case "PT_alter_table_partition_by", "PT_alter_table_add_partition", "PT_alter_table_add_partition_num", "PT_alter_table_add_partition_def_list":
 			t.Partitioned = true

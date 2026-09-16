@@ -283,14 +283,18 @@ PostgreSQL 17 and 18. The syntax is PostgreSQL's own (libpg_query of the declare
 the analyzer is built from that version's catalog. The verdicts are checked against PostgreSQL's
 own regression suite, run through the analyzer and a real server side by side: on 17 they
 disagree on 19 of 22,103 statements, on 18 on 31 of 23,384, every one listed and explained
-([docs/postgres.md](docs/postgres.md#what-the-checker-embeds)).
+([docs/postgres.md](docs/postgres.md#what-the-checker-embeds)). The migrations are judged the same
+way: generated schema pairs, every kind of change the diff can report, run as DDL against a real
+server with rows in its tables
+([docs/migrations.md](docs/migrations.md#how-the-plan-is-tested)).
 
 MySQL 8.4. The parser and lexer are MySQL's own, extracted from the server source, and the
 function catalog comes from the same source. The verdicts are checked against a running `mysqld`:
 the result types of every built-in function, the error statements, the `ONLY_FULL_GROUP_BY` check
 and the `sql_mode` variants agree with 8.4 ([docs/mysql.md](docs/mysql.md#what-the-checker-embeds)).
 What has no MySQL counterpart (`Copy`, `MatView`, PL/pgSQL, domains, composite types and arrays,
-`-schemas`, `// sqlshape: type`, seeded tables in migrations) is listed there.
+`-schemas`, `// sqlshape: type`, seeded tables in migrations) is listed there. Its migrations are
+judged against a running `mysqld` the same way as PostgreSQL's.
 
 ## License
 

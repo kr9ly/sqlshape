@@ -250,3 +250,168 @@ func TestProbeSerialSequenceFollowsRename(t *testing.T) {
 		roundTrip(t, from, to, "-- @migrate rename t.m -> t.n", false)
 	})
 }
+
+// A composite type's ALTER ATTRIBUTE TYPE goes through the same catalog check as ALTER
+// COLUMN TYPE (find_composite_type_dependencies) and PostgreSQL refuses it while any
+// column, anywhere, has the type (0A000 "cannot alter type ... because column ... uses
+// it", measured) -- unlike ADD / DROP ATTRIBUTE, which touch no stored value and go
+// through untouched (also measured, against a table holding a row of the type). There is
+// no rewrite to offer in ALTER ATTRIBUTE TYPE's place (the column would need to be
+// dropped and re-added, which loses data), so the plan reports it as a problem instead of
+// DDL PostgreSQL would refuse.
+func TestProbeCompositeAlterAttributeTypeWhileColumnUsesIt(t *testing.T) {
+	requirePgDump(t)
+	t.Run("used: a problem, not DDL", func(t *testing.T) {
+		from := mustCanonical(t, `
+CREATE TYPE pt AS (x integer, y integer);
+CREATE TABLE t (id integer PRIMARY KEY, p pt NOT NULL);
+`)
+		to := mustCanonical(t, `
+CREATE TYPE pt AS (x bigint, y integer);
+CREATE TABLE t (id integer PRIMARY KEY, p pt NOT NULL);
+`)
+		_, err := Plan(from.s, to.s, to.intents)
+		if err == nil || !strings.Contains(err.Error(), "attribute x changes type") || !strings.Contains(err.Error(), "a column uses the type") {
+			t.Errorf("got %v\nwant a problem naming the column that uses the type", err)
+		}
+	})
+	t.Run("unused: ALTER ATTRIBUTE TYPE", func(t *testing.T) {
+		from := mustCanonical(t, `CREATE TYPE pt AS (x integer, y integer);`)
+		to := mustCanonical(t, `CREATE TYPE pt AS (x bigint, y integer);`)
+		roundTrip(t, from, to, "", false)
+	})
+	t.Run("used: ADD / DROP ATTRIBUTE still plan and apply", func(t *testing.T) {
+		from := mustCanonical(t, `
+CREATE TYPE pt AS (x integer, y integer);
+CREATE TABLE t (id integer PRIMARY KEY, p pt NOT NULL);
+`)
+		to := mustCanonical(t, `
+CREATE TYPE pt AS (x integer, z text);
+CREATE TABLE t (id integer PRIMARY KEY, p pt NOT NULL);
+`)
+		roundTrip(t, from, to, "", true)
+	})
+}
+
+// An EXCLUDE constraint on a generated column is a table constraint "defined solely on
+// this column" the same way a UNIQUE or CHECK is: dropGenerated's DROP COLUMN takes it
+// down silently, but addGenerated only put PRIMARY KEY / UNIQUE / CHECK back
+// (soleColumnConstraints), leaving the EXCLUDE gone (measured: the plan's DDL applied but
+// left "+ constraint" in the diff -- it never came back).
+func TestProbeExcludeRestoredAfterGeneratedRewrite(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a integer NOT NULL, g bigint GENERATED ALWAYS AS (a + 1) STORED,
+  CONSTRAINT t_g_excl EXCLUDE USING btree (g WITH =));
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a bigint NOT NULL, g bigint GENERATED ALWAYS AS (a + 1) STORED,
+  CONSTRAINT t_g_excl EXCLUDE USING btree (g WITH =));
+`)
+	roundTrip(t, from, to, "", false)
+}
+
+// A row-level security policy's USING / WITH CHECK reading a column blocks ALTER COLUMN
+// TYPE the same way a generated column's expression does (0A000 "cannot alter type of a
+// column used in a policy definition", measured), whether or not the policy itself
+// changes: the plan drops it and recreates it around the ALTER.
+func TestProbePolicyAroundColumnTypeChange(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a integer);
+ALTER TABLE t ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pol ON t USING (a > 0) WITH CHECK (a > 0);
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a bigint);
+ALTER TABLE t ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pol ON t USING (a > 0) WITH CHECK (a > 0);
+`)
+	roundTrip(t, from, to, "", false)
+}
+
+// The same refusal ALTER COLUMN TYPE meets from a policy also comes from a RULE that
+// reads the column ("cannot alter type of a column used by a view or rule", 0A000,
+// measured): the plan drops it and recreates it around the ALTER, the same way as a
+// policy -- found and fixed together, pinned separately since a rule's condition is
+// unanalyzed AST (matched by deparsed text) rather than a policy's schema.Expr.
+func TestProbeRuleAroundColumnTypeChange(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a integer);
+CREATE RULE r AS ON INSERT TO t WHERE (a > 0) DO ALSO NOTHING;
+`)
+	to := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a bigint);
+CREATE RULE r AS ON INSERT TO t WHERE (a > 0) DO ALSO NOTHING;
+`)
+	roundTrip(t, from, to, "", false)
+}
+
+// A rule that already gets its own DROP RULE / CREATE RULE elsewhere in the plan (here,
+// because the table it is on renames, which the rule's deparsed definition reads into,
+// making it differ from the from-side rule of the same name) must not also go through
+// the column-type-change drop/recreate above: a second DROP RULE for the same rule is
+// 42704 "rule ... does not exist" (measured), since the first one already ran it.
+func TestProbeRuleNotDroppedTwiceAroundRenameAndTypeChange(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE TABLE t (id integer PRIMARY KEY, a integer);
+CREATE RULE r AS ON INSERT TO t WHERE (a > 0) DO ALSO NOTHING;
+`)
+	to := mustCanonical(t, `
+-- @migrate rename t -> u
+CREATE TABLE u (id integer PRIMARY KEY, a bigint);
+CREATE RULE r AS ON INSERT TO u WHERE (a > 0) DO ALSO NOTHING;
+`)
+	roundTrip(t, from, to, "-- @migrate rename u -> t", true)
+}
+
+// DROP SCHEMA must come after the ALTER TABLE ... SET SCHEMA that empties it of the
+// table declared to move out (-- @migrate rename): dropSchemas (from-side view of what
+// is "still in" a schema) ran inside drops(), before renames() moved the table, so it
+// saw the table as still there and it was 2BP01 "other objects depend on it" (measured).
+func TestProbeDropSchemaAfterTableMovesOut(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE SCHEMA app;
+CREATE TABLE app.t (id integer PRIMARY KEY);
+`)
+	to := mustCanonical(t, `
+-- @migrate rename app.t -> public.t
+CREATE TABLE public.t (id integer PRIMARY KEY);
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// The mirror image of DROP SCHEMA's ordering bug: CREATE SCHEMA must come before the
+// ALTER TABLE ... SET SCHEMA that moves a table into it, but it was emitted from adds(),
+// which runs after renames() -- 3F000 "schema does not exist" (measured).
+func TestProbeCreateSchemaBeforeTableMovesIn(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `CREATE TABLE public.t (id integer PRIMARY KEY);`)
+	to := mustCanonical(t, `
+-- @migrate rename public.t -> app.t
+CREATE SCHEMA app;
+CREATE TABLE app.t (id integer PRIMARY KEY);
+`)
+	roundTrip(t, from, to, "", true)
+}
+
+// ALTER TABLE ... SET SCHEMA already carries an owned sequence (bigserial / IDENTITY)
+// with it when the sequence starts out in its owning table's own schema: a separate
+// ALTER SEQUENCE ... SET SCHEMA for it, emitted because the table's rename also moves
+// the sequence's declared owner, found nothing left in the old schema to move (42P01
+// "relation does not exist", measured).
+func TestProbeOwnedSequenceFollowsTableSchemaMove(t *testing.T) {
+	requirePgDump(t)
+	from := mustCanonical(t, `
+CREATE SCHEMA app;
+CREATE TABLE app.t (id bigserial PRIMARY KEY);
+`)
+	to := mustCanonical(t, `
+-- @migrate rename app.t -> public.t
+CREATE TABLE public.t (id bigserial PRIMARY KEY);
+`)
+	roundTrip(t, from, to, "-- @migrate rename public.t -> app.t", false)
+}

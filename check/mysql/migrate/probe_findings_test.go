@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kr9ly/sqlshape/check/mysql/v2/diff"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/dump"
 )
 
@@ -169,6 +170,191 @@ CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, b INT, parent_id INT NOT NULL, 
 	}
 	if len(changes) > 0 {
 		t.Errorf("changes: %v\nDDL:\n%s", changes, joined)
+	}
+}
+
+// A renamed column that also participates in a foreign key (here, the parent side a child's
+// constraint references) and is read by a generated column: the RENAME COLUMN + MODIFY COLUMN
+// combination Error 3108 forces is itself refused by the server's default algorithm (Error
+// 1846 "ALGORITHM=COPY is not supported ... Columns participating in a foreign key are
+// renamed. Try ALGORITHM=INPLACE", measured); the same ALTER TABLE with ALGORITHM=INPLACE
+// succeeds.
+func TestProbeRenamedForeignKeyColumnReadByGeneratedColumn(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, g BIGINT GENERATED ALWAYS AS (id + 1) STORED);
+CREATE TABLE children (id INT PRIMARY KEY, parent_id INT,
+  CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES t (id));
+`)
+	toSQL := `-- sqlshape: mysql 8.4
+-- @migrate rename t.id -> t.id_new
+CREATE TABLE t (id_new INT PRIMARY KEY, g BIGINT GENERATED ALWAYS AS (id_new + 1) STORED);
+CREATE TABLE children (id INT PRIMARY KEY, parent_id INT,
+  CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES t (id_new));
+`
+	to := mustCanonical(t, ctx, toSQL)
+	plan(t, ctx, "renamed foreign-key column read by a generated column", base, to)
+}
+
+// A column newly gaining ON UPDATE CURRENT_TIMESTAMP fires on any later UPDATE against the
+// row, even one naming only an unrelated column (a fresh column's backfill): every row the
+// backfill's UPDATE touches gets the same instant, which a UNIQUE key over the auto-updating
+// column then refuses as a duplicate (Error 1062 "Duplicate entry", measured) if the MODIFY
+// that adds it runs ahead of the backfill in the same plan. The MODIFY must wait until every
+// row-touching statement in the plan is done (deferredMods).
+func TestProbeOnUpdateModifyBeforeBackfill(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, ts DATETIME(6), UNIQUE KEY t_ts (ts));
+`)
+	rows := "INSERT INTO t (id, ts) VALUES (1, '2024-01-01 00:00:00'), (2, '2024-01-02 00:00:00'), (3, NULL);\n"
+	toSQL := `-- sqlshape: mysql 8.4
+-- @migrate backfill t.a = id
+CREATE TABLE t (id INT PRIMARY KEY, ts DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  a INT NOT NULL DEFAULT 0, UNIQUE KEY t_ts (ts));
+`
+	to := mustCanonical(t, ctx, toSQL)
+	ddl, err := Plan(base.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	joined := strings.Join(ddl, "\n")
+	changes, err := Verify(ctx, dump.Local{}, base.text+"\n"+rows, joined, to.s)
+	if err != nil {
+		t.Fatalf("verify: %v\nDDL:\n%s", err, joined)
+	}
+	if len(changes) > 0 {
+		t.Errorf("changes: %v\nDDL:\n%s", changes, joined)
+	}
+}
+
+// The primary key going, with a surviving invisible UNIQUE key: InnoDB promotes a UNIQUE key
+// over only NOT NULL columns to substitute clustering key the moment no PRIMARY KEY is left,
+// and an invisible index cannot serve as one (Error 3522 "A primary key index cannot be
+// invisible", measured) -- not only on the DROP PRIMARY KEY itself, but at a later MODIFY in
+// the same window that completes such a key's column list (b here turns NOT NULL, under its
+// declared backfill, after the DROP and before the new PRIMARY KEY goes back on). The
+// planner forces every invisible UNIQUE key VISIBLE for that whole window and restores
+// INVISIBLE, once the target's own PRIMARY KEY exists, at the very end of the plan
+// (invisibleUniqueKeysOf, deferredMods).
+func TestProbeInvisibleUniqueKeyBeforePrimaryKeyDrop(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL, b SMALLINT, PRIMARY KEY (id),
+  UNIQUE KEY t_ab (a(10), b) INVISIBLE);
+`)
+	rows := "INSERT INTO t (id, a, b) VALUES (1, 'x', 1), (2, 'y', 2), (3, 'z', NULL);\n"
+	toSQL := `-- sqlshape: mysql 8.4
+-- @migrate backfill t.b = 9 where b is null
+CREATE TABLE t (id INT, a TEXT NOT NULL, b SMALLINT NOT NULL, PRIMARY KEY (b),
+  UNIQUE KEY t_ab (a(10), b) INVISIBLE);
+`
+	to := mustCanonical(t, ctx, toSQL)
+	ddl, err := Plan(base.s, to.s, to.intents)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	joined := strings.Join(ddl, "\n")
+	changes, err := Verify(ctx, dump.Local{}, base.text+"\n"+rows, joined, to.s)
+	if err != nil {
+		t.Fatalf("verify: %v\nDDL:\n%s", err, joined)
+	}
+	if len(changes) > 0 {
+		t.Errorf("changes: %v\nDDL:\n%s", changes, joined)
+	}
+}
+
+// A key whose only change is going invisible (or back): DROP INDEX + ADD, the recreate path
+// every other key change takes, silently keeps the old visibility on this server (measured:
+// neither statement errors, but the result reads back the same as before either way) rather
+// than applying the new one -- only a plain ALTER INDEX ... [NOT] VISIBLE actually flips it.
+func TestProbeKeyVisibilityOnlyChangeUsesAlterIndex(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE parents (id INT PRIMARY KEY, a INT NOT NULL, b INT NOT NULL, UNIQUE KEY parents_ab (a, b));
+CREATE TABLE children (id INT PRIMARY KEY, ra INT, rb INT,
+  CONSTRAINT fk_ab FOREIGN KEY (ra, rb) REFERENCES parents (a, b));
+`)
+	to := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE parents (id INT PRIMARY KEY, a INT NOT NULL, b INT NOT NULL, UNIQUE KEY parents_ab (a, b) INVISIBLE);
+CREATE TABLE children (id INT PRIMARY KEY, ra INT, rb INT,
+  CONSTRAINT fk_ab FOREIGN KEY (ra, rb) REFERENCES parents (a, b));
+`)
+	plan(t, ctx, "a key turning invisible, needed by another table's foreign key", base, to)
+}
+
+// A key the plan itself is turning invisible (keyVisAlters), not merely one already
+// invisible and surviving: the same Error 3522 hits if that key leads with only NOT NULL
+// columns and no PRIMARY KEY exists at the moment it goes invisible -- here the key is over
+// the very column the PRIMARY KEY is moving onto, so it must wait until the target's own
+// PRIMARY KEY exists (the very end of the plan), not run right after alters().
+func TestProbeKeyTurningInvisibleWaitsForPrimaryKey(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a TINYINT(1) NOT NULL, PRIMARY KEY (id), UNIQUE KEY t_a (a));
+`)
+	to := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT, a TINYINT(1) NOT NULL, PRIMARY KEY (a), UNIQUE KEY t_a (a) INVISIBLE);
+`)
+	plan(t, ctx, "a key over the primary key's replacement turning invisible", base, to)
+}
+
+// The primary key moving off an AUTO_INCREMENT column: dropKeysOf's own fold (coverEarly)
+// adds the AUTO_INCREMENT column's replacement key in the same statement as DROP PRIMARY
+// KEY (Error 1075 otherwise); when the target declares that replacement key itself
+// INVISIBLE, adding it already invisible hits the same Error 3522 an already-invisible
+// surviving key does (invisibleUniqueKeysOf) -- coverEarly must add it VISIBLE and let
+// keyVisAlters turn it invisible once the target's own PRIMARY KEY exists.
+func TestProbeCoverEarlyKeyInvisibleFromCreation(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL AUTO_INCREMENT, a TINYINT(1) NOT NULL, PRIMARY KEY (id));
+`)
+	to := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL AUTO_INCREMENT, a TINYINT(1) NOT NULL, PRIMARY KEY (a),
+  UNIQUE KEY t_id (id) INVISIBLE);
+`)
+	plan(t, ctx, "the primary key moving off an auto_increment column onto an invisible replacement", base, to)
+}
+
+// Canonicalizing must be idempotent: an ENUM column under a table with its own DEFAULT
+// CHARSET / COLLATE, freshly created from raw declarative SQL, omits an explicit CHARACTER
+// SET on the column (COLLATE alone, matching the table default); reading the same column
+// back from an existing table (SHOW CREATE TABLE, canonicalizing a second time) always
+// spells both (measured against mysqld 8.4). Without stripRedundantCharset (diff.go) and
+// clearing Type.Charset once Column.Collation is set (schema.go's column()), a plan
+// comparing the two spellings of the same column would see one as changed forever --
+// pinned two ways: canonicalizing the same schema twice must compare equal (diff.Compare
+// empty both ways), and a plan between them must be empty.
+func TestProbeCanonicalizeIdempotentUnderTableCharset(t *testing.T) {
+	ctx := start(t)
+	sql := `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT PRIMARY KEY, c ENUM('a','b') NOT NULL DEFAULT 'a')
+  ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`
+	first := mustCanonical(t, ctx, sql)
+	second := mustCanonical(t, ctx, first.text)
+	if changes := diff.Compare(first.s, second.s); len(changes) > 0 {
+		var d []string
+		for _, ch := range changes {
+			d = append(d, ch.String())
+		}
+		t.Fatalf("canonicalizing twice does not compare equal:\n%s\nfirst:\n%s\nsecond:\n%s",
+			strings.Join(d, "\n"), first.text, second.text)
+	}
+	if changes := diff.Compare(second.s, first.s); len(changes) > 0 {
+		var d []string
+		for _, ch := range changes {
+			d = append(d, ch.String())
+		}
+		t.Fatalf("canonicalizing twice does not compare equal (reversed):\n%s", strings.Join(d, "\n"))
+	}
+	ddl, err := Plan(first.s, second.s, nil)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(ddl) > 0 {
+		t.Errorf("plan between two canonicalizations of the same schema is not empty:\n%s", strings.Join(ddl, "\n"))
 	}
 }
 

@@ -361,7 +361,8 @@ func (p *planner) renames() {
 		// OwnedBy is always schema-qualified; relation names (FullName, relTo, colTo) drop
 		// "public." -- ownerRelation gives the latter form
 		owner, col := ownerRelation(seq.OwnedBy), ownerColumn(seq.OwnedBy)
-		if fr := fromRels[owner]; fr == nil || fr.Column(col) == nil || fr.Column(col).Identity != 0 {
+		fr := fromRels[owner]
+		if fr == nil || fr.Column(col) == nil || fr.Column(col).Identity != 0 {
 			continue // an identity column's sequence is the server's own; nothing names it
 		}
 		toOwner, toCol := p.toName(owner), col
@@ -383,7 +384,16 @@ func (p *planner) renames() {
 				continue
 			}
 			cur := qrel(seq)
-			if ts.Schema != seq.Schema {
+			switch {
+			case ts.Schema != seq.Schema && fr.Schema == seq.Schema:
+				// ALTER TABLE ... SET SCHEMA already carries an owned sequence with it
+				// (measured): the table's own move (emitted elsewhere) gets this one
+				// there too, since it starts out in the same schema as its owner. A
+				// separate ALTER SEQUENCE ... SET SCHEMA here finds nothing left to move
+				// (42P01 "relation does not exist", measured); what follows still needs
+				// to name it where it now lives.
+				cur = q(ts.Schema) + "." + q(seq.Name)
+			case ts.Schema != seq.Schema:
 				p.emit("ALTER SEQUENCE %s SET SCHEMA %s", cur, q(ts.Schema))
 				cur = q(ts.Schema) + "." + q(seq.Name)
 			}
@@ -506,6 +516,18 @@ func (p *planner) enumRecreates() {
 func (p *planner) usesEnum(r *schema.Relation, oid catalog.OID) bool {
 	for _, c := range r.Columns {
 		if c.Type.OID == oid || p.from.Types.ArrayOf(oid) == c.Type.OID {
+			return true
+		}
+	}
+	return false
+}
+
+// typeInUse reports whether any table, anywhere in the from-side schema, has a column of
+// type oid (or an array of it): the shape ALTER TYPE runs against before any table's own
+// ALTERs (alters() emits type changes first).
+func (p *planner) typeInUse(oid catalog.OID) bool {
+	for _, r := range p.from.Relations {
+		if r.Kind == schema.Table && p.usesEnum(r, oid) {
 			return true
 		}
 	}

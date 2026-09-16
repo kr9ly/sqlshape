@@ -69,6 +69,52 @@ release it is a candidate for.
   NULL, the same directive PostgreSQL already has; a call then types as NOT NULL. A PROCEDURE
   or TRIGGER still refuses the directive (neither returns a value for it to describe).
 
+- The migrate probes have a coverage unit and a third round of vocabulary. `diff.Alphabet()`
+  (both dialects) enumerates every kind of change the diff can report -- an `(Op, Kind, Field)`
+  triple such as `+ table`, `~ column type`, `~ constraint deferrable` -- mined from the same
+  property functions `Compare` uses, and the probe's gate (200 pairs of seed 1) now fails unless
+  every triple is produced by some pair or listed as unreachable with a reason; only "the planner
+  writes no DDL for it" and "cannot appear" are accepted, and a property the diff learns fails the
+  gate until the generator produces it. PostgreSQL reaches 90 of 102 (unreached: the six
+  note-only changes `INHERITS` / partition key / partition of / `OF type` / a domain's base type /
+  a range's subtype; four PostgreSQL 18 spellings the probe's PostgreSQL 17 refuses; `~ index
+  unique`, which pg_dump never produces, and `~ function window`, since `LANGUAGE internal`
+  functions are not tracked). MySQL reaches 47 of 48 (unreached: `~ table partitioned`, a problem the plan reports rather than DDL). The vocabulary that got the
+  generators there: PostgreSQL's row-level security (the flags, policies and their predicates,
+  commands, roles), composite types (as column types, attributes added / dropped / retyped, with
+  and without columns using them), column comments, CHECK expression changes, `UNIQUE NULLS NOT
+  DISTINCT`, `DEFERRABLE` on unique constraints and foreign keys, partial and expression indexes,
+  `EXCLUDE` (btree and gist, `=` and `<>`), `ON UPDATE` actions, identity `ALWAYS` / `BY DEFAULT`
+  and identity added or dropped, rules, extensions, tables moving between schemas, standalone
+  sequences and `OWNED BY`, procedures, aggregates, `plpgsql`, trigger functions swapped, seeded
+  rows added / changed / removed; MySQL's live `AUTO_INCREMENT=<n>` on an existing table (ignored,
+  as designed), column comments, CHECK expression changes and `NOT ENFORCED`, `ON UPDATE` / `ON
+  DELETE` changes, `FULLTEXT` and `SPATIAL` indexes (a `POINT SRID 4326` column type), functional
+  and `DESC` key parts, `INVISIBLE` indexes, table `CHARSET` / `COLLATE` and `ROW_FORMAT`
+  (`ROW_FORMAT` is new to the schema model, the diff and the plan). What the round found, fixed
+  and pinned in `probe_findings_test.go` -- PostgreSQL: an attribute type change on a composite
+  type some column uses is refused (0A000), so the plan reports it instead of writing the DDL;
+  an `EXCLUDE` constraint is restored after a generated-column rewrite like the other
+  constraints; a policy or a rule reading a column whose type changes is dropped around the
+  change (0A000) and a rule is not dropped twice when a rename recreates it anyway (42704);
+  `CREATE SCHEMA` comes before and `DROP SCHEMA` after the `SET SCHEMA` moving tables in and
+  out (3F000 / 2BP01); a bigserial's sequence follows its table's `SET SCHEMA` on its own
+  (42P01), is released with `OWNED BY NONE` before the table it was owned by is dropped, and is
+  not dropped explicitly when the column or table going drops it implicitly (2BP01); `CREATE
+  AGGREGATE` keeps its definition text and a function becoming a procedure or aggregate is a
+  `DROP` and a `CREATE` (42723). MySQL: a `RENAME COLUMN` of a column a foreign key rests on and
+  a stored generated column reads can be done by neither `ALGORITHM` (1846 / 1845), so the
+  foreign keys over it are dropped before the rename and re-added after; a `MODIFY` giving a
+  column `ON UPDATE CURRENT_TIMESTAMP` runs after the plan's backfills, whose `UPDATE`s it would
+  otherwise touch (1062); an `INVISIBLE` unique key cannot stand in for a primary key that is
+  being moved (3522), so such keys are visible across the move and made invisible at the end,
+  and a key whose only difference is its visibility is an `ALTER INDEX ... [NOT] VISIBLE` (a
+  `DROP` + `ADD` in one statement keeps the old visibility, measured); the canonical form of an
+  `ENUM` / `SET` column under an explicit table `CHARSET` / `COLLATE` was not idempotent (a
+  second canonicalization added `CHARACTER SET`, so a plan after `apply` was never empty),
+  fixed in the loader and the diff. Rulings recorded in `docs/design.md` (a "how fidelity is
+  measured" section for migrations, next to the checker's) and `docs/migrations.md`.
+
 - Both migrate probes now run against tables holding rows (three per table, distinct positive
   integers, a NULL in the third row of every nullable column), with up to five mutations per pair,
   composite foreign keys, and the rest of each dialect's vocabulary: PostgreSQL's domains, a second

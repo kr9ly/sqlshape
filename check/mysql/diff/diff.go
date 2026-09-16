@@ -294,6 +294,7 @@ func TableProps(t *schema.Table) map[string]string {
 		"engine":      t.Engine,
 		"charset":     t.Charset,
 		"collation":   t.Collation,
+		"rowFormat":   t.RowFormat,
 		"comment":     t.Comment,
 		"partitioned": fmt.Sprint(t.Partitioned),
 	}
@@ -321,10 +322,40 @@ func Definition(text, name string) string {
 	text = strings.TrimSpace(text)
 	for _, prefix := range []string{"`" + strings.ReplaceAll(name, "`", "``") + "`", name} {
 		if strings.HasPrefix(text, prefix) {
-			return strings.TrimSpace(text[len(prefix):])
+			text = strings.TrimSpace(text[len(prefix):])
+			break
 		}
 	}
-	return text
+	return stripRedundantCharset(text)
+}
+
+// stripRedundantCharset removes an explicit "CHARACTER SET x" clause from a definition that
+// also carries an explicit COLLATE: a collation names its charset uniquely in MySQL, so the
+// two say the same thing, and canonicalizing is not otherwise idempotent for an ENUM / SET
+// column under a table with its own DEFAULT CHARSET / COLLATE -- freshly creating one from
+// raw declarative SQL omits CHARACTER SET (COLLATE alone, matching the table default), but
+// reading the same column back from an existing table (SHOW CREATE TABLE, canonicalizing a
+// second time) always spells both (measured against mysqld 8.4), so a plan comparing the two
+// spellings of the same column would see one as changed forever. Definitions with and
+// without the clause must compare equal; ColumnProps / alterTable's own MODIFY-COLUMN check
+// both go through Definition, so this covers both diff.Compare and the plan itself.
+func stripRedundantCharset(def string) string {
+	if !strings.Contains(def, "COLLATE ") {
+		return def
+	}
+	const marker = "CHARACTER SET "
+	i := strings.Index(def, marker)
+	if i < 0 {
+		return def
+	}
+	j := i + len(marker)
+	for j < len(def) && def[j] != ' ' {
+		j++
+	}
+	if j >= len(def) {
+		return def[:i]
+	}
+	return def[:i] + def[j+1:]
 }
 
 func columns(t *schema.Table) map[string]map[string]string {

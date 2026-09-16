@@ -94,7 +94,7 @@ type ViewColumn struct {
 	// are never NULL (dialect.Type.ElemNotNull's meaning); refrozen with Nullable when a
 	// base table's NOT NULL changes, since the proof may rest on one.
 	ElemNotNull bool
-	Collation string // the column's collation name, "" for none / default
+	Collation   string // the column's collation name, "" for none / default
 	// SrcRel / Src: the base relation and column this output column is a plain reference
 	// to (writes through the view land there); nil for computed columns. Pointers, so a
 	// later RENAME of the base column is followed the way PG follows attnums. When the
@@ -714,7 +714,11 @@ func (s *Schema) apply(n *pgparse.Node, loc int32) {
 	defer func() {
 		// remember the text that created what this statement added
 		switch n.Node.(type) {
-		case *pgparse.Node_CreateFunctionStmt:
+		case *pgparse.Node_CreateFunctionStmt, *pgparse.Node_DefineStmt:
+			// DefineStmt: CREATE AGGREGATE is the only DefineStmt form that adds to
+			// Functions (createAggregate) -- it never set Definition itself (measured:
+			// the planner's function-alter path replays it via Definition the same way
+			// as a function/procedure, and found it empty)
 			if len(s.Functions) > nFuncs {
 				s.Functions[len(s.Functions)-1].Definition = s.stmtText
 			}
