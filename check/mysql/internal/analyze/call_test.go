@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
@@ -465,8 +466,10 @@ END;
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Problems) > 0 {
-		t.Fatalf("schema problems: %v", s.Problems)
+	// the loader mirrors the server's own CREATE-time refusal (1320, measured) as a problem
+	// and still loads the function
+	if len(s.Problems) != 1 || !strings.Contains(s.Problems[0].Message, "No RETURN found in FUNCTION broken_fn") {
+		t.Fatalf("schema problems: %v, want the one 1320 problem", s.Problems)
 	}
 	if _, err := Analyze(s, "SELECT v, broken_fn(v) FROM widgets WHERE id = $1"); err != nil {
 		t.Fatalf("got %v, want no error (the broken body is skipped, not propagated as a 1442 false positive)", err)

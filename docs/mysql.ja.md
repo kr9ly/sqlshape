@@ -107,7 +107,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 - `NEW.col` / `OLD.col`はトリガ表の列として型付けする。無い列は1054
 - INSERTトリガでの`OLD`、DELETEトリガでの`NEW`は1363
-- `OLD`への代入、`NEW`へのBEFORE以外での代入は1362
+- `OLD`への代入（イベントより先に見る。INSERTトリガでも同じ）、`NEW`へのBEFORE以外での代入は1362。トリガの外の`SET NEW.col` / `SET OLD.col`は1193（そこでの`NEW.col`の読み取りは、サーバが実行時にしか解決しない列参照）
 - NOT NULL列の`NEW.col`もBEFOREトリガの中ではNULLになりうる。AFTERトリガでは宣言どおりで、サーバ自身のNOT NULL検査は両者の間で走る（測定済み）
 - `DECLARE`した変数やルーチンの引数は同名の列より優先して解決する
 

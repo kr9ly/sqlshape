@@ -308,6 +308,11 @@ func (a *analyzer) trigRowColumn(qualifier, field string, at int, write bool) (*
 	row := strings.ToUpper(qualifier)
 	event := strings.ToUpper(tg.Event)
 	timing := strings.ToUpper(tg.Timing)
+	if write && row == "OLD" {
+		// checked before the event: SET OLD.x is 1362 in an INSERT trigger too, not 1363
+		// (measured on 8.4, found by the body probe)
+		return nil, false, &Error{Message: "Updating of OLD row is not allowed in trigger", Code: 1362, Position: a.ph.Back(at)}
+	}
 	if row == "OLD" && event == "INSERT" {
 		return nil, false, &Error{Message: "There is no OLD row in on INSERT trigger", Code: 1363, Position: a.ph.Back(at)}
 	}
@@ -318,13 +323,8 @@ func (a *analyzer) trigRowColumn(qualifier, field string, at int, write bool) (*
 	if col == nil {
 		return nil, false, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", field, row), Code: 1054, Position: a.ph.Back(at)}
 	}
-	if write {
-		if row == "OLD" {
-			return nil, false, &Error{Message: "Updating of OLD row is not allowed in trigger", Code: 1362, Position: a.ph.Back(at)}
-		}
-		if row == "NEW" && timing == "AFTER" {
-			return nil, false, &Error{Message: "Updating of NEW row is not allowed in after trigger", Code: 1362, Position: a.ph.Back(at)}
-		}
+	if write && row == "NEW" && timing == "AFTER" {
+		return nil, false, &Error{Message: "Updating of NEW row is not allowed in after trigger", Code: 1362, Position: a.ph.Back(at)}
 	}
 	nullable := !col.NotNull
 	if row == "NEW" && timing == "BEFORE" {
@@ -1257,7 +1257,14 @@ func (a *analyzer) walkSetTarget(qual, name string, at int) error {
 		}
 		return nil // a system variable: not validated (item 4)
 	}
-	if a.trig != nil && (strings.EqualFold(qual, "new") || strings.EqualFold(qual, "old")) {
+	if strings.EqualFold(qual, "new") || strings.EqualFold(qual, "old") {
+		if a.trig == nil {
+			// outside a trigger the SET target NEW.x / OLD.x is read as a scoped system
+			// variable, and refused at CREATE time (1193 "Unknown system variable
+			// 'NEW.a'", measured on 8.4, found by the body probe); a read of NEW.x there is
+			// a column reference the server resolves only at run time, and passes
+			return &Error{Message: fmt.Sprintf("Unknown system variable '%s.%s'", qual, name), Code: 1193, Position: a.ph.Back(at)}
+		}
 		_, _, err := a.trigRowColumn(qual, name, at, true)
 		return err
 	}

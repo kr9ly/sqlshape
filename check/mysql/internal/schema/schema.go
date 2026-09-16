@@ -2049,9 +2049,43 @@ func (s *Schema) createRoutine(n *mysqlast.Node, kind RoutineKind, st mysqlparse
 		// but the routine is still loaded -- analyze.AnalyzeRoutine reads the very same
 		// body and raises the matching error wherever a statement's own check reaches it.
 		s.problem(at(n), "CREATE %s %s: %s", kind, name, msg)
+	} else if kind == Function && !hasReturn(r.Body) {
+		// a FUNCTION with no RETURN anywhere in its body is refused at CREATE time (1320
+		// "No RETURN found in FUNCTION", measured; found by the body probe, which saw the
+		// analyzer stop at an earlier run-time certainty of the same body and never say so)
+		s.problem(at(n), "CREATE FUNCTION %s: No RETURN found in FUNCTION %s", name, name)
 	}
 	r.Directives, r.NotNull = s.spDirectives(strings.ToLower(kind.String()), name, st.SQL, st.Offset)
 	s.Routines = append(s.Routines, r)
+}
+
+// hasReturn reports whether a RETURN statement appears anywhere in a body (the server's
+// own 1320 check is textual presence, not reachability).
+func hasReturn(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case mysqlast.List:
+		for _, e := range x {
+			if hasReturn(e) {
+				return true
+			}
+		}
+	case *mysqlast.Struct:
+		for _, k := range x.Order {
+			if hasReturn(x.Fields[k]) {
+				return true
+			}
+		}
+	case *mysqlast.Node:
+		if x.Class == "sp_return" {
+			return true
+		}
+		for _, a := range x.Args {
+			if hasReturn(a) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // bodyRefusalProblem walks a trigger's or routine's body for a construct the server itself

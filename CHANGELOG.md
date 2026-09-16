@@ -45,6 +45,14 @@ release it is a candidate for.
   keys, foreign keys with each `ON DELETE` action, checks, `NOT NULL`; `IGNORE` / `REPLACE` /
   `ON DUPLICATE KEY UPDATE` and `ON CONFLICT`), with every constraint error the server raises
   required to be a predicted violation under a key `Violates` matches.
+- MySQL trigger, procedure and function bodies are tested against the server's own
+  CREATE-time verdict the same way (the body probe in `check/mysql/internal/analyze`): every
+  construct the server refuses when the body is created, mixed into generated bodies, must
+  be refused by the checker too, and nothing the server accepts may be. It found, and this
+  release fixes: `SET OLD.col` in an INSERT trigger is 1362, not 1363 (the server checks the
+  write before the event), `SET NEW.col` / `SET OLD.col` outside a trigger is 1193, and a
+  FUNCTION with no `RETURN` is a schema problem (1320) even when the checker stops at an
+  earlier run-time certainty of the same body.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run
   outside `Run` / `Exec` the wrapping `Violates` judges.
 - `sqlshape.Error(code)` declares a schema's named error in Go (`var OrderTooLarge =

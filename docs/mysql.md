@@ -174,7 +174,9 @@ The body is read once per schema, the way a PL/pgSQL function's is on PostgreSQL
 
 - `NEW.col` / `OLD.col` type as the trigger's own table's columns; an unknown column is 1054;
 - `OLD` in an INSERT trigger, or `NEW` in a DELETE trigger, is 1363;
-- writing `OLD`, or writing `NEW` outside a BEFORE trigger, is 1362;
+- writing `OLD` (checked before the event: in an INSERT trigger too), or writing `NEW` outside
+  a BEFORE trigger, is 1362; outside a trigger, `SET NEW.col` / `SET OLD.col` is 1193 (a
+  read of `NEW.col` there is a column the server resolves only at run time);
 - a NOT NULL column's `NEW.col` can still be NULL in a BEFORE trigger and is as declared in an
   AFTER one: the server's own NOT NULL check runs between the two (measured);
 - a `DECLARE`d variable or a routine's own parameter shadows a column of the same name.
