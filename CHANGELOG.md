@@ -32,7 +32,7 @@ release it is a candidate for.
   `FOR UPDATE` / `FOR SHARE`; the loader applies `ALTER VIEW`. Inside a routine or trigger body
   the first three are the server's own 1314.
 - The statement facts the `One` proof and the obligations are judged on are tested against a
-  running server the way the checker's types are: `x/factsprobe` generates schemas with rows
+  running server the way the checker's types are: `x/stmtprobe` generates schemas with rows
   and statements over them (joins, views, derived tables, CTEs, `EXISTS` / `IN` subqueries,
   `GROUP BY`, `UNION ALL`, writes), and refutes every claim of the facts -- a predicate holding
   on every row, a fixed column, an at-most-one-row proof, the value a write stores -- with the
@@ -40,7 +40,13 @@ release it is a candidate for.
   MySQL accepted an `UPDATE` / `DELETE` whose subquery reads the table it writes (the server's
   1093, or 1443 through a view), and PostgreSQL recorded a subquery's reference to a joined
   table's column, when the subquery sits in the join's `ON` clause, as a value known before
-  the statement runs rather than as the row's own column.
+  the statement runs rather than as the row's own column. The same probe judges the predicted
+  failure modes: writes against a schema carrying every constraint kind (named and unnamed
+  keys, foreign keys with each `ON DELETE` action, checks, `NOT NULL`; `IGNORE` / `REPLACE` /
+  `ON DUPLICATE KEY UPDATE` and `ON CONFLICT`), with every constraint error the server raises
+  required to be a predicted violation under a key `Violates` matches.
+- `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run
+  outside `Run` / `Exec` the wrapping `Violates` judges.
 - `sqlshape.Error(code)` declares a schema's named error in Go (`var OrderTooLarge =
   sqlshape.Error("30001")`); `go vet` checks the declaration against the schema both ways, an
   expect line may use the Name, and `Violates` accepts the value.

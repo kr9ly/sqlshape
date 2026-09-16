@@ -83,6 +83,12 @@ func wrapErr[R, P any](s sqlshape.Stmt[R, P], err error) error {
 	return wrapPgErr(err, expects(s.Template))
 }
 
+// WrapError is the error Run / Exec would return for err when it came from a statement run
+// outside them (pgx directly, a migration script, a test): a *ConstraintError for a
+// constraint violation (SQLSTATE class 23), so that Violates can judge it; err itself
+// otherwise. A statement's own `-- sqlshape: expect` codes are not known here.
+func WrapError(err error) error { return wrapPgErr(err, nil) }
+
 // wrapPgErr is wrapErr with the statement's expectations passed in (nil: class 23 only).
 // An error already mapped is left alone.
 func wrapPgErr(err error, expects func(code string) bool) error {

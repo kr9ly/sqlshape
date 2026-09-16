@@ -1,12 +1,17 @@
-// Package factsprobe checks a dialect's statement facts (x/facts) against a running
-// server: it generates a small schema with rows and statements over it, asks the dialect's
-// analyzer for each statement's facts, runs the statement, and refutes every claim the
-// facts make with what the server actually returned -- a predicate that every row was said
-// to satisfy, a column said to be fixed, a level said to be at most one row. It is the
-// oracle behind the One proof and the obligations (x/cardinality, x/obligation), written
-// once for every dialect; check/postgres and check/mysql drive it from their tests. Like
-// pgtest and mysqltest it is sqlshape's own test tooling, with no compatibility promise.
-package factsprobe
+// Package stmtprobe checks a dialect's analyzer against a running server on the claims a
+// handwritten test cannot enumerate: it generates a small schema with rows and statements
+// over it, asks the analyzer for each statement's verdict, runs the statement, and refutes
+// the verdict with what the server did. Two probes share the generator: the facts probe
+// (Run) refutes every claim of the statement facts (x/facts) -- a predicate that every row
+// was said to satisfy, a column said to be fixed, a level said to be at most one row, the
+// value a write stores -- with the rows the server returned; the failure probe
+// (RunFailures) refutes the predicted failure modes -- every constraint error the server
+// raises must be among the violations predicted for the statement, under the key the
+// runtime's Violates would match. It is the oracle behind the One proof, the obligations
+// and the expect lines, written once for every dialect; check/postgres and check/mysql
+// drive it from their tests. Like pgtest and mysqltest it is sqlshape's own test tooling,
+// with no compatibility promise.
+package stmtprobe
 
 import (
 	"fmt"
@@ -59,6 +64,24 @@ type Table struct {
 	// view: the table is a view over view.base (CREATE VIEW); Rows are the base's rows
 	// its conjuncts keep, PK and Uniques are nil
 	view *derived
+	// the failure probe's constraints (nil for the facts probe's tables)
+	uniqueName string    // CONSTRAINT <name> UNIQUE for Uniques[0], "" for an unnamed one
+	check      *checkDef // CHECK (col > 0)
+	fk         *fkDef    // FOREIGN KEY (col) REFERENCES ref (id)
+}
+
+// checkDef is a CHECK (col > 0) constraint.
+type checkDef struct {
+	col  string
+	name string // "" for the server's own name
+}
+
+// fkDef is a single-column foreign key to another table's id.
+type fkDef struct {
+	col      string
+	ref      *Table
+	name     string // "" for the server's own name
+	onDelete string // "" (the default, RESTRICT / NO ACTION), "CASCADE" or "SET NULL"
 }
 
 func (t *Table) col(name string) int {
@@ -137,8 +160,29 @@ func (t *Table) create(d Dialect) string {
 	if t.PK != nil {
 		parts = append(parts, "PRIMARY KEY ("+strings.Join(t.PK, ", ")+")")
 	}
-	for _, u := range t.Uniques {
+	for i, u := range t.Uniques {
+		if i == 0 && t.uniqueName != "" {
+			parts = append(parts, "CONSTRAINT "+t.uniqueName+" UNIQUE ("+strings.Join(u, ", ")+")")
+			continue
+		}
 		parts = append(parts, "UNIQUE ("+strings.Join(u, ", ")+")")
+	}
+	if c := t.check; c != nil {
+		p := "CHECK (" + c.col + " > 0)"
+		if c.name != "" {
+			p = "CONSTRAINT " + c.name + " " + p
+		}
+		parts = append(parts, p)
+	}
+	if f := t.fk; f != nil {
+		p := "FOREIGN KEY (" + f.col + ") REFERENCES " + f.ref.Name + " (id)"
+		if f.name != "" {
+			p = "CONSTRAINT " + f.name + " " + p
+		}
+		if f.onDelete != "" {
+			p += " ON DELETE " + f.onDelete
+		}
+		parts = append(parts, p)
 	}
 	return "CREATE TABLE " + t.Name + " (" + strings.Join(parts, ", ") + ");"
 }

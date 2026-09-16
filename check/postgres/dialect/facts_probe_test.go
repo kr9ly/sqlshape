@@ -12,7 +12,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
-	"github.com/kr9ly/sqlshape/v2/x/factsprobe"
+	"github.com/kr9ly/sqlshape/v2/x/stmtprobe"
 )
 
 var (
@@ -51,8 +51,8 @@ func TestFactsProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	rep, err := factsprobe.Run(ctx, factsprobe.Options{
-		Dialect:        factsprobe.Dialect{Header: "-- sqlshape: postgres 17", IntType: "integer", StrType: "text"},
+	rep, err := stmtprobe.Run(ctx, stmtprobe.Options{
+		Dialect:        stmtprobe.Dialect{Header: "-- sqlshape: postgres 17", IntType: "integer", StrType: "text"},
 		Load:           Load,
 		DB:             db,
 		Seed:           *factsSeed,
@@ -63,7 +63,7 @@ func TestFactsProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := rep.String("postgres")
+	text := rep.String("facts probe (postgres)")
 	if *factsReport != "" {
 		if err := os.WriteFile(*factsReport, []byte(text), 0o644); err != nil {
 			t.Fatal(err)

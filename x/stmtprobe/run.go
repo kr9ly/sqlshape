@@ -1,4 +1,4 @@
-package factsprobe
+package stmtprobe
 
 import (
 	"context"
@@ -41,6 +41,7 @@ type Report struct {
 	Unverified map[string]int
 	Missed     []string // alphabet entries neither hit nor known unreached
 	Stale      []string // known-unreached entries that were hit
+	alphabet   []string // the alphabet the report covers (Alphabet, or FailureAlphabet)
 }
 
 // Run generates, judges and reports.
@@ -116,6 +117,7 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 			}
 		}
 	}
+	rep.alphabet = Alphabet
 	return rep, nil
 }
 
@@ -224,10 +226,10 @@ func (o Options) judgeOne(ctx context.Context, q *query, m *Schema, an dialect.A
 }
 
 // constraintError: the server refused a write for a constraint (PostgreSQL's class 23,
-// MySQL's 1062 / 1048 / 1452 / 3819 / 1263).
+// MySQL's 1062 / 1048 / 1364 / 1452 / 1451 / 3819 / 1263 / 1369).
 func constraintError(err error) bool {
 	msg := err.Error()
-	for _, mark := range []string{"SQLSTATE 23", "Error 1062", "Error 1048", "Error 1452", "Error 3819", "Error 1263"} {
+	for _, mark := range []string{"SQLSTATE 23", "Error 1062", "Error 1048", "Error 1364", "Error 1452", "Error 1451", "Error 3819", "Error 1263", "Error 1369"} {
 		if strings.Contains(msg, mark) {
 			return true
 		}
@@ -434,7 +436,7 @@ func sameRows(want, got []row, limit1 bool) bool {
 // String renders the report the way the migrate probe's is written.
 func (rep *Report) String(title string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# facts probe (%s)\n\n", title)
+	fmt.Fprintf(&b, "# %s\n\n", title)
 	var keys []string
 	for k := range rep.Counts {
 		keys = append(keys, k)
@@ -457,8 +459,8 @@ func (rep *Report) String(title string) string {
 			fmt.Fprintf(&b, "- %d x %s\n", rep.Unverified[u], u)
 		}
 	}
-	fmt.Fprintf(&b, "\n## alphabet coverage\n\n%d entries, %d hit\n\n", len(Alphabet), len(rep.Hit))
-	for _, e := range Alphabet {
+	fmt.Fprintf(&b, "\n## alphabet coverage\n\n%d entries, %d hit\n\n", len(rep.alphabet), len(rep.Hit))
+	for _, e := range rep.alphabet {
 		switch {
 		case rep.Hit[e]:
 			fmt.Fprintf(&b, "- [x] %s\n", e)

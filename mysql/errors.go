@@ -72,6 +72,11 @@ var (
 	reCheckOption = regexp.MustCompile(`^CHECK OPTION failed '(?:[^'.]+\.)?([^']+)'$`)   // 1369: "CHECK OPTION failed 'db.view'"
 )
 
+// WrapError is the error Run / Exec would return for err when it came from a statement run
+// outside them (database/sql directly, a migration script, a test): a *ConstraintError for
+// an integrity error, so that Violates can judge it; err itself otherwise.
+func WrapError(err error) error { return wrapErr(err) }
+
 // wrapErr maps MySQL's integrity errors to ConstraintError; other errors pass through.
 func wrapErr(err error) error {
 	var ce *ConstraintError

@@ -6,7 +6,7 @@ import (
 	"github.com/kr9ly/sqlshape/v2/x/facts"
 )
 
-// Found by x/factsprobe (the facts oracle, first run on PostgreSQL): a subquery inside a
+// Found by x/stmtprobe (the facts oracle, first run on PostgreSQL): a subquery inside a
 // join's ON clause referencing a column of either joined side recorded the reference as a
 // Known term ("t1.s": a value fixed before the statement runs) instead of an Outer term (the
 // enclosing row's own column). The subquery's scope sits under the passthrough scope the

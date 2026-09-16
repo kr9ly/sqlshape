@@ -533,7 +533,7 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 // table it writes: 1093 "You can't specify target table 't' for update in FROM clause" for
 // a subquery naming the target itself (in WHERE, EXISTS or IN alike), 1443 "The definition
 // of table 'v' prevents operation UPDATE on table 't'." for one reading a view over it
-// (measured on 8.4, found by x/factsprobe). A derived table over the target is
+// (measured on 8.4, found by x/stmtprobe). A derived table over the target is
 // materialized and allowed (measured), as is an INSERT ... SELECT from its own table; a
 // scalar subquery in SET is not recorded in the facts and goes unchecked here.
 func (a *analyzer) targetInSubquery(op string) error {

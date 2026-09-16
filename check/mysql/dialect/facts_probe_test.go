@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/kr9ly/sqlshape/mysqltest/v2"
-	"github.com/kr9ly/sqlshape/v2/x/factsprobe"
+	"github.com/kr9ly/sqlshape/v2/x/stmtprobe"
 )
 
 var (
@@ -47,8 +47,8 @@ func TestFactsProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	rep, err := factsprobe.Run(ctx, factsprobe.Options{
-		Dialect:        factsprobe.Dialect{Header: "-- sqlshape: mysql 8.4", IntType: "INT", StrType: "VARCHAR(20)", Positional: true},
+	rep, err := stmtprobe.Run(ctx, stmtprobe.Options{
+		Dialect:        stmtprobe.Dialect{Header: "-- sqlshape: mysql 8.4", IntType: "INT", StrType: "VARCHAR(20)", Positional: true},
 		Load:           load,
 		DB:             db.Conn(),
 		Seed:           *factsSeed,
@@ -59,7 +59,7 @@ func TestFactsProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := rep.String("mysql")
+	text := rep.String("facts probe (mysql)")
 	if *factsReport != "" {
 		if err := os.WriteFile(*factsReport, []byte(text), 0o644); err != nil {
 			t.Fatal(err)

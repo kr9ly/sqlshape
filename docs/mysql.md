@@ -119,7 +119,8 @@ What a statement's own form does to the list:
   included) rejects a `NULL` for a `NOT NULL` column; more rows, `INSERT ... SELECT` and `UPDATE`
   store the type's implicit default with a warning, so no 1048 is listed for them.
 
-`mysql.Violates(err, key)` tests the run-time error by the same names.
+`mysql.Violates(err, key)` tests the run-time error by the same names; `mysql.WrapError(err)`
+gives an error from a statement run outside `Run` / `Exec` the same wrapping first.
 
 The same two shapes are two writes for the obligation checker (x/obligation), not one:
 

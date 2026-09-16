@@ -80,7 +80,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 - 厳密モードでなければ、`NOT NULL`列への`NULL`を拒むのは1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけで、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、それらには1048を挙げない
 - `UPDATE IGNORE`は`WITH CHECK OPTION`ビューの1369も、キーや`NOT NULL`の違反と同じように吸収する（測定済み）。トリガ自身の`SIGNAL`はどの`IGNORE`も吸収しないのと対照的である
 
-`mysql.Violates(err, key)`は実行時のエラーを同じ名前で判定する。
+`mysql.Violates(err, key)`は実行時のエラーを同じ名前で判定する。`Run` / `Exec`の外で走らせた文のエラーは`mysql.WrapError(err)`で先に同じ包み方にする。
 
 同じ2つの形は、義務判定（x/obligation）にとっては書き込みが2つある文である:
 

@@ -12,7 +12,7 @@ import (
 	"github.com/kr9ly/sqlshape/mysqltest/v2"
 )
 
-// Found by x/factsprobe (the facts oracle, first run): the server refuses an UPDATE or
+// Found by x/stmtprobe (the facts oracle, first run): the server refuses an UPDATE or
 // DELETE whose subquery reads the table being written -- 1093 for the table itself, in
 // WHERE, EXISTS or IN alike, 1443 for a view over it -- and the analyzer accepted both. A
 // derived table over the target is materialized and accepted, INSERT ... SELECT from its own

@@ -48,6 +48,8 @@ if postgres.Violates(err, "customers_email_key") {
 
 `-- sqlshape: error <code> = <Name>`注釈のNameは、`sqlshape.Error(code)`でGoに写し取られる（[checks.ja.md](checks.ja.md#トリガーが送出するエラーには名前を付ける)）。これは`sqlshape.Failure`——コードそのものを保持する`~string`——を返す。`Violates`は`Failure`も生の文字列も同じに扱い（`Violates[K ~string](err error, key K) bool`）、渡されたコードだけで判定する。スキーマを読まないので、Nameとたまたま同じ文字列との区別が付かず、両者を解決し合うこともない。`OrderTooLarge`が`sqlshape.Error("P0401")`なら、`Violates(err, OrderTooLarge)`と`Violates(err, "P0401")`はまったく同じ呼び出しである。
 
+`Run` / `Exec`の外で走らせた文（pgxを直接、マイグレーションスクリプト、テスト）のエラーは`postgres.WrapError(err)`で同じ包み方になり、`Violates`で判定できる。そこでは文自身のexpectのコードは分からないので、制約のクラスだけを包む。
+
 ## 検査済みのSQLのみが実行できる
 
 実行のたびに、テンプレートから組み立てたSQLが、検査器が同じ分岐の組み合わせについて検査したSQLと一字一句一致することを確認する。一致しなければクエリは投げずにエラーになる:

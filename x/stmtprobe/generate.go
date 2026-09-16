@@ -1,4 +1,4 @@
-package factsprobe
+package stmtprobe
 
 import (
 	"fmt"

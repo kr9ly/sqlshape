@@ -83,6 +83,10 @@ string that happens to equal it, and never resolves one to the other. `Violates(
 OrderTooLarge)` and `Violates(err, "P0401")` are exactly the same call once `OrderTooLarge` is
 `sqlshape.Error("P0401")`.
 
+A statement run outside `Run` / `Exec` (pgx directly, a migration script, a test) gets the same
+wrapping from `postgres.WrapError(err)`, so `Violates` judges its error too; a statement's own
+expect codes are not known there, only the constraint classes.
+
 ## Only checked SQL runs
 
 On every execution, the SQL built from the template is compared, character for character, with the
