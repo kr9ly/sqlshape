@@ -203,7 +203,10 @@ type analyzer struct {
 	// cursors of the innermost block that has one in scope; labels are the enclosing
 	// labeled blocks / loops, for LEAVE / ITERATE. sawReturn records whether the routine's
 	// body had a RETURN anywhere (a function without one is refused).
-	trig      *schema.Trigger
+	trig *schema.Trigger
+	// storeRow is the VALUES row (1-based) whose literals literalStore is judging; 0
+	// outside a multi-row INSERT (the message then says row 1)
+	storeRow  int
 	trigTable *schema.Table
 	routine   *schema.Routine
 	vars      *varScope
@@ -738,7 +741,9 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
 		}
 		for i, v := range vals {
+			a.storeRow = ri + 1
 			as, err := a.assign(scope{rels: []relation{*rel}}, rel.table, targets[i], v)
+			a.storeRow = 0
 			if err != nil {
 				return err
 			}
@@ -1626,6 +1631,11 @@ func (a *analyzer) assign(sc scope, table *schema.Table, col *schema.Column, v m
 	t, err := a.expr(sc, v, "field list")
 	if err != nil {
 		return assignment{}, err
+	}
+	if a.storeChecks(table, a.storeRow) {
+		if e := a.literalStore(col, v, max(a.storeRow, 1)); e != nil {
+			return assignment{}, e
+		}
 	}
 	return assignment{col: col, nullable: !t.known || t.nullable}, nil
 }

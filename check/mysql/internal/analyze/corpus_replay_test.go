@@ -437,8 +437,14 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 			return
 		}
 		defer dc.Close()
-		if _, err := dc.ExecContext(dctx, "SET SESSION lock_wait_timeout = 3"); err != nil {
+		if _, err := dc.ExecContext(dctx, "SET SESSION lock_wait_timeout = 3, SESSION autocommit = 1"); err != nil {
 			schemaBroken = "dump session: " + err.Error()
+			return
+		}
+		if _, err := dc.ExecContext(dctx, "COMMIT"); err != nil {
+			// the file may have set autocommit off globally (locking_readonly_db): a pooled
+			// connection would then read the dictionary from a transaction's stale snapshot
+			schemaBroken = "dump commit: " + err.Error()
 			return
 		}
 		if _, err := dc.ExecContext(dctx, "USE `"+current.String+"`"); err != nil {
@@ -450,10 +456,9 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 			schemaBroken = "dump: " + err.Error()
 			return
 		}
-		header := "-- sqlshape: mysql 8.4\n"
-		if mode != "" {
-			header += "-- sqlshape: server sql_mode = '" + mode + "'\n"
-		}
+		// the session's sql_mode, an empty one included (SET sql_mode = '' is the corpus's
+		// way out of strict mode; without the line the schema would assume the default)
+		header := "-- sqlshape: mysql 8.4\n-- sqlshape: server sql_mode = '" + mode + "'\n"
 		sc, err := schema.Load(header + text)
 		if err != nil {
 			schemaBroken = "load: " + err.Error()
@@ -583,10 +588,14 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 			continue
 		}
 		if word == "CALL" {
-			if body := calledBody(s, sql); body != "" && (reSystemSchema.MatchString(body) || mentionsAny(body, temps)) {
+			body := calledBody(s, sql)
+			if serr == nil && reBodyDDL.MatchString(body) {
+				dirty = true // the body ran DDL: the schema is not what the CALL was judged on
+			}
+			if body != "" && (reSystemSchema.MatchString(body) || mentionsAny(body, temps) || reCreateTempAny.MatchString(body)) {
 				// the routine's body reads information_schema / performance_schema (the
-				// corpus's own p_verify_reprepare_count) or a TEMPORARY table: the same
-				// two exclusions as for a top-level statement, one level down
+				// corpus's own p_verify_reprepare_count) or a TEMPORARY table, or creates
+				// one: the same exclusions as for a top-level statement, one level down
 				p.count("not judged (routine body)", 1)
 				continue
 			}
@@ -686,6 +695,8 @@ func predictedCodes(r *Result) []int {
 }
 
 var (
+	reBodyDDL       = regexp.MustCompile(`(?i)\b(CREATE|DROP|ALTER|RENAME)\s+(TABLE|VIEW|TEMPORARY)\b`)
+	reCreateTempAny = regexp.MustCompile(`(?i)\bCREATE\s+TEMPORARY\s+TABLE\b`)
 	reMissingTable  = regexp.MustCompile(`Table '([^']+)' doesn't exist`)
 	reQualifiedCall = regexp.MustCompile("(?i)`?\\w+`?\\s*\\.\\s*`?\\w+`?\\s*\\(")
 	reCallName      = regexp.MustCompile("(?is)^CALL\\s+`?([\\w$]+)`?")

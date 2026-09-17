@@ -137,6 +137,31 @@ What a statement's own form does to the list:
 `mysql.Violates(err, key)` tests the run-time error by the same names; `mysql.WrapError(err)`
 gives an error from a statement run outside `Run` / `Exec` the same wrapping first.
 
+A literal the column can never store is not a failure mode but the statement's own error,
+since every execution fails the same way in strict mode (the default). The checker applies the
+server's own `Field::store` rules to a literal written straight into a column by `INSERT ...
+VALUES`, `UPDATE ... SET`, `ON DUPLICATE KEY UPDATE` or `REPLACE` (all measured):
+
+| into | rejected | error |
+|---|---|---|
+| an integer column | a value outside its range, a real or decimal included once rounded | 1264 |
+| | a string holding no number (`'abc'`, `''`) | 1366 |
+| | a number followed by other text (`'12a'`) | 1265 |
+| `YEAR` | anything but 0, 1-99 and 1901-2155 | 1264 |
+| `DECIMAL(M,D)` | more than M-D integer digits once rounded to D places; a negative value into `UNSIGNED` | 1264 |
+| `FLOAT` | a value beyond the single-precision range | 1264 |
+| `DATE` / `DATETIME` / `TIMESTAMP` | a string `str_to_datetime` cannot read or finds out of range, a zero month, day or date the `sql_mode` forbids (`NO_ZERO_IN_DATE`, `NO_ZERO_DATE`), a day the month lacks unless `ALLOW_INVALID_DATES`; a number `number_to_datetime` rejects; a `TIMESTAMP` outside 1970-01-01 00:00:01 to 2038-01-19 03:14:07 UTC (judged only where the session time zone cannot change the verdict) | 1292 |
+| `TIME` | a string `str_to_time` cannot read, minutes or seconds of 60 or more, more than 838 hours | 1292 |
+| `CHAR(n)` / `VARCHAR(n)` / `BINARY(n)` / `VARBINARY(n)` | a string longer than n characters (bytes when binary) once trailing spaces are dropped | 1406 |
+| `ENUM` | a string that names no member (compared as the collation does) and is not a member's index; a number outside 1 to the member count | 1265 |
+| `SET` | a list naming a member the set lacks | 1265 |
+| any spatial type | a number or a string: neither can hold a well-formed geometry | 1416 |
+
+Not read: `INSERT IGNORE` / `UPDATE IGNORE` and a schema whose `sql_mode` is not strict (the
+value is stored adjusted, with a warning; under `STRICT_TRANS_TABLES` alone a nontransactional
+table is strict for the first row only), a value inside a routine or trigger body, hex and bit
+literals, `JSON` and `BIT` columns, and an expression the server would fold (`100 + 28`).
+
 The same two shapes are two writes for the obligation checker (x/obligation), not one:
 
 | statement | writes recorded | why |

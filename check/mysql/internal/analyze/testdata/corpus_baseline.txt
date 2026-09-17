@@ -110,8 +110,6 @@ check_constraints	RUNTIME 3819	b8787742eb7a	INSERT INTO t1 VALUES(1)
 check_constraints	RUNTIME 3819	0cfc54392caf	INSERT INTO t1 VALUES(10)
 check_constraints	RUNTIME 3819	3b1af52db195	INSERT INTO t1 VALUES()
 check_constraints	LENIENT 13	dd5c5b1614c5	LOAD DATA INFILE '../../std_data/loaddata3.dat' IGNORE INTO TABLE t1
-check_constraints	RUNTIME 1265	d12d845ac0a9	INSERT INTO t1 VALUES('c')
-check_constraints	RUNTIME 1265	6e675b86c259	INSERT INTO t1 VALUES('d')
 check_constraints	RUNTIME 3819	93e7a4d7f7af	UPDATE v1 SET f1 = 8 WHERE f1 = 6
 clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	387d6ac73624	CALL p0_proc_with_warning
 clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	6b391fb2d47e	CALL p1_declare_handler_preserves
@@ -222,8 +220,6 @@ ctype_ucs	DIFF column count	6b5e2a563541	SELECT '00' UNION SELECT '10' INTO OUTF
 ctype_ucs	DIFF column count	482172a0d82b	SELECT '00' UNION SELECT '10' INTO OUTFILE 'tmpp2.txt' CHARACTER SET ucs2
 ctype_ucs	DIFF column type binary->string	592299046777	select insert(_ucs2 0x006100620063,10,2,_ucs2 0x006400650066)
 ctype_ucs	DIFF column type binary->string	158c150f21d4	select insert(_ucs2 0x006100620063,1,2,_ucs2 0x006400650066)
-ctype_ucs	RUNTIME 1265	6b3cbaa56eb7	insert into t1 values ('D')
-ctype_ucs	RUNTIME 1265	577eb3c7f6e2	insert into t1 values ('E ')
 ctype_ucs	DIFF column type binary->string	13fd5f872954	select concat(a,if(b<10,_ucs2 0x0061,_ucs2 0x0062)) from t1
 ctype_ucs	DIFF column type binary->string	14a46bc8dab0	select concat(a,if(b>10,_ucs2 0x0061,_ucs2 0x0062)) from t1
 ctype_ucs	LENIENT 1267	794d84c70b8b	select concat(a,if(b<10,_ucs2 0x00C0,_ucs2 0x0062)) from t1
@@ -375,7 +371,7 @@ delete	CODE 1109->1066	b6e6b934ab14	DELETE t1 FROM db1.t1, db2.t1
 delete	LENIENT 1146	ef25e210a7af	DELETE t1, t2, t3 FROM t1, t2, t3
 delete	LENIENT 1442	15ba89d25e6a	DELETE IGNORE FROM t1
 delete	CODE 1395->1288	75f7bc00c795	DELETE v2 FROM v2
-delete	CODE 1242->3065	9308895fb05c	DELETE    OUTR1.* 
+delete	RUNTIME 1242	9308895fb05c	DELETE    OUTR1.* 
 delete	RUNTIME 1242	7fe4ef483069	DELETE OUTR1.* FROM e3 AS OUTR1 INNER JOIN d3 AS OUTR2 ON 
 delete	RUNTIME 1292	675d39c577f8	DELETE d2 FROM t AS d1, t AS d2 WHERE d1.a > d2.a
 delete	RUNTIME 1292	b81eb3f68bc3	DELETE FROM outr1, outr2
@@ -405,7 +401,6 @@ derived_condition_pushdown	DIFF column type int->bigint	4d852a9e4b66	SELECT f1, 
 derived_correlated	CODE 1109->1054	581a749bcf45	with cte as (select t1.a) select (select * from cte) from t1
 derived_correlated	DIFF column type int->bigint	3a9631a8feeb	select * from t1,
 derived_correlated	DIFF column type int->bigint	5c84aaa8d089	SELECT * FROM t1, LATERAL ( SELECT MAX(1) FROM t2 GROUP BY t1.f1 ) AS l1
-derived_correlated	STRICT 1055	da47e7d09bd6	SELECT (SELECT t0007.c0009         FROM (SELECT t0007.c0008 AS c0003
 derived_correlated	LENIENT 1054	32360023ff66	SELECT 1 FROM
 derived_cs	LENIENT 1054	27f9218dfd2f	select QN.a from (select 1 as a) as qn
 derived_cs	LENIENT 1054	f633e599218b	select qn.a from (select 1 as a) as QN
@@ -446,6 +441,7 @@ events_bugs	LENIENT 1525	112d8151900e	call p_16()
 events_bugs	SCHEMA problems: server sql_mode = ?: sql_mode: ? is not a mode of MySQL N.N	d325095ea8ca	select @@sql_mode into @full_mode
 events_restart	SCHEMA no database selected	89b067bb657c	SELECT @@event_scheduler
 events_time_zone	LENIENT 1210	e2bc9f8126c5	SELECT SLEEP(@step / 2)
+explain	CODE 1048->1292	5cecdb2dcf3e	INSERT INTO t2 VALUES (NULL), (0)
 explain_dml	SCHEMA problems: PARTITION RANGE: definition not understood	6c52d044b54d	INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')
 explain_json_hypergraph	SCHEMA problems: unsupported construct ternary_option: ?	922f59c2175c	INSERT INTO t1 VALUES (-100,1),(1,6)
 explain_json_hypergraph	SCHEMA problems: unsupported construct ternary_option: ?	96a98e11f0bc	INSERT INTO t2 VALUES
@@ -455,9 +451,6 @@ filesort	STRICT 1054	46259457ccb0	SELECT 'a' AS f1 FROM t1 WHERE a='8' GROUP BY 
 filesort	LENIENT 3037	dcbf912f5a26	SELECT
 filesort_debug	LENIENT 1038	9e94f8ab4797	DELETE IGNORE FROM t1 ORDER BY c26,c7,c23,c4,c25,c5,c20,
 filesort_debug	LENIENT 1038	b67bd5113372	DELETE FROM t1 ORDER BY c26,c7,c23,c4,c25,c5,c20,
-filesort_debug	STRICT 1055	f095b43b73c9	SELECT (SELECT 1 FROM t2 GROUP BY d, a_t2 HAVING c) FROM t1 GROUP BY (1=2)
-filesort_json	RUNTIME 1292	85768c129272	INSERT INTO `F` (`col_int_key`, `col_date_key`, `pk`, `col_varchar_10_utf8`, `col_int`, `col_varchar
-filesort_json	RUNTIME 1292	2e78e8198285	INSERT INTO `H` (`col_date_key`, `col_int`, `col_int_key`, `col_varchar_255_latin1`, `col_varchar_25
 flush	LENIENT 1100	3f0ae4aca767	select * from t3
 flush	LENIENT 1100	648061759d0e	insert into t3 (a) values (1)
 flush	LENIENT 1100	f752c3b7cad4	insert into t3 (a) values (2)
@@ -613,8 +606,6 @@ func_like	LENIENT 1210	842021b5350c	SELECT ('a%b' LIKE 'ax%b' ESCAPE x) FROM t1
 func_like	RUNTIME 1690	51d55944de2b	SELECT 1 FROM t1 HAVING (SELECT 1 FROM t1) LIKE EXP(NOW())
 func_like	LENIENT 3141	710a5fdc0ffd	SELECT 'a' LIKE '%' ESCAPE CAST('' AS JSON)
 func_like	CODE 1292->1096	b2e02fcc4680	DELETE FROM t1 WHERE
-func_math	DIFF nullable true->false	7d8802508543	select format(t2.f2-t2.f1+1,0) from t1,t2
-func_math	DIFF nullable true->false	eed8bb02b228	select format(cast(-2 as unsigned), 2), format(18446744073709551614, 2), format(-2, 2)
 func_math	DIFF column type bigint->int unsigned	1670936464d8	SELECT c DIV 900 y FROM t1 GROUP BY y
 func_math	DIFF column name	2e317365761c	SELECT DISTINCT (a DIV 254576881) FROM t1
 func_math	DIFF column name	ee9997bbd3e0	SELECT (a DIV 254576881) FROM t1 UNION ALL 
@@ -673,7 +664,6 @@ func_math	LENIENT 3020	8b6fb7b92b87	INSERT INTO t1 VALUES (log2(0))
 func_math	LENIENT 3020	c40dca3eed8f	INSERT INTO t1 VALUES (log10(0))
 func_math	LENIENT 3020	dcc7bfe2dfce	UPDATE t1 SET a = ln(0)
 func_math	LENIENT 3020	af9e74b99485	DELETE FROM t1 WHERE a <=> ln(0)
-func_math	STRICT 1146	e46f6944a877	CALL test_round_fn()
 func_math	LENIENT 13	784072fcd2d2	LOAD DATA INFILE '../../std_data/loaddata_utf8.dat' INTO TABLE t1 CHARACTER SET utf8mb3
 func_math	RUNTIME 1690	4a360a09dbac	select cast(pow(2,63) as signed) as pp
 func_math	RUNTIME 1690	f8b68b3602e9	SELECT 9223372036854775809 * -1
@@ -690,9 +680,6 @@ func_math	RUNTIME 1264	b4538efbcc51	CALL test_round(9223372036854775808)
 func_math	RUNTIME 1292	1e4a60955fe6	INSERT INTO t VALUES (1.0E+01+'a')
 func_math	RUNTIME 1690	62d79c4f163d	SELECT a, 0-a FROM t1
 func_math	RUNTIME 1690	11eb49c027f0	SELECT a, 1-a FROM t1
-func_math	STRICT 1055	f9585ef65bb8	SELECT 27 DIV (c2/c1) / 17 AS c1 FROM t1 GROUP BY c1
-func_math	STRICT 1055	0aacea06cabd	SELECT 27 DIV CAST(c2/c1 AS CHAR) / 17 AS c1 FROM t1 GROUP BY c1
-func_math	STRICT 1055	3dfaa6d8988e	SELECT 27 DIV CAST(c2/c1 AS DOUBLE) / 17 AS c1 FROM t1 GROUP BY c1
 func_math	DIFF column type bigint->int	42d218a0b50a	SELECT * FROM (SELECT -TRUE AS a, --TRUE AS b) AS dt
 func_math	DIFF column type bigint->int	35ddc7e2e9a9	SELECT * FROM v
 func_misc	RUNTIME 1242	67ba1b836c25	select benchmark(100, (select (a) from table_26093))
@@ -802,7 +789,7 @@ func_str	DIFF column type string->binary	b10daf93209c	select insert(null,2,1,'hi
 func_str	DIFF column type string->binary	a58bbe924e0f	select insert('txs',null,null,'hi'),insert(null,null,null,null)
 func_str	DIFF column type bigint unsigned->binary	3353c54202aa	SELECT REPEAT(0x1111, 40000000) >> 1
 func_str	DIFF column name	437ae66d6822	SELECT (~(REPEAT(0xb822, 0x5C9C380)))
-func_str	STRICT 1140	b9eea417c926	SELECT COUNT(*), CONCAT(x, 'x') FROM (SELECT * FROM t) AS tt
+func_str	DIFF nullable false->true	b9eea417c926	SELECT COUNT(*), CONCAT(x, 'x') FROM (SELECT * FROM t) AS tt
 func_str	DIFF nullable true->false	ebe7aae496e4	SELECT
 func_str	DIFF nullable true->false	83e62894d455	SELECT
 func_str	DIFF nullable true->false	1c1410213bd3	SELECT
@@ -866,7 +853,6 @@ func_time	LENIENT 1305	abbf0ba65cbe	insert into t1 set a = sysdate()
 func_time	CODE 1267->1140	73b3636e060f	select concat(a,ifnull(min(date_format(now(), '%Y-%m-%d')),' ull')) from t1
 func_time	DIFF column type datetime->date	c804874e72b7	SELECT min(timestampadd(month, 1>'', from_days('%Z')))
 func_time	DIFF column type decimal->bigint	c262b2f37b36	SELECT a, UNIX_TIMESTAMP(a), UNIX_TIMESTAMP('5000-01-01 00:00:00') FROM t1
-func_time	DIFF nullable true->false	c71d845d0070	SELECT CONCAT(UNIX_TIMESTAMP(COUNT(1)), '|')
 func_time	LENIENT 1210	daf354ffeada	SELECT PERIOD_ADD(-11924, 2892462180)
 func_time	LENIENT 1210	0b7e8c1c1799	SELECT PERIOD_DIFF(200024, 200012)
 func_time	LENIENT 1210	4847a1601c08	SELECT PERIOD_DIFF(200012, 200024)
@@ -1284,7 +1270,6 @@ grant	DIFF column name	024eee5d764a	select t1.*,t2.* from mysqltest_1.t1,mysqlte
 grant	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	6827cdef3cf4	SELECT TABLE_SCHEMA, TABLE_NAME, GROUP_CONCAT(PRIVILEGE_TYPE ORDER BY
 grant	SCHEMA problems: unsupported construct ternary_option: ?	ef76365ef095	insert into tables_priv values ('','test_db','mysqltest_1','test_table','test_grantor',CURRENT_TIMES
 grant	SCHEMA problems: unsupported construct ternary_option: ?	4efd4bad66a8	delete from tables_priv where host = '' and user = 'mysqltest_1'
-grant	DIFF nullable true->false	78f01e7150df	SELECT USER()
 grant2	DIFF column type string->binary	a42d37b8c8e5	select current_user()
 grant2	DIFF column type string->binary	055b08222849	select * from t1
 grant2	SCHEMA problems: unsupported construct ternary_option: ?	e1ab8b79aea8	SELECT LEFT(CURRENT_USER(),INSTR(CURRENT_USER(),'@')-1) INTO @u
@@ -1383,19 +1368,14 @@ group_by	DIFF column type int->bigint	740f6acce28a	SELECT DISTINCT a, COUNT(*) F
 group_by	DIFF column type int->bigint	90e44ff4c93c	SELECT t1.x
 group_min_max_innodb	SCHEMA problems: unsupported construct ternary_option: ?	4209504f9258	insert into t1 values ( 1,"e"),(2,"a"),( 3,"c"),(4,"d")
 group_min_max_ps_protocol	RUNTIME 1242	0abe929386c4	DELETE FROM t3 WHERE (SELECT (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) x 
-having	STRICT 1140	d6f58dd6cecc	SELECT  COUNT(f1) FROM t2
-having	STRICT 1140	e55ba15fbb23	SELECT t1.f2 FROM t1
 having	STRICT 1054	022d624cf5ab	select a as foo, sum(b) as bar from t1
 having	STRICT 1054	2c7e71422766	select a as foo,
 having	STRICT 1054	2a46ce0c8b22	select a as foo,
 having	STRICT 1054	4bddf331d669	SELECT a FROM (SELECT 1 FROM t1 AS From1) AS From2 
 having	STRICT 1054	45a403334906	SELECT a FROM (SELECT 1 FROM t1 AS From1) AS From2
 having	STRICT 1054	c1481c71e932	SELECT Outjoin3.a FROM (SELECT 1 FROM t1 AS From1) AS From2 
-having	STRICT 1055	3142c1ed7900	SELECT t, next_seq_value() r FROM t1 FORCE INDEX(t)
-having	STRICT 3065	f63ea78ac723	SELECT DISTINCT t1.t, next_seq_value() r  FROM t1, t1 P
 having	CODE 1052->1054	6582a65e495a	SELECT (SELECT 1 FROM a HAVING g)
-having	CODE 1052->1055	a701e0ec62ce	SELECT *
-having	STRICT 1055	b3bdb943eb79	SELECT t1.f1 AS f1, DEFAULT(t2.f1) AS f2
+having	LENIENT 1052	a701e0ec62ce	SELECT *
 having_myisam	RUNTIME 1242	9324da2a48fb	SELECT col_int_key
 heap	RUNTIME 1062	587aa538e8bf	insert into t1 values ("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx
 heap_auto_increment	STRICT 1054	8b0f23ab011c	select _rowid,t1._rowid,skey,sval from t1
@@ -1403,6 +1383,7 @@ histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	c
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	c6852b774c9e	INSERT INTO t1 VALUES (1), (2)
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	306ce7a27f58	INSERT INTO t1 VALUES (1), (2), (3), (4), (5)
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	fc1787de5e7b	INSERT INTO t1 VALUES (1), (2), (3)
+histograms	STRICT 1406	3981813324b7	WITH cte AS (
 histograms_debug	LENIENT 1792	d93129d8e95a	INSERT INTO t1 (col1) VALUES (1)
 host_cache_size_functionality	LENIENT 1238	4350eedf9322	SELECT COUNT(@@local.Host_Cache_Size)
 host_cache_size_functionality	LENIENT 1238	3e53bbf6d025	SELECT COUNT(@@SESSION.Host_Cache_Size)
@@ -1411,15 +1392,10 @@ ignore_strict	LENIENT 1526	7ecb0b391ecf	UPDATE t1 SET a=a+1
 ignore_strict	LENIENT 1748	0d3f2b84efaf	UPDATE v1 SET a=11 WHERE a=2
 ignore_strict	LENIENT 1526	acd092d63e7d	UPDATE t1 SET a=4 WHERE a=5
 ignore_strict	RUNTIME 1242	5d4a49f0e467	DELETE FROM t11 WHERE t11.b = (SELECT b FROM t2 WHERE t11.a < t2.a)
-ignore_strict	RUNTIME 1264	30d2432abf0b	INSERT INTO t1 VALUES(2147483648)
-ignore_strict	RUNTIME 1366	7319eff3332b	INSERT INTO t1 values('a')
-ignore_strict	RUNTIME 1406	838c54f16d2e	INSERT INTO t3 (c1) VALUES('12345678901.x')
 ignore_strict	LENIENT 1411	02c7e3a0fb21	INSERT INTO t1 VALUES(STR_TO_DATE('32.10.2004 15.30','%D.%D.%Y %H.%I'))
 ignore_strict	RUNTIME 1441	6ff24bdce819	INSERT INTO t1 (d) SELECT DATE_SUB('2000-01-01', INTERVAL 2001 YEAR)
 ignore_strict	RUNTIME 1292	5411b9923188	INSERT INTO t1 (col1) VALUES (CAST(1000 as CHAR(3)))
 ignore_strict	RUNTIME 1365	42674097b74b	INSERT INTO t1 VALUES(2/0)
-ignore_strict	RUNTIME 1366	a71d57ec2f40	INSERT INTO t1 VALUES ('a59b')
-ignore_strict	RUNTIME 1265	7e50238d3b30	INSERT INTO t1 VALUES ('1a')
 ignore_strict	LENIENT 1210	316901552400	INSERT INTO t1(SELECT SLEEP(NULL))
 ignore_strict	LENIENT 13	9d2beecfea02	LOAD DATA INFILE '../../std_data/wl6030_2.dat' INTO TABLE t1 FIELDS TERMINATED BY ',' ENCLOSED BY '"
 ignore_strict	LENIENT 13	b8a6ff7ffb9a	LOAD DATA INFILE '../../std_data/wl6030_2.dat' IGNORE INTO TABLE t1 FIELDS TERMINATED BY ',' ENCLOSE
@@ -1466,9 +1442,6 @@ information_schema_cs	LENIENT 3566	da052b6d16fc	SELECT CAN_ACCESS_USER(NULL, NUL
 init_connect	SCHEMA problems: unsupported construct execute_var_ident: ?	055b08222849	select * from t1
 init_file	DIFF column type bigint->bigint unsigned	d136e7b5a743	SELECT YEAR(@X)-YEAR(@Y)
 innodb_mysql_sync	DIFF column name	4be700e06a57	SELECT ((@id := id) - id) FROM t2
-insert	RUNTIME 1292	64d5235aff65	insert into t1 values (default,default,default,default), (default,default,default,default), (4,0,"a"
-insert	RUNTIME 1292	06c02025f1e0	insert into t1 set a=4,t=0,c="a",i=5
-insert	RUNTIME 1292	9e2651d93ea2	insert into t1 set a=5,t=0,c="a",i=null
 insert	RUNTIME 1265	97cdab2cb371	insert into t1 values(null,@value,@value,@value,@value,@value,@value,@value,@value,@value)
 insert	RUNTIME 1264	97cdab2cb371	insert into t1 values(null,@value,@value,@value,@value,@value,@value,@value,@value,@value)
 insert	LENIENT 1110	e8eaf135de55	insert into t1 (a,b,b) values (1,1,1)
@@ -1486,7 +1459,6 @@ insert	LENIENT 1110	7b6dedd4fb2c	INSERT IGNORE t1 (a, a) SELECT 1,1 UNION SELECT
 insert	LENIENT 1136	2b3a22600926	INSERT INTO t1(a) values()
 insert	RUNTIME 1292	53d527013025	INSERT INTO default_date VALUES()
 insert	RUNTIME 1292	1144c1a7cf0a	INSERT INTO default_date VALUES(DEFAULT)
-insert	RUNTIME 1292	a444cb691b02	INSERT INTO default_date VALUES('0000-00-00')
 insert	LENIENT 1110	3588de707114	INSERT INTO t1(a,a) VALUES (1,1)
 insert	LENIENT 1110	40ca0f9540a6	INSERT INTO t1(a, a, b, c) VALUES (1, 1, DEFAULT, DEFAULT)
 insert	LENIENT 1110	86483264e825	INSERT INTO t1(b, b) VALUES (DEFAULT, DEFAULT)
@@ -1499,6 +1471,7 @@ insert_select	STRICT 1054	8df8bc8bcda1	INSERT INTO t2 (f1, f2)
 insert_select_myisam	DIFF column name	9bc52dc15a9f	Select null, Field, Count From t1 Where Month=20030901 and Type=2
 insert_update	LENIENT 1052	69e3f32fd78d	INSERT t1 SELECT a,b,c FROM t2 WHERE d=2 ON DUPLICATE KEY UPDATE c=c+VALUES(a)
 insert_update	STRICT 1054	08492641ffb5	INSERT INTO t1 SELECT 1, a FROM t2 NATURAL JOIN t3 
+insert_update	RUNTIME 1048	02f8285d9aab	INSERT INTO t1 (id,c1) SELECT 1,NULL
 insert_update	RUNTIME 1366	30c3f0c893ac	INSERT INTO t1 values(x'8142', x'8142', x'8142')
 insert_update	RUNTIME 1366	9c29be3c9601	UPDATE t1 SET a=x'8243' where a=x'6162'
 insert_update	RUNTIME 1366	78e199f9e95f	INSERT INTO t2 values(x'8142', x'8142', x'8142')
@@ -1525,8 +1498,6 @@ insert_update_myisam	LENIENT 1052	93617fe366c9	insert into t1 select a from t1 o
 insert_update_myisam	LENIENT 1052	e59fe7a89f2b	insert ignore into t1 select a from t1 on duplicate key update a=t1.a+1
 internal_tmp_disk_storage_engine	DIFF column type binary->string	f2b75bc06721	select distinct concat(c1, repeat('xx', 250)) as cc from t2 order by 1
 internal_tmp_disk_storage_engine	DIFF column type binary->string	5ec14fa15c95	select concat(c1, repeat('xx', 250)) as cc from t2 group by cc order by 1
-internal_tmp_disk_storage_engine	STRICT 1055	71adc0ca3d31	select t2.b,t1.b,t1.a
-internal_tmp_disk_storage_engine	STRICT 3065	2c51c926a6d0	select distinct nullif(a,b) as c from t1 z order by z.c
 ipv6_debug	LENIENT 1193	4d2fbb345136	SELECT @@global.debug, @@global.bind_address
 join	LENIENT 1116	df4d8bbaf36b	select t1.a from t1 as t1 left join t1 as t2 using (a) left join t1 as t3 using (a) left join t1 as 
 join	LENIENT 1116	8e206ee9afb2	select a from t1 as t1 left join t1 as t2 using (a) left join t1 as t3 using (a) left join t1 as t4 
@@ -1691,27 +1662,6 @@ locking_clause	LENIENT 3569	5ed09183fd35	SELECT * FROM t1, t2 FOR SHARE FOR UPDA
 locking_clause	LENIENT 3569	facc91082108	SELECT * FROM t1, t2 FOR UPDATE OF t1 FOR SHARE
 locking_clause	LENIENT 3569	a7eac3f359be	SELECT * FROM t1, t2 FOR UPDATE OF t2 FOR SHARE
 locking_clause	DIFF column count	dce937bbb9fc	SELECT 1 UNION SELECT 1 INTO @var FOR UPDATE
-locking_part	STRICT 1146	b5d3e7acead9	INSERT INTO t2 VALUES
-locking_part	STRICT 1146	1a0fa475db63	SELECT * FROM t3 FORCE INDEX(a) WHERE a='01' FOR UPDATE
-locking_part	STRICT 1146	d760ef672321	SELECT d,a,b,c FROM t3 ORDER BY d FOR SHARE SKIP LOCKED
-locking_part	STRICT 1146	8252f6b04049	SELECT d,a,b,c FROM t3 ORDER BY d FOR UPDATE SKIP LOCKED
-locking_part	STRICT 1146	1356688e152f	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR UPDATE OF t2
-locking_part	STRICT 1146	0468b88f8386	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR SHARE OF t2
-locking_part	STRICT 1146	cd0136316a0f	SELECT * FROM t1, t2 FOR SHARE OF t1 NOWAIT FOR SHARE OF t2 NOWAIT
-locking_part	STRICT 1146	c20e00fcfd75	SELECT * FROM t3 FORCE INDEX(a) WHERE a='01' FOR SHARE
-locking_readonly_db	STRICT 1146	36d99834ebe6	INSERT INTO t2 VALUES (10)
-locking_readonly_db	STRICT 1146	d99c216ebc79	INSERT INTO t2 VALUES (20)
-locking_readonly_db	STRICT 1146	516c9752dfbe	INSERT INTO t2 VALUES (30)
-locking_readonly_db	STRICT 1146	1356688e152f	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR UPDATE OF t2
-locking_readonly_db	STRICT 1146	0468b88f8386	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR SHARE OF t2
-locking_readonly_db	STRICT 1146	cd0136316a0f	SELECT * FROM t1, t2 FOR SHARE OF t1 NOWAIT FOR SHARE OF t2 NOWAIT
-locking_readonly_db	STRICT 1146	18d37fc64f42	SELECT * FROM t1, t2 FOR UPDATE OF t1 FOR SHARE OF t2
-locking_with_out_key	STRICT 1146	36d99834ebe6	INSERT INTO t2 VALUES (10)
-locking_with_out_key	STRICT 1146	d99c216ebc79	INSERT INTO t2 VALUES (20)
-locking_with_out_key	STRICT 1146	516c9752dfbe	INSERT INTO t2 VALUES (30)
-locking_with_out_key	STRICT 1146	1356688e152f	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR UPDATE OF t2
-locking_with_out_key	STRICT 1146	0468b88f8386	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR SHARE OF t2
-locking_with_out_key	STRICT 1146	cd0136316a0f	SELECT * FROM t1, t2 FOR SHARE OF t1 NOWAIT FOR SHARE OF t2 NOWAIT
 log_components_eventlog	LENIENT 1193	6cebb597af1e	SELECT @@syseventlog.tag
 log_components_filter	LENIENT 1238	6b899b0a6566	SELECT @@session.dragnet.log_error_filter_rules
 log_components_implicit	LENIENT 1193	b922d4f54976	SELECT @@global.dragnet.log_error_filter_rules
@@ -1761,7 +1711,6 @@ lpad	DIFF column type string->binary	45e31d752915	SELECT LPAD(NULL, NULL, 'x') A
 lpad	DIFF column type string->binary	85e89b9057e6	SELECT LPAD(NULL, NULL, NULL) AS result
 lpad	DIFF column type string->binary	26dfaf692377	SELECT LPAD(NULL, 5, NULL) AS result
 max_statement_time	LENIENT 3024	0aff871040ee	SELECT *, SLEEP(0.5) from t1
-max_statement_time	LENIENT 3024	4db2fbef5ea4	SELECT /*+ MAX_EXECUTION_TIME(1) */ * FROM t1
 max_statement_time	LENIENT 3024	3fc1e2aa76a6	SELECT f1()
 mem_cnt_sql_keys	LENIENT 1	f754a353fea6	SELECT 1 INTO OUTFILE '../../tmp/f1.txt'
 merge_innodb	SCHEMA dump: SHOW CREATE TABLE tN: Error N (HYN): Unable to open underlyi	c64899c9e086	SELECT * FROM t5
@@ -1818,13 +1767,6 @@ myisam	LENIENT 1099	c6770912870a	insert into t1 values(6),(7)
 myisam	LENIENT 1099	e59075683b72	insert into t1 (a) values(6),(7)
 myisam	LENIENT 1416	074abdd4dde8	INSERT INTO t1 VALUES (ST_GeomFromText("POINT(0 0)"))
 myisam	LENIENT 1416	352cdb273f5f	INSERT INTO t2 VALUES (ST_GeomFromText("POINT(0 0)"))
-myisam_skip_lock_nowait	STRICT 1146	36d99834ebe6	INSERT INTO t2 VALUES (10)
-myisam_skip_lock_nowait	STRICT 1146	d99c216ebc79	INSERT INTO t2 VALUES (20)
-myisam_skip_lock_nowait	STRICT 1146	516c9752dfbe	INSERT INTO t2 VALUES (30)
-myisam_skip_lock_nowait	STRICT 1146	5f9b71998a31	SELECT * FROM t2 WHERE a=20 FOR UPDATE
-myisam_skip_lock_nowait	STRICT 1146	1356688e152f	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR UPDATE OF t2
-myisam_skip_lock_nowait	STRICT 1146	0468b88f8386	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR SHARE OF t2
-myisam_skip_lock_nowait	STRICT 1146	cd0136316a0f	SELECT * FROM t1, t2 FOR SHARE OF t1 NOWAIT FOR SHARE OF t2 NOWAIT
 mysql_tzinfo_to_sql_sys	DIFF column name	7cc01bc2f6b8	SELECT (count(*) > 0) FROM time_zone
 mysql_tzinfo_to_sql_sys	DIFF column name	89f208fca680	SELECT (count(*) > 0) FROM time_zone_name
 mysql_tzinfo_to_sql_sys	DIFF column name	80c813c49475	SELECT (count(*) > 0) FROM time_zone_transition
@@ -2130,8 +2072,6 @@ partition_exchange	SCHEMA problems: unsupported construct name_list: ?	568083135
 partition_exchange	SCHEMA problems: unsupported construct name_list: ?	82e41ecfc6d7	SELECT * FROM t
 partition_exchange	SCHEMA problems: unsupported construct name_list: ?	e6f29ff2944f	SELECT * FROM tp PARTITION (p0)
 partition_exchange	SCHEMA problems: unsupported construct name_list: ?	e4361b76acb6	SELECT * FROM tsp PARTITION (sp2)
-partition_exchange	RUNTIME 1292	f16435c05f9a	INSERT INTO t2 VALUES (3, "p1"), (4, "p2"), (7, "p1"), (8, "p2")
-partition_exchange	RUNTIME 1292	a63896233dcb	INSERT INTO t2 VALUES (3, "p1"), (4, "p2"), (17, "p1"), (12, "p2")
 partition_exchange	SCHEMA problems: PARTITION RANGE: definition not understood	a3a34859c9ff	INSERT INTO t1(b,a) VALUES('first',40),('second',91),('third',140),
 partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	e0ca564738ce	INSERT INTO t1 PARTITION () VALUES (1, "error")
 partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	3eaa66bfbc03	INSERT INTO t1 PARTITION (pNeg, pNeg) VALUES (-1, "pNeg(-subp1)")
@@ -2294,12 +2234,8 @@ ps	SCHEMA problems: unsupported construct checksum: ?	97ae6d0cd549	call proc_1()
 ps	SCHEMA problems: unsupported construct create_user: ?	97ae6d0cd549	call proc_1()
 ps	LENIENT 1539	97ae6d0cd549	call proc_1()
 ps	SCHEMA problems: unsupported construct execute_var_ident: ?	3a3914d4bc6b	CALL p2(@a)
-ps	RUNTIME 1366	b49db6db8f12	INSERT INTO ints VALUES ('')
-ps	RUNTIME 1366	84f19c97dac6	INSERT INTO deci VALUES ('')
 ps	RUNTIME 1265	56ef3fdd2cc0	INSERT INTO dbls VALUES ('')
 ps	RUNTIME 1265	da22aaa67523	INSERT INTO flts VALUES ('')
-ps	RUNTIME 1366	7817d562f6fb	INSERT INTO ints VALUES ('   ')
-ps	RUNTIME 1366	c1aa083f83b6	INSERT INTO deci VALUES ('   ')
 ps	RUNTIME 1265	053481428bbb	INSERT INTO dbls VALUES ('   ')
 ps	RUNTIME 1265	a8dc9222aa38	INSERT INTO flts VALUES ('   ')
 ps	RUNTIME 1366	698719f97022	INSERT INTO ints VALUES (@empty)
@@ -2477,9 +2413,7 @@ regular_expressions_utf-8	DIFF column type string->binary	73fef62ef900	SELECT re
 regular_expressions_utf-8	RUNTIME 3854	8fb26c8c7564	select regexp_instr( ( _utf32', ,*'), 13946)
 regular_expressions_utf-8	RUNTIME 3854	d79df3c7ed38	select regexp_replace( ( _utf32', ,*'), 13946, 42)
 regular_expressions_utf-8	RUNTIME 3854	ddaa93a266d9	select regexp_substr( ( _utf32', ,*'), 13946)
-regular_expressions_utf-8	RUNTIME 1292	effab9154ca4	UPDATE t1 SET col_datetime = 8
-regular_expressions_utf-8	LENIENT 1210	46434b4c64ec	UPDATE t1 SET col_datetime = 8
-regular_expressions_utf-8	RUNTIME 1292	b736fc8767fe	UPDATE t1 SET col_datetime = 8
+regular_expressions_utf-8	CODE 1210->1292	46434b4c64ec	UPDATE t1 SET col_datetime = 8
 regular_expressions_utf-8_icu_58	LENIENT 3688	b5d723ef23a7	SELECT regexp_like( 'a\nb', '(*CR)a.b' )
 regular_expressions_utf-8_icu_59	LENIENT 3699	2b4267891000	SELECT regexp_like('', "(((((((){120}){11}){11}){11}){80}){11}){4}" )
 rename_myisam	LENIENT 1100	b22000f51e8b	SELECT * FROM mysqltest.t4
@@ -2633,7 +2567,6 @@ signal_sqlmode	LENIENT 1648	9537a00334f9	call p2
 signal_sqlmode	LENIENT 1648	55670a79d079	call p3
 skip_name_resolve	LENIENT 1238	d828a064ae1d	SELECT @@LOCAL.skip_name_resolve
 sp	SCHEMA problems: unsupported construct replace_stmt: ?bar\?	415911d410bb	call setcontext()
-sp	STRICT 1146	662872db2978	call create_select("cs", 90)
 sp	STRICT 1146	70edbe46b408	select * from t1, t3
 sp	STRICT 1136	98d9c1fc7eff	call hndlr1(42)
 sp	STRICT 1136	ffed74595d30	call hndlr2(42)
@@ -2653,8 +2586,6 @@ sp	LENIENT 1100	469d40619e43	select f4()
 sp	LENIENT 1146	4d55d2abf169	select f10()
 sp	LENIENT 1137	cb6d1b12dc76	select f11()
 sp	LENIENT 1137	25cd9f3fa312	select f11() from t1
-sp	STRICT 1146	126df75e0e32	call bug1863(10)
-sp	STRICT 1146	2fae348b8db2	call bug2460_2()
 sp	STRICT 1146	3f0ae4aca767	select * from t3
 sp	SCHEMA problems: unsupported construct analyze_table_stmt: ?	cefb85055252	call bug3843()
 sp	SCHEMA problems: unsupported construct show_columns_stmt: ?	1b49dbb56d22	call bug4902()
@@ -2686,7 +2617,6 @@ sp	SCHEMA no database selected	9e2cb4e10724	select database()
 sp	RUNTIME 1365	8905fb1dc28f	select func_20028_c()
 sp	RUNTIME 1365	201031cde26e	call proc_20028_c()
 sp	SCHEMA no database selected	bf86ca0f3bde	select database(), database ()
-sp	DIFF nullable true->false	2973f7ebdcdd	select current_user(), current_user ()
 sp	SCHEMA no database selected	d47683fccb22	CALL mysqltest1.p1()
 sp	RUNTIME 1690	e840ab8af5d7	select bug20777(-9223372036854775808) as 'lower bounds signed bigint'
 sp	RUNTIME 1690	84e1ebc363ab	select bug20777(0) as 'lower bounds unsigned bigint'
@@ -2767,7 +2697,6 @@ sp-external	CODE 6001->1324	469d480e8772	CALL bar(2)
 sp-external	CODE 6001->1324	db4a32946ade	CALL JAVASCRIPT(2)
 sp-lock	LENIENT 1456	2b71e30aba06	call p1()
 sp-lock	LENIENT 1422	2b71e30aba06	call p1()
-sp-prelocking	STRICT 1146	481424fbb823	call sp2()
 sp-prelocking	LENIENT 1146	15d72988e96b	insert into bug_27907_t1(a) values (1)
 sp-prelocking	LENIENT 1100	fdb9a6497787	INSERT INTO t2 values(4)
 sp-threads	LENIENT 1100	0c3029289915	call bug11158()
@@ -2815,33 +2744,7 @@ sp_validation	LENIENT 1241	47395f84d85f	UPDATE t2 SET a = 20
 sp_validation	STRICT 1146	a782e71a13d9	SELECT * FROM t1_result_set
 sql_mode	RUNTIME 1292	051556bb43ec	UPDATE test SET count = count + 1 WHERE id = '1invalid'
 ssl_dynamic	LENIENT 1193	5fb33d2b441a	SELECT @@global.mysqlx_ssl_ca = @orig_mysqlx_ssl_ca,
-strict	RUNTIME 1292	84c9d312afca	INSERT INTO t1 VALUES('2004-0-31')
-strict	RUNTIME 1292	55ba04fc2296	INSERT INTO t1 VALUES('2004-01-02'),('2004-0-31')
-strict	RUNTIME 1292	567b821d2d79	INSERT INTO t1 VALUES('2004-10-0')
-strict	RUNTIME 1292	63c741ecefb7	INSERT INTO t1 VALUES('2004-09-31')
-strict	RUNTIME 1292	a9ce39653f85	INSERT INTO t1 VALUES('2004-10-32')
-strict	RUNTIME 1292	62cb3fc9366b	INSERT INTO t1 VALUES('2003-02-29')
-strict	RUNTIME 1292	f5cc07ce4f6f	INSERT INTO t1 VALUES('2004-13-15')
-strict	RUNTIME 1292	c73b9d1f6b90	INSERT INTO t1 VALUES('0000-00-00')
-strict	RUNTIME 1292	7cbe22d787a1	INSERT INTO t1 VALUES ('59')
-strict	RUNTIME 1292	fe9ab0e6f5d6	INSERT INTO t1 VALUES('2004-0-30')
-strict	RUNTIME 1292	740b59d735af	INSERT INTO t1 VALUES('2004-01-04'),('2004-0-31'),('2004-01-05')
-strict	RUNTIME 1292	127c32b7bb65	INSERT INTO t1 VALUES ('2004-2-30')
-strict	RUNTIME 1292	32b9b604f0ca	INSERT INTO t1 VALUES('2004-13-31'),('2004-1-1')
-strict	RUNTIME 1292	4cb3112fd6c1	INSERT INTO t1 VALUES ('2003-02-29')
-strict	RUNTIME 1292	c381d995f024	INSERT INTO t1 VALUES ('2004-1-2'), ('2004-13-31'),('2004-1-3')
-strict	RUNTIME 1292	2a3b89e6e502	INSERT INTO t1 VALUES('2004-0-31 15:30:00')
-strict	RUNTIME 1292	365d9bfa91fd	INSERT INTO t1 VALUES('2004-10-0 15:30:00')
-strict	RUNTIME 1292	e5a112b3bcc7	INSERT INTO t1 VALUES('2004-09-31 15:30:00')
-strict	RUNTIME 1292	3335bcf0d71a	INSERT INTO t1 VALUES('2004-10-32 15:30:00')
-strict	RUNTIME 1292	e1eabe12528a	INSERT INTO t1 VALUES('2003-02-29 15:30:00')
-strict	RUNTIME 1292	252dd7a4b694	INSERT INTO t1 VALUES('2004-13-15 15:30:00')
-strict	RUNTIME 1292	4cf2b2f1df53	INSERT INTO t1 VALUES('0000-00-00 15:30:00')
 strict	RUNTIME 1292	4f6a8c4b970e	INSERT INTO t1 VALUES('0000-10-31 15:30:00')
-strict	RUNTIME 1292	2315486a3e71	INSERT INTO t1 VALUES('2004-02-29 25:30:00')
-strict	RUNTIME 1292	fac8aaadc5f2	INSERT INTO t1 VALUES('2004-02-29 15:65:00')
-strict	RUNTIME 1292	d11fe7677fc3	INSERT INTO t1 VALUES('2004-02-29 15:31:61')
-strict	RUNTIME 1292	0c503b00bb94	INSERT INTO t1 VALUES('0000-00-00 00:00:00')
 strict	RUNTIME 1292	5c6fe795acad	INSERT INTO t1 VALUES('2004-02-30 15:30:04')
 strict	LENIENT 1411	8a1e7de90059	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('31.10.0000 15.30','%d.%m.%Y %H.%i'))
 strict	LENIENT 1411	6e4d83a9ee45	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('31.0.2004 15.30','%d.%m.%Y %H.%i'))
@@ -2887,78 +2790,17 @@ strict	RUNTIME 1292	23f441ac4438	INSERT INTO t1 (col3) VALUES(CONVERT('0000-10-3
 strict	RUNTIME 1292	f3028d5c5a33	INSERT INTO t1 (col3) VALUES(CONVERT('2004-10-0 15:30',DATETIME))
 strict	RUNTIME 1292	07824aa71a5d	INSERT INTO t1 (col3) VALUES(CONVERT('2004-0-10 15:30',DATETIME))
 strict	RUNTIME 1292	11b1a8056be6	INSERT INTO t1 (col3) VALUES(CONVERT('0000-00-00',DATETIME))
-strict	RUNTIME 1264	edda8515fa36	INSERT INTO t1 (col1) VALUES(-129)
-strict	RUNTIME 1264	8359add9354e	INSERT INTO t1 (col1) VALUES(128)
-strict	RUNTIME 1264	a5f9e45d960d	INSERT INTO t1 (col2) VALUES(-1)
-strict	RUNTIME 1264	df0f41864921	INSERT INTO t1 (col2) VALUES(256)
-strict	RUNTIME 1264	14402aa1abe3	INSERT INTO t1 (col1) VALUES('-129')
-strict	RUNTIME 1264	93c4e8ab18bb	INSERT INTO t1 (col1) VALUES('128')
-strict	RUNTIME 1264	5d3601a87152	INSERT INTO t1 (col2) VALUES('-1')
-strict	RUNTIME 1264	03771d23b06f	INSERT INTO t1 (col2) VALUES('256')
-strict	RUNTIME 1264	e4564315368a	INSERT INTO t1 (col1) VALUES(128.0)
-strict	RUNTIME 1264	456877e30691	INSERT INTO t1 (col2) VALUES(-1.0)
-strict	RUNTIME 1264	30b985511810	INSERT INTO t1 (col2) VALUES(256.0)
 strict	RUNTIME 1264	9459755d7792	UPDATE t1 SET col1 = col1 - 50 WHERE col1 < 0
 strict	RUNTIME 1264	72d02d62891f	UPDATE t1 SET col2=col2 + 50 WHERE col2 > 0
 strict	RUNTIME 1365	7453bb70d6ed	UPDATE t1 SET col1=col1 / 0 WHERE col1 > 0
-strict	RUNTIME 1366	7b69f4cfdef3	INSERT INTO t1 (col1) VALUES ('')
-strict	RUNTIME 1366	9566cb122f62	INSERT INTO t1 (col1) VALUES ('a59b')
-strict	RUNTIME 1265	d88f00bac2c7	INSERT INTO t1 (col1) VALUES ('1a')
-strict	RUNTIME 1264	3d65b3cd1c58	INSERT INTO t1 (col1) VALUES(-32769)
-strict	RUNTIME 1264	751235dc3100	INSERT INTO t1 (col1) VALUES(32768)
-strict	RUNTIME 1264	b56b7f671cb2	INSERT INTO t1 (col2) VALUES(65536)
-strict	RUNTIME 1264	95147b7bea94	INSERT INTO t1 (col1) VALUES('-32769')
-strict	RUNTIME 1264	090a9c0e7ff1	INSERT INTO t1 (col1) VALUES('32768')
-strict	RUNTIME 1264	71e64714c121	INSERT INTO t1 (col2) VALUES('65536')
-strict	RUNTIME 1264	97159f7ff52d	INSERT INTO t1 (col1) VALUES(-32769.0)
-strict	RUNTIME 1264	470283170a56	INSERT INTO t1 (col1) VALUES(32768.0)
-strict	RUNTIME 1264	3132e6ce1c60	INSERT INTO t1 (col2) VALUES(65536.0)
 strict	RUNTIME 1264	f4e4656d665d	UPDATE t1 SET col2 = col2 + 50 WHERE col2 > 0
 strict	RUNTIME 1365	67f41798288f	UPDATE t1 SET col1 = col1 / 0 WHERE col1 > 0
 strict	RUNTIME 1365	24447d735955	UPDATE t1 SET col1= MOD(col1,0) WHERE col1 > 0
-strict	RUNTIME 1264	70ac125c5fec	INSERT INTO t1 (col1) VALUES(-8388609)
-strict	RUNTIME 1264	2b5e1db59744	INSERT INTO t1 (col1) VALUES(8388608)
-strict	RUNTIME 1264	6a49685399e6	INSERT INTO t1 (col2) VALUES(16777216)
-strict	RUNTIME 1264	d9e09a57d6a4	INSERT INTO t1 (col1) VALUES('-8388609')
-strict	RUNTIME 1264	cb350f5224ce	INSERT INTO t1 (col1) VALUES('8388608')
-strict	RUNTIME 1264	bf43fe74cc34	INSERT INTO t1 (col2) VALUES('16777216')
-strict	RUNTIME 1264	5d782428e978	INSERT INTO t1 (col1) VALUES(-8388609.0)
-strict	RUNTIME 1264	4e777c1b7c53	INSERT INTO t1 (col1) VALUES(8388608.0)
-strict	RUNTIME 1264	984ad70fff80	INSERT INTO t1 (col2) VALUES(16777216.0)
 strict	RUNTIME 1365	cb1227d44414	UPDATE t1 SET col1 =col1 / 0 WHERE col1 > 0
-strict	RUNTIME 1264	9afb1bd5ec83	INSERT INTO t1 (col1) VALUES(-2147483649)
-strict	RUNTIME 1264	e6233557819d	INSERT INTO t1 (col1) VALUES(2147643648)
-strict	RUNTIME 1264	1479c55956f7	INSERT INTO t1 (col2) VALUES(4294967296)
-strict	RUNTIME 1264	fa8c6af42b59	INSERT INTO t1 (col1) VALUES('-2147483649')
-strict	RUNTIME 1264	ec2a65f3c846	INSERT INTO t1 (col1) VALUES('2147643648')
-strict	RUNTIME 1264	3fca17635a0d	INSERT INTO t1 (col2) VALUES('4294967296')
-strict	RUNTIME 1264	dd0dc91357da	INSERT INTO t1 (col1) VALUES(-2147483649.0)
-strict	RUNTIME 1264	1ea0c2b06265	INSERT INTO t1 (col1) VALUES(2147643648.0)
-strict	RUNTIME 1264	fa04cadbe10d	INSERT INTO t1 (col2) VALUES(4294967296.0)
 strict	RUNTIME 1264	8f5a2b9cd559	UPDATE t1 SET col2 =col2 + 50 WHERE col2 > 0
-strict	RUNTIME 1264	b6c4d03d834b	INSERT INTO t1 (col1) VALUES(-9223372036854775809)
-strict	RUNTIME 1264	f50e354422f1	INSERT INTO t1 (col1) VALUES(9223372036854775808)
-strict	RUNTIME 1264	084b40401ef0	INSERT INTO t1 (col2) VALUES(18446744073709551616)
-strict	RUNTIME 1264	145d5a362a9c	INSERT INTO t1 (col1) VALUES('-9223372036854775809')
-strict	RUNTIME 1264	f3a8bd0c562f	INSERT INTO t1 (col1) VALUES('9223372036854775808')
-strict	RUNTIME 1264	d1f172943e64	INSERT INTO t1 (col2) VALUES('18446744073709551616')
-strict	RUNTIME 1264	a6bb6be37194	INSERT INTO t1 (col1) VALUES(-9223372036854785809.0)
-strict	RUNTIME 1264	217b5d913234	INSERT INTO t1 (col1) VALUES(9223372036854785808.0)
-strict	RUNTIME 1264	ac21ccc6ea7f	INSERT INTO t1 (col2) VALUES(18446744073709551616.0)
-strict	RUNTIME 1264	d9f7ad963648	INSERT INTO t1 VALUES (101.55)
-strict	RUNTIME 1264	bb8bede37a0f	INSERT INTO t1 VALUES (101)
-strict	RUNTIME 1264	83f088fd13d2	INSERT INTO t1 VALUES (-101.55)
-strict	RUNTIME 1264	97d8ae7ac86a	INSERT INTO t1 VALUES (1010.55)
-strict	RUNTIME 1264	6fb5f82aebb6	INSERT INTO t1 VALUES (1010)
-strict	RUNTIME 1264	dcbf09b533f1	INSERT INTO t1 VALUES ('101.55')
-strict	RUNTIME 1264	f6c33b36dc2e	INSERT INTO t1 VALUES ('101')
-strict	RUNTIME 1264	67c7b559b198	INSERT INTO t1 VALUES ('-101.55')
-strict	RUNTIME 1264	1118d2dcab3f	INSERT INTO t1 VALUES ('-1010.55')
-strict	RUNTIME 1264	3b5b14300466	INSERT INTO t1 VALUES ('-100E+1')
-strict	RUNTIME 1366	e9a11dd6664b	INSERT INTO t1 VALUES ('-100E')
+strict	CODE 1366->1265	e9a11dd6664b	INSERT INTO t1 VALUES ('-100E')
 strict	RUNTIME 1264	70433801726e	UPDATE t1 SET col1 =col1 * 50000 WHERE col1 =11
-strict	RUNTIME 1366	d88f00bac2c7	INSERT INTO t1 (col1) VALUES ('1a')
-strict	RUNTIME 1264	81c9516824fa	INSERT INTO t1 (col1) VALUES (+3.4E+39)
+strict	CODE 1366->1265	d88f00bac2c7	INSERT INTO t1 (col1) VALUES ('1a')
 strict	RUNTIME 1264	94b8c0b6b2fb	INSERT INTO t1 (col2) VALUES (-1.1E-3)
 strict	RUNTIME 1264	0c5ae1112743	INSERT INTO t1 (col1) VALUES ('+3.4E+39')
 strict	RUNTIME 1264	3317eeb4aa6a	INSERT INTO t1 (col2) VALUES ('-1.1E-3')
@@ -2967,6 +2809,7 @@ strict	RUNTIME 1365	50358c320648	UPDATE t1 SET col2 =col2 / 0 WHERE col2 > 0
 strict	RUNTIME 1365	69e0a7a8f7cb	UPDATE t1 SET col2= MOD(col2,0) WHERE col2 > 0
 strict	RUNTIME 1265	7b69f4cfdef3	INSERT INTO t1 (col1) VALUES ('')
 strict	RUNTIME 1265	9566cb122f62	INSERT INTO t1 (col1) VALUES ('a59b')
+strict	RUNTIME 1265	d88f00bac2c7	INSERT INTO t1 (col1) VALUES ('1a')
 strict	DIFF column type float unsigned->float	3abd07b0a7e7	SELECT * FROM t1
 strict	LENIENT 1367	2fcb00155e47	INSERT INTO t1 (col1) VALUES (+1.7E+309)
 strict	RUNTIME 1264	d54f4b180e2d	INSERT INTO t1 (col1) VALUES ('+1.8E+309')
@@ -2974,14 +2817,6 @@ strict	RUNTIME 1264	4fbcd8333cdc	INSERT INTO t1 (col2) VALUES ('-1.2E-3')
 strict	RUNTIME 1690	dc99e6e41dff	UPDATE t1 SET col1 =col1 * 5000 WHERE col1 > 0
 strict	LENIENT 1367	57dc48de276e	INSERT IGNORE INTO t1 VALUES (+1.9E+309,-1.9E+309)
 strict	DIFF column type double unsigned->double	3abd07b0a7e7	SELECT * FROM t1
-strict	RUNTIME 1406	09cf161bbcc3	INSERT INTO t1 (col1) VALUES ('hellobob')
-strict	RUNTIME 1406	0555a2a773b5	INSERT INTO t1 (col2) VALUES ('hellobob')
-strict	RUNTIME 1406	213eded61ea5	UPDATE t1 SET col1 ='hellobob' WHERE col1 ='he'
-strict	RUNTIME 1406	c9e1aeb21d56	UPDATE t1 SET col2 ='hellobob' WHERE col2 ='he'
-strict	RUNTIME 1265	8318344a1394	INSERT INTO t1 (col1) VALUES ('yellow')
-strict	RUNTIME 1265	56464b4f9787	INSERT INTO t1 (col1) VALUES ('redd')
-strict	RUNTIME 1265	32f7666ee460	INSERT INTO t1 VALUES ('')
-strict	RUNTIME 1265	bb66c43583b8	UPDATE t1 SET col1 ='yellow' WHERE col1 ='green'
 strict	RUNTIME 1364	4ddb6c423c41	INSERT INTO t1 VALUES(default(col1),default(col2))
 strict	RUNTIME 1406	a0ca69f51784	insert into t1 (charcol) values (repeat('x',256))
 strict	RUNTIME 1406	cb2688ae23b0	insert into t1 (varcharcol) values (repeat('x',256))
@@ -3000,8 +2835,6 @@ strict	RUNTIME 1292	e10f6afb334e	insert into t1 (col1) values (cast(1000.0 as ch
 strict	RUNTIME 1292	5051749cfdce	insert into t1 (col2) values (cast('abc' as signed integer))
 strict	RUNTIME 1292	43517977529d	insert into t1 (col2) values (10E+0 + 'a')
 strict	RUNTIME 1292	86e0ba2e3055	insert into t1 (col2) values (cast('10a' as unsigned integer))
-strict	RUNTIME 1292	826191c8f7cb	insert into t1 values (0,0,0)
-strict	RUNTIME 1292	60c3ba117fc9	insert into t1 values (0.0,0.0,0.0)
 strict	RUNTIME 1292	e98df06a0d55	insert into t1 (col1) values (convert('0000-00-00',date))
 strict	RUNTIME 1292	7a63d48d60ea	insert into t1 (col1) values (cast('0000-00-00' as date))
 strict	RUNTIME 1292	f1c4aafe1e5f	insert into t1 select * from t1
@@ -3010,27 +2843,7 @@ strict	RUNTIME 1364	935d23867fc8	INSERT INTO t1 VALUES (DEFAULT(i))
 strict	RUNTIME 1364	5094a5d00f8d	INSERT INTO t1 SET j = 1, i = DEFAULT
 strict	RUNTIME 1364	83e9a7161f65	INSERT INTO t1 SET j = 1, i = DEFAULT(i)
 strict	RUNTIME 1364	697bbd3e3a5e	INSERT INTO t1 VALUES (DEFAULT,1)
-strict	RUNTIME 1292	3e161fc3237f	insert into t1 values ('2000-10-00')
-strict	RUNTIME 1292	aa7aca9930f3	insert into t1 values (1000)
-strict	RUNTIME 1292	fbe32b50c42a	update t1 set d = 1100
 strict	RUNTIME 1406	df6c1304674d	insert into t1 values(b'101')
-strict	RUNTIME 1366	ad297ea112ea	insert into t1(col1) values('-')
-strict	RUNTIME 1366	5a19063456c0	insert into t1(col2) values('+')
-strict	RUNTIME 1366	f3e23e92b8e5	insert into t1(col3) values('-')
-strict	RUNTIME 1366	932cdf2a1349	insert into t1(col4) values('+')
-strict	RUNTIME 1366	ce630408d709	insert into t1(col5) values('-')
-strict	RUNTIME 1366	f2c1b7b459d0	insert into t1(col6) values('+')
-strict	RUNTIME 1366	f9d7cc5b996c	insert into t1(col7) values('-')
-strict	RUNTIME 1366	7d3952ea29c6	insert into t1(col8) values('+')
-strict	RUNTIME 1366	c7442b21c08e	insert into t1(col9) values('-')
-strict	RUNTIME 1366	89a17a4d9458	insert into t1(col10) values('+')
-strict	RUNTIME 1366	7006a682fa8a	insert into t1 values ('-')
-strict	RUNTIME 1366	268e801daf56	insert into t1 values ('+')
-strict	RUNTIME 1366	3de32f5db32e	insert into t1 values ('')
-strict	RUNTIME 1265	bfde2a96369f	insert into t1 values ('2000a')
-strict	RUNTIME 1265	5bbba2c9dbdf	insert into t1 values ('2E3x')
-strict	RUNTIME 1292	7d129ab1676a	UPDATE t1 SET a = '0000-00-00'
-strict	RUNTIME 1292	4564ee784fda	UPDATE t1 SET a = '2004-0-30'
 strict	RUNTIME 1292	6c039840d7ff	INSERT INTO t1 SELECT * FROM t1
 strict	RUNTIME 1365	b7b506a57eb8	INSERT INTO t1 VALUES(1/0)
 strict	RUNTIME 1365	f72f62263064	UPDATE t1 SET a = (1/0)
@@ -3039,8 +2852,6 @@ strict	RUNTIME 1365	cd60ebbb256c	CALL p2()
 strict	RUNTIME 1406	73af8d3f0b6b	INSERT INTO t1 VALUES(1000)
 strict	RUNTIME 1406	720a73b21378	INSERT INTO t1 VALUES(cast(1000 as char(4)))
 strict	RUNTIME 1292	e17390f0fedb	INSERT INTO t1 VALUES(cast(1000 as char(3)))
-strict	RUNTIME 1264	82b23cb35ea3	INSERT INTO t1 VALUES(-9223372036854775809)
-strict	RUNTIME 1264	add1fa2a6d9e	INSERT INTO t1 VALUES(9223372036854775808)
 strict	RUNTIME 1264	e64d1aaecf90	INSERT INTO t1 VALUES (18)
 subquery_bugs	RUNTIME 1242	0364a61b89e4	SELECT 1 FROM a WHERE (SELECT f FROM b WHERE (SELECT 1 FROM c)) <=> e GROUP BY d
 subquery_bugs	LENIENT 3141	4717ddaad6f9	SELECT DISTINCT * FROM t1
@@ -3052,12 +2863,11 @@ subquery_bugs	RUNTIME 1242	8b2fae53f66e	SELECT 1 = (SELECT 1
 subquery_bugs	STRICT 3029	b47001337db8	SELECT ( SELECT b FROM t2 ORDER BY a, MIN(a) LIMIT 1 ) FROM t1 GROUP BY a
 subquery_bugs	LENIENT 3037	1f492e8a06e0	SELECT 1 FROM t1 GROUP BY (
 subquery_hypergraph	RUNTIME 1242	a12add7a707b	SELECT * FROM t WHERE (SELECT x FROM t)
-subquery_scalar_to_derived	STRICT 1140	948f4e47a94d	SELECT derived_1_0.countrycount AS countrycount,
+subquery_scalar_to_derived	DIFF nullable false->true	948f4e47a94d	SELECT derived_1_0.countrycount AS countrycount,
 subquery_scalar_to_derived	RUNTIME 1406	ecc5831cd04d	INSERT INTO t1 VALUES
 subquery_scalar_to_derived	STRICT 1056	a41f072579bf	SELECT
 subquery_scalar_to_derived	STRICT 1056	8f942d2f6017	SELECT (SELECT MIN(f1) AS min FROM t1 ) AS field1 FROM t1 GROUP BY
 subquery_scalar_to_derived	DIFF column type bigint->int	bb9e1cbb8837	SELECT COUNT(*), (SELECT 1 FROM t)
-subquery_scalar_to_derived	STRICT 1140	50dd30d28623	SELECT i AS i1,  # used to get renamed to i2
 subquery_scalar_to_derived_correlated	STRICT 1056	f67fbb65b73e	SELECT /*+ SET_VAR(optimizer_switch='subquery_to_derived=OFF') */
 subquery_scalar_to_derived_correlated	STRICT 1056	45a3b9dad918	SELECT
 subquery_table_to_derived	LENIENT 1267	0786c04b7fea	SELECT col
@@ -3066,13 +2876,6 @@ subselect_debug	RUNTIME 1242	bcc587010314	SELECT ((SELECT 1 FROM t1) IN (SELECT 
 subselect_innodb	DIFF column type string->binary	eadf17b672df	SELECT t2.*, t4.DOCTYPENAME, t1.CONTENTSIZE,t1.MIMETYPE FROM t2 INNER JOIN t4 ON t2.DOCTYPEID = t4.D
 table_definition_cache_functionality	LENIENT 1238	d3be72a57c8e	SELECT COUNT(@@local.table_definition_cache)
 table_definition_cache_functionality	LENIENT 1238	35e7b4a5249a	SELECT COUNT(@@SESSION.table_definition_cache)
-table_lock_skip_lock_nowait	STRICT 1146	36d99834ebe6	INSERT INTO t2 VALUES (10)
-table_lock_skip_lock_nowait	STRICT 1146	d99c216ebc79	INSERT INTO t2 VALUES (20)
-table_lock_skip_lock_nowait	STRICT 1146	516c9752dfbe	INSERT INTO t2 VALUES (30)
-table_lock_skip_lock_nowait	STRICT 1146	1356688e152f	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR UPDATE OF t2
-table_lock_skip_lock_nowait	STRICT 1146	0468b88f8386	SELECT * FROM t1, t2 FOR SHARE OF t1 FOR SHARE OF t2
-table_lock_skip_lock_nowait	STRICT 1146	cd0136316a0f	SELECT * FROM t1, t2 FOR SHARE OF t1 NOWAIT FOR SHARE OF t2 NOWAIT
-table_lock_skip_lock_nowait	STRICT 1146	1e63f5e90b17	LOCK TABLES t2 WRITE
 table_open_cache_functionality	LENIENT 1238	046d85b631f0	SELECT COUNT(@@local.table_open_cache)
 table_open_cache_functionality	LENIENT 1238	a58ba21e5bff	SELECT COUNT(@@SESSION.table_open_cache)
 tablelock	LENIENT 1422	3fc1e2aa76a6	SELECT f1()
@@ -3105,8 +2908,6 @@ temptable_disk	DIFF column type string->binary	37a30f63aa4e	SELECT * FROM
 temptable_fallback	DIFF column name	9ba98c3d8dbd	SELECT (@id1=@id2)
 temptable_fallback	DIFF column name	e426e90ce134	SELECT (@id1<@id2)
 test_mysql_thd_store_service	STRICT 1305	7c67cc66902d	SELECT test_thd_store_service_function()
-time_truncate_fractional_strict	RUNTIME 1292	de9d13c4e030	INSERT INTO t1 VALUES ('838:59:59.9999999')
-time_truncate_fractional_strict	RUNTIME 1292	1a3caf9d7e41	INSERT INTO t1 VALUES ('-838:59:59.9999999')
 time_zone	LENIENT 1525	724858da99bf	SELECT TIMESTAMP'2015-01-01 10:10:10+5:30'
 time_zone	LENIENT 1525	24b306d2e868	SELECT TIMESTAMP'2015-01-01 10:10:10+5:030'
 time_zone	LENIENT 1525	8a25dca45042	SELECT TIMESTAMP'2015-01-01 10:10:10+005:30'
@@ -3129,16 +2930,12 @@ time_zone	RUNTIME 1292	a736be37028b	INSERT INTO t1 VALUES ( TIMESTAMP'2038-01-19
 time_zone	RUNTIME 1292	69f529d54d7d	INSERT INTO t1 VALUES ( TIMESTAMP'2038-01-19 03:14:07.999999+00:00' )
 time_zone	RUNTIME 1292	b307b5394998	INSERT INTO t1 VALUES ( TIMESTAMP'1970-01-01 00:00:00.000000+00:00' )
 time_zone	RUNTIME 1292	596b97ac739b	INSERT INTO t1 VALUES ( TIMESTAMP'1970-01-01 00:00:00.000001+00:00' )
-time_zone	RUNTIME 1292	d9e8cfea3ea5	INSERT INTO t1 VALUES ( '2038-01-19 03:14:08+00:00' )
 time_zone	RUNTIME 1292	9f7aff707636	INSERT INTO t1 VALUES ( TIMESTAMP'9999-12-31 23:59:59.999999+00:00' )
-time_zone	RUNTIME 1292	a7f5feb91a5b	INSERT INTO t1 VALUES ( '9999-12-31 23:59:59.999999+00:00' )
 time_zone	RUNTIME 1292	a9c8590ccbf1	INSERT INTO t2 VALUES ( TIMESTAMP'2038-01-19 03:14:08+00:00' )
 time_zone	RUNTIME 1292	75e3c3b31744	INSERT INTO t2 VALUES ( TIMESTAMP'1970-01-01 00:00:00.000000+00:00' )
 time_zone	RUNTIME 1292	b30969113fc2	INSERT INTO t2 VALUES ( TIMESTAMP'1970-01-01 00:00:00.000001+00:00' )
 time_zone	RUNTIME 1292	b46a873fa22b	INSERT INTO t2 VALUES ( TIMESTAMP'1970-01-01 00:00:00.999999+00:00' )
-time_zone	RUNTIME 1292	bd16a52305dd	INSERT INTO t2 VALUES ( '2038-01-19 03:14:08+00:00' )
 time_zone	RUNTIME 1292	8b0419f4cc80	INSERT INTO t2 VALUES ( TIMESTAMP'9999-12-31 23:59:59.999999+00:00' )
-time_zone	RUNTIME 1292	19644698d70e	INSERT INTO t2 VALUES ( '9999-12-31 23:59:59.999999+00:00' )
 time_zone	RUNTIME 1292	32be9aec61c7	SELECT TIMESTAMP '2020-00-01 08:00:00.123456+00:00'
 time_zone	RUNTIME 1292	47d8ac915c5d	SELECT TIMESTAMP '2020-01-00 08:00:00.123456+00:00'
 time_zone	RUNTIME 1292	cf2bdf99beb7	INSERT INTO t1 VALUES ( '2020-00-01 00:00:00.123456+00:00' )
@@ -3308,13 +3105,10 @@ type_blob	LENIENT 1210	76b91e0ba9e3	select truncate(ST_GEOMFROMTEXT('LINESTRING(
 type_date	DIFF column type datetime->date	60bd094a62f4	select date_add(date,INTERVAL 1 DAY),date_add(date,INTERVAL 1 SECOND) from t1
 type_date	LENIENT 1525	78633732de26	SELECT * FROM t1 WHERE a = '0000-00-00'
 type_date	LENIENT 1525	7ae11f584873	SELECT * FROM t2 WHERE a = '0000-00-00'
-type_date	RUNTIME 1292	03a15f6bbfbd	INSERT INTO t1 VALUES ('0000-00-00')
 type_date	LENIENT 1525	8a12156063cd	SELECT * FROM t1 WHERE a = '1000-00-00'
 type_date	LENIENT 1525	35ced041e136	SELECT * FROM t2 WHERE a = '1000-00-00'
-type_date	RUNTIME 1292	d2fa63c4fd67	INSERT INTO t1 VALUES ('1000-00-00')
 type_date	RUNTIME 1441	ff192b999e89	INSERT INTO t1 VALUES
 type_date	RUNTIME 1292	a1845d652cd3	INSERT INTO t1 VALUE(15.00+adddate('2011-00-00', 1))
-type_datetime	RUNTIME 1292	d3a063ccdc1a	insert into t1 values ('2007-03-32','2007-03-23 13:49:38')
 type_datetime	LENIENT 1525	071f88bc69ee	DELETE IGNORE  FROM t1 WHERE dt1 = '0000-00-01 00:00:01'
 type_datetime	RUNTIME 1292	8a97eb1b4c29	DELETE FROM test.t WHERE `col_int_nokey` > `col_int_nokey`
 type_datetime	RUNTIME 1292	ebb07497498d	UPDATE test.t SET `col_varchar_nokey` = TIMESTAMP(`col_time_nokey`,'00:00:00')
@@ -3328,13 +3122,8 @@ type_float	RUNTIME 1264	a0a58131d325	INSERT INTO t5s VALUES('-1e+52')
 type_float	DIFF column type float unsigned->float	9b794a16a9ed	SELECT * from t5u
 type_newdecimal	DIFF column type decimal unsigned->decimal	1e57b24662bf	select a from t1
 type_newdecimal	DIFF column type bigint->decimal	b670f07380ca	select floor(-999999999999999999999.999)
-type_newdecimal	RUNTIME 1264	6fd39f507799	INSERT INTO Sow6_2f VALUES (101.55)
 type_newdecimal	RUNTIME 1264	05cebec9db9a	UPDATE Sow6_2f SET col1 = col1 * 50 WHERE col1 = 11
 type_newdecimal	RUNTIME 1365	1e7d25224eb8	UPDATE Sow6_2f SET col1 = col1 / 0 WHERE col1 > 0
-type_newdecimal	RUNTIME 1366	fa3a84bdd6ee	INSERT INTO Sow6_2f VALUES ('a59b')
-type_newdecimal	RUNTIME 1264	476d1c4093e4	insert into t1 values(1,-1,-1)
-type_newdecimal	RUNTIME 1264	4613458ed097	insert into t1 values (999.999,999.999)
-type_newdecimal	RUNTIME 1264	cfc44cecb7ef	insert into t1 values (-999.999,-999.999)
 type_newdecimal	LENIENT 1427	9a3d33be9ec8	select convert(ln(14000),decimal(2,3)) c1
 type_newdecimal	LENIENT 1427	d9c1ffee9b38	select cast(ln(14000) as decimal(2,3)) c1
 type_newdecimal	DIFF column type decimal unsigned->decimal	055b08222849	select * from t1
@@ -3343,8 +3132,6 @@ type_newdecimal	LENIENT 1426	d898af9f0999	SELECT CAST(1 AS decimal(66,10))
 type_newdecimal	LENIENT 1425	33d42bcec451	SELECT CAST(1 AS decimal(65,31))
 type_newdecimal	LENIENT 1425	7c9512375129	SELECT a+CAST(1 AS decimal(65,31)) AS aa, SUM(b) FROM t1 GROUP BY aa
 type_newdecimal	DIFF column name	c5f4951382b4	select (1.20396873 * 0.89550000 * 0.68000000 * 1.08721696 * 0.99500000 *
-type_newdecimal	STRICT 1055	d961d6b39a06	select STRAIGHT_JOIN
-type_newdecimal	STRICT 1055	677b9c8a2229	SELECT a FROM t1 GROUP BY 1 IN(1) INTO @b
 type_newdecimal	STRICT 1054	6b6bde693246	SELECT 1 FROM t1 WHERE EXISTS
 type_newdecimal	DIFF column type decimal unsigned->decimal	3abd07b0a7e7	SELECT * FROM t1
 type_newdecimal	RUNTIME 1690	a400e3397f17	SELECT a - b FROM t1
@@ -3355,13 +3142,9 @@ type_newdecimal	LENIENT 3146	da82ef831078	SELECT -1 DIV LEAST(1,JSON_INSERT(1, '
 type_newdecimal	RUNTIME 3854	9e5721866407	WITH RECURSIVE cte1 AS (
 type_ranges	DIFF column type smallint->smallint unsigned	c98e583a7222	select auto,string,tiny,short,medium,long_int,longlong,real_float,real_double,utiny,ushort,umedium,u
 type_ranges	DIFF column type string->binary	4af7b8be5573	select * from t2
+type_set	STRICT 1265	62a8d6c492f6	INSERT INTO bar VALUES ("100")
 type_temporal_fractional	LENIENT 1426	3d1d317ee62a	SELECT CURTIME(7)
 type_temporal_fractional	LENIENT 1426	4645616c2c3e	SELECT CURTIME(31)
-type_temporal_fractional	RUNTIME 1292	e8076c2077f6	INSERT INTO t1 VALUES ('00:00:00.111111 xxx')
-type_temporal_fractional	RUNTIME 1292	1c924ccf6511	INSERT INTO t1 VALUES (106060)
-type_temporal_fractional	RUNTIME 1292	287508d5364c	INSERT INTO t1 VALUES (106060.0)
-type_temporal_fractional	RUNTIME 1292	106a08318f41	INSERT INTO t1 VALUES (106060e0)
-type_temporal_fractional	RUNTIME 1292	523f99d2ff50	INSERT INTO t1 VALUES ('106060')
 type_temporal_fractional	RUNTIME 1292	a36e0a9f2cd7	INSERT INTO t1 VALUES ('838:59:59.0000009')
 type_temporal_fractional	RUNTIME 1292	f750f715002a	INSERT INTO t1 VALUES ('-838:59:59.0000009')
 type_temporal_fractional	RUNTIME 1292	84a6a04906ca	INSERT INTO t1 VALUES (CAST(0xFFFFFFFF00000000 AS SIGNED))
@@ -3372,23 +3155,7 @@ type_temporal_fractional	LENIENT 1426	f2d07b4d4828	SELECT SYSDATE(7)
 type_temporal_fractional	LENIENT 1426	afe2876f7742	SELECT SYSDATE(31)
 type_temporal_fractional	LENIENT 1426	435dbb708d17	SELECT NOW(7)
 type_temporal_fractional	LENIENT 1426	d74e6abf3885	SELECT NOW(31)
-type_temporal_fractional	RUNTIME 1292	f4ad71888699	INSERT INTO t1 VALUES ('xxx', NULL)
-type_temporal_fractional	RUNTIME 1292	d4cb4df114b0	INSERT INTO t1 VALUES (NULL,'xxx')
-type_temporal_fractional	RUNTIME 1292	1cf817fd421e	INSERT INTO t1 VALUES ('1999-01-01 00:00:00 xxx', NULL)
-type_temporal_fractional	RUNTIME 1292	29c7ce08e21b	INSERT INTO t1 VALUES ('1999-00-00 00:00:00 xxx', NULL)
-type_temporal_fractional	RUNTIME 1292	f9d525420383	INSERT INTO t1 VALUES (NULL, '1999-00-00 00:00:00 xxx')
-type_temporal_fractional	RUNTIME 1292	02959767e2da	INSERT INTO t1 VALUES ('1999-00-00 xxx', NULL)
-type_temporal_fractional	RUNTIME 1292	4297facf176b	INSERT INTO t1 VALUES (NULL, '1999-00-00 xxx')
-type_temporal_fractional	RUNTIME 1292	cf2ed818d9fd	INSERT INTO t1 VALUES ('1999-00-00 00:00:00', NULL)
-type_temporal_fractional	RUNTIME 1292	c3470114721a	INSERT INTO t1 VALUES (NULL, '1999-00-00 00:00:00')
 type_temporal_fractional	RUNTIME 1292	b1c43f5660d3	INSERT INTO t1 VALUES (NULL, TIMESTAMP('0000-00-00 10:00:00'))
-type_temporal_fractional	RUNTIME 1292	386536c49b4a	INSERT INTO t1 VALUES (NULL, 199991231000000)
-type_temporal_fractional	RUNTIME 1292	91bc58a09b09	INSERT INTO t1 VALUES (NULL, -0.1)
-type_temporal_fractional	RUNTIME 1292	a2aa4c4b9d9f	INSERT INTO t1 VALUES (NULL, -1.0)
-type_temporal_fractional	RUNTIME 1292	aa5537f8767d	INSERT INTO t1 VALUES (NULL, -1.1)
-type_temporal_fractional	RUNTIME 1292	e797f3b9b308	INSERT INTO t1 VALUES (NULL, -0.1e0)
-type_temporal_fractional	RUNTIME 1292	9c6e4d477343	INSERT INTO t1 VALUES (NULL, -1.0e0)
-type_temporal_fractional	RUNTIME 1292	851e382b1cc9	INSERT INTO t1 VALUES (NULL, -1.1e0)
 type_temporal_fractional	RUNTIME 1292	60b7fd330a33	INSERT INTO t1 VALUES (NULL, CAST(0xFFFFFFFF00000000 AS SIGNED))
 type_temporal_fractional	RUNTIME 1292	24f1ba9e8d0e	INSERT INTO t1 VALUES (NULL, CAST(0xFFFFFFFF00000000 AS UNSIGNED))
 type_temporal_fractional	DIFF column type bigint->decimal	2c2e47deb9a6	SELECT LEAST(TIMESTAMP'2001-01-01 00:00:00.1', TIMESTAMP'2001-01-01 00:00:00.2') + 1
@@ -3397,7 +3164,6 @@ type_temporal_fractional	LENIENT 1426	01a5944f8679	SELECT CAST(1 AS DATETIME(31)
 type_temporal_fractional	DIFF nullable true->false	6c9acd6e705f	SELECT CAST(a AS CHAR) FROM t1
 type_temporal_fractional	DIFF nullable true->false	ae12a8d91a66	SELECT CAST(a AS CHAR(6)) FROM t1
 type_temporal_fractional	DIFF column type string->datetime	c10487a4a5df	SELECT TIMESTAMP('2011-05-18 16:17:11.2', '11.29')
-type_temporal_fractional	STRICT 1055	444e0bdf9251	SELECT col_datetime_3_key , COUNT( col_timestamp_5_key )
 type_temporal_fractional	DIFF nullable true->false	a0ae2e39bcbb	SELECT CAST(COALESCE(a,a) AS CHAR) FROM t1
 type_temporal_fractional	DIFF column type decimal->bigint	4355d4d6608e	SELECT UNIX_TIMESTAMP(NULL)
 type_temporal_fractional	DIFF column type decimal->bigint	809a452a517f	SELECT UNIX_TIMESTAMP('0000-01-01 00:00:00')
@@ -3434,7 +3200,6 @@ type_temporal_fractional	LENIENT 3144	9da3064b08d2	SELECT * FROM t1 WHERE
 type_time	DIFF column type time->datetime	0f119b782f42	SELECT TIMESTAMP(f1,'1') FROM t1
 type_time	DIFF nullable true->false	8297621cc801	SELECT CAST(IF(1, TIME'00:00:00',TIME'00:00:00') AS CHAR)
 type_time	DIFF nullable true->false	1ca1831bc63e	SELECT CAST(CASE WHEN 1 THEN TIME'00:00:00' ELSE TIME'00:00:00' END AS CHAR)
-type_time	RUNTIME 1292	ab79e40b21ce	INSERT INTO t1 VALUES ('10-11-12')
 type_timestamp	DIFF column type double->bigint	a4ce02315347	SELECT TIMESTAMP('2000-01-27','23:13:41') - TIMESTAMP('2003-05-16','23:53:29')
 type_varchar	DIFF column name	deee14cc3e35	SELECT a,(a + 0) FROM t1 ORDER BY a
 type_varchar	DIFF column name	91404eadca42	SELECT a,(a DIV 2) FROM t1 ORDER BY a
@@ -3523,10 +3288,10 @@ varbinary	DIFF column type decimal->double	febb6e5d5ce4	SELECT 1.0 * (_binary x'
 varbinary	DIFF column type bigint unsigned->double	c31ecf472db3	SELECT (_binary x'31' | NULL) + 0
 varbinary	DIFF column type decimal->double	f489ad6f1115	SELECT
 varbinary	DIFF column type decimal->double	8773c2fabf91	SELECT
-varbinary	STRICT 1140	517bb619ff13	SELECT
-varbinary	STRICT 1140	29cb9f240375	SELECT
-varbinary	STRICT 1055	9ec03b4ffceb	SELECT
-varbinary	STRICT 1055	f965dd0f1228	SELECT
+varbinary	DIFF column type decimal->double	517bb619ff13	SELECT
+varbinary	DIFF column type decimal->double	29cb9f240375	SELECT
+varbinary	DIFF column type decimal->double	9ec03b4ffceb	SELECT
+varbinary	DIFF column type decimal->double	f965dd0f1228	SELECT
 variables	LENIENT 1238	b02ab5b8411a	select @@global.timestamp
 variables	LENIENT 1193	9435362f3716	select @@xxxxxxxxxx
 variables	LENIENT 1238	0da901f069c6	select @@session.key_buffer_size
@@ -3610,7 +3375,6 @@ view	LENIENT 1176	5131fd68a939	SELECT * FROM v1 IGNORE INDEX (PRIMARY) WHERE c1=
 view	LENIENT 1176	1fbcb6108df3	SELECT * FROM v1 USE INDEX (c2) WHERE c2=2
 view	LENIENT 1176	e602425fabed	SELECT * FROM v1 FORCE INDEX (c2) WHERE c2=2
 view	LENIENT 1176	478fb6cfc941	SELECT * FROM v1 IGNORE INDEX (c2) WHERE c2=2
-view	DIFF nullable true->false	0f577e8df108	SELECT COLLATION(c1), COLLATION(c2) FROM v1
 view	LENIENT 1267	6e0fd12535b3	SELECT * FROM v1 WHERE c1 = 'text1'
 view	LENIENT 1267	3c999506e0d5	SELECT * FROM v1 WHERE c2 = 'text2'
 view	CODE 1395->1288	a64b15c2a8a6	DELETE vtt FROM vtt WHERE a1=8
@@ -3755,7 +3519,6 @@ window_functions	LENIENT 3585	ed966dee5af3	SELECT ROW_NUMBER() OVER (ROWS BETWEE
 window_functions	LENIENT 3585	a47e5595dd47	SELECT ROW_NUMBER() OVER (ORDER BY a RANGE BETWEEN CURRENT ROW AND UNBOUNDED PRECEDING)
 window_functions	LENIENT 3596	48f4dfaf3ba3	SELECT ROW_NUMBER() OVER (ROWS BETWEEN INTERVAL 2 DAY PRECEDING AND UNBOUNDED FOLLOWING)
 window_functions	LENIENT 3596	4356d7e1f592	SELECT ROW_NUMBER() OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND INTERVAL 2 DAY FOLLOWING)
-window_functions	STRICT 3065	1a4d74cd9f49	UPDATE
 window_functions	LENIENT 3593	33889c9eb451	SELECT MAX(row_number() OVER ()) FROM t
 window_functions	CODE 3593->1140	1d14b4c945e7	SELECT MIN(rank() OVER (ORDER BY a)) FROM t
 window_functions	CODE 3593->1140	6e76922c1dae	SELECT BIT_AND(rank() OVER (ORDER BY a)) FROM t
@@ -3808,10 +3571,8 @@ window_functions_bugs	LENIENT 3141	61b2c4b35b4d	SELECT JSON_ARRAY(NTH_VALUE(CAST
 window_functions_bugs	LENIENT 3141	299429a58bcc	SELECT JSON_ARRAY(LEAD(CAST('true' AS JSON), 2, CAST('' AS JSON)) OVER (), '')
 window_functions_bugs	DIFF nullable true->false	b300708812c6	SELECT
 window_functions_bugs	DIFF column type binary->string	549132f990c2	SELECT
-window_functions_bugs	STRICT 1140	ef4a216262e2	SELECT MIN(a), LEAD(a, 5, 7) OVER (ORDER BY b) AS field1 FROM t1 WHERE b IN ( SELECT a FROM t2 ) ORD
 window_functions_bugs	DIFF column type bigint->int	1118f232f41b	SELECT DISTINCT
 window_functions_bugs	DIFF column type int->bigint	8b5f344469a3	SELECT f1, f2, DENSE_RANK() OVER (ORDER BY f1), RANK() OVER (ORDER BY f1)
-window_functions_bugs	STRICT 1140	72421d09b150	SELECT DISTINCT BIT_XOR( c2 )
 window_jsonaggs	SCHEMA problems: unsupported construct sum_expr: ?	35ddc7e2e9a9	SELECT * FROM v
 window_min_max	DIFF column type bigint->int	44c20d073cb3	SELECT sex, NTILE(2) OVER w , MIN(ASCII(sex)) OVER w min,
 window_min_max	DIFF column type int->bigint	7b7cdf87ecd7	SELECT k, MIN(i), SUM(j), MIN(k) OVER (ROWS UNBOUNDED PRECEDING) min_wf FROM t
@@ -3838,11 +3599,6 @@ with_recursive_solver	STRICT 1146	f9bd068029a5	call solver("[[1,2,1,3],  [1,0,1,
 with_recursive_solver	STRICT 1146	02d7b5dddd26	call solver("[[1,2,1,3],  [1,0,1,1],  [0,1,0,1],  [1,3,1,3]]", "[1,3,-1,4]")
 xa_debug	LENIENT 1399	3abd07b0a7e7	SELECT * FROM t1
 xa_debug	LENIENT 1399	60f251c8bd12	INSERT INTO t1 VALUES (1)
-xa_debug	RUNTIME 1366	414f06c82189	INSERT INTO t1 VALUES ('I: The first string'), ('I: The second string')
-xa_debug	RUNTIME 1366	f6849c2b3f00	INSERT INTO t1 VALUES ('II: The first string'), ('II: The second string')
-xa_debug	RUNTIME 1366	063709275b24	INSERT INTO t1 VALUES ('III: The first string'), ('III: The second string')
-xa_debug	RUNTIME 1366	5fc0a6171db0	INSERT INTO t1 VALUES ('IV: The first string'), ('IV: The second string')
-xa_debug	RUNTIME 1366	445739748266	INSERT INTO t1 VALUES ('V: The first string'), ('V: The second string')
 xa_default	LENIENT 1399	9875053f6da0	INSERT INTO t1 VALUES (40)
 xa_default	LENIENT 1399	c56d9b114068	INSERT INTO t1 VALUES (42)
 xa_detach_on_prepare_off	LENIENT 1399	f25aa4712800	insert t1 values (40)
