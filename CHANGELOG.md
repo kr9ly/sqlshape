@@ -75,8 +75,11 @@ release it is a candidate for.
   date `str_to_datetime` rejects under the `sql_mode`, a `TIME` past 838 hours, a string
   longer than the column, an `ENUM` / `SET` member that does not exist, a number or a string
   into a spatial column -- is the statement's own error with the server's number and message
-  (1264 / 1265 / 1292 / 1366 / 1406 / 1416), in strict mode and outside `IGNORE`; 140 such
-  stores are pinned against mysqld; the corpus baseline falls to 3,619.
+  (1264 / 1265 / 1292 / 1366 / 1406 / 1416), in strict mode and outside `IGNORE`; 144 such
+  stores are pinned against mysqld. A prefix key (`UNIQUE (c(10))`) or an expression key
+  (`UNIQUE ((n * 2))`) is now a violable key (1062) for the writes that assign its columns,
+  and a `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literal the server cannot read as that
+  type is the statement's 1525; the corpus baseline falls to 3,525.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

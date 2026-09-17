@@ -63,7 +63,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 - ウィンドウ関数の整数（`MIN(id) OVER ()`、`FIRST_VALUE`、`NTH_VALUE`、`LAG`、`LEAD`など）はウィンドウの一時表を通ってクライアントに届くので広がる。`INT`と`BIGINT`は`BIGINT`に、`TINYINT` / `SMALLINT` / `MEDIUMINT`は`INT`になり、符号は保たれ、`YEAR`は`INT UNSIGNED`になる。ふつうの集約は列の型を保つ（`SMALLINT`の`MIN(small)`は`SMALLINT`）。`ROLLUP`のグループ列も、実行計画がたまたまグループ化を一時表に落とす場合を除いて型を保つ。その場合は検査器は予測しない
 - `ROLLUP`の下では、グループ列を読む列がnullableになる（超集約行でNULLになる）。選択リストの定数はならない
-- `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'`リテラルはその型を持ち（小数桁は書かれた桁数）、NULLにならない。`<=>`も被演算子にかかわらずNULLにならない
+- `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'`リテラルはその型を持ち（小数桁は書かれた桁数）、NULLにならない。サーバがちょうどその型として読めないもの（時刻部のある`DATE`、時刻部の無い`TIMESTAMP`、`NO_ZERO_IN_DATE`下のゼロの月、`-14:00`〜`+14:00`の外の時差）は文のエラー1525になる。`<=>`も被演算子にかかわらずNULLにならない
 - `USER()`、`CURRENT_USER()`、`DATABASE()`、`SCHEMA()`、`VERSION()`、`CURRENT_ROLE()`はバイナリ文字列でなく文字列（utf8mb3）である
 
 ### 制約名と失敗モード
@@ -73,7 +73,7 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 | 制約 | 名前 | エラー |
 |---|---|---|
 | 主キー | `PRIMARY` | 1062 |
-| `UNIQUE`キー | キーの名前 | 1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反しない） |
+| `UNIQUE`キー | キーの名前 | 1062（サーバが自分で番号を振るキーと、NULLが避けるキーは違反しない。プレフィックスキー`UNIQUE (c(10))`と式キー`UNIQUE ((n * 2))`は読む列を通して違反する） |
 | 外部キー | `CONSTRAINT`名。無ければ`<table>_ibfk_<n>` | 子側は1452、親側は1451（`ON DELETE` / `ON UPDATE CASCADE`を追う） |
 | `CHECK` | `CONSTRAINT`名。無ければ`<table>_chk_<n>` | 3819 |
 | `NOT NULL` | `<table>.<column>` | 1048 |

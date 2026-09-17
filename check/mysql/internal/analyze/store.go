@@ -252,6 +252,32 @@ func (a *analyzer) literalStore(col *schema.Column, v mysqlast.Value, row int) *
 	return nil
 }
 
+// temporalLiteral is item_create.cc's create_temporal_literal check on a DATE'...' /
+// TIME'...' / TIMESTAMP'...' literal: the value must parse as exactly the named type with
+// no warning, under TIME_FUZZY_DATE plus the sql_mode's NO_ZERO_IN_DATE / NO_ZERO_DATE /
+// ALLOW_INVALID_DATES; otherwise the statement fails with 1525 (ER_WRONG_VALUE).
+func (a *analyzer) temporalLiteral(typ, value string, start int) *Error {
+	flags := a.dateFlags("date") // TIME_FUZZY_DATE and the mode's flags, whatever the type
+	var tm mysqlTime
+	var warn int
+	ok := false
+	word := "DATETIME"
+	switch typ {
+	case "date":
+		word = "DATE"
+		ok = strToDatetime(value, flags, &tm, &warn) && warn == 0 && tm.fields <= 3
+	case "time":
+		word = "TIME"
+		ok = strToTime(value, &tm, &warn) && warn == 0
+	default:
+		ok = strToDatetime(value, flags, &tm, &warn) && warn == 0 && tm.fields > 3
+	}
+	if ok {
+		return nil
+	}
+	return &Error{Message: fmt.Sprintf("Incorrect %s value: '%s'", word, value), Code: 1525, Position: a.ph.Back(start)}
+}
+
 // dateFlags is Field_*::date_flags for a column type under the schema's sql_mode: a DATE /
 // DATETIME is fuzzy (a 0 month or day is allowed unless NO_ZERO_IN_DATE), a TIMESTAMP never
 // is; NO_ZERO_DATE and ALLOW_INVALID_DATES follow the mode.
@@ -528,8 +554,9 @@ func isPunct(c byte) bool {
 	return c > ' ' && c < 0x7f && !isDigit(c) && !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z')
 }
 
-// tzDisplacement parses {+-}HH:MM to the end of s, in seconds.
+// tzDisplacement parses {+-}HH:MM to the end of s (trailing spaces allowed), in seconds.
 func tzDisplacement(s string) (int, bool) {
+	s = strings.TrimRight(s, " \t\n\r\f\v")
 	if len(s) != 6 || (s[0] != '+' && s[0] != '-') || !isDigit(s[1]) || !isDigit(s[2]) || s[3] != ':' || !isDigit(s[4]) || !isDigit(s[5]) {
 		return 0, false
 	}
@@ -545,9 +572,24 @@ func tzDisplacement(s string) (int, bool) {
 	return off, true
 }
 
-// strToDatetime is my_time.cc's str_to_datetime. It returns false on an error (warn says
-// which); on success warn may still carry timeWarnTruncated for trailing text.
+// strToDatetime is my_time.cc's str_to_datetime: parseDatetime's verdict as a bool (false on
+// tdNone and tdError alike; warn says which); on success warn may still carry
+// timeWarnTruncated for trailing text.
 func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
+	return parseDatetime(s, flags, t, warn) == tdOK
+}
+
+// parseDatetime's verdicts: read; not a datetime at all (MYSQL_TIMESTAMP_NONE: no leading
+// digit, a rejected delimiter, a bad displacement -- str_to_time then tries its own
+// shapes); a datetime shape the value does not fit (MYSQL_TIMESTAMP_ERROR: a field out of
+// range, a zero the flags forbid).
+const (
+	tdOK = iota
+	tdNone
+	tdError
+)
+
+func parseDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) int {
 	const maxParts = 8
 	var date, dateLen [maxParts]uint
 	end := len(s)
@@ -557,7 +599,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 	}
 	if i >= end || !isDigit(s[i]) {
 		*warn = timeWarnTruncated
-		return false
+		return tdNone
 	}
 	pos := i
 	for pos < end && (isDigit(s[pos]) || s[pos] == 'T') {
@@ -596,7 +638,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 			remaining--
 			if tmp > 999999 {
 				*warn = timeWarnTruncated
-				return false
+				return tdNone
 			}
 		}
 		dateLen[part] = uint(i - start)
@@ -624,7 +666,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 				off, ok := tzDisplacement(s[i:])
 				if !ok {
 					*warn = timeWarnTruncated
-					return false
+					return tdNone
 				}
 				foundDisplacement, displacement = true, off
 				i = end
@@ -636,7 +678,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 			off, ok := tzDisplacement(s[i:])
 			if !ok {
 				*warn = timeWarnTruncated
-				return false
+				return tdNone
 			}
 			foundDisplacement, displacement = true, off
 			i = end
@@ -646,7 +688,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 			if isSpace(s[i]) {
 				if allowSpace&(1<<part) == 0 {
 					*warn = timeWarnTruncated
-					return false
+					return tdNone
 				}
 				foundSpace = true
 			} else if !((s[i] == '-' && allowHyphen&(1<<part) != 0) || (s[i] == ':' && allowColon&(1<<part) != 0)) && part != 2 {
@@ -662,7 +704,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 	}
 	if foundDelimiter && !foundSpace && flags&timeDatetimeOnly != 0 {
 		*warn = timeWarnTruncated
-		return false
+		return tdNone
 	}
 	i = lastFieldPos
 	numberOfFields := part
@@ -670,7 +712,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 		yearLength = int(dateLen[0])
 		if yearLength == 0 {
 			*warn = timeWarnTruncated
-			return false
+			return tdNone
 		}
 	}
 	*t = mysqlTime{year: date[0], month: date[1], day: date[2], hour: date[3], minute: date[4], second: date[5]}
@@ -703,10 +745,10 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 		} else {
 			*warn |= timeWarnZeroDate
 		}
-		return false
+		return tdError
 	}
 	if checkDate(*t, notZero != 0, flags, warn) {
-		return false
+		return tdError
 	}
 	if fracDigits == 6 && i < end && isDigit(s[i]) {
 		for i < end && isDigit(s[i]) {
@@ -717,10 +759,10 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 		off, ok := tzDisplacement(s[i:])
 		if !ok {
 			*warn = timeWarnTruncated
-			return false
+			return tdNone
 		}
 		t.hasTZ, t.tzOffset = true, off
-		return true
+		return tdOK
 	}
 	for ; i < end; i++ {
 		if !isSpace(s[i]) {
@@ -728,7 +770,7 @@ func strToDatetime(s string, flags timeFlags, t *mysqlTime, warn *int) bool {
 			break
 		}
 	}
-	return true
+	return tdOK
 }
 
 // numberToDatetime is my_time.cc's number_to_datetime: YYMMDD, YYYYMMDD, YYMMDDHHMMSS and
@@ -807,14 +849,14 @@ func strToTime(s string, t *mysqlTime, warn *int) bool {
 	if end-i >= 12 {
 		var dt mysqlTime
 		var w int
-		if strToDatetime(s[i:], timeFuzzyDate|timeDatetimeOnly, &dt, &w) {
+		switch parseDatetime(s[i:], timeFuzzyDate|timeDatetimeOnly, &dt, &w) {
+		case tdOK:
 			*t = mysqlTime{hour: dt.hour, minute: dt.minute, second: dt.second, secondPart: dt.secondPart, isTime: true}
 			*warn = w &^ timeWarnTruncated
 			return true
-		}
-		// str_to_datetime's NONE (not a datetime shape at all) falls through; its ERROR
-		// (a datetime shape it could not accept) is this function's error too
-		if w != timeWarnTruncated || datetimeShaped(s[i:]) {
+		case tdError:
+			// a datetime shape the value does not fit is this function's error too; tdNone
+			// (not a datetime at all) falls through to the time shapes
 			*warn = w
 			return false
 		}
@@ -927,17 +969,6 @@ func strToTime(s string, t *mysqlTime, warn *int) bool {
 		}
 	}
 	return true
-}
-
-// datetimeShaped says a string that str_to_datetime rejected still looked like a date (a
-// digit run followed by a delimiter and more digits), so str_to_time's fallback does not
-// apply (MYSQL_TIMESTAMP_ERROR rather than MYSQL_TIMESTAMP_NONE).
-func datetimeShaped(s string) bool {
-	i := 0
-	for i < len(s) && isDigit(s[i]) {
-		i++
-	}
-	return i >= 4 && i < len(s) && (s[i] == '-' || s[i] == '/' || s[i] == '.') && i+1 < len(s) && isDigit(s[i+1])
 }
 
 // numberToTime is my_time.cc's number_to_time: HHMMSS, or a full datetime number.

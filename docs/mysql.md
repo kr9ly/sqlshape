@@ -105,7 +105,10 @@ A few results are not the type they are written over (all measured):
 - under `ROLLUP`, the columns that read the grouped columns are nullable (the super-aggregate
   rows hold NULL there); a constant in the select list is not;
 - `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literals carry their type (the fractional digits
-  written) and are never NULL; `<=>` is never NULL, whatever its operands;
+  written) and are never NULL; one the server cannot read as exactly that type (a `DATE` with
+  a time part, a `TIMESTAMP` without one, a zero month under `NO_ZERO_IN_DATE`, a
+  displacement outside `-14:00` to `+14:00`) is the statement's error 1525; `<=>` is never
+  NULL, whatever its operands;
 - `USER()`, `CURRENT_USER()`, `DATABASE()`, `SCHEMA()`, `VERSION()` and `CURRENT_ROLE()` are
   character strings (utf8mb3), not binary strings.
 
@@ -116,7 +119,7 @@ A failure mode is named as MySQL names the constraint, and numbered as MySQL num
 | constraint | name | error |
 |---|---|---|
 | primary key | `PRIMARY` | 1062 |
-| `UNIQUE` key | the key's name | 1062 (a key the server numbers itself, or one a NULL leaves alone, cannot be violated) |
+| `UNIQUE` key | the key's name | 1062 (a key the server numbers itself, or one a NULL leaves alone, cannot be violated; a prefix key `UNIQUE (c(10))` or an expression key `UNIQUE ((n * 2))` is violated through the columns it reads) |
 | foreign key | the `CONSTRAINT` name, or `<table>_ibfk_<n>` when it has none | 1452 on the child side, 1451 on the parent side (following `ON DELETE` / `ON UPDATE CASCADE`) |
 | `CHECK` | the `CONSTRAINT` name, or `<table>_chk_<n>` | 3819 |
 | `NOT NULL` | `<table>.<column>` | 1048 |

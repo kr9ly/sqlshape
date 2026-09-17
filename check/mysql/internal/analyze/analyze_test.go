@@ -84,6 +84,7 @@ var analyzeCases = []analyzeCase{
 	{"SELECT id, MIN(id) OVER (), MAX(small) OVER (), FIRST_VALUE(big) OVER (), NTH_VALUE(tiny, 2) OVER (), LAG(y) OVER (), LEAD(hits) OVER (), SUM(id) OVER (), ABS(id), id + 0 FROM metrics", []string{"id int", "MIN(id) OVER () bigint null", "MAX(small) OVER () int null", "FIRST_VALUE(big) OVER () bigint null", "NTH_VALUE(tiny, 2) OVER () int unsigned null", "LAG(y) OVER () int unsigned null", "LEAD(hits) OVER () bigint unsigned null", "SUM(id) OVER () decimal null", "ABS(id) bigint", "id + 0 bigint"}, nil},
 	{"SELECT id, small, tiny, 1+1, COUNT(*) FROM metrics GROUP BY id, small, tiny WITH ROLLUP", []string{"id int null", "small smallint null", "tiny tinyint unsigned null", "1+1 bigint", "COUNT(*) bigint"}, nil},
 	{"SELECT DATE'2000-01-01', TIME'10:00:00.12', TIMESTAMP'2000-01-01 10:00:00', CAST(DATE'2000-01-01' AS DOUBLE), CAST(TIME'10:00:00' AS SIGNED)", []string{"DATE'2000-01-01' date", "TIME'10:00:00.12' time(2)", "TIMESTAMP'2000-01-01 10:00:00' datetime(0)", "CAST(DATE'2000-01-01' AS DOUBLE) double", "CAST(TIME'10:00:00' AS SIGNED) bigint"}, nil},
+	{"SELECT TIMESTAMP'2015-01-01 10:10:10+05:30', TIMESTAMP'2015-01-01T10:10:10.5', DATE'2004-02-29', DATE'20040229', TIME'-838:59:59', TIME'1 10:00:00', TIME'100000', TIME'010203.12345', TIMESTAMP'2019-09-20 10:00:00.999999+02:00 '", []string{"TIMESTAMP'2015-01-01 10:10:10+05:30' datetime(0)", "TIMESTAMP'2015-01-01T10:10:10.5' datetime(1)", "DATE'2004-02-29' date", "DATE'20040229' date", "TIME'-838:59:59' time(0)", "TIME'1 10:00:00' time(0)", "TIME'100000' time(0)", "TIME'010203.12345' time(5)", "TIMESTAMP'2019-09-20 10:00:00.999999+02:00 ' datetime(6)"}, nil},
 	{"SELECT id <=> big, NULL <=> 1, id = big FROM metrics", []string{"id <=> big bigint(1)", "NULL <=> 1 bigint(1)", "id = big bigint(1) null"}, nil},
 	{"SELECT USER(), CURRENT_USER(), DATABASE(), SCHEMA(), VERSION(), CURRENT_ROLE()", []string{"USER() varchar null", "CURRENT_USER() varchar null", "DATABASE() varchar null", "SCHEMA() varchar null", "VERSION() varchar", "CURRENT_ROLE() varchar null"}, nil},
 	{"SELECT id INTO @v FROM metrics LIMIT 1", nil, nil},
@@ -202,6 +203,18 @@ type errorCase struct {
 // errorCases are the statements MySQL rejects, with its error number and message.
 var errorCases = []errorCase{
 	{"SELECT id FROM nobody", 1146, "Table 'nobody' doesn't exist", 15},
+	// temporal literals the server refuses (create_temporal_literal)
+	{"SELECT TIMESTAMP'2015-01-01 10:10:10+5:30'", 1525, "Incorrect DATETIME value: '2015-01-01 10:10:10+5:30'", 7},
+	{"SELECT TIMESTAMP'2015-01-01 10:10:10+14:01'", 1525, "Incorrect DATETIME value: '2015-01-01 10:10:10+14:01'", 7},
+	{"SELECT TIMESTAMP'2010-01-01'", 1525, "Incorrect DATETIME value: '2010-01-01'", 7},
+	{"SELECT TIMESTAMP'2001-00-01 00:00:00'", 1525, "Incorrect DATETIME value: '2001-00-01 00:00:00'", 7},
+	{"SELECT TIMESTAMP'20130710010203123456'", 1525, "Incorrect DATETIME value: '20130710010203123456'", 7},
+	{"SELECT DATE'2010-01'", 1525, "Incorrect DATE value: '2010-01'", 7},
+	{"SELECT DATE'2010-01-01 10:00:00'", 1525, "Incorrect DATE value: '2010-01-01 10:00:00'", 7},
+	{"SELECT DATE'2005-02-29'", 1525, "Incorrect DATE value: '2005-02-29'", 7},
+	{"SELECT TIME'10:70:00'", 1525, "Incorrect TIME value: '10:70:00'", 7},
+	{"SELECT TIME'839:00:00'", 1525, "Incorrect TIME value: '839:00:00'", 7},
+	{"SELECT TIME'xxxx'", 1525, "Incorrect TIME value: 'xxxx'", 7},
 	{"SELECT idd FROM users", 1054, "Unknown column 'idd' in 'field list'", 7},
 	{"SELECT u.idd FROM users u", 1054, "Unknown column 'u.idd' in 'field list'", 7},
 	{"SELECT x.id FROM users u", 1054, "Unknown column 'x.id' in 'field list'", 7},

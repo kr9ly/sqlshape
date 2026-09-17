@@ -260,15 +260,6 @@ ctype_utf32	RUNTIME 1366	a76f35b85c40	INSERT INTO t1 VALUES(x'DFFF')
 ctype_utf32	RUNTIME 1366	f63c1c7a4719	INSERT INTO t1 VALUES(x'110000')
 ctype_utf8	DIFF column type binary->string	f7018eb92fca	select left(_utf8mb3 0xD0B0D0B1D0B2,1)
 ctype_utf8	DIFF column type binary->string	f05fff01bad3	select right(_utf8mb3 0xD0B0D0B2D0B2,1)
-ctype_utf8	RUNTIME 1062	d2a7d72b48f2	insert into t1 values ('aaaaaaaaaaa')
-ctype_utf8	RUNTIME 1062	34d5c677490a	insert into t1 values ('aaaaaaaaaaaa')
-ctype_utf8	RUNTIME 1062	e9765c3aa39e	insert into t1 values ('aaa')
-ctype_utf8	RUNTIME 1062	9673e740b16e	insert into t1 values ('bbb')
-ctype_utf8	RUNTIME 1062	0a616749aeea	insert into t1 values ('ааа')
-ctype_utf8	RUNTIME 1062	5af818590961	insert into t1 values ('ббб')
-ctype_utf8	RUNTIME 1062	b82d57f37e8a	insert into t1 values ('ꪪꪪꪪ')
-ctype_utf8	RUNTIME 1062	a4a1efcc9477	insert into t1 values ('aa')
-ctype_utf8	RUNTIME 1062	50e18cc18b9d	insert into t1 values ('бб')
 ctype_utf8	DIFF column type binary->string	6ce1f92e7508	select soundex(_utf8mb3 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB)
 ctype_utf8	DIFF column type binary->string	eee62906d3e8	select soundex(_utf8mb3 0xD091D092D093)
 ctype_utf8	DIFF column type binary->string	c8e55918ecb4	select char(0xd1,0x8f using utf8mb3)
@@ -295,15 +286,6 @@ ctype_utf8	RUNTIME 1406	dbfcc52b520a	INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 
 ctype_utf8	RUNTIME 1406	d840f94cb9af	INSERT INTO t1 (c1) VALUES(CONCAT('a', REPEAT(X'C385', 128)))
 ctype_utf8mb4	DIFF column type binary->string	328b6109eb55	select left(_utf8mb4 0xD0B0D0B1D0B2,1)
 ctype_utf8mb4	DIFF column type binary->string	0f2bdc35a06d	select right(_utf8mb4 0xD0B0D0B2D0B2,1)
-ctype_utf8mb4	RUNTIME 1062	d2a7d72b48f2	insert into t1 values ('aaaaaaaaaaa')
-ctype_utf8mb4	RUNTIME 1062	34d5c677490a	insert into t1 values ('aaaaaaaaaaaa')
-ctype_utf8mb4	RUNTIME 1062	e9765c3aa39e	insert into t1 values ('aaa')
-ctype_utf8mb4	RUNTIME 1062	9673e740b16e	insert into t1 values ('bbb')
-ctype_utf8mb4	RUNTIME 1062	0a616749aeea	insert into t1 values ('ааа')
-ctype_utf8mb4	RUNTIME 1062	5af818590961	insert into t1 values ('ббб')
-ctype_utf8mb4	RUNTIME 1062	b82d57f37e8a	insert into t1 values ('ꪪꪪꪪ')
-ctype_utf8mb4	RUNTIME 1062	a4a1efcc9477	insert into t1 values ('aa')
-ctype_utf8mb4	RUNTIME 1062	50e18cc18b9d	insert into t1 values ('бб')
 ctype_utf8mb4	DIFF column type binary->string	07e0446c087e	select soundex(_utf8mb4 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB)
 ctype_utf8mb4	DIFF column type binary->string	b62ae6f715b2	select soundex(_utf8mb4 0xD091D092D093)
 ctype_utf8mb4	DIFF column type binary->string	25e643eb9df9	select char(0xd1,0x8f using utf8mb4)
@@ -325,17 +307,6 @@ ctype_utf8mb4	LENIENT 1300	9e1c663c73d5	select hex(_utf8mb4 X'616263FF')
 ctype_utf8mb4	LENIENT 1300	d53365731630	select hex(_utf8mb4 B'001111111111')
 ctype_utf8mb4	LENIENT 1300	14e1d5239f9a	select (_utf8mb4 X'616263FF')
 ctype_utf8mb4	DIFF column type binary->string	9b502491a126	SELECT CONCAT(utf8mb4, _utf8mb3 x'ea9da8') FROM t1 LIMIT 0
-ctype_utf8mb4_innodb	RUNTIME 1062	d2a7d72b48f2	insert into t1 values ('aaaaaaaaaaa')
-ctype_utf8mb4_innodb	RUNTIME 1062	34d5c677490a	insert into t1 values ('aaaaaaaaaaaa')
-ctype_utf8mb4_innodb	RUNTIME 1062	e9765c3aa39e	insert into t1 values ('aaa')
-ctype_utf8mb4_innodb	RUNTIME 1062	9673e740b16e	insert into t1 values ('bbb')
-ctype_utf8mb4_innodb	RUNTIME 1062	0a616749aeea	insert into t1 values ('ааа')
-ctype_utf8mb4_innodb	RUNTIME 1062	5af818590961	insert into t1 values ('ббб')
-ctype_utf8mb4_innodb	RUNTIME 1062	b82d57f37e8a	insert into t1 values ('ꪪꪪꪪ')
-ctype_utf8mb4_innodb	RUNTIME 1062	a4a1efcc9477	insert into t1 values ('aa')
-ctype_utf8mb4_innodb	RUNTIME 1062	50e18cc18b9d	insert into t1 values ('бб')
-ctype_utf8mb4_innodb	RUNTIME 1062	63f0a76dd4f1	insert into t1 values ('Ã±Ã±')
-ctype_utf8mb4_innodb	RUNTIME 1062	e03636543549	insert into t1 values ('Ã±Ã±Ã±')
 date_formats	DIFF column type datetime->date	d9c8c571d6c4	select str_to_date('15-01-2001 12:59:59', GET_FORMAT(DATE,'USA'))
 date_formats	DIFF column type datetime->date	5b15fe1bfbb4	select str_to_date( NULL, 1 )
 dd_is_compatibility_cs	SCHEMA problems: unsupported construct ternary_option: ?	c1c5af1b465c	INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10),
@@ -1377,7 +1348,6 @@ having	STRICT 1054	c1481c71e932	SELECT Outjoin3.a FROM (SELECT 1 FROM t1 AS From
 having	CODE 1052->1054	6582a65e495a	SELECT (SELECT 1 FROM a HAVING g)
 having	LENIENT 1052	a701e0ec62ce	SELECT *
 having_myisam	RUNTIME 1242	9324da2a48fb	SELECT col_int_key
-heap	RUNTIME 1062	587aa538e8bf	insert into t1 values ("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx
 heap_auto_increment	STRICT 1054	8b0f23ab011c	select _rowid,t1._rowid,skey,sval from t1
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	cb938e5a10f6	INSERT INTO t1 VALUES (1, 1, 1, 1)
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	c6852b774c9e	INSERT INTO t1 VALUES (1), (2)
@@ -1565,10 +1535,6 @@ key_cache	LENIENT 1193	894e3271e01f	SELECT @@skr.default_storage_engine="test"
 key_myisam	DIFF column type binary->string	a9c32697dfc4	SELECT * FROM t1 WHERE a='a' AND b=2
 key_myisam	DIFF column type binary->string	b3df378924b8	SELECT * FROM t1 WHERE a='a' AND b in (2)
 key_myisam	DIFF column type binary->string	087f68ad10c0	SELECT * FROM t1 WHERE a='a' AND b in (1,2)
-key_myisam	RUNTIME 1062	7e62f6616645	insert t1 (c) values ('cc22')
-key_myisam	RUNTIME 1062	b0dd96e2f711	insert t1 (t) values ('ttt22')
-key_myisam	RUNTIME 1062	96acdaf57f70	insert t1 (c) values (0xD0B1212322D0B1D0B1D0B1D0B1D0B1)
-key_myisam	RUNTIME 1062	8777add8038f	insert t1 (t) values (0xD0B1D0B1212322D0B1D0B1D0B1D0B1)
 kill	SCHEMA problems: unsupported construct kill: ?	42364a017b73	SELECT 1
 kill	SCHEMA problems: unsupported construct kill: ?	6f8beb5cd3cd	INSERT INTO t1 VALUES
 lead_lag	LENIENT 1235	2485612c6dda	SELECT id, sex, LEAD(id, 1, 10) IGNORE NULLS OVER () FROM t1
@@ -2883,47 +2849,14 @@ tablesample	LENIENT 3889	caff43402cf2	SELECT * FROM t3 TABLESAMPLE SYSTEM (100)
 tablesample	LENIENT 6107	09d4783143ee	SELECT * FROM t3 TABLESAMPLE SYSTEM (101)
 tablespace	SCHEMA problems: unsupported construct create: ?	a8d3b76734e2	CALL cr(3)
 temp_table	STRICT 1146	4af7b8be5573	select * from t2
-temporal_literal	LENIENT 1525	c28600edfa99	SELECT DATE'xxxx'
-temporal_literal	LENIENT 1525	a99c4e0d3eae	SELECT DATE'01'
-temporal_literal	LENIENT 1525	f4803e4b680b	SELECT DATE'01-01'
-temporal_literal	LENIENT 1525	9fa73ca510c1	SELECT DATE'2001'
-temporal_literal	LENIENT 1525	785037fdda7e	SELECT DATE'2001-01'
-temporal_literal	LENIENT 1525	163a07b5bd27	SELECT DATE'2001-01-01 00:00:00'
-temporal_literal	LENIENT 1525	45f6a4411ce8	SELECT DATE'2001-00-00'
-temporal_literal	LENIENT 1525	64d3b5db5369	SELECT DATE'2001-01-00'
-temporal_literal	LENIENT 1525	eb0139ba39ae	SELECT TIME'xxxx'
-temporal_literal	LENIENT 1525	a1e1faa25708	SELECT TIME'900:00:00'
-temporal_literal	LENIENT 1525	ea9bdff4c3c7	SELECT TIME'-900:00:00'
 temporal_literal	LENIENT 1525	cde151717647	SELECT TIME'0000-00-00 00:00:00'
-temporal_literal	LENIENT 1525	223800502d05	SELECT TIME'40 24:00:00'
-temporal_literal	LENIENT 1525	361f621b70cd	SELECT TIMESTAMP'xxxx'
-temporal_literal	LENIENT 1525	3ab8cb1b6036	SELECT TIMESTAMP'2010'
-temporal_literal	LENIENT 1525	a15cb195e4ea	SELECT TIMESTAMP'2010-01'
-temporal_literal	LENIENT 1525	36e76ea07677	SELECT TIMESTAMP'2010-01-01'
 temporal_literal	LENIENT 1525	05cd7eb86c05	SELECT TIMESTAMP'2001-00-00 00:00:00.9999999'
 temporal_literal	LENIENT 1525	5f9046242542	SELECT TIMESTAMP'2001-00-01 00:00:00.9999999'
 temporal_literal	LENIENT 1525	6e47fc83538a	SELECT TIMESTAMP'2001-01-00 00:00:00.9999999'
-temporal_literal	LENIENT 1525	debae899de22	SELECT TIME'10-11:12.098700  '
 temptable_disk	DIFF column type string->binary	37a30f63aa4e	SELECT * FROM
 temptable_fallback	DIFF column name	9ba98c3d8dbd	SELECT (@id1=@id2)
 temptable_fallback	DIFF column name	e426e90ce134	SELECT (@id1<@id2)
 test_mysql_thd_store_service	STRICT 1305	7c67cc66902d	SELECT test_thd_store_service_function()
-time_zone	LENIENT 1525	724858da99bf	SELECT TIMESTAMP'2015-01-01 10:10:10+5:30'
-time_zone	LENIENT 1525	24b306d2e868	SELECT TIMESTAMP'2015-01-01 10:10:10+5:030'
-time_zone	LENIENT 1525	8a25dca45042	SELECT TIMESTAMP'2015-01-01 10:10:10+005:30'
-time_zone	LENIENT 1525	585f9c2fd3bb	SELECT TIMESTAMP'2015-01-01 10:10:10+05:300'
-time_zone	LENIENT 1525	d80f39d31ace	SELECT TIMESTAMP'2015-01-01 10:10:10.0+05:300'
-time_zone	LENIENT 1525	e79d714272c8	SELECT TIMESTAMP'2015-01-01 10:10:10.0+05:30xxx'
-time_zone	LENIENT 1525	c8dedfe44fd7	SELECT TIMESTAMP'2015-01-01 10:10:10.0+25:30'
-time_zone	LENIENT 1525	982a962ed9af	SELECT TIMESTAMP'2015-01-01 10:10:10+05'
-time_zone	LENIENT 1525	902c51c24694	SELECT TIMESTAMP'2015-01-01 10:10:10+05:'
-time_zone	LENIENT 1525	c65ab991cded	SELECT TIMESTAMP'2015-01-01 10:10:10+0'
-time_zone	LENIENT 1525	a54066d53c60	SELECT TIMESTAMP'2015-01-01 10:10:10+1'
-time_zone	LENIENT 1525	0fff0fa53410	SELECT TIMESTAMP'2015-01-01 10:10:10 +05:30'
-time_zone	LENIENT 1525	3855431c0e8a	SELECT TIMESTAMP'2015-01-01 10:10:10+14:01'
-time_zone	LENIENT 1525	08eda6554a1b	SELECT TIMESTAMP'2015-01-01 10:10:10-14:01'
-time_zone	LENIENT 1525	a70566852d21	SELECT TIMESTAMP'2015-01-01 10:10:10+zx:00'
-time_zone	LENIENT 1525	26921a1d58c9	SELECT TIMESTAMP'2015-01-01 10:10:10+00:00zx'
 time_zone	DIFF column type string->datetime	16188fdefd66	SELECT TIMESTAMP( '2003-12-31 23:59:59+02:00', '12:00:00' )
 time_zone	DIFF column type decimal->bigint	c8860906aabb	SELECT UNIX_TIMESTAMP( '2015-11-13 23:59:59+02:00' )
 time_zone	RUNTIME 1292	a736be37028b	INSERT INTO t1 VALUES ( TIMESTAMP'2038-01-19 03:14:08+00:00' )
@@ -3041,8 +2974,6 @@ type_bit_myisam	DIFF column type bigint unsigned->int unsigned	77a6e893b24e	sele
 type_bit_myisam	DIFF column type bigint unsigned->int unsigned	81e67a81ef80	select b1+0,sum(b1), sum(b2) from t1 join t2 on b1 = b2 group by b1 order by 1
 type_blob	DIFF column type string->binary	0f3d15790640	select foobar, boggle from t1 where foobar = 'fish'
 type_blob	DIFF column type string->binary	f56d44867ecb	select foobar, boggle from t1 where foobar = 'fish' and boggle = 10
-type_blob	RUNTIME 1062	533c5eb715d9	insert into t1 (txt) values ('Chevy'), ('Chevy ')
-type_blob	RUNTIME 1062	6908ce410ba3	insert into t1 (txt) values ('Chevy'), ('CHEVY')
 type_blob	LENIENT 1210	d4acb9c118a0	SELECT c1,ST_Astext(c4) FROM tab WHERE c4<@g1
 type_blob	LENIENT 1210	12bb33f442a0	SELECT c1,ST_Astext(c4) FROM tab WHERE c4>@g1+3
 type_blob	LENIENT 1210	c8aea5b84d14	SELECT * FROM tab WHERE c2+4 > 5
@@ -3171,31 +3102,6 @@ type_temporal_fractional	DIFF column type decimal->bigint	cbdafb6a3710	SELECT UN
 type_temporal_fractional	DIFF column type decimal->bigint	394b65f0685b	SELECT UNIX_TIMESTAMP('2001-01-00 00:00:00')
 type_temporal_fractional	DIFF column type decimal->bigint	61c31677ccc1	SELECT UNIX_TIMESTAMP('0000-00-00 10:10:20')
 type_temporal_fractional	DIFF column type bigint->decimal	59431a8d9261	SELECT UNIX_TIMESTAMP(TIMESTAMP('0000-00-00 00:00:00.1'))
-type_temporal_fractional	LENIENT 1525	a25bfd4d90c7	SELECT TIMESTAMP '201307100102031'
-type_temporal_fractional	LENIENT 1525	1d6203b65a5b	SELECT TIMESTAMP '2013071001020312'
-type_temporal_fractional	LENIENT 1525	d1bfd914c90e	SELECT TIMESTAMP '20130710010203123'
-type_temporal_fractional	LENIENT 1525	e4c0307cc3ec	SELECT TIMESTAMP '201307100102031234'
-type_temporal_fractional	LENIENT 1525	0910a8e46ca1	SELECT TIMESTAMP '2013071001020312345'
-type_temporal_fractional	LENIENT 1525	c8bc5df9cc42	SELECT TIMESTAMP '20130710010203123456'
-type_temporal_fractional	LENIENT 1525	362963eba6d4	SELECT TIMESTAMP '2013:07:10 01:02:03:04'
-type_temporal_fractional	LENIENT 1525	865d9725e834	SELECT TIMESTAMP '2013:07:10 01.02.131'
-type_temporal_fractional	LENIENT 1525	a3f163796749	SELECT TIMESTAMP '2013:07:10 01.02.131.2'
-type_temporal_fractional	LENIENT 1525	1de8873ccc2d	SELECT TIMESTAMP '2013:07:10 01.02.0312.3'
-type_temporal_fractional	LENIENT 1525	25c10921374d	SELECT TIMESTAMP '2013.07.10 01.02.131.23456'
-type_temporal_fractional	LENIENT 1525	6b30c2d12587	SELECT TIMESTAMP '201307100102031.'
-type_temporal_fractional	LENIENT 1525	828a7125332d	SELECT TIMESTAMP '2012071001021.1'
-type_temporal_fractional	LENIENT 1525	579a6578c819	SELECT TIME '10102031'
-type_temporal_fractional	LENIENT 1525	032b20d2a6b5	SELECT TIME '101020312'
-type_temporal_fractional	LENIENT 1525	7b5471184330	SELECT TIME '1010203123'
-type_temporal_fractional	LENIENT 1525	f7424244d6ab	SELECT TIME '10102031234'
-type_temporal_fractional	LENIENT 1525	0b0fcecf1b7b	SELECT TIME '101020312345'
-type_temporal_fractional	LENIENT 1525	6d69b0aa0685	SELECT TIME '1010203123456'
-type_temporal_fractional	LENIENT 1525	a03e26ce8bbc	SELECT TIME '01:02:03:04'
-type_temporal_fractional	LENIENT 1525	e93c7dc138a3	SELECT TIME '01:02:131'
-type_temporal_fractional	LENIENT 1525	c759f01059f1	SELECT TIME '01:02:131.2'
-type_temporal_fractional	LENIENT 1525	937400b789c6	SELECT TIME '01:02:0312.3'
-type_temporal_fractional	LENIENT 1525	2f6fd955353d	SELECT TIME '01:02:131.23456'
-type_temporal_fractional	LENIENT 1525	d21018f595c1	SELECT TIME '11102031.'
 type_temporal_fractional	LENIENT 3144	9da3064b08d2	SELECT * FROM t1 WHERE
 type_time	DIFF column type time->datetime	0f119b782f42	SELECT TIMESTAMP(f1,'1') FROM t1
 type_time	DIFF nullable true->false	8297621cc801	SELECT CAST(IF(1, TIME'00:00:00',TIME'00:00:00') AS CHAR)

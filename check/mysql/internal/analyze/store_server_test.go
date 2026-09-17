@@ -163,6 +163,9 @@ var storeCases = []struct {
 	{"INSERT INTO lit (tm) VALUES (-8385959)", 0},
 	{"INSERT INTO lit (tm) VALUES (20040229155959)", 0},
 	{"INSERT INTO lit (tm2) VALUES ('10:00:00.999')", 0},
+	{"INSERT INTO lit (tm) VALUES ('010203.12345')", 0},
+	{"INSERT INTO lit (tm) VALUES ('2004-13-29 15:59:59')", 1292},
+	{"INSERT INTO lit (dt) VALUES ('2019-09-20 10:00:00.999999+02:00 ')", 0},
 	// strings
 	{"INSERT INTO lit (c3) VALUES ('abc')", 0},
 	{"INSERT INTO lit (c3) VALUES ('abcd')", 1406},

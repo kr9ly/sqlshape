@@ -350,7 +350,7 @@ func (a *analyzer) insertViolations(w *write) []Violation {
 		if k.Kind != schema.Primary && k.Kind != schema.Unique || w.onDuplicate != nil || w.replace {
 			continue // ON DUPLICATE KEY UPDATE and REPLACE absorb a colliding key
 		}
-		cols, ok := keyColumns(k)
+		cols, ok := violableKeyColumns(k)
 		if !ok || systemGenerated(t, cols, w.inserted) || leftNull(t, cols, w.inserted) {
 			continue
 		}
@@ -427,7 +427,7 @@ func (a *analyzer) updateViolations(t *schema.Table, values []assignment, skip m
 		if k.Kind != schema.Primary && k.Kind != schema.Unique || skip[k.Name] {
 			continue
 		}
-		if cols, ok := keyColumns(k); ok && anyIn(cols, set) {
+		if cols, ok := violableKeyColumns(k); ok && anyIn(cols, set) {
 			out = append(out, Violation{Code: codeDuplicateKey, Constraint: k.Name, Table: t.Name, Columns: cols})
 		}
 	}
@@ -539,6 +539,33 @@ func (a *analyzer) referencingViolations(t *schema.Table, changed map[string]boo
 		}
 	}
 	return out
+}
+
+// violableKeyColumns lists the columns whose values a key constrains, prefix parts
+// (`UNIQUE (c(10))`, judged on the first characters) and expression parts (`UNIQUE
+// ((col + 1))`, judged on the columns the expression reads) included: a write that assigns
+// any of them may collide on the key (1062), unlike keyColumns' reading, where such a
+// part is not something an equality on the column fixes. Found by the corpus probe
+// (ctype_utf8's prefix keys), pinned by TestViolationsServer.
+func violableKeyColumns(k *schema.Key) ([]string, bool) {
+	cols := make([]string, 0, len(k.Parts))
+	seen := map[string]bool{}
+	add := func(c string) {
+		if c != "" && !seen[strings.ToLower(c)] {
+			seen[strings.ToLower(c)] = true
+			cols = append(cols, c)
+		}
+	}
+	for _, p := range k.Parts {
+		if p.Expr != nil {
+			for _, c := range exprColumns(p.Expr) {
+				add(c)
+			}
+			continue
+		}
+		add(p.Column)
+	}
+	return cols, len(cols) > 0
 }
 
 // keyColumns lists a key's columns when every part is a whole column (a prefix or an

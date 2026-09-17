@@ -48,6 +48,7 @@ func TestViolationsServer(t *testing.T) {
 		"INSERT INTO payments (id, account_id, amount) VALUES (10, 1, 5)",
 		"INSERT INTO receipts (id, payment_id) VALUES (100, 10)",
 		"INSERT INTO audit (id, receipt_id) VALUES (1000, 100)",
+		"INSERT INTO tags (id, code, body, n) VALUES (1, 'abc', 'wxyz', 7)",
 	} {
 		if _, err := conn.ExecContext(ctx, seed); err != nil {
 			t.Fatalf("%s: %v", seed, err)
@@ -71,6 +72,11 @@ func TestViolationsServer(t *testing.T) {
 		{"UPDATE payments SET account_id = $1 WHERE id = $2", []any{999, 10}, "1452 fk_payments_account"},
 		{"DELETE FROM accounts WHERE id = $1", []any{1}, "1451 fk_payments_account"},
 		{"DELETE FROM payments WHERE id = $1", []any{10}, "1451 audit_ibfk_1"},
+		// a prefix key collides on the first characters, an expression key on the expression
+		{"INSERT INTO tags (id, code, body, n) VALUES ($1, $2, $3, $4)", []any{2, "abz", "qqqq", 8}, "1062 code_prefix"},
+		{"INSERT INTO tags (id, code, body, n) VALUES ($1, $2, $3, $4)", []any{2, "zzz", "wxyq", 8}, "1062 body_prefix"},
+		{"INSERT INTO tags (id, code, body, n) VALUES ($1, $2, $3, $4)", []any{2, "zzz", "qqqq", 7}, "1062 n_expr"},
+		{"UPDATE tags SET code = $1 WHERE id = $2", []any{"abq", 1}, ""},
 		// two rows with a NULL nick do not collide on the unique key: nothing to expect
 		{"INSERT INTO accounts (email) VALUES ($1)", []any{"d@x"}, ""},
 		{"INSERT IGNORE INTO accounts (id, email) VALUES ($1, $2)", []any{1, "z@x"}, ""},
@@ -92,7 +98,7 @@ func TestViolationsServer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, execErr := tx.ExecContext(ctx, strings.NewReplacer("$1", "?", "$2", "?", "$3", "?").Replace(c.sql), c.args...)
+		_, execErr := tx.ExecContext(ctx, strings.NewReplacer("$1", "?", "$2", "?", "$3", "?", "$4", "?").Replace(c.sql), c.args...)
 		tx.Rollback()
 		if c.want == "" {
 			if execErr != nil {

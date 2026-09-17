@@ -162,17 +162,25 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		return known("varbinary", false), nil
 	case "PTI_temporal_literal":
 		// DATE'...' / TIME'...' / TIMESTAMP'...' (Item_date_literal / Item_time_literal /
-		// Item_datetime_literal over a value the parser already validated): the named
-		// type, never NULL; the fractional seconds are the literal's own digits
+		// Item_datetime_literal): the named type, never NULL; the fractional seconds are
+		// the literal's own digits. The value must parse as exactly that type with no
+		// warning (create_temporal_literal: str_to_datetime under the sql_mode's zero-date
+		// flags, a DATE with no time part, a DATETIME with one, str_to_time for a TIME),
+		// else the statement is 1525 "Incorrect DATE / TIME / DATETIME value" (measured)
 		ft := strings.TrimPrefix(str(n.Arg("field_type")), "MYSQL_TYPE_")
 		typ, ok := fromFieldType(ft, false)
 		if !ok {
 			return unknown, nil
 		}
-		if tok, ok := n.Arg("literal").(mysqlast.Token); ok && (typ.Name == "time" || typ.Name == "datetime") {
-			typ.Dec = 0
-			if i := strings.LastIndexByte(tok.Value, '.'); i >= 0 {
-				typ.Dec = min(len(tok.Value)-i-1, 6)
+		if tok, ok := n.Arg("literal").(mysqlast.Token); ok {
+			if err := a.temporalLiteral(typ.Name, tok.Value, n.Start); err != nil {
+				return unknown, err
+			}
+			if typ.Name == "time" || typ.Name == "datetime" {
+				typ.Dec = 0
+				if i := strings.LastIndexByte(tok.Value, '.'); i >= 0 {
+					typ.Dec = min(len(tok.Value)-i-1, 6)
+				}
 			}
 		}
 		return typed{typ: typ, known: true}, nil

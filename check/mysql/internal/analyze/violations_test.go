@@ -37,6 +37,15 @@ CREATE TABLE audit (
   receipt_id BIGINT UNSIGNED NOT NULL,
   FOREIGN KEY (receipt_id) REFERENCES receipts (id)
 );
+CREATE TABLE tags (
+  id INT NOT NULL PRIMARY KEY,
+  code VARCHAR(30) NOT NULL,
+  body TEXT NOT NULL,
+  n INT NOT NULL,
+  UNIQUE KEY code_prefix (code(2)),
+  UNIQUE KEY body_prefix (body(3)),
+  UNIQUE KEY n_expr ((n * 2))
+);
 `
 
 // TestViolations covers the failure modes: what each write may violate, spelled as the
