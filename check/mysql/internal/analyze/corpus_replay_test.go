@@ -41,6 +41,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	driver "github.com/go-sql-driver/mysql"
 
@@ -469,6 +470,7 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 		s = sc
 	}
 	dirty := true
+	locked := false // LOCK TABLES held by the file's connection
 	judged, total := 0, 0
 	temps := map[string]bool{} // CREATE TEMPORARY TABLE names: not in SHOW CREATE, so not the analyzer's
 	const fileBudget = 3 * time.Minute
@@ -486,6 +488,13 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 		switch word {
 		case "SHUTDOWN", "RESTART", "KILL":
 			p.count("skipped (server control)", 1)
+			continue
+		}
+		if !utf8.ValidString(sql) {
+			// a file in a legacy encoding (gb18030, sjis, koi8r ...): the harness sends the
+			// bytes as utf8mb4 and reads SHOW CREATE back as utf8mb4, so the names it
+			// compares are not the file's -- the file's own character set, not a verdict
+			p.count("not judged (encoding)", 1)
 			continue
 		}
 		// the server
@@ -516,6 +525,17 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 		if serr == nil && schemaChanging(word) {
 			dirty = true
 		}
+		if serr == nil {
+			switch word {
+			case "LOCK":
+				locked = true
+			case "UNLOCK", "START", "BEGIN": // UNLOCK TABLES; a transaction start releases LOCK TABLES too
+				if locked {
+					dirty = true // a DDL under the lock is visible only now
+				}
+				locked = false
+			}
+		}
 		if reSystemSchema.MatchString(sql) {
 			p.count("not judged (system schema)", 1)
 			continue
@@ -538,6 +558,14 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 			p.count("not judged (statement kind)", 1)
 			continue
 		}
+		if dirty && locked {
+			// a DDL ran under LOCK TABLES: SHOW CREATE from the dump's connection waits on
+			// (or does not yet see) what the locking connection did -- ALTER TABLE ...
+			// RENAME under LOCK TABLES leaves the new name locked exclusively (measured:
+			// the dump read an inventory without it); judged again after UNLOCK
+			p.count("not judged (locked)", 1)
+			continue
+		}
 		if dirty {
 			rebuild()
 			dirty = false
@@ -554,6 +582,15 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 			}
 			continue
 		}
+		if word == "CALL" {
+			if body := calledBody(s, sql); body != "" && (reSystemSchema.MatchString(body) || mentionsAny(body, temps)) {
+				// the routine's body reads information_schema / performance_schema (the
+				// corpus's own p_verify_reprepare_count) or a TEMPORARY table: the same
+				// two exclusions as for a top-level statement, one level down
+				p.count("not judged (routine body)", 1)
+				continue
+			}
+		}
 		res, aerr := analyzeSafe(s, sql)
 		if aerr != nil && strings.HasPrefix(aerr.Error(), "panic:") {
 			hits = append(hits, corpusHit{file: name, line: st.Line, class: "PANIC", key: panicKey(aerr.Error()), sql: sql, detail: aerr.Error()})
@@ -566,9 +603,10 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 			p.count("not judged (analyzer limit)", 1)
 			continue
 		}
-		if acode := errCode(aerr); acode == 1146 && otherDatabase(sql, aerr.Error()) {
-			// the table the analyzer misses is named with a database qualifier: another
-			// database's, which the analyzer (one database) does not model
+		if acode := errCode(aerr); acode == 1146 && otherDatabase(sql, aerr.Error()) || acode == 1305 && reQualifiedCall.MatchString(sql) {
+			// the table the analyzer misses is named with a database qualifier (or the
+			// routine it misses is called as db.routine): another database's, which the
+			// analyzer (one database) does not model
 			p.count("not judged (other database)", 1)
 			continue
 		}
@@ -647,7 +685,24 @@ func predictedCodes(r *Result) []int {
 	return out
 }
 
-var reMissingTable = regexp.MustCompile(`Table '([^']+)' doesn't exist`)
+var (
+	reMissingTable  = regexp.MustCompile(`Table '([^']+)' doesn't exist`)
+	reQualifiedCall = regexp.MustCompile("(?i)`?\\w+`?\\s*\\.\\s*`?\\w+`?\\s*\\(")
+	reCallName      = regexp.MustCompile("(?is)^CALL\\s+`?([\\w$]+)`?")
+)
+
+// calledBody is the CREATE text of the routine a CALL statement names, "" when the schema
+// has no such routine.
+func calledBody(s *schema.Schema, sql string) string {
+	m := reCallName.FindStringSubmatch(sql)
+	if m == nil {
+		return ""
+	}
+	if r := s.RoutineOf(schema.Procedure, m[1]); r != nil {
+		return r.Definition
+	}
+	return ""
+}
 
 // otherDatabase: the table a 1146 names appears database-qualified in the statement (the
 // name is matched as bytes: the corpus is read as latin-1, and a name need not be UTF-8).
@@ -785,7 +840,7 @@ func compareColumns(r *Result, d *description) (key, detail string) {
 	}
 	for i, c := range r.Columns {
 		oc := d.cols[i]
-		if c.Name != oc.name {
+		if !sameColumnName(c.Name, oc.name) {
 			return "column name", fmt.Sprintf("column %d: analyzer %q, server %q", i+1, c.Name, oc.name)
 		}
 		if !c.Known {
@@ -800,6 +855,30 @@ func compareColumns(r *Result, d *description) (key, detail string) {
 		}
 	}
 	return "", ""
+}
+
+// sameColumnName compares a result column's name with the server's, allowing for what the
+// connection's character set did to the server's: under a file's SET NAMES utf8mb3 a
+// character outside the BMP in the name comes back as '?', and under a single-byte SET
+// NAMES (koi8r, latin1) the name is not UTF-8 at all -- the file's connection settings,
+// not the analyzer's naming.
+func sameColumnName(analyzer, server string) bool {
+	if analyzer == server {
+		return true
+	}
+	if !utf8.ValidString(server) {
+		return true
+	}
+	if strings.ContainsRune(server, '?') {
+		folded := strings.Map(func(r rune) rune {
+			if r > 0xFFFF {
+				return '?'
+			}
+			return r
+		}, analyzer)
+		return folded == server
+	}
+	return false
 }
 
 // familyOf is oracleKey over the driver's DatabaseTypeName.

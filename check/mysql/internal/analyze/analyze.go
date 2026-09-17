@@ -504,7 +504,17 @@ func (a *analyzer) statement(v mysqlast.Value) error {
 	}
 	switch n.Class {
 	case "PT_select_stmt":
-		return a.selectStmt(n)
+		if err := a.selectStmt(n); err != nil {
+			return err
+		}
+		if len(selectInto(n)) > 0 {
+			// INTO @var / INTO var: the row goes into the variables and no result set
+			// reaches the client (measured on mysqld 8.4, the corpus probe's `SELECT ...
+			// INTO @v` statements, in the trailing and the in-query positions alike); a
+			// body's walkSelect keeps the columns to match them against the targets
+			a.columns = nil
+		}
+		return nil
 	case "PT_insert":
 		return a.insert(n)
 	case "PT_update":
@@ -698,6 +708,22 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		}
 	}
 	rows, _ := arg(n, "row_value_list", 6).(mysqlast.List)
+	if len(rows) > 0 && arg(n, "insert_query_expression", 7) == nil {
+		// `VALUES ()` (each row empty) inserts a row of defaults whatever the column list
+		// says: no column is assigned, so no 1136 (measured on mysqld 8.4, the corpus
+		// probe's `INSERT INTO t1 VALUES ()` and `INSERT INTO t1 () VALUES (), ()`); an
+		// omitted NOT NULL column without a default is the usual 1364
+		empty := true
+		for _, row := range rows {
+			if vals, _ := row.(mysqlast.List); len(vals) > 0 {
+				empty = false
+			}
+		}
+		if empty {
+			targets = nil
+			w.inserted = map[string]bool{}
+		}
+	}
 	w.rows = len(rows)
 	switch {
 	case arg(n, "insert_query_expression", 7) != nil:

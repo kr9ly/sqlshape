@@ -59,6 +59,13 @@ go-sql-driver/mysqlが`parseTime=true`で実際に返す型で、動いている
 
 MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付きの型がMySQLに無いためである。
 
+書かれた型と結果の型が違うものがいくつかある（いずれも実測）。
+
+- ウィンドウ関数の整数（`MIN(id) OVER ()`、`FIRST_VALUE`、`NTH_VALUE`、`LAG`、`LEAD`など）はウィンドウの一時表を通ってクライアントに届くので広がる。`INT`と`BIGINT`は`BIGINT`に、`TINYINT` / `SMALLINT` / `MEDIUMINT`は`INT`になり、符号は保たれ、`YEAR`は`INT UNSIGNED`になる。ふつうの集約は列の型を保つ（`SMALLINT`の`MIN(small)`は`SMALLINT`）。`ROLLUP`のグループ列も、実行計画がたまたまグループ化を一時表に落とす場合を除いて型を保つ。その場合は検査器は予測しない
+- `ROLLUP`の下では、グループ列を読む列がnullableになる（超集約行でNULLになる）。選択リストの定数はならない
+- `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'`リテラルはその型を持ち（小数桁は書かれた桁数）、NULLにならない。`<=>`も被演算子にかかわらずNULLにならない
+- `USER()`、`CURRENT_USER()`、`DATABASE()`、`SCHEMA()`、`VERSION()`、`CURRENT_ROLE()`はバイナリ文字列でなく文字列（utf8mb3）である
+
 ### 制約名と失敗モード
 
 失敗モードの名前はMySQLが制約に付ける名前そのもので、番号はMySQLのエラー番号である。
@@ -203,7 +210,8 @@ SELECT name, count(*) FROM users GROUP BY id            -- OK: id は主キー
 
 - `LOAD DATA [LOCAL] INFILE ... INTO TABLE t`はファイルの行のINSERTである。対象は基底表でなければならず（ビューは1288）、列リストはその表で解決し（`@var`はフィールドを受け取るだけで列には代入しない）、`SET`の代入は式を列に対して型付けし、その中のプレースホルダは列の型を取る。失敗モードはINSERTのもの——埋める列にかかるキー・外部キー・CHECK（1062 / 1452 / 3819）、`IGNORE`が警告に変えること、`REPLACE`が衝突する行を先に消すこと——だが、サーバが変える点が2つある（実測）。`NOT NULL`列のフィールドがNULLになりうることは1048でなく1263（`SET col = NULL`は1048のまま）、列リストから外した`NOT NULL`列は1364でなく型の暗黙の既定値を取る。
 - `LOCK TABLES`が名指す表は存在しなければならず（1146。ビューもロックできる）、別名は重複してはならない（1066）。`UNLOCK TABLES`は何も解決しない。どちらにもパラメータは無い。
-- `SELECT ... INTO OUTFILE` / `INTO DUMPFILE`は、`INTO`の位置がどちらでも包んでいる`SELECT`と同じく型付けするが、列は返さない。行はサーバ上のファイルに書かれる。末尾の`FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`は`SELECT`の列をそのまま残す。
+- `SELECT ... INTO OUTFILE` / `INTO DUMPFILE`は、`INTO`の位置がどちらでも包んでいる`SELECT`と同じく型付けするが、列は返さない。行はサーバ上のファイルに書かれる。`SELECT ... INTO @var` / `INTO var`も同じで、行は変数に入る（数は一致しなければならない。1222）。末尾の`FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`は`SELECT`の列をそのまま残す。
+- `INSERT INTO t VALUES ()`（全行が空。列リストの有無は問わない）は既定値の行を挿入する。どの列にも代入しないので1136にはならず、既定値の無い`NOT NULL`列を外していれば通常どおり1364である。
 
 ### MySQLに無いもの
 

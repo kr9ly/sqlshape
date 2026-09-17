@@ -246,7 +246,10 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 		sc.facts.Single = true
 	}
 	if sc.info != nil && sc.info.rollup {
-		// the super-aggregate rows of ROLLUP hold NULL in every non-aggregated column
+		// the super-aggregate rows of ROLLUP hold NULL in every non-aggregated column that
+		// reads the grouped columns (an Item_rollup_group_item wraps each occurrence of a
+		// GROUP BY expression; a constant item such as `1+1` is left alone and keeps its
+		// nullability, measured on mysqld 8.4 -- TestOracle, the corpus probe's olap file)
 		k := 0
 		for _, it := range sc.itemList {
 			n, ok := it.(*mysqlast.Node)
@@ -255,7 +258,7 @@ func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, 
 			}
 			switch n.Class {
 			case "PTI_expr_with_alias":
-				if k < len(cols) && !isAggregateLike(exprNode(n.Arg("expr"))) {
+				if k < len(cols) && !isAggregateLike(exprNode(n.Arg("expr"))) && containsColumnRef(n.Arg("expr")) {
 					cols[k].Nullable = true
 				}
 				k++
@@ -579,4 +582,28 @@ func exprNode(v mysqlast.Value) *mysqlast.Node {
 		return n
 	}
 	return &mysqlast.Node{}
+}
+
+// containsColumnRef reports a column reference (a bare or qualified identifier, or a
+// `*`) anywhere under v, outside of aggregates or not.
+func containsColumnRef(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case *mysqlast.Node:
+		switch x.Class {
+		case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident", "PTI_simple_ident_q_2d", "PTI_simple_ident_q_3d", "Item_asterisk":
+			return true
+		}
+		for _, arg := range x.Args {
+			if containsColumnRef(arg) {
+				return true
+			}
+		}
+	case mysqlast.List:
+		for _, e := range x {
+			if containsColumnRef(e) {
+				return true
+			}
+		}
+	}
+	return false
 }

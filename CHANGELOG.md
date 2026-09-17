@@ -60,7 +60,17 @@ release it is a candidate for.
   a SELECT's columns compared by name, type family and nullability, an error by number. The
   first run agrees on 44,342 statements and lists 4,605 disagreements as the baseline the next
   rounds work down; two analyzer crashes it found (a routine variable shadowing the column an
-  INSERT or UPDATE in the body assigns) are fixed.
+  INSERT or UPDATE in the body assigns) are fixed. The second round fixes what its largest
+  classes were: a window function's integer widens through the window's temporary table
+  (`INT` / `BIGINT` to `BIGINT`, narrower to `INT`, `YEAR` to `INT UNSIGNED`), `USER()` /
+  `CURRENT_USER()` / `DATABASE()` / `SCHEMA()` / `CURRENT_ROLE()` are character strings,
+  `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literals are typed and never NULL, `<=>` is never
+  NULL, a `ROLLUP` constant stays `NOT NULL`, `SELECT ... INTO @var` returns no columns in
+  either position (a body's trailing `INTO` now counts as an INTO too), and `INSERT INTO t
+  VALUES ()` inserts a row of defaults instead of 1136; the probe itself stops judging a file in
+  a legacy encoding, a statement after a DDL under `LOCK TABLES`, a `CALL` whose body reads a
+  system schema or a temporary table, a `db.routine()` call, and a column name the
+  connection's character set rewrote.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

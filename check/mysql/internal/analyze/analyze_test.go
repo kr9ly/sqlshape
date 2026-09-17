@@ -25,6 +25,14 @@ CREATE TABLE orders (
 );
 CREATE VIEW v_users AS SELECT id, name FROM users;
 CREATE VIEW v_stats AS SELECT user_id, COUNT(*) AS n FROM orders GROUP BY user_id;
+CREATE TABLE metrics (
+  id INT NOT NULL PRIMARY KEY,
+  small SMALLINT NOT NULL,
+  big BIGINT,
+  tiny TINYINT UNSIGNED NOT NULL,
+  y YEAR NOT NULL,
+  hits INT UNSIGNED NOT NULL DEFAULT 0
+);
 `
 
 func load(t *testing.T) *schema.Schema {
@@ -68,6 +76,20 @@ type analyzeCase struct {
 // analyzeCases are the statements the analyzer types; TestOracle checks the same
 // statements against a real server.
 var analyzeCases = []analyzeCase{
+	// what the corpus probe (TestCorpusReplay) found, each pinned against mysqld by TestOracle:
+	// a window function's integer widens through the window's temporary table (INT / BIGINT
+	// to BIGINT, narrower to INT, YEAR to INT UNSIGNED) while a ROLLUP group column keeps its
+	// type; a ROLLUP constant stays NOT NULL; temporal literals are typed; <=> is never NULL; the system constants are
+	// utf8mb3 strings; SELECT ... INTO @var and INSERT ... VALUES () return / assign nothing
+	{"SELECT id, MIN(id) OVER (), MAX(small) OVER (), FIRST_VALUE(big) OVER (), NTH_VALUE(tiny, 2) OVER (), LAG(y) OVER (), LEAD(hits) OVER (), SUM(id) OVER (), ABS(id), id + 0 FROM metrics", []string{"id int", "MIN(id) OVER () bigint null", "MAX(small) OVER () int null", "FIRST_VALUE(big) OVER () bigint null", "NTH_VALUE(tiny, 2) OVER () int unsigned null", "LAG(y) OVER () int unsigned null", "LEAD(hits) OVER () bigint unsigned null", "SUM(id) OVER () decimal null", "ABS(id) bigint", "id + 0 bigint"}, nil},
+	{"SELECT id, small, tiny, 1+1, COUNT(*) FROM metrics GROUP BY id, small, tiny WITH ROLLUP", []string{"id int null", "small smallint null", "tiny tinyint unsigned null", "1+1 bigint", "COUNT(*) bigint"}, nil},
+	{"SELECT DATE'2000-01-01', TIME'10:00:00.12', TIMESTAMP'2000-01-01 10:00:00', CAST(DATE'2000-01-01' AS DOUBLE), CAST(TIME'10:00:00' AS SIGNED)", []string{"DATE'2000-01-01' date", "TIME'10:00:00.12' time(2)", "TIMESTAMP'2000-01-01 10:00:00' datetime(0)", "CAST(DATE'2000-01-01' AS DOUBLE) double", "CAST(TIME'10:00:00' AS SIGNED) bigint"}, nil},
+	{"SELECT id <=> big, NULL <=> 1, id = big FROM metrics", []string{"id <=> big bigint(1)", "NULL <=> 1 bigint(1)", "id = big bigint(1) null"}, nil},
+	{"SELECT USER(), CURRENT_USER(), DATABASE(), SCHEMA(), VERSION(), CURRENT_ROLE()", []string{"USER() varchar null", "CURRENT_USER() varchar null", "DATABASE() varchar null", "SCHEMA() varchar null", "VERSION() varchar", "CURRENT_ROLE() varchar null"}, nil},
+	{"SELECT id INTO @v FROM metrics LIMIT 1", nil, nil},
+	{"SELECT id FROM metrics LIMIT 1 INTO @v", nil, nil},
+	{"INSERT INTO metrics () VALUES ()", nil, nil},
+	{"INSERT INTO metrics VALUES (), ()", nil, nil},
 	{"SELECT id, name, email FROM users", []string{"id bigint unsigned", "name varchar(100)", "email varchar(255) null"}, nil},
 	{"SELECT * FROM users", []string{"id bigint unsigned", "name varchar(100)", "email varchar(255) null", "created_at datetime(6)"}, nil},
 	{"SELECT u.id AS uid, o.total, o.note FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = $1", []string{"uid bigint unsigned", "total decimal(10,2)", "note text null"}, []string{"bigint unsigned"}},

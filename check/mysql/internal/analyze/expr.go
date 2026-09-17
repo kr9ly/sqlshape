@@ -161,7 +161,21 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 	case "Item_hex_string", "Item_bin_string", "PTI_literal_underscore_charset_hex_num", "PTI_literal_underscore_charset_bin_num":
 		return known("varbinary", false), nil
 	case "PTI_temporal_literal":
-		return unknown, nil
+		// DATE'...' / TIME'...' / TIMESTAMP'...' (Item_date_literal / Item_time_literal /
+		// Item_datetime_literal over a value the parser already validated): the named
+		// type, never NULL; the fractional seconds are the literal's own digits
+		ft := strings.TrimPrefix(str(n.Arg("field_type")), "MYSQL_TYPE_")
+		typ, ok := fromFieldType(ft, false)
+		if !ok {
+			return unknown, nil
+		}
+		if tok, ok := n.Arg("literal").(mysqlast.Token); ok && (typ.Name == "time" || typ.Name == "datetime") {
+			typ.Dec = 0
+			if i := strings.LastIndexByte(tok.Value, '.'); i >= 0 {
+				typ.Dec = min(len(tok.Value)-i-1, 6)
+			}
+		}
+		return typed{typ: typ, known: true}, nil
 	case "Item_null":
 		return known("null", true), nil
 	case "Item_func_true", "Item_func_false":
@@ -175,6 +189,10 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("left"), n.Arg("right")}, ts, "")
 		a.paramSources(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")})
+		if op, _ := n.Arg("boolfunc2creator").(mysqlast.Op); op == "<=>" {
+			// Item_func_equal::resolve_type's set_nullable(false): NULL <=> NULL is 1
+			return boolean(false), nil
+		}
 		return boolean(ts[0].nullable || ts[1].nullable), nil
 	case "Item_func_in":
 		list, _ := n.Arg("list").(mysqlast.List)
@@ -415,7 +433,7 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, err
 		}
 		if _, ok := catalog.Items[class]; ok {
-			return a.classType(class, args, ts), nil
+			return a.classType(class, args, ts, isWindowFunction(n)), nil
 		}
 		return unknown, nil
 	}
@@ -502,7 +520,7 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return known("datetime", true), nil
 		}
 	}
-	return a.classType(f.Class, args, ts), nil
+	return a.classType(f.Class, args, ts, isWindowFunction(n)), nil
 }
 
 // storedFuncCall types a call to a schema-declared FUNCTION: its argument count must match
@@ -545,8 +563,10 @@ func (a *analyzer) storedFuncCall(sc scope, r *schema.Routine, args []mysqlast.V
 
 // classType is what an Item class returns over typed arguments, from the catalog: the
 // family fixes the result kind, the facts refine the type, the nullability and the
-// placeholders' types; the hybrid families compute from the arguments.
-func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) typed {
+// placeholders' types; the hybrid families compute from the arguments. windowed says the
+// call carries an OVER clause: its value then reaches the client through the window's
+// temporary table, which widens the narrow integers (tmpTableInt).
+func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed, windowed bool) typed {
 	fs := classFacts(class)
 	// placeholders: param_type_is_default gives a type by position, param_type_uses_non_param the others' type
 	for _, f := range fs {
@@ -728,6 +748,12 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 			binary := factBinary(fs)
 			switch {
 			case binary:
+			case isA(class, "Item_func_sysconst"), fam == "Item_static_string_func":
+				// USER() / CURRENT_USER() / DATABASE() / SCHEMA() / VERSION() / CURRENT_ROLE()
+				// ...: the constructor's collation.set(system_charset_info) makes them
+				// utf8mb3 strings, which classFacts (the class's own resolve_type facts)
+				// does not see
+				binary = false
 			case class == "Item_func_quote":
 				binary = false // a binary argument's quotes take the connection's collation
 			case strings.Contains(strings.Join(fs, ";"), "args[0]->collation"):
@@ -776,6 +802,9 @@ func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed) ty
 		}
 	default:
 		t.nullable = nullable
+	}
+	if windowed {
+		t.typ = tmpTableInt(t.typ)
 	}
 	return t
 }

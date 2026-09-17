@@ -94,6 +94,21 @@ operator is a `bigint(1)`, which `bool` may receive; so may a `TINYINT(1)`.
 
 There is no `// sqlshape: type` binding on MySQL: it has no named types to bind a Go type to.
 
+A few results are not the type they are written over (all measured):
+
+- a window function's integer (`MIN(id) OVER ()`, `FIRST_VALUE`, `NTH_VALUE`, `LAG`, `LEAD`
+  ...) reaches the client through the window's temporary table, which widens it: `INT` and
+  `BIGINT` become `BIGINT`, `TINYINT` / `SMALLINT` / `MEDIUMINT` become `INT`, the signedness
+  kept, and `YEAR` becomes `INT UNSIGNED`. A plain aggregate keeps the column's type
+  (`MIN(small)` over a `SMALLINT` is a `SMALLINT`), and so does a `ROLLUP` group column
+  unless the plan happens to materialize the grouping, which the checker does not predict;
+- under `ROLLUP`, the columns that read the grouped columns are nullable (the super-aggregate
+  rows hold NULL there); a constant in the select list is not;
+- `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literals carry their type (the fractional digits
+  written) and are never NULL; `<=>` is never NULL, whatever its operands;
+- `USER()`, `CURRENT_USER()`, `DATABASE()`, `SCHEMA()`, `VERSION()` and `CURRENT_ROLE()` are
+  character strings (utf8mb3), not binary strings.
+
 ### Constraint names and failure modes
 
 A failure mode is named as MySQL names the constraint, and numbered as MySQL numbers the error:
@@ -353,8 +368,13 @@ Besides `SELECT` / `INSERT` / `UPDATE` / `DELETE` / `CALL`, the checker reads th
 - `LOCK TABLES` names tables that must exist (1146, a view may be locked) under distinct aliases
   (1066); `UNLOCK TABLES` resolves nothing. Neither has parameters.
 - `SELECT ... INTO OUTFILE` / `INTO DUMPFILE`, in either position of the `INTO`, is typed like the
-  `SELECT` it wraps but returns no columns: the rows go to a file on the server. A trailing `FOR
-  UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE` leaves a `SELECT`'s columns as they are.
+  `SELECT` it wraps but returns no columns: the rows go to a file on the server. So is `SELECT ...
+  INTO @var` / `INTO var` (the row goes into the variables; the count must match, 1222). A
+  trailing `FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE` leaves a `SELECT`'s columns as they
+  are.
+- `INSERT INTO t VALUES ()` (every row empty, with or without a column list) inserts a row of
+  defaults: no column is assigned, so there is no 1136, and an omitted `NOT NULL` column
+  without a default is the usual 1364.
 
 ### Not on MySQL
 

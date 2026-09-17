@@ -186,6 +186,50 @@ func kindOf(t schema.Type) string {
 	return catalog.ResultKind(fieldType(t))
 }
 
+// tmpTableInt is what an integer becomes when a window function's value goes through the
+// window's temporary table (sql_tmp_table.cc's create_tmp_field_from_item, which an
+// Item::SUM_FUNC_ITEM with m_is_window_function reaches, unlike a plain aggregate whose
+// Item_sum_hybrid::create_tmp_field keeps the column's own type): an INT_RESULT of display
+// width MY_INT32_NUM_DECIMAL_DIGITS - 1 (10) or more is a Field_longlong, a narrower one a
+// Field_long -- so INT and BIGINT come back as BIGINT, TINYINT / SMALLINT / MEDIUMINT as
+// INT, the signedness kept, and a YEAR (Field_year is unsigned) as INT UNSIGNED (measured
+// on mysqld 8.4: TestOracle, the corpus probe's window_min_max file). The other result
+// kinds keep their type (a DECIMAL its precision, a string its length; a FLOAT stays a
+// FLOAT). A ROLLUP group column's Item_rollup_group_item wrapper takes the same path only
+// when the plan materializes the grouping (a join without an index, DISTINCT): the plan's
+// decision, not the statement's, so it is not predicted (measured: grouping on a key keeps
+// the column's type).
+func tmpTableInt(t schema.Type) schema.Type {
+	width := t.Length
+	switch t.Name {
+	case "tinyint", "smallint", "mediumint", "int", "bigint", "year":
+		if width <= 0 {
+			switch t.Name {
+			case "tinyint", "year":
+				width = 4
+			case "smallint":
+				width = 6
+			case "mediumint":
+				width = 9
+			case "int":
+				width = 11
+			case "bigint":
+				width = 20
+			}
+			if t.Unsigned {
+				width--
+			}
+		}
+	default:
+		return t
+	}
+	name := "int"
+	if width >= 10 {
+		name = "bigint"
+	}
+	return schema.Type{Name: name, Length: -1, Dec: -1, Unsigned: t.Unsigned || t.Name == "year"}
+}
+
 // isTemporal reports the temporal types (is_temporal_type).
 func isTemporal(t schema.Type) bool {
 	switch t.Name {

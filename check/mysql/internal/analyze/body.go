@@ -1532,6 +1532,11 @@ func badStatementName(class string) string {
 
 // selectInto digs a SELECT's own INTO target list out (nil when there is none).
 func selectInto(n *mysqlast.Node) mysqlast.List {
+	if l, ok := n.Arg("into").(mysqlast.List); ok && len(l) > 0 {
+		// the trailing position: `SELECT ... FROM t LIMIT 1 INTO @v` (PT_select_stmt's own
+		// "into", a list of PT_select_var / PT_select_sp_var / names)
+		return l
+	}
 	qe, ok := n.Arg("qe").(*mysqlast.Node)
 	if !ok {
 		// defensive: PT_select_stmt's own "qe" is always its query expression Node.
