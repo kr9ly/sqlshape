@@ -93,14 +93,14 @@ visible where deleted_at IS NULL statement
 require pinned(tenant_id) statement
 require single on delete statement`},
 		{`SELECT body FROM secrets WHERE id = $1`, `
-require via view FAIL table secrets is referenced directly: it is declared `+"`require via view`"+`, read it through a view`},
+require via view FAIL table secrets is referenced directly: it is declared ` + "`require via view`" + `, read it through a view`},
 		{`SELECT id FROM secret_ids WHERE id = $1`, ``},
 		{`UPDATE tickets SET amount = $1 WHERE id = $2 AND status <> 'closed' AND amount > 0`, `
 require status <> 'closed' AND amount > 0 on update statement`},
 		{`UPDATE tickets t SET amount = $1 WHERE t.id = $2 AND t.status <> 'closed'`, `
 require status <> 'closed' AND amount > 0 on update FAIL tickets requires status <> 'closed' AND amount > 0 here: add that predicate for tickets t, or opt out with ` + "`-- sqlshape: unfiltered tickets`"},
 		{`DELETE FROM ledger WHERE id = $1`, `
-require never on delete FAIL ledger is declared `+"`require never on delete`"+`: no statement may do this to it`},
+require never on delete FAIL ledger is declared ` + "`require never on delete`" + `: no statement may do this to it`},
 		{`INSERT INTO ledger (id, amount) VALUES ($1, $2)`, ``},
 		// a view's body is judged as the schema's own definition (TestDefinitions), not
 		// again by the statements that read it

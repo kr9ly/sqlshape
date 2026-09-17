@@ -150,7 +150,7 @@ type Note struct {
 // Violation is a constraint the statement may violate: what the runtime reports and the
 // template's expect line names.
 type Violation struct {
-	Key        string // the name the expect line uses: the constraint's, or table.column for NOT NULL
+	Key string // the name the expect line uses: the constraint's, or table.column for NOT NULL
 	// Name is the `-- sqlshape: error <key> = <Name>` annotation's name, "" when the
 	// violation carries none (every constraint but a trigger's / routine's raised
 	// SIGNAL). An expect line may name a violation by Key or by Name, whichever it
