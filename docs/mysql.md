@@ -165,6 +165,28 @@ value is stored adjusted, with a warning; under `STRICT_TRANS_TABLES` alone a no
 table is strict for the first row only), a value inside a routine or trigger body, hex and bit
 literals, `JSON` and `BIT` columns, and an expression the server would fold (`100 + 28`).
 
+### Spatial types
+
+A geometry value has one of seven types (`POINT` ... `GEOMETRYCOLLECTION`); a column is declared
+with one of them or with `GEOMETRY` (any). The checker knows a value's type when a constructor
+(`POINT(1, 1)`), a typed reader (`ST_PointFromText`) or a constant text or WKB fixes it, and
+judges with it (all measured):
+
+| statement | error |
+|---|---|
+| `ST_GeomFromText` (and the typed variants) over a constant the server's WKT reader refuses: malformed text, a `LINESTRING` of one point, a polygon ring of fewer than four points or not closed, a `MULTIPOINT` mixing `(x y)` and `x y` or empty; `ST_GeomFromWKB` over a constant WKB it refuses (malformed, trailing bytes); a geometry value given to `ST_GeomFromWKB` | 3037 |
+| a typed reader over a constant of another type (`ST_PointFromText('LINESTRING(...)')`; the `GEOMCOLL` variants take the `MULTI*` types) | 3516 |
+| a constant SRID outside 0 to 4294967295 | 1690 |
+| `LINESTRING(...)` of one argument; a `POLYGON(...)` ring made of `POINT` constants with fewer than four points or not closed | 3037 |
+| `LINESTRING` / `POLYGON` / `MULTI*` given an argument known to be another geometry type; an arithmetic or bit operator, a numeric function or `BETWEEN` given a geometry (comparisons are allowed) | 1210 |
+| a value stored into a spatial column that is not the internal format of the column's type: a number or a character string, a hex / `UNHEX` constant that is not a 4-byte SRID followed by a well-formed little-endian WKB, a constant of another geometry type | 1416, whatever the `sql_mode`, `IGNORE` included |
+
+A nullable expression of another geometry type stored into a typed spatial column (a `LINESTRING`
+column into a `POINT` column) fails on every non-NULL value: it is the failure mode `1416`, which
+`mysql.Violates(err, "1416")` matches. Not read: the SRID a column declares (3643), whether a
+constant SRID names a spatial reference system (3548), the functions' own run-time checks
+(`ST_Centroid` over a degenerate ring), GeoJSON.
+
 The same two shapes are two writes for the obligation checker (x/obligation), not one:
 
 | statement | writes recorded | why |

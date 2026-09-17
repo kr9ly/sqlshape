@@ -106,6 +106,7 @@ func (a *analyzer) violations() []Violation {
 		out = append(out, a.triggerFailureModes(w)...)
 	}
 	out = append(out, a.calledRoutineViolations()...)
+	out = append(out, a.storeRaised...)
 	return dedupe(out)
 }
 

@@ -663,7 +663,7 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 // SIGNALs (1644 / 1643), a division by zero (1365), a duplicate under a locking read.
 func runtimeCode(code int) bool {
 	switch code {
-	case 1048, 1062, 1451, 1452, 3819, 1369, 1364, 1263, 1264, 1265, 1292, 1366, 1406, 3854, 1690, 1441, 1242, 1172, 1644, 1643, 1365, 1329, 1213, 1205, 1105, 3105, 1216, 1217, 1586:
+	case 1048, 1062, 1451, 1452, 3819, 1369, 1364, 1263, 1264, 1265, 1292, 1366, 1406, 3854, 1690, 1441, 1242, 1172, 1644, 1643, 1365, 1329, 1213, 1205, 1105, 3105, 1216, 1217, 1586, 1416:
 		return true
 	}
 	return false
@@ -895,6 +895,10 @@ func sameColumnName(analyzer, server string) bool {
 // familyOf is oracleKey over the driver's DatabaseTypeName.
 func familyOf(t string) string {
 	name := strings.ToLower(t)
+	if name == "geometry" {
+		return "geometry"
+	}
+
 	unsigned := strings.HasPrefix(name, "unsigned ")
 	name = strings.TrimPrefix(name, "unsigned ")
 	switch name {

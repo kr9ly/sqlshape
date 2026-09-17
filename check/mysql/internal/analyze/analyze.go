@@ -206,12 +206,15 @@ type analyzer struct {
 	trig *schema.Trigger
 	// storeRow is the VALUES row (1-based) whose literals literalStore is judging; 0
 	// outside a multi-row INSERT (the message then says row 1)
-	storeRow  int
-	trigTable *schema.Table
-	routine   *schema.Routine
-	vars      *varScope
-	labels    []string
-	sawReturn bool
+	storeRow int
+	// storeRaised are the failure modes a store of a value into a column adds (a geometry
+	// of another type into a typed spatial column, geometryStore), folded into violations()
+	storeRaised []Violation
+	trigTable   *schema.Table
+	routine     *schema.Routine
+	vars        *varScope
+	labels      []string
+	sawReturn   bool
 	// raised accumulates the body's own failure modes as the walk finds them (a SIGNAL, an
 	// embedded write's own violations, a SELECT INTO's 1172): what block's own DECLARE ...
 	// HANDLER absorption filters, and what AnalyzeTrigger/AnalyzeRoutine hand back as
@@ -693,6 +696,14 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		for i, c := range cols {
 			w.values = append(w.values, assignment{col: targets[i], nullable: c.Nullable || !c.Known})
 			values = append(values, facts.Term{Kind: facts.Known, Text: "?"})
+			if a.routine == nil && a.trig == nil && c.Known {
+				if e, viol := a.geometryStore(rel.table, targets[i], nil, typed{typ: c.Type, known: true, nullable: c.Nullable}); e != nil {
+					e.Position = a.ph.Back(nodeStart(q))
+					return e
+				} else if viol != nil {
+					a.storeRaised = append(a.storeRaised, *viol)
+				}
+			}
 		}
 		if qe, ok := q.(*mysqlast.Node); ok {
 			if body, ok := qe.Arg("body").(*mysqlast.Node); ok && body.Class == "PT_query_specification" {
@@ -1631,6 +1642,13 @@ func (a *analyzer) assign(sc scope, table *schema.Table, col *schema.Column, v m
 	t, err := a.expr(sc, v, "field list")
 	if err != nil {
 		return assignment{}, err
+	}
+	if a.routine == nil && a.trig == nil {
+		if e, viol := a.geometryStore(table, col, v, t); e != nil {
+			return assignment{}, e
+		} else if viol != nil {
+			a.storeRaised = append(a.storeRaised, *viol)
+		}
 	}
 	if a.storeChecks(table, a.storeRow) {
 		if e := a.literalStore(col, v, max(a.storeRow, 1)); e != nil {

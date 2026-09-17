@@ -40,9 +40,8 @@ import (
 //     long");
 //   - an ENUM rejects a string that is none of its members (1265; a short number is an
 //     index, 1 to the member count), a SET a list with a member it lacks (1265);
-//   - a GEOMETRY column (any spatial type) rejects every non-geometry value: a number or a
-//     string can never hold a well-formed geometry (1416 "Cannot get geometry object from
-//     data you send to the GEOMETRY field").
+//
+// A spatial column is judged by geom.go's geometryStore (1416), whatever the sql_mode.
 //
 // Not read: a hex / bit literal (a number in a numeric column, a string elsewhere), the
 // double types (the lexer already bounds their literals), JSON and BIT columns, character
@@ -246,8 +245,6 @@ func (a *analyzer) literalStore(col *schema.Column, v mysqlast.Value, row int) *
 				return fail(1265, "Data truncated")
 			}
 		}
-	case "geometry", "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection":
-		return &Error{Message: "Cannot get geometry object from data you send to the GEOMETRY field", Code: 1416, Position: at}
 	}
 	return nil
 }

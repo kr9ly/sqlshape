@@ -79,7 +79,14 @@ release it is a candidate for.
   stores are pinned against mysqld. A prefix key (`UNIQUE (c(10))`) or an expression key
   (`UNIQUE ((n * 2))`) is now a violable key (1062) for the writes that assign its columns,
   and a `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literal the server cannot read as that
-  type is the statement's 1525; the corpus baseline falls to 3,525.
+  type is the statement's 1525; the corpus baseline falls to 3,525. The spatial types get
+  their rules: a value's geometry type is known from a constructor, a typed reader or a
+  constant, and with it the checker refuses what the server's WKT / WKB readers refuse (3037,
+  3516 for the typed readers, 1690 for an SRID out of range), the constructors' argument types
+  and counts (1210 / 3037), a geometry given to an arithmetic or numeric function (1210), and a
+  value stored into a spatial column that is not the internal format of the column's type
+  (1416, whatever the `sql_mode`); a nullable geometry of another type stored into a typed
+  column is the failure mode `1416`, which `Violates` matches; the corpus baseline falls to 3,215.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

@@ -85,6 +85,8 @@ func typeKey(t schema.Type) string {
 		name = "string"
 	case "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob":
 		name = "binary"
+	case "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection":
+		name = "geometry" // the wire says GEOMETRY for every spatial type
 	}
 	if t.Unsigned {
 		return name + " unsigned"

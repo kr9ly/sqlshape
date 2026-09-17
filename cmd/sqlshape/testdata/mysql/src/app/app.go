@@ -146,7 +146,7 @@ type NewNote struct {
 	Body     string
 }
 
-var insertNote = sqlshape.Query[struct{}, NewNote]("-- sqlshape: expect PRIMARY, tenant_notes_tenant_body\nINSERT INTO tenant_notes (id, tenant_id, body) VALUES ({{.ID}}, {{.TenantID}}, {{.Body}})") // want `expects tenant_notes_tenant_body but no expansion can violate it`
+var insertNote = sqlshape.Query[struct{}, NewNote]("-- sqlshape: expect PRIMARY, tenant_notes_tenant_body\nINSERT INTO tenant_notes (id, tenant_id, body) VALUES ({{.ID}}, {{.TenantID}}, {{.Body}})")
 
 var moveNote = sqlshape.Query[struct{}, struct {
 	ID       uint64

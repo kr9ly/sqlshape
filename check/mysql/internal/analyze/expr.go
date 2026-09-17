@@ -217,6 +217,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if err != nil {
 			return unknown, err
 		}
+		if n.Class == "Item_func_between" && geometryOperand(ts) {
+			return unknown, a.geometryRejected("between", n.Start)
+		}
 		a.paramsFromOthers(args, ts, "")
 		a.paramSources(sc, args)
 		return boolean(anyNullable(ts)), nil
@@ -289,6 +292,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if err != nil {
 			return unknown, err
 		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected(operatorName(n.Class), n.Start)
+		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "")
 		t := numOp(ts[0], ts[1], n.Class == "Item_func_mod")
 		if n.Class == "Item_func_minus" && a.s.Settings.SQLMode.Has(sqlmode.NoUnsignedSubtraction) {
@@ -303,6 +309,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if err != nil {
 			return unknown, err
 		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected("/", n.Start)
+		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "")
 		t := numOp(ts[0], ts[1], false)
 		if t.typ.Name == "bigint" { // an integer division is exact: decimal
@@ -315,6 +324,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if err != nil {
 			return unknown, err
 		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected("DIV", n.Start)
+		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "LONGLONG")
 		t := known("bigint", true)
 		t.typ.Unsigned = ts[0].typ.Unsigned || ts[1].typ.Unsigned
@@ -324,6 +336,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if err != nil {
 			return unknown, err
 		}
+		if geometryOperand([]typed{t}) {
+			return unknown, a.geometryRejected("-", n.Start)
+		}
 		out := num1(t, false)
 		out.typ.Unsigned = false
 		return out, nil
@@ -331,6 +346,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		ts, err := a.exprs(sc, exprArgs(n), where)
 		if err != nil {
 			return unknown, err
+		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected(operatorName(n.Class), n.Start)
 		}
 		a.paramsFromOthers(exprArgs(n), ts, "LONGLONG")
 		t := known("bigint", anyNullable(ts))
@@ -405,6 +423,20 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		t.nullable = true
 		return t, nil
 
+	// the spatial constructors: POINT(x, y) is a point; LINESTRING / POLYGON / MULTI* /
+	// GEOMETRYCOLLECTION judge their arguments (geom.go)
+	case "Item_func_point":
+		ts, err := a.exprs(sc, exprArgs(n), where)
+		if err != nil {
+			return unknown, err
+		}
+		for _, arg := range exprArgs(n) {
+			a.setParamField(arg, "DOUBLE")
+		}
+		return geometryType(wkbPoint, anyNullable(ts)), nil
+	case "Item_func_spatial_collection":
+		return a.spatialCollection(sc, n, where)
+
 	// casts
 	case "create_func_cast":
 		return a.cast(sc, n, where)
@@ -441,6 +473,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, err
 		}
 		if _, ok := catalog.Items[class]; ok {
+			if e := a.rejectsGeometry(class, operatorName(class), ts, n.Start); e != nil {
+				return unknown, e
+			}
 			return a.classType(class, args, ts, isWindowFunction(n)), nil
 		}
 		return unknown, nil
@@ -506,6 +541,12 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 	ts, err := a.exprs(sc, args, where)
 	if err != nil {
 		return unknown, err
+	}
+	if f.Class == "Item_func_geometry_from_text" || f.Class == "Item_func_geometry_from_wkb" {
+		return a.geometryReader(name, args, ts, n.Start)
+	}
+	if e := a.rejectsGeometry(f.Class, strings.ToLower(name), ts, n.Start); e != nil {
+		return unknown, e
 	}
 	switch f.Factory {
 	case "Datediff_instantiator": // TO_DAYS(a) - TO_DAYS(b): a bigint, NULL for an invalid date

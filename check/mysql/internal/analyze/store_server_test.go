@@ -280,8 +280,8 @@ func TestLiteralStoreServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range storeCases {
-		if c.want == 0 {
-			continue
+		if c.want == 0 || c.want == 1416 {
+			continue // a geometry store fails whatever the mode (geom.go)
 		}
 		if _, err := Analyze(lenient, c.sql); err != nil {
 			t.Errorf("%s: the checker still says %v without strict mode", c.sql, err)
