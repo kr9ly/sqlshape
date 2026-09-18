@@ -20,32 +20,49 @@ func (a *analyzer) queryExpression(v mysqlast.Value, outer *scope) ([]Column, er
 // is one SELECT (nil for a set operation): what a derived table or a view contributes to
 // the proof.
 func (a *analyzer) queryExpressionFacts(v mysqlast.Value, outer *scope) ([]Column, *facts.Scope, error) {
+	cols, body, _, err := a.queryExpressionBlock(v, outer)
+	return cols, body, err
+}
+
+// queryExpressionBlock is queryExpressionFacts with the block's scope too, when the
+// expression is one SELECT (nil for a set operation): INSERT ... SELECT ... ON DUPLICATE
+// KEY UPDATE resolves its assignments against the SELECT's tables as well as the target.
+func (a *analyzer) queryExpressionBlock(v mysqlast.Value, outer *scope) ([]Column, *facts.Scope, *scope, error) {
 	qe, ok := v.(*mysqlast.Node)
 	if !ok || qe.Class != "PT_query_expression" {
-		return nil, nil, fmt.Errorf("analyze: query expression not understood: %s", mysqlast.Sprint(v))
+		return nil, nil, nil, fmt.Errorf("analyze: query expression not understood: %s", mysqlast.Sprint(v))
 	}
 	ctes, err := a.with(qe.Arg("with_clause"), outer)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	sc := outer.derived()
 	sc.ctes = append(append([]relation{}, sc.ctes...), ctes...)
+	a.limitZero = limitIsZero(qe.Arg("limit")) // LIMIT 0: the select list is never evaluated (fold.go)
 	cols, block, body, err := a.bodyScope(qe.Arg("body"), sc)
+	a.limitZero = false
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// ORDER BY of the whole expression: against the result columns, and for a single
-	// SELECT also against its tables
-	if err := a.orderBy(qe.Arg("order"), cols, block, "order clause"); err != nil {
-		return nil, nil, err
+	// SELECT also against its tables and its select list
+	if block != nil {
+		a.pushList(block, "order clause", cols, block.itemList)
+	}
+	err = a.orderBy(qe.Arg("order"), cols, block, "order clause")
+	if block != nil {
+		a.popList()
+	}
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	if block != nil {
 		if err := a.orderCheck(block, qe.Arg("order")); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	if err := a.limit(qe.Arg("limit")); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if body != nil {
 		if limitOne(qe.Arg("limit")) {
@@ -53,7 +70,7 @@ func (a *analyzer) queryExpressionFacts(v mysqlast.Value, outer *scope) ([]Colum
 		}
 		body.Children = append(body.Children, cteBodies(ctes)...)
 	}
-	return cols, body, nil
+	return cols, body, block, nil
 }
 
 // subqueryFacts is subquery, with the block's facts (see queryExpressionFacts).
@@ -89,6 +106,8 @@ func (a *analyzer) orderBy(v mysqlast.Value, cols []Column, block *scope, where 
 	if list == nil {
 		list, _ = n.Arg("group_list").(mysqlast.List)
 	}
+	a.noFold++ // a constant item is dropped from the list, never evaluated (fold.go)
+	defer func() { a.noFold-- }()
 	for k, it := range list {
 		item := it
 		if oe, ok := it.(*mysqlast.Node); ok && oe.Class == "PT_order_expr" {
@@ -109,6 +128,27 @@ func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, w
 	if block == nil && where == "order clause" && (isAggregateLike(n) || isWindowFunction(n) || containsAggregate(n)) {
 		return &Error{Message: fmt.Sprintf("Expression #%d of ORDER BY contains aggregate function and applies to a UNION, EXCEPT or INTERSECT", num), Code: 3028, Position: a.ph.Back(n.Start)}
 	}
+	if block != nil && where == "group statement" && !isColumnRef(n) && n.Class != "Item_int" && n.Class != "Item_uint" {
+		// an aggregate cannot be grouped on (measured): one that is a select item as
+		// written is 1056 with its text, an alias of one inside the expression is 1056
+		// with the server's '???', any other is 1111
+		if containsOwn(n, func(x *mysqlast.Node) bool { return x.Class == "Item_func_grouping" }) {
+			return &Error{Message: "Can't group on 'GROUPING function'", Code: 1056, Position: a.ph.Back(n.Start)}
+		}
+		if containsOwn(n, func(x *mysqlast.Node) bool { return isAggregate(x) }) {
+			for _, it := range block.itemList {
+				if ewa, ok := it.(*mysqlast.Node); ok && ewa.Class == "PTI_expr_with_alias" {
+					if e, ok := ewa.Arg("expr").(*mysqlast.Node); ok && strings.EqualFold(a.textOf(e), a.textOf(n)) {
+						return &Error{Message: fmt.Sprintf("Can't group on '%s'", a.textOf(n)), Code: 1056, Position: a.ph.Back(n.Start)}
+					}
+				}
+			}
+			return &Error{Message: "Invalid use of group function", Code: 1111, Position: a.ph.Back(n.Start)}
+		}
+		if a.namesAggregateAlias(*block, n) {
+			return &Error{Message: "Can't group on '???'", Code: 1056, Position: a.ph.Back(n.Start)}
+		}
+	}
 	switch n.Class {
 	case "Item_int", "Item_uint":
 		pos := intOr(n.Arg("i"), 0)
@@ -122,14 +162,22 @@ func (a *analyzer) orderItem(item mysqlast.Value, cols []Column, block *scope, w
 	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident":
 		name := str(n.Arg("ident"))
 		matches := 0
-		for _, c := range cols {
-			if strings.EqualFold(c.Name, name) {
+		var first *Column
+		for i := range cols {
+			if strings.EqualFold(cols[i].Name, name) {
+				if first != nil && first.base != nil && first.base == cols[i].base && first.leaf1 == cols[i].leaf1 {
+					continue // the same table column twice is one item (find_item_in_list)
+				}
 				matches++
+				if first == nil {
+					first = &cols[i]
+				}
 			}
 		}
 		if block != nil && where == "group statement" {
-			// a table column of the same name shadows a select-list alias (with a warning)
-			if _, err := a.lookup(*block, "", name, where, n.Start); err == nil {
+			// a table column of the same name shadows a select-list alias (with a warning):
+			// the lookup is of the tables alone, so not under the clause's own name
+			if _, err := a.lookup(*block, "", name, "group statement (tables)", n.Start); err == nil {
 				return nil
 			}
 			if matches == 1 && aliasOfAggregate(block.itemList, name) {
@@ -206,27 +254,60 @@ func (a *analyzer) bodyScope(v mysqlast.Value, sc scope) ([]Column, *scope, *fac
 // and GROUP BY see the select list's names as well as the tables' (a MySQL extension).
 func (a *analyzer) querySpecification(body *mysqlast.Node, sc scope) ([]Column, *scope, error) {
 	sc.kids = new([]*facts.Scope)
+	sc.tag = new(byte)
 	sc, err := a.from(body.Arg("from_clause"), sc)
 	if err != nil {
 		return nil, nil, err
 	}
 	// the select list is resolved before the WHERE (setup_fields, then setup_conds): its
-	// errors come first
+	// errors come first. A constant select item runs per row over a FROM (its 1690 is a
+	// violation, fold.go), once without one (the statement's error); an EXISTS never
+	// evaluates its subquery's select list
+	perRow, off := a.foldPerRow, a.existsList || a.limitZero
+	a.existsList, a.limitZero = false, false
+	// a select item over a FROM runs per row; so does a subquery's without one when the
+	// subquery itself sits in a per-row position (measured: `SELECT (SELECT <constant>)
+	// FROM t` over no rows runs, `WHERE (SELECT <constant>)` fails before any)
+	a.foldPerRow = len(sc.rels) > 0 || perRow
+	if len(sc.rels) == 0 {
+		// without a FROM, a constant false WHERE returns no row before the select list is
+		// evaluated (measured: `SELECT 9223372036854775807 + 1 FROM DUAL WHERE 1 = 0` runs)
+		w := body.Arg("opt_where_clause")
+		if wn, ok := w.(*mysqlast.Node); ok && wn.Class == "PTI_where" {
+			w = wn.Arg("expr")
+		}
+		if b, _, ok := a.constBool(w); ok && !b {
+			off = true
+		}
+	}
+	if off {
+		a.noFold++
+	}
+	itemList, _ := body.Arg("item_list").(mysqlast.List)
+	a.pushList(&sc, "field list", nil, itemList)
 	cols, err := a.items(sc, body.Arg("item_list"))
+	a.popList()
+	if off {
+		a.noFold--
+	}
+	a.foldPerRow = perRow
 	if err != nil {
 		return nil, nil, err
 	}
 	sc.items = cols
-	sc.itemList, _ = body.Arg("item_list").(mysqlast.List)
+	sc.itemList = itemList
 	if err := a.condition(sc, body.Arg("opt_where_clause"), "where clause"); err != nil {
 		return nil, nil, err
 	}
-	if err := a.orderBy(body.Arg("opt_group_clause"), cols, &sc, "group statement"); err != nil {
+	a.pushList(&sc, "group statement", cols, itemList)
+	err = a.orderBy(body.Arg("opt_group_clause"), cols, &sc, "group statement")
+	a.popList()
+	if err != nil {
 		return nil, nil, err
 	}
-	a.inHaving = append(a.inHaving, blockID(&sc))
+	a.pushList(&sc, "having clause", cols, itemList)
 	err = a.condition(sc, body.Arg("opt_having_clause"), "having clause")
-	a.inHaving = a.inHaving[:len(a.inHaving)-1]
+	a.popList()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -572,6 +653,97 @@ func aliasOfAggregate(items mysqlast.List, name string) bool {
 			continue
 		}
 		return containsAggregate(ewa.Arg("expr"))
+	}
+	return false
+}
+
+// containsOwn reports a node pred accepts anywhere in v outside any subquery (whose
+// aggregates are its own).
+func containsOwn(v mysqlast.Value, pred func(*mysqlast.Node) bool) bool {
+	switch x := v.(type) {
+	case mysqlast.List:
+		for _, e := range x {
+			if containsOwn(e, pred) {
+				return true
+			}
+		}
+	case *mysqlast.Node:
+		if x.Class == "PT_subquery" {
+			return false
+		}
+		if pred(x) {
+			return true
+		}
+		for _, arg := range x.Args {
+			if containsOwn(arg, pred) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// namesAggregateAlias reports an unqualified name in v (outside any subquery) that is no
+// table column of the block but the alias of an aggregate select item.
+func (a *analyzer) namesAggregateAlias(block scope, v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case mysqlast.List:
+		for _, e := range x {
+			if a.namesAggregateAlias(block, e) {
+				return true
+			}
+		}
+	case *mysqlast.Node:
+		if x.Class == "PT_subquery" {
+			return false
+		}
+		if x.Class == "PTI_simple_ident_ident" || x.Class == "PTI_simple_ident_nospvar_ident" {
+			name := str(x.Arg("ident"))
+			if _, err := a.lookup(block, "", name, "group statement (tables)", x.Start); err != nil && aliasOfAggregate(block.itemList, name) {
+				return true
+			}
+			return false
+		}
+		for _, arg := range x.Args {
+			if a.namesAggregateAlias(block, arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// aliasOfWindow reports a select alias whose expression carries a window function: an
+// outer reference to it is 3594.
+func aliasOfWindow(items mysqlast.List, name string) bool {
+	for _, it := range items {
+		ewa, ok := it.(*mysqlast.Node)
+		if !ok || ewa.Class != "PTI_expr_with_alias" || !strings.EqualFold(str(ewa.Arg("alias")), name) {
+			continue
+		}
+		return containsWindow(ewa.Arg("expr"))
+	}
+	return false
+}
+
+// containsWindow reports a window function anywhere in v.
+func containsWindow(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case *mysqlast.Node:
+		if isWindowFunction(x) {
+			return true
+		}
+		for _, arg := range x.Args {
+			if containsWindow(arg) {
+				return true
+			}
+		}
+	case mysqlast.List:
+		for _, e := range x {
+			if containsWindow(e) {
+				return true
+			}
+		}
 	}
 	return false
 }

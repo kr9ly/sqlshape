@@ -567,7 +567,7 @@ func (a *analyzer) fdWalk(fd *fdSet, v mysqlast.Value, sub int, having bool) *fd
 		case isColumnRef(x):
 			if sub == 0 {
 				if having && (x.Class == "PTI_simple_ident_ident" || x.Class == "PTI_simple_ident_nospvar_ident") {
-					if _, ok := a.lookupItem(info.sc, str(x.Arg("ident"))); ok {
+					if _, ok, _ := a.lookupItem(info.sc, str(x.Arg("ident"))); ok {
 						return nil
 					}
 				}
@@ -624,12 +624,22 @@ func (a *analyzer) havingWalk(info *blockInfo, v mysqlast.Value, sub int) error 
 		case isColumnRef(x):
 			if sub == 0 {
 				if x.Class == "PTI_simple_ident_ident" || x.Class == "PTI_simple_ident_nospvar_ident" {
-					if _, ok := a.lookupItem(info.sc, str(x.Arg("ident"))); ok {
+					if _, ok, _ := a.lookupItem(info.sc, str(x.Arg("ident"))); ok {
 						return nil
 					}
 				}
 				col, ok := a.localColumn(info, x)
 				if !ok || info.namesColumn(col) {
+					return nil
+				}
+				found, ambiguous := a.outerHas(info.sc, x)
+				if ambiguous {
+					return &Error{Message: fmt.Sprintf("Column '%s' in having clause is ambiguous", a.textOf(x)), Code: 1052, Position: a.ph.Back(x.Start)}
+				}
+				if found {
+					// the server never consults the block's own tables here: the name is an
+					// enclosing block's column (measured: `... WHERE EXISTS (SELECT 1 FROM
+					// orders HAVING id)` reads the outer id; `HAVING note`, orders' own, is 1054)
 					return nil
 				}
 				return &Error{Message: fmt.Sprintf("Unknown column '%s' in 'having clause'", a.textOf(x)), Code: 1054, Position: a.ph.Back(x.Start)}
@@ -1180,4 +1190,46 @@ var nondeterministic = map[string]bool{
 	"LOCALTIME": true, "LOCALTIMESTAMP": true, "UTC_DATE": true, "UTC_TIME": true, "UTC_TIMESTAMP": true, "UNIX_TIMESTAMP": true, "CURRENT_ROLE": true,
 	"ICU_VERSION": true, "PS_CURRENT_THREAD_ID": true, "PS_THREAD_ID": true, "ROLES_GRAPHML": true, "BENCHMARK": true, "SOURCE_POS_WAIT": true,
 	"MASTER_POS_WAIT": true, "WAIT_FOR_EXECUTED_GTID_SET": true, "STATEMENT_DIGEST": true, "STATEMENT_DIGEST_TEXT": true,
+}
+
+// outerHas reports whether an enclosing block's tables have the column x names (an
+// unqualified name in any of them; a qualified one in the relation of that alias), and
+// whether two of one block's do (1052). A block whose own HAVING is being typed does not
+// lend its tables either (its select list and GROUP BY only, as lookup already saw).
+func (a *analyzer) outerHas(sc scope, x *mysqlast.Node) (found, ambiguous bool) {
+	table, field := "", ""
+	switch x.Class {
+	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident":
+		field = str(x.Arg("ident"))
+	case "PTI_simple_ident_q_2d", "PTI_simple_ident_q_3d":
+		table, field = str(x.Arg("table")), str(x.Arg("field"))
+	default:
+		return false, false
+	}
+	for s := sc.outer; s != nil; s = s.outer {
+		if ll := a.listOf(s); ll != nil && ll.clause == "having clause" {
+			continue
+		}
+		var leaves []int
+		for i := range s.rels {
+			rel := &s.rels[i]
+			if table != "" && !strings.EqualFold(rel.alias, table) {
+				continue
+			}
+			if _, ok := rel.column(field); ok {
+				leaves = append(leaves, i)
+			}
+		}
+		if len(leaves) > 1 && table == "" && s.mergedLeaves(field, leaves) {
+			leaves = leaves[:1]
+		}
+		switch len(leaves) {
+		case 0:
+			continue
+		case 1:
+			return true, false
+		}
+		return true, true
+	}
+	return false, false
 }

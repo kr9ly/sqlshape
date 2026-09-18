@@ -123,6 +123,19 @@ MySQLには`// sqlshape: type`の束縛は無い。束縛先となる名前付�
 
 型付きの空間列に別のジオメトリ型のnullableな式を格納する（`LINESTRING`列を`POINT`列へ）と、NULLでない値のたびに失敗する。これは失敗モード`1416`で、`mysql.Violates(err, "1416")`が一致する。読まないもの: 列が宣言するSRID（3643）、定数SRIDが空間参照系を指すか（3548）、関数自身の実行時の検査（縮退したリングへの`ST_Centroid`）、GeoJSON。
 
+### 定数の算術
+
+サーバが計算できない定数式は文自身の1690で、行を読む前に判定される（すべて実測。item_func.ccの計算どおり）:
+
+| 式 | エラー |
+|---|---|
+| 厳密な結果が`BIGINT`（オペランドのどちらかが符号なしなら`BIGINT UNSIGNED`）に収まらない整数の`+` `-` `*` `DIV`（`9223372036854775807 * 2`、`CAST(1 AS UNSIGNED) - 2`、`-9223372036854775808 DIV -1`。文字列オペランドは演算子を`DOUBLE`に、小数オペランドは`DECIMAL`にする。どちらも判定しない）。`ABS(-9223372036854775808)`。整数の範囲を超える`ROUND(n, -k)` | 1690 `BIGINT [UNSIGNED] value is out of range` |
+| 無限大になる`DOUBLE`の結果: `1e308 + 1e308`、`1e300 / 1e-300`、`EXP(710)`、`POW(2, 1024)`、`COT(0)`、`DEGREES(1e307)`。`FLT_MAX`を超える`CAST(x AS FLOAT)` | 1690 `DOUBLE value is out of range` |
+| 関数や演算子が計算した`DOUBLE`を`BIGINT`の範囲外で`CAST(f AS SIGNED / UNSIGNED)`する（`CAST(POW(2, 63) AS SIGNED)`。リテラルは丸め込まれるだけ） | 1690。内側の式の名で |
+| 定数nが1〜1024の外の`RANDOM_BYTES(n)` | 1690 `length value is out of range` |
+
+定数がどこにあるかで、文が失敗するか行が失敗するかが決まる。`WHERE`・`HAVING`・`ON`ではオプティマイザが行を読む前に畳み込む（キーのある列との`id = 9223372036854775807 + 1`、`IN (...)`、`LIKE`、条件の項）ので文が失敗する。`FROM`の無い問い合わせの選択項目、派生表やCTEのもの、`INSERT ... VALUES`の値も同じ。`FROM`のある問い合わせの選択項目、`UPDATE`の`SET`、`ON DUPLICATE KEY UPDATE`の代入、索引の無い列との比較、`HAVING`での集約との比較は行ごとに実行される。文は失敗モード`1690`を持ち（`mysql.Violates(err, "1690")`が一致する）、行の無い問い合わせは失敗しない。サーバが評価しないものは放っておく: `AND` / `OR`を決めた定数の後ろ（`1 = 0 AND x`）、定数条件の`IF` / `CASE` / `COALESCE` / `IFNULL`が取らない枝、定数の`IN`が一致した後ろのリスト、NULLになりえないxの`x IS NULL`、`GROUP BY` / `ORDER BY`の項目、`EXISTS`のサブクエリの選択リスト、`LIMIT 0`。読まないもの: トリガやルーチンの本体、16進 / ビットリテラルのオペランド、ユーザー変数、ウィンドウの`ORDER BY`、`DECIMAL`の桁溢れ（65桁）。
+
 同じ2つの形は、義務判定（x/obligation）にとっては書き込みが2つある文である:
 
 | 文 | 記録する書き込み | 理由 |
@@ -232,7 +245,7 @@ SELECT name, count(*) FROM users GROUP BY id            -- OK: id は主キー
 
 ### 名前解決
 
-`ORDER BY`、`GROUP BY`、`HAVING`はサーバと同じにSELECTリストの別名を見る（`GROUP BY`では同名の表の列が勝つ）。派生表には別名が要る（1248）。`QUALIFY`は8.4がハイパーグラフオプティマイザ無しで拒むとおりに拒む（6037）。`USING`と`NATURAL`の結合は共通列を1つにまとめる（修飾の無い名前は左側に解決し、`SELECT *`は1回だけ並べる）。表名とビュー名は`lower_case_table_names`の言うとおりに照合し、列名とキー名は大文字小文字を区別しない。書く表をサブクエリが読む`UPDATE` / `DELETE`はサーバが拒むとおりに拒む。表そのものなら1093（`WHERE`・`EXISTS`・`IN`のどれでも）、その表の上のビューなら1443。派生表で包めば実体化されて通り、同じ表からの`INSERT ... SELECT`も通る（実測）。
+`ORDER BY`、`GROUP BY`、`HAVING`はサーバと同じにSELECTリストの別名を見る。裸の名前だけでなく式の中でも（`ORDER BY c + 1`、`GROUP BY CONCAT(f1)`。`GROUP BY`では同名の表の列が勝ち、別名付きで書いた項目は別名の無い同名の列に勝ち、同名の別々の項目が2つあれば1052）。外側のブロックの選択リスト・`GROUP BY`・`HAVING`・`ORDER BY`に置かれた入れ子の問い合わせはそのブロックの別名も見るが、`WHERE`や`ON`に置かれたものは見ない（`SELECT name c, (SELECT 1 FROM orders WHERE note = c) FROM users`は通り、同じサブクエリを`WHERE`に置くと1054）。サブクエリより後で宣言された別名は1247（`forward reference in item list`）、集約の別名は入れ子の問い合わせ自身の`HAVING`から以外は1247（`reference to group function`）で、`GROUP BY`に置かれたものからは常に1247。ウィンドウ関数の別名は3594。`HAVING`はブロック自身の表に対して名前を解決しない。選択リストにも`GROUP BY`にも無い列は最上位では1054で、サブクエリの中では外側のブロックの列になる（`WHERE EXISTS (SELECT 1 FROM orders HAVING id)`は外側の`id`を読む）。`_rowid`は基底表の最初のキー（サーバの並び: `PRIMARY`、`NOT NULL`列だけの一意キー、残り）が`NOT NULL`の整数型（`INT`系、`YEAR`、`BIT`）1列の一意キーであるときその列を指す。修飾した参照か、表が1つだけのレベルで。ビューと派生表には無い。`INSERT ... SELECT ... ON DUPLICATE KEY UPDATE`の代入は対象表と`SELECT`の表に対して解決する（両方にある修飾の無い名前は1052）。ただし`SELECT`がグループ化・集約されていれば対象表だけを見る。`VALUES(c)`は常に対象表の列で、選択リストの別名はそこから見えない。派生表には別名が要る（1248）。`QUALIFY`は8.4がハイパーグラフオプティマイザ無しで拒むとおりに拒む（6037）。`USING`と`NATURAL`の結合は共通列を1つにまとめる（修飾の無い名前は左側に解決し、`SELECT *`は1回だけ並べる）。表名とビュー名は`lower_case_table_names`の言うとおりに照合し、列名とキー名は大文字小文字を区別しない。書く表をサブクエリが読む`UPDATE` / `DELETE`はサーバが拒むとおりに拒む。表そのものなら1093（`WHERE`・`EXISTS`・`IN`のどれでも）、その表の上のビューなら1443。派生表で包めば実体化されて通り、同じ表からの`INSERT ... SELECT`も通る（実測）。
 
 ### ビュー
 

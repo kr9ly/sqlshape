@@ -1062,6 +1062,29 @@ func (a *analyzer) writeFacts(kind facts.StmtKind, rel *relation, assigned []*sc
 }
 
 // limitOne reports a literal LIMIT 1 (or 0).
+// limitIsZero reports a literal LIMIT 0.
+func limitIsZero(v mysqlast.Value) bool {
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return false
+	}
+	lim := mysqlast.Value(n)
+	if opts, ok := n.Arg("limit_options").(*mysqlast.Struct); ok {
+		lim = opts.Fields["limit"]
+	}
+	ln, ok := lim.(*mysqlast.Node)
+	if !ok {
+		return false
+	}
+	switch ln.Class {
+	case "Item_int":
+		return str(ln.Arg("i")) == "0"
+	case "Item_uint": // the grammar's limit_option builds an Item_uint
+		return str(ln.Arg("str")) == "0"
+	}
+	return false
+}
+
 func limitOne(v mysqlast.Value) bool {
 	n, ok := v.(*mysqlast.Node)
 	if !ok {

@@ -63,6 +63,7 @@ type Column struct {
 
 	base      *schema.Column // the base table column this is a plain reference to, if any
 	baseTable *schema.Table  // its table
+	aliased   bool           // a select item written with an alias (find_item_in_list prefers these)
 	// leaf1 / leafCol: the relation of the producing block (1-based index into its rels,
 	// 0 when the column is not a plain reference) and the column's name there
 	leaf1   int
@@ -168,9 +169,10 @@ type analyzer struct {
 	// so no fact fixes them, but the server's ONLY_FULL_GROUP_BY check takes the equality
 	// for a constant one and derives functional dependencies from it (aggregate_check.cc)
 	nullEq map[*facts.Scope][]facts.ColRef
-	// inHaving are the blocks whose HAVING is being typed: a nested query's unqualified
-	// name may be one of their select aliases
-	inHaving []*relation
+	// lists are the SELECT blocks whose select list, GROUP BY, HAVING or ORDER BY is being
+	// typed, innermost last: a nested query's unqualified name may be one of their select
+	// aliases (Item_field::fix_outer_field's resolve_in_select_list; see lookup)
+	lists []listLookup
 	// subFacts are the subqueries' bodies by their PT_subquery node, for the EXISTS / IN
 	// predicates; claimed are the bodies such a predicate carries (not Children then)
 	subFacts map[*mysqlast.Node]*facts.Scope
@@ -207,6 +209,21 @@ type analyzer struct {
 	// storeRow is the VALUES row (1-based) whose literals literalStore is judging; 0
 	// outside a multi-row INSERT (the message then says row 1)
 	storeRow int
+	// noFold turns constant folding (fold.go) off while positive: a branch a constant
+	// condition decides against, a GROUP BY / ORDER BY item, an EXISTS's select list;
+	// foldPerRow says a constant's 1690 is the violation of an expression that runs per
+	// row (a select item over a FROM, an UPDATE's SET), not the statement's error
+	noFold     int
+	foldPerRow bool
+	// insertTarget is the INSERT's target relation while its ON DUPLICATE KEY UPDATE is
+	// typed: what VALUES(c) resolves c against
+	insertTarget *relation
+	// parents are the expression nodes being typed, outermost first; condBases the
+	// indexes in it where each condition being typed starts (optimizeTime reads them)
+	parents    []*mysqlast.Node
+	condBases  []int
+	existsList bool // the next SELECT block typed is an EXISTS's: its select list is not evaluated
+	limitZero  bool // the next SELECT block typed is under LIMIT 0: likewise
 	// storeRaised are the failure modes a store of a value into a column adds (a geometry
 	// of another type into a typed spatial column, geometryStore), folded into violations()
 	storeRaised []Violation
@@ -392,6 +409,51 @@ func (r *relation) column(name string) (colRef, bool) {
 	return colRef{rel: r, col: col, c: Column{Name: col.Name, Type: col.Type, Known: true, Nullable: !col.NotNull || r.nullable, base: col, baseTable: r.table}}, true
 }
 
+// rowid is the column `_rowid` names in a base table (find_field_in_table's rowid_field_offset,
+// measured in TestNameResolutionServer): the table's first key once the server has sorted them
+// (PRIMARY, then the unique keys over NOT NULL columns in declaration order, then the
+// rest) when that key is unique over exactly one column of an integer type (the INT
+// family, YEAR, BIT) that is NOT NULL; a view or a derived table has none.
+func (r *relation) rowid() (colRef, bool) {
+	if r.table == nil || r.view != "" {
+		return colRef{}, false
+	}
+	var first *schema.Key
+	rank := func(k *schema.Key) int {
+		switch {
+		case k.Kind == schema.Primary:
+			return 0
+		case k.Kind == schema.Unique:
+			for _, p := range k.Parts {
+				c := r.table.Column(p.Column)
+				if p.Expr != nil || c == nil || !c.NotNull {
+					return 2
+				}
+			}
+			return 1
+		}
+		return 2
+	}
+	for _, k := range r.table.Keys {
+		if first == nil || rank(k) < rank(first) {
+			first = k
+		}
+	}
+	if first == nil || (first.Kind != schema.Primary && first.Kind != schema.Unique) || len(first.Parts) != 1 || first.Parts[0].Expr != nil {
+		return colRef{}, false
+	}
+	col := r.table.Column(first.Parts[0].Column)
+	if col == nil || !col.NotNull {
+		return colRef{}, false
+	}
+	switch col.Type.Name {
+	case "tinyint", "smallint", "mediumint", "int", "bigint", "year", "bit":
+	default:
+		return colRef{}, false
+	}
+	return colRef{rel: r, col: col, c: Column{Name: col.Name, Type: col.Type, Known: true, Nullable: r.nullable, base: col, baseTable: r.table}}, true
+}
+
 // scope is the relations a name resolves against: the query's own, then, for a
 // correlated subquery, the enclosing queries'. ctes are the common table expressions in
 // force, by name, for the FROM clauses of this query and its subqueries.
@@ -399,6 +461,9 @@ type scope struct {
 	rels  []relation
 	outer *scope
 	ctes  []relation
+	// tag identifies the SELECT block across the copies of its scope (a block without a
+	// FROM has no relation to stand for it), for lists
+	tag *byte
 	// items are the block's select-list columns once typed: HAVING resolves a name that
 	// is not a table column against them (a MySQL extension).
 	items []Column
@@ -682,12 +747,25 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 	}
 	a.facts = &facts.Facts{Kind: facts.Insert, Top: &facts.Scope{At: -1, Leaves: []facts.Leaf{a.leafFacts(*rel)}}}
 	var values []facts.Term
+	dupScope := scope{rels: []relation{*rel}}
+	a.insertTarget = rel
+	defer func() { a.insertTarget = nil }()
 	if q := arg(n, "insert_query_expression", 7); q != nil {
 		// INSERT ... SELECT: the query's columns feed the targets in order; a bare
 		// placeholder in its select list takes the target's type
-		cols, body, err := a.queryExpressionFacts(q, nil)
+		cols, body, block, err := a.queryExpressionBlock(q, nil)
 		if err != nil {
 			return err
+		}
+		if block != nil && !(block.info != nil && block.info.aggregated) {
+			// ON DUPLICATE KEY UPDATE sees the SELECT's tables beside the target (measured:
+			// `INSERT INTO t SELECT ... FROM u ... ON DUPLICATE KEY UPDATE c = u.c` runs, an
+			// unqualified name both have is 1052) -- unless the SELECT is grouped or
+			// aggregated, when only the target is in view (`... GROUP BY a ON DUPLICATE KEY
+			// UPDATE k = a` is 1054, corpus). A select alias is never visible to it, and
+			// VALUES(c) names the target's column alone (Item_insert_value in node)
+			dupScope = *block
+			dupScope.rels = append(append([]relation{}, block.rels...), *rel) // the target last: the join's merged columns keep their leaf indexes
 		}
 		if len(cols) != len(targets) {
 			return &Error{Message: "Column count doesn't match value count at row 1", Code: 1136, Position: -1}
@@ -787,13 +865,15 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			return err
 		}
 		if i < len(dupVals) {
-			as, err := a.assign(scope{rels: []relation{*rel}}, rel.table, col, dupVals[i])
+			a.foldPerRow = true // the update runs per colliding row (fold.go)
+			as, err := a.assign(dupScope, rel.table, col, dupVals[i])
+			a.foldPerRow = false
 			if err != nil {
 				return err
 			}
 			w.onDuplicate = append(w.onDuplicate, as)
 			dupTargets = append(dupTargets, col)
-			dupTerms = append(dupTerms, a.storedTerm(scope{rels: []relation{*rel}}, col, dupVals[i]))
+			dupTerms = append(dupTerms, a.storedTerm(dupScope, col, dupVals[i]))
 		}
 	}
 	if len(dupTargets) > 0 {
@@ -871,7 +951,9 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 		}
 		tg.assigned = append(tg.assigned, col.col)
 		if i < len(vals) {
+			a.foldPerRow = true // a SET expression runs per matched row (fold.go)
 			as, err := a.assign(sc, table, col.col, vals[i])
+			a.foldPerRow = false
 			if err != nil {
 				return err
 			}
@@ -1366,18 +1448,40 @@ func (a *analyzer) column(sc scope, v mysqlast.Value, where string) (colRef, err
 
 // lookup resolves table.field (table may be "") in sc: the innermost query whose
 // relations know the name wins, an outer query is tried only when none of the inner one's
-// do (a correlated reference); two matches at one level are ambiguous. In a HAVING clause
-// an unqualified name that no table has may be a select-list alias.
+// do (a correlated reference); two matches at one level are ambiguous.
+//
+// The select list's aliases are visible where the server's is_item_list_lookup /
+// resolve_in_select_list say (measured, TestNameResolutionServer): an unqualified name in
+// the block's own HAVING, GROUP BY or ORDER BY expression resolves against them first
+// (two different items of the name: 1052); a nested query placed in the select list,
+// GROUP BY, HAVING or ORDER BY of an enclosing block sees that block's aliases too (not
+// one placed in its WHERE or ON), the ones declared before it when placed in the select
+// list -- a later one is 1247 "forward reference in item list" -- and an alias of an
+// aggregate only from the nested query's HAVING, and never from a GROUP BY placement
+// (1247 "reference to group function").
+//
+// `_rowid` names the table's first key when that key is unique over one NOT NULL integer
+// column (relation.rowid), for a qualified reference or a level with a single table.
 func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef, error) {
-	if where == "having clause" && table == "" {
-		if ref, ok := a.lookupItem(sc, field); ok {
+	if table == "" && (where == "having clause" || where == "order clause" || where == "group statement") {
+		ref, ok, ambiguous := a.lookupItem(sc, field)
+		if ambiguous {
+			return colRef{}, &Error{Message: fmt.Sprintf("Column '%s' in %s is ambiguous", field, where), Code: 1052, Position: a.ph.Back(at)}
+		}
+		if ok {
 			return ref, nil
 		}
 	}
 	for s := &sc; s != nil; s = s.outer {
-		if s != &sc && table == "" && a.typingHaving(s) {
-			if ref, ok := a.lookupItem(*s, field); ok {
-				return ref, nil
+		if s != &sc && table == "" {
+			if ll := a.listOf(s); ll != nil {
+				ref, found, err := a.outerItem(ll, *s, field, where, at)
+				if err != nil {
+					return colRef{}, err
+				}
+				if found {
+					return ref, nil
+				}
 			}
 		}
 		var found []colRef
@@ -1388,7 +1492,11 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 			if table != "" && !strings.EqualFold(rel.alias, table) {
 				continue
 			}
-			if ref, ok := rel.column(field); ok {
+			ref, ok := rel.column(field)
+			if !ok && strings.EqualFold(field, "_rowid") && (table != "" || len(s.rels) == 1) {
+				ref, ok = rel.rowid()
+			}
+			if ok {
 				found = append(found, ref)
 				leaves = append(leaves, i)
 				leaf = i
@@ -1416,18 +1524,69 @@ func (a *analyzer) lookup(sc scope, table, field, where string, at int) (colRef,
 	return colRef{}, &Error{Message: fmt.Sprintf("Unknown column '%s' in '%s'", qualified, where), Code: 1054, Position: a.ph.Back(at)}
 }
 
-// typingHaving reports a block whose HAVING is being typed.
-func (a *analyzer) typingHaving(s *scope) bool {
-	id := blockID(s)
-	if id == nil {
-		return false
+// listLookup is a block whose clause resolves names against its select list: items are
+// the select-list columns typed so far (all of them once the list is done), all the
+// list's nodes, for the aliases not yet typed and for what each item is.
+type listLookup struct {
+	tag    *byte
+	clause string // "field list", "group statement", "having clause", "order clause"
+	items  []Column
+	all    mysqlast.List
+}
+
+// listOf is the list lookup in force for the block s, nil when none of its clauses that
+// see the select list is being typed.
+func (a *analyzer) listOf(s *scope) *listLookup {
+	if s.tag == nil {
+		return nil
 	}
-	for _, h := range a.inHaving {
-		if h == id {
-			return true
+	for i := len(a.lists) - 1; i >= 0; i-- {
+		if a.lists[i].tag == s.tag {
+			return &a.lists[i]
 		}
 	}
-	return false
+	return nil
+}
+
+// pushList / popList bracket the typing of a block's clause that sees its select list.
+func (a *analyzer) pushList(sc *scope, clause string, items []Column, all mysqlast.List) {
+	a.lists = append(a.lists, listLookup{tag: sc.tag, clause: clause, items: items, all: all})
+}
+
+func (a *analyzer) popList() { a.lists = a.lists[:len(a.lists)-1] }
+
+// outerItem resolves an unqualified name of a nested query against an enclosing block's
+// select list (the block's clause ll is being typed; where is the nested query's own
+// clause): the alias found, a 1247 the server raises for it, or nothing.
+func (a *analyzer) outerItem(ll *listLookup, s scope, field, where string, at int) (colRef, bool, error) {
+	items := ll.items
+	if ll.clause != "field list" {
+		items = s.items
+	}
+	var found *Column
+	for i := range items {
+		if strings.EqualFold(items[i].Name, field) {
+			found = &items[i]
+			break
+		}
+	}
+	if found == nil {
+		if ll.clause == "field list" {
+			for _, it := range ll.all {
+				if ewa, ok := it.(*mysqlast.Node); ok && ewa.Class == "PTI_expr_with_alias" && strings.EqualFold(str(ewa.Arg("alias")), field) {
+					return colRef{}, false, &Error{Message: fmt.Sprintf("Reference '%s' not supported (forward reference in item list)", field), Code: 1247, Position: a.ph.Back(at)}
+				}
+			}
+		}
+		return colRef{}, false, nil
+	}
+	if aliasOfWindow(ll.all, field) {
+		return colRef{}, false, &Error{Message: fmt.Sprintf("You cannot use the alias '%s' of an expression containing a window function in this context.'", field), Code: 3594, Position: a.ph.Back(at)}
+	}
+	if aliasOfAggregate(ll.all, field) && (where != "having clause" || ll.clause == "group statement") {
+		return colRef{}, false, &Error{Message: fmt.Sprintf("Reference '%s' not supported (reference to group function)", field), Code: 1247, Position: a.ph.Back(at)}
+	}
+	return colRef{c: *found}, true, nil
 }
 
 // use records a resolved reference to a table's or a view's column, once, in order of
@@ -1463,22 +1622,35 @@ func (a *analyzer) use(ref colRef, at int) {
 	a.uses = append(a.uses, facts.Use{Table: table, Column: ref.c.Name, Position: int32(a.ph.Back(at)), Assigned: !a.readUses[key]})
 }
 
-// lookupItem resolves a name against the block's typed select list (HAVING, and the
-// ORDER BY of the block): the item's column, with no schema column behind it.
-func (a *analyzer) lookupItem(sc scope, name string) (colRef, bool) {
+// lookupItem resolves a name against the block's typed select list (HAVING, GROUP BY and
+// ORDER BY expressions): the item's column, with no schema column behind it. As
+// find_item_in_list does, an item written with the alias wins over an unaliased column of
+// the name; two aliased items, or two unaliased ones that are not the same table column
+// of the same relation, are ambiguous.
+func (a *analyzer) lookupItem(sc scope, name string) (ref colRef, ok, ambiguous bool) {
 	var found *Column
-	for i := range sc.items {
-		if strings.EqualFold(sc.items[i].Name, name) {
-			if found != nil {
-				return colRef{}, false // ambiguous: let the tables decide, or the error say so
+	for aliased := true; ; aliased = false {
+		for i := range sc.items {
+			c := &sc.items[i]
+			if c.aliased != aliased || !strings.EqualFold(c.Name, name) {
+				continue
 			}
-			found = &sc.items[i]
+			if found != nil {
+				if found.base == nil || found.base != c.base || found.leaf1 != c.leaf1 {
+					return colRef{}, false, true
+				}
+				continue
+			}
+			found = c
+		}
+		if found != nil || !aliased {
+			break
 		}
 	}
 	if found == nil {
-		return colRef{}, false
+		return colRef{}, false, false
 	}
-	return colRef{c: *found}, true
+	return colRef{c: *found}, true, false
 }
 
 // items types the select list.
@@ -1539,7 +1711,7 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			if name == "" {
 				name = a.itemName(expr)
 			}
-			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable}
+			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable, aliased: str(n.Arg("alias")) != ""}
 			if ref, ok := a.plainColumn(sc, expr); ok {
 				c.base, c.baseTable = ref.c.base, ref.c.baseTable
 				if ref.rel != nil { // nil for a body-walk variable/NEW/OLD reference: no leaf to record
@@ -1554,6 +1726,9 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			out = append(out, c)
 		default:
 			return nil, fmt.Errorf("analyze: select item not understood: %s", n.Class)
+		}
+		if ll := a.listOf(&sc); ll != nil && ll.clause == "field list" {
+			ll.items = out // a nested query later in the list sees the items typed so far
 		}
 	}
 	return out, nil
@@ -1603,7 +1778,9 @@ func (a *analyzer) condition(sc scope, v mysqlast.Value, where string) error {
 	if n, ok := v.(*mysqlast.Node); ok && (n.Class == "PTI_where" || n.Class == "PTI_having") {
 		v = n.Arg("expr")
 	}
+	a.condBases = append(a.condBases, len(a.parents))
 	_, err := a.expr(sc, v, where)
+	a.condBases = a.condBases[:len(a.condBases)-1]
 	return err
 }
 

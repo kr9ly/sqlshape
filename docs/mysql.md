@@ -187,6 +187,32 @@ column into a `POINT` column) fails on every non-NULL value: it is the failure m
 constant SRID names a spatial reference system (3548), the functions' own run-time checks
 (`ST_Centroid` over a degenerate ring), GeoJSON.
 
+### Constant arithmetic
+
+A constant expression the server cannot compute is the statement's own 1690, judged before any
+row is read (all measured, as item_func.cc computes):
+
+| expression | error |
+|---|---|
+| an integer `+` `-` `*` `DIV` whose exact result does not fit `BIGINT`, or `BIGINT UNSIGNED` when an operand is unsigned (`9223372036854775807 * 2`, `CAST(1 AS UNSIGNED) - 2`, `-9223372036854775808 DIV -1`; a string operand makes the operator a `DOUBLE` one, a decimal operand a `DECIMAL` one, neither judged); `ABS(-9223372036854775808)`; `ROUND(n, -k)` over an integer past its range | 1690 `BIGINT [UNSIGNED] value is out of range` |
+| a `DOUBLE` result that is infinite: `1e308 + 1e308`, `1e300 / 1e-300`, `EXP(710)`, `POW(2, 1024)`, `COT(0)`, `DEGREES(1e307)`; `CAST(x AS FLOAT)` beyond `FLT_MAX` | 1690 `DOUBLE value is out of range` |
+| `CAST(f AS SIGNED / UNSIGNED)` of a `DOUBLE` a function or operator computed, outside the `BIGINT` range (`CAST(POW(2, 63) AS SIGNED)`; a literal is clamped instead) | 1690, naming the inner expression |
+| `RANDOM_BYTES(n)` with a constant n outside 1 to 1024 | 1690 `length value is out of range` |
+
+Where the constant sits decides whether the statement fails or a row does. In a `WHERE`,
+`HAVING` or `ON` the optimizer folds it before reading rows (`id = 9223372036854775807 + 1`
+against a keyed column, `IN (...)`, `LIKE`, a term of the condition): the statement fails. So
+does a select item of a query without a `FROM`, a derived table's or CTE's, an `INSERT ...
+VALUES` value. A select item of a query with a `FROM`, an `UPDATE`'s `SET`, an `ON DUPLICATE
+KEY UPDATE` assignment, a comparison against an unindexed column or against an aggregate in
+`HAVING` run per row: the statement carries the failure mode `1690`, which
+`mysql.Violates(err, "1690")` matches, and a query over no rows does not fail. What the server never evaluates is left alone: the constants after the
+one that decides an `AND` / `OR` (`1 = 0 AND x`), the branch an `IF` / `CASE` / `COALESCE` /
+`IFNULL` with a constant condition does not take, the list after the entry a constant `IN`
+matches, `x IS NULL` over a never-NULL x, a `GROUP BY` / `ORDER BY` item, an `EXISTS`
+subquery's select list, `LIMIT 0`. Not read: a trigger's or routine's body, a hex or bit
+literal operand, a user variable, a window's `ORDER BY`, `DECIMAL` overflow (65 digits).
+
 The same two shapes are two writes for the obligation checker (x/obligation), not one:
 
 | statement | writes recorded | why |
@@ -381,9 +407,27 @@ SELECT name, count(*) FROM users GROUP BY id            -- OK: id is the primary
 
 ### Name resolution
 
-`ORDER BY`, `GROUP BY` and `HAVING` see the select list's aliases as the server does (a table
-column of the same name wins in `GROUP BY`); a derived table needs an alias (1248); `QUALIFY` is
-rejected as 8.4 rejects it without the hypergraph optimizer (6037). A `USING` or `NATURAL` join
+`ORDER BY`, `GROUP BY` and `HAVING` see the select list's aliases as the server does, in an
+expression as well as bare (`ORDER BY c + 1`, `GROUP BY CONCAT(f1)`; a table column of the same
+name wins in `GROUP BY`, an item written with an alias wins over an unaliased column of the
+name, two different items of the name are 1052). A nested query placed in the select list,
+`GROUP BY`, `HAVING` or `ORDER BY` of an enclosing block sees that block's aliases too, one in
+its `WHERE` or `ON` does not (`SELECT name c, (SELECT 1 FROM orders WHERE note = c) FROM users`
+runs; the same subquery in the `WHERE` is 1054); an alias declared after the subquery is 1247
+(`forward reference in item list`), an alias of an aggregate is 1247 (`reference to group
+function`) except from the nested query's own `HAVING`, and always from a `GROUP BY` placement;
+an alias of a window function is 3594. `HAVING` never resolves a name against the block's own
+tables: a column not in the select list or `GROUP BY` is 1054 at the top level, and an
+enclosing block's column inside a subquery (`WHERE EXISTS (SELECT 1 FROM orders HAVING id)`
+reads the outer `id`). `_rowid` names a base table's first key when, after the server's
+ordering (`PRIMARY`, the unique keys over `NOT NULL` columns, the rest), that key is unique over
+one `NOT NULL` integer column (`INT` family, `YEAR`, `BIT`), for a qualified reference or a
+level with a single table; a view or a derived table has none. `INSERT ... SELECT ... ON
+DUPLICATE KEY UPDATE` resolves its assignments against the target and the `SELECT`'s tables
+(an unqualified name both have is 1052) unless the `SELECT` is grouped or aggregated, when the
+target alone is in view; `VALUES(c)` is always the target's column; a select alias is never
+visible there. A derived table needs an alias (1248); `QUALIFY` is rejected as 8.4 rejects it
+without the hypergraph optimizer (6037). A `USING` or `NATURAL` join
 coalesces its common columns (an unqualified name resolves to the left side, `SELECT *` lists it
 once). Table and view names compare as `lower_case_table_names` says; column and key names never
 mind case. An `UPDATE` or `DELETE` whose subquery reads the table it writes is refused as the

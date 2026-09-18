@@ -87,6 +87,18 @@ release it is a candidate for.
   value stored into a spatial column that is not the internal format of the column's type
   (1416, whatever the `sql_mode`); a nullable geometry of another type stored into a typed
   column is the failure mode `1416`, which `Violates` matches; the corpus baseline falls to 3,215.
+  The fifth round evaluates constant arithmetic as the server does: an integer operator whose
+  exact result does not fit its `BIGINT` / `BIGINT UNSIGNED`, an infinite `DOUBLE`, a
+  function's `DOUBLE` cast to an integer it does not fit, a `RANDOM_BYTES` length out of range
+  is the statement's 1690 where the optimizer folds it (a condition, a query without a `FROM`,
+  `INSERT ... VALUES`) and the failure mode `1690` where it runs per row (a select item over a
+  `FROM`, an `UPDATE`'s `SET`), with the server's own laziness (`1 = 0 AND x`, an `IF`'s dead
+  branch, `x IS NULL` over a never-NULL x) respected; the select list's aliases are visible in
+  `GROUP BY` / `ORDER BY` / `HAVING` expressions and to a nested query the server lets see them
+  (1247 for a forward reference or an aggregate's alias, 3594 for a window function's),
+  `HAVING` reads an enclosing block's columns and never the block's own tables, `_rowid` names a
+  table's first unique integer key, and `INSERT ... SELECT ... ON DUPLICATE KEY UPDATE` sees the
+  `SELECT`'s tables; the corpus baseline falls to 3,050 (hits 3,768 -> 3,589).
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

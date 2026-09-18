@@ -522,7 +522,7 @@ func (a *analyzer) resetStatement() {
 	a.blocks = nil
 	a.fdConst = nil
 	a.nullEq = nil
-	a.inHaving = nil
+	a.lists = nil
 	a.subFacts = nil
 	a.claimed = nil
 	a.paramSrc = nil

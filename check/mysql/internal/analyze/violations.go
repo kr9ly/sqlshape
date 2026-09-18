@@ -63,6 +63,7 @@ const (
 	code1172           = 1172 // SELECT ... INTO with more than one row
 	codeNoDefault      = 1364 // "Field '...' doesn't have a default value"
 	codeViewCheck      = 1369 // ER_VIEW_CHECK_FAILED: a write through a WITH CHECK OPTION view
+	code1690           = 1690 // ER_DATA_OUT_OF_RANGE: a constant the server cannot compute, run per row (fold.go)
 )
 
 // Key identifies a violation the way the expect line and mysql.Violates spell it: the
@@ -312,6 +313,8 @@ func constraintSQLState(code int) string {
 		return "42000"
 	case codeNullToNotNull:
 		return "22004"
+	case code1690:
+		return "22003"
 	}
 	return "HY000"
 }

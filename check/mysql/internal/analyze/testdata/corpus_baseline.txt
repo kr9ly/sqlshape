@@ -55,7 +55,6 @@ archive	LENIENT 1031	86adcff5b44a	UPDATE archive_table SET x = NULL
 archive	LENIENT 1031	f87f328697c1	UPDATE archive_table AS t1, innodb_table AS t2
 archive	LENIENT 1031	e84d19fd270b	UPDATE v SET x = x + 1 WHERE id = 1
 archive	LENIENT 1031	edac3f614a05	UPDATE v AS t1, innodb_table AS t2
-auto_increment	STRICT 1054	8b0f23ab011c	select _rowid,t1._rowid,skey,sval from t1
 auto_increment	RUNTIME 1264	bb8ef6641894	INSERT INTO t1 VALUES (NULL), (NULL), (NULL)
 auto_increment	LENIENT 1467	bf8404596e9e	INSERT INTO t1 VALUES (NULL), (18446744073709551615-1), (NULL)
 bigint	DIFF column type bigint->decimal	15c3444b1c69	select +9999999999999999999,-9999999999999999999
@@ -93,8 +92,6 @@ cast	LENIENT 1439	0a8bb4be5bb3	SELECT CAST( 'a' AS BINARY(4294967296784564))
 cast	DIFF column type float->double	d28f8b03f06f	SELECT CAST(1/3 AS FLOAT(10)), CAST(1/3 AS FLOAT(53))
 cast	LENIENT 1426	1aac47be91b3	SELECT CAST(1/3 AS FLOAT(54))
 cast	RUNTIME 1690	57d992d6655c	SELECT PERIOD_ADD(200905, CAST(3.14e19 AS DOUBLE))
-cast	RUNTIME 1690	21c7b296821f	SELECT CAST("3.14e100" AS FLOAT)
-cast	RUNTIME 1690	44bb05f03fd5	SELECT CAST(-1e308 as FLOAT)
 cast	LENIENT 1210	dbec57f35267	SELECT CAST(ST_PointFromText('POINT(10 10)') AS YEAR)
 cast	RUNTIME 1292	b7f4c10b6bd1	INSERT INTO t values(CAST("2020extra" AS YEAR))
 cast	RUNTIME 1292	1fbfbcb44f94	INSERT INTO t values(CAST(20201 AS YEAR))
@@ -132,7 +129,6 @@ compare	DIFF column type int->int unsigned	9b8e478af5eb	SELECT b,c FROM t1 WHERE
 compression	SCHEMA no database selected	087ab405b00a	INSERT INTO wl13292.t1 VALUES (1)
 conflicting_variables_plugin	LENIENT 1193	b89d5e7be10e	SELECT @@sql_mode2
 connection_compression_zstd	LENIENT 13	cf643f11fe03	LOAD DATA INFILE '../../std_data/inconsistent_scan.csv' INTO TABLE t1 COLUMNS TERMINATED BY "," IGNO
-const_folding	RUNTIME 1690	8de34ae037b3	WITH RECURSIVE
 constraints	LENIENT 3941	71c6b2ad44aa	CALL alter_constraint_proc()
 count_distinct	DIFF nullable false->true	b04b7bf844e7	SELECT '' FROM t GROUP BY 1 WITH ROLLUP HAVING GROUP_CONCAT('')
 create	DIFF nullable true->false	3b6c27afc3da	select a, 
@@ -155,9 +151,6 @@ ctype_binary_myisam	DIFF column type string->binary	4cea8dcea3a3	SELECT GROUP_CO
 ctype_binary_myisam	DIFF column type string->binary	7b1ecc89d278	SELECT GROUP_CONCAT(CASE WHEN a THEN a ELSE '' END) FROM t1
 ctype_binary_myisam	DIFF column type string->binary	da6aba2f4f8c	SELECT COALESCE(a,'') FROM t1 GROUP BY 1
 ctype_collate	LENIENT 1253	50ea31c28b6c	SELECT latin1_f FROM t1 ORDER BY latin1_f COLLATE koi8r_general_ci
-ctype_collate	STRICT 1054	3e741e7606f5	SELECT latin1_f COLLATE latin1_swedish_ci AS latin1_f_as FROM t1 ORDER BY latin1_f_as, hex(latin1_f_
-ctype_collate	STRICT 1054	28bc2aea3537	SELECT latin1_f COLLATE latin1_german2_ci AS latin1_f_as FROM t1 ORDER BY latin1_f_as, hex(latin1_f_
-ctype_collate	STRICT 1054	f5e2e998b14c	SELECT latin1_f COLLATE latin1_general_ci AS latin1_f_as FROM t1 ORDER BY latin1_f_as, hex(latin1_f_
 ctype_collate	LENIENT 1253	b8890264a97a	SELECT latin1_f COLLATE koi8r_general_ci  AS latin1_f_as FROM t1 ORDER BY latin1_f_as
 ctype_collate	CODE 1253->1055	88014095a461	SELECT latin1_f,count(*) FROM t1 GROUP BY latin1_f COLLATE koi8r_general_ci
 ctype_collate	LENIENT 1273	5bbc8f32732f	SELECT DISTINCT latin1_f COLLATE koi8r             FROM t1
@@ -206,7 +199,6 @@ ctype_many	LENIENT 1267	935002dd9ca6	SELECT CHARSET(CONCAT(utf16, utf8mb3)) FROM
 ctype_many	LENIENT 1267	772637feb2d4	SELECT CHARSET(CONCAT(utf16, ucs2)) FROM t1
 ctype_many	RUNTIME 1242	b3eb00932b23	SELECT * FROM t2 WHERE a=(SELECT a FROM t1) AND a=_LATIN1'x'
 ctype_recoding	DIFF column type string->binary	9a3e25e51ef8	SELECT 'тест' as s
-ctype_uca	STRICT 1054	89411442abae	SELECT alias1.col_real_key / alias1.col_bigint_key AS field1,
 ctype_ucs	DIFF column type binary->string	8d31ece50a98	SELECT LPAD(_ucs2 X'0420',10,_ucs2 X'0421')
 ctype_ucs	DIFF column type binary->string	3626c98cf8b6	SELECT LPAD(_ucs2 X'0420',10,_ucs2 X'04210422')
 ctype_ucs	DIFF column type binary->string	1bace42f8081	SELECT LPAD(_ucs2 X'0420',10,_ucs2 X'042104220423')
@@ -356,7 +348,6 @@ derived	RUNTIME 1242	0612a6733495	SELECT * FROM (SELECT (SELECT a.a FROM t1 AS a
 derived	LENIENT 1060	9ea26760cbe7	select * from (select * from t1,t2) foo
 derived	STRICT 1055	3c043cdfe782	SELECT *
 derived	DIFF column type binary->string	3727da1c2332	SELECT alias1.col_text AS field1 ,
-derived	STRICT 1054	712b1ab5eb99	SELECT *
 derived	DIFF column type bigint->int	8f90cf02b279	SELECT * FROM t1 LEFT JOIN ( SELECT 1 FROM t1 ) d1 ON TRUE ORDER BY a
 derived	DIFF column type binary->string	fbeb1102d899	SELECT f1
 derived	DIFF column type binary->string	ec659403cf08	SELECT a, b
@@ -388,7 +379,6 @@ disable_drop_rename_user	LENIENT 1449	850248433df7	INSERT INTO t1 VALUES (10)
 disable_drop_rename_user	LENIENT 1142	850248433df7	INSERT INTO t1 VALUES (10)
 distinct	DIFF column type bigint->int	ca15e7488698	select id >= 0 and id <= 5 as grp,count(*) from t1 group by grp
 distinct	DIFF column type binary->string	d513b402ee3b	SELECT DISTINCT t1.*, t2.* FROM t1 LEFT JOIN t2 ON (t2.userid = t1.touserid)
-distinct	STRICT 1052	5a5836fca491	SELECT DISTINCT a,a FROM t1 WHERE b < 12 ORDER BY a
 distinct	LENIENT 1	b5e2dc018a33	SELECT DISTINCT fruit_id, fruit_name INTO OUTFILE 
 distinct	LENIENT 13	8ee5fdf05664	LOAD DATA INFILE '../../tmp/data1.tmp' INTO TABLE t2
 distinct	LENIENT 1	aba6cc621999	SELECT DISTINCT @v19:= fruit_id, @v20:= fruit_name INTO OUTFILE 
@@ -400,8 +390,8 @@ endspace	SCHEMA problems: unsupported construct ternary_option: ?	cb4fe3b17092	s
 endspace	SCHEMA problems: unsupported construct ternary_option: ?	06a98cdd7f8d	insert into t1 values ('teststring'), ('nothing'), ('teststring\t')
 endspace	SCHEMA problems: unsupported construct ternary_option: ?	8db7cc4e82e5	select * from t1 where text1 like 'teststring_%'
 errors	LENIENT 1054	8fa3f08ec3e0	select count(not_existing_database.t1.a) from t1
-errors	RUNTIME 1690	b7de78f9d7f1	SELECT (CONVERT('0' USING latin1) IN (CHAR(COT('v') USING utf8mb3),''))
-errors	RUNTIME 1690	f5b9f06d9d3f	SELECT UPDATEXML(-73 * -2465717823867977728,@@global.auto_increment_increment,null)
+errors	LENIENT 1054	a3131c01159a	SELECT '' AS b FROM t1 GROUP BY VALUES(b)
+errors	LENIENT 1054	82758128e360	REPLACE t2(b) SELECT '' AS b FROM t1 GROUP BY VALUES(b)
 errors	LENIENT 1054	8fa9bb5764df	UPDATE t2 SET a=(SELECT '' AS b FROM t1 GROUP BY VALUES(b))
 errors	LENIENT 1054	acd43bbe32cd	INSERT INTO t2 VALUES (1,0) ON DUPLICATE KEY UPDATE
 events_2	LENIENT 1415	94094473477e	insert into t1 (a) values (1)
@@ -417,7 +407,6 @@ explain_json_hypergraph	SCHEMA problems: unsupported construct ternary_option: ?
 explain_json_hypergraph	SCHEMA problems: unsupported construct ternary_option: ?	96a98e11f0bc	INSERT INTO t2 VALUES
 filesort	DIFF column type string->binary	301d1c63464c	SELECT * FROM t1 ORDER BY f1
 filesort	DIFF column type string->binary	ed1d9bae5d34	SELECT *
-filesort	STRICT 1054	46259457ccb0	SELECT 'a' AS f1 FROM t1 WHERE a='8' GROUP BY f1 ORDER BY CONCAT(f1)
 filesort	LENIENT 3037	dcbf912f5a26	SELECT
 filesort_debug	LENIENT 1038	9e94f8ab4797	DELETE IGNORE FROM t1 ORDER BY c26,c7,c23,c4,c25,c5,c20,
 filesort_debug	LENIENT 1038	b67bd5113372	DELETE FROM t1 ORDER BY c26,c7,c23,c4,c25,c5,c20,
@@ -456,9 +445,6 @@ fulltext_order_by	CODE 1250->1054	29554239caaf	select a.text, b.id, b.betreff
 fulltext_order_by	LENIENT 1214	7f55d064a7c3	select a.text, b.id, b.betreff
 fulltext_var	LENIENT 1191	c8491230ce25	select * from t1 where match b against ('+aaaaaa bbbbbb' in boolean mode)
 fulltext_var	LENIENT 1191	fa260f79ff60	select * from t1 where match b against ('+aaaaaa @bbbbbb' in boolean mode)
-func_aes	RUNTIME 1690	a8ec2d01003d	SELECT RANDOM_BYTES(1000000000000)
-func_aes	RUNTIME 1690	7424d75b3edd	SELECT LENGTH(RANDOM_BYTES(0))
-func_aes	RUNTIME 1690	30dc63fd5ffe	SELECT RANDOM_BYTES(2147483647 - 9)
 func_aes_kdf_hkdf	LENIENT 3235	b6ad5942337a	select aes_encrypt("foo",repeat("x",16),NULL,'hKdF')
 func_aes_kdf_pbkdf2_hmac	LENIENT 3235	01bc4dbd9e40	select AES_ENCRYPT('my_text','my_key_string', '', 'invalid')
 func_aes_kdf_pbkdf2_hmac	LENIENT 3236	d6e026f12f06	select AES_ENCRYPT('my_text','my_key_string', '', 'pbkdf2_hmac', 'salt', '100')
@@ -466,8 +452,6 @@ func_aes_kdf_pbkdf2_hmac	LENIENT 3236	7cd3b63540e4	select AES_ENCRYPT('my_text',
 func_aes_kdf_pbkdf2_hmac	LENIENT 3238	333c41b3ddd5	select aes_encrypt("foo",repeat("x",16),NULL,repeat("1",10000000000))
 func_aes_kdf_pbkdf2_hmac	LENIENT 3238	24990062acfe	select aes_encrypt("foo",repeat("x",16),NULL,repeat("1",300))
 func_aes_kdf_pbkdf2_hmac	LENIENT 3235	3e3ac79e7f5d	select aes_encrypt("foo",repeat("x",16),NULL,'pbkdf2_HMac')
-func_aes_misc	RUNTIME 1690	8cafd4bc8ae2	select RANDOM_BYTES(0)
-func_aes_misc	RUNTIME 1690	405b1ebd64b6	select RANDOM_BYTES(1025)
 func_bitwise_ops	DIFF column type bigint unsigned->binary	8ff25a696191	SELECT vbin1 & vbin2, vbin1 | vbin2, vbin1 ^ vbin2, ~vbin1, vbin1 << 3, vbin2 >> 3
 func_bitwise_ops	LENIENT 3513	6b397f121b21	SELECT HEX(vbin1 & vbin2) FROM t WHERE id=7
 func_bitwise_ops	LENIENT 3513	18936108ad26	SELECT HEX(vbin1 | vbin2) FROM t WHERE id=7
@@ -573,45 +557,6 @@ func_like	CODE 1292->1096	b2e02fcc4680	DELETE FROM t1 WHERE
 func_math	DIFF column type bigint->int unsigned	1670936464d8	SELECT c DIV 900 y FROM t1 GROUP BY y
 func_math	DIFF column name	2e317365761c	SELECT DISTINCT (a DIV 254576881) FROM t1
 func_math	DIFF column name	ee9997bbd3e0	SELECT (a DIV 254576881) FROM t1 UNION ALL 
-func_math	RUNTIME 1690	6efe6d7c0639	SELECT 1e308 + 1e308
-func_math	RUNTIME 1690	bcfb07fdcfc2	SELECT -1e308 - 1e308
-func_math	RUNTIME 1690	f13b78f4b212	SELECT 1e300 * 1e300
-func_math	RUNTIME 1690	ff3a6e3af386	SELECT 1e300 / 1e-300
-func_math	RUNTIME 1690	f6e3a7dc4171	SELECT EXP(750)
-func_math	RUNTIME 1690	16ba5bb11f70	SELECT POW(10, 309)
-func_math	RUNTIME 1690	d82c537da81a	SELECT -9999999999999999991 DIV -1
-func_math	RUNTIME 1690	25b0d5647c12	SELECT -9223372036854775808 DIV -1
-func_math	RUNTIME 1690	13dd48ae04bd	select 123456789012345678901234567890.123456789012345678901234567890 div 1 as x
-func_math	RUNTIME 1690	fbc2a1499101	select "123456789012345678901234567890.123456789012345678901234567890" div 1 as x
-func_math	RUNTIME 1690	2052d1436ed3	SELECT COT(0)
-func_math	RUNTIME 1690	255e864ceca5	SELECT DEGREES(1e307)
-func_math	RUNTIME 1690	dfd2449cfef1	SELECT 9223372036854775808 + 9223372036854775808
-func_math	RUNTIME 1690	9cd5fa3ca0e6	SELECT 18446744073709551615 + 1
-func_math	RUNTIME 1690	8ac6a60d1761	SELECT 1 + 18446744073709551615
-func_math	RUNTIME 1690	83e1026afc71	SELECT -2 + CAST(1 AS UNSIGNED)
-func_math	RUNTIME 1690	5315fc66c71c	SELECT CAST(1 AS UNSIGNED) + -2
-func_math	RUNTIME 1690	9507d11a558c	SELECT -9223372036854775808 + -9223372036854775808
-func_math	RUNTIME 1690	f7cd3c8c068c	SELECT 9223372036854775807 + 9223372036854775807
-func_math	RUNTIME 1690	79f95fed24ea	SELECT CAST(0 AS UNSIGNED) - 9223372036854775809
-func_math	RUNTIME 1690	22359e689281	SELECT 9223372036854775808 - 9223372036854775809
-func_math	RUNTIME 1690	4e5a48497e1a	SELECT CAST(1 AS UNSIGNED) - 2
-func_math	RUNTIME 1690	177d0060f3ac	SELECT 18446744073709551615 - (-1)
-func_math	RUNTIME 1690	b6603b9fb9e6	SELECT -1 - 9223372036854775808
-func_math	RUNTIME 1690	41af61f824a4	SELECT -1 - CAST(1 AS UNSIGNED)
-func_math	RUNTIME 1690	065cea8ebebd	SELECT -9223372036854775808 - 1
-func_math	RUNTIME 1690	c1a14a9791dc	SELECT 9223372036854775807 - -9223372036854775808
-func_math	RUNTIME 1690	1016ebbe182b	SELECT 18446744073709551615 - 1
-func_math	RUNTIME 1690	ccce689eb7b3	SELECT 18446744073709551615 - CAST(1 AS UNSIGNED)
-func_math	RUNTIME 1690	6fb43709eebe	SELECT 18446744073709551614 - (-1)
-func_math	RUNTIME 1690	b87c78585a40	SELECT 9223372036854775807 - -1
-func_math	RUNTIME 1690	865f953ef3e2	SELECT 4294967296 * 4294967296
-func_math	RUNTIME 1690	5298f63fd4f1	SELECT 9223372036854775808 * 2
-func_math	RUNTIME 1690	2a8949b00599	SELECT 7158278827 * 3221225472
-func_math	RUNTIME 1690	d258119d04c0	SELECT 9223372036854775807 * (-2)
-func_math	RUNTIME 1690	e6256991a848	SELECT CAST(1 as UNSIGNED) * (-1)
-func_math	RUNTIME 1690	c7b637411180	SELECT 9223372036854775807 * 2
-func_math	RUNTIME 1690	75e06358647c	SELECT ABS(-9223372036854775808)
-func_math	RUNTIME 1690	f7e4ae924434	SELECT 18446744073709551615 DIV -1
 func_math	RUNTIME 1690	ab0facba41d4	SELECT -a FROM t1
 func_math	RUNTIME 1690	103b176d8aea	SELECT -b FROM t1
 func_math	RUNTIME 1690	3d54a2c2c45e	SELECT @a + @a
@@ -629,17 +574,7 @@ func_math	LENIENT 3020	c40dca3eed8f	INSERT INTO t1 VALUES (log10(0))
 func_math	LENIENT 3020	dcc7bfe2dfce	UPDATE t1 SET a = ln(0)
 func_math	LENIENT 3020	af9e74b99485	DELETE FROM t1 WHERE a <=> ln(0)
 func_math	LENIENT 13	784072fcd2d2	LOAD DATA INFILE '../../std_data/loaddata_utf8.dat' INTO TABLE t1 CHARACTER SET utf8mb3
-func_math	RUNTIME 1690	4a360a09dbac	select cast(pow(2,63) as signed) as pp
-func_math	RUNTIME 1690	f8b68b3602e9	SELECT 9223372036854775809 * -1
-func_math	RUNTIME 1690	2860b6e3afe7	SELECT -1 * 9223372036854775809
 func_math	RUNTIME 1264	5dde931a6d5e	INSERT INTO t VALUES(hex(rtrim(1.040739e+308)))
-func_math	RUNTIME 1690	d8e255a882b7	SELECT 1-CAST(POW(2,100) AS SIGNED)
-func_math	RUNTIME 1690	f068bf554355	SELECT 1-CAST(POW(2,1000) AS SIGNED)
-func_math	RUNTIME 1690	c202ea6acb14	select -9223372036854775808 * -1 as result
-func_math	RUNTIME 1690	4fe0e6b766ed	select -1 * -9223372036854775808 as result
-func_math	RUNTIME 1690	92e7661683b7	select -9223372036854775808 * 2 as result
-func_math	RUNTIME 1690	c2da0aa0e1ed	select 2 * -9223372036854775808 as result
-func_math	RUNTIME 1690	1aaed5b6b52a	select (round(-9223372036854775808, -4))
 func_math	RUNTIME 1264	b4538efbcc51	CALL test_round(9223372036854775808)
 func_math	RUNTIME 1292	1e4a60955fe6	INSERT INTO t VALUES (1.0E+01+'a')
 func_math	RUNTIME 1690	62d79c4f163d	SELECT a, 0-a FROM t1
@@ -988,110 +923,46 @@ grant2	DIFF column type string->binary	a42d37b8c8e5	select current_user()
 grant2	DIFF column type string->binary	055b08222849	select * from t1
 grant2	SCHEMA problems: unsupported construct ternary_option: ?	e1ab8b79aea8	SELECT LEFT(CURRENT_USER(),INSTR(CURRENT_USER(),'@')-1) INTO @u
 grant_explain_non_select	STRICT 1288	dfac0487fc78	DELETE FROM v1 USING v1, t2 WHERE v1.a = t2.a
-group_by	LENIENT 1111	b0924a4a8da4	SELECT 1 FROM (SELECT 1) as a  GROUP BY SUM(1)
 group_by	DIFF column type binary->string	f9cb08507243	select value,description,bug_id from t2 left join t1 on t2.program=t1.product and t2.value=t1.compon
 group_by	DIFF column type binary->string	02b18e26f2b0	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
 group_by	DIFF column type binary->string	d10edc997e82	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
 group_by	DIFF column type binary->string	dc74af1bb09b	select row_number() over (), value,description,COUNT(DISTINCT bug_id) from t2 left join t1 on t2.pro
 group_by	DIFF column type bigint->int	7c1da931e0bb	select count(*), interval(qty,2,3,4,5,6,7,8) as category from t1 group by category
-group_by	STRICT 1054	e99f0e312496	SELECT a, ROUND(RAND(100)*10) r2, SUM(1) r1 FROM t1 WHERE a = 1
 group_by	DIFF column type binary->string	607a5c91b576	SELECT hostname, COUNT(DISTINCT user_id) as no FROM t1
-group_by	LENIENT 1111	91c045001961	SELECT 1 FROM t1 GROUP BY SUM(b)
 group_by	CODE 1241->1140	dfd2cb8a6108	SELECT t1.a FROM t1 ORDER BY (SELECT SUM(t2.a), t2.a FROM t2)
 group_by	STRICT 3029	c8a2b6142e61	SELECT t1.a FROM t1 GROUP BY t1.a
 group_by	CODE 1055->1054	3e3d58cfd8ee	SELECT 1 FROM t1 GROUP BY t1.a
 group_by	CODE 1055->1054	10e775189d04	SELECT 1 FROM t1 GROUP BY t1.a
 group_by	STRICT 1241	d4d9c5c6b89f	SELECT t1.a FROM t1 GROUP BY t1.a
-group_by	STRICT 1054	36c7452a24f2	SELECT b c, (SELECT a FROM t1 WHERE b = c)
-group_by	STRICT 1054	125e213927f4	SELECT b c, (SELECT a FROM t1 WHERE b = c)
-group_by	CODE 1247->1054	181d0aa8e74f	SELECT MAX(b) c, (SELECT a FROM t1 WHERE b = c)
-group_by	CODE 1242->1054	36c7452a24f2	SELECT b c, (SELECT a FROM t1 WHERE b = c)
-group_by	CODE 1055->1054	1bff89a2e1b3	SELECT (SELECT t1.a) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa+0
-group_by	CODE 1055->1054	cd0308af3c4c	SELECT (SELECT t1.a) aa, COUNT(DISTINCT b) FROM t1 GROUP BY -aa
+group_by	RUNTIME 1242	36c7452a24f2	SELECT b c, (SELECT a FROM t1 WHERE b = c)
 group_by	DIFF column type int->bigint	d9a219914fbd	SELECT (SELECT t2.a FROM t2 WHERE t2.a = t1.a) aa, b, COUNT(DISTINCT b)
 group_by	DIFF column type int->bigint	69493037adef	SELECT (SELECT t2.a FROM t2 WHERE t2.a = t1.a) aa, b, COUNT(         b)
-group_by	STRICT 1054	34c889ad4574	SELECT (SELECT t2.a FROM t2 WHERE t2.a = t1.a) aa, b, COUNT(DISTINCT b)
-group_by	STRICT 1054	db5fb8c2eb4b	SELECT (SELECT t2.a FROM t2 WHERE t2.a = t1.a) aa, b, COUNT(         b)
+group_by	DIFF column type int->bigint	34c889ad4574	SELECT (SELECT t2.a FROM t2 WHERE t2.a = t1.a) aa, b, COUNT(DISTINCT b)
+group_by	DIFF column type int->bigint	db5fb8c2eb4b	SELECT (SELECT t2.a FROM t2 WHERE t2.a = t1.a) aa, b, COUNT(         b)
 group_by	STRICT 3029	c447f2ca0f65	SELECT (SELECT 1 AS foo ORDER BY COUNT(a)) AS x
 group_by	STRICT 3029	67ffe40885ef	SELECT (SELECT 1 AS foo ORDER BY COUNT(t1.a)) AS x
-group_by	CODE 1247->1054	7b288a3871df	SELECT COUNT(*) AS c FROM t GROUP BY (SELECT 1 HAVING c)
-group_by	CODE 1247->1054	571f3f32345c	SELECT COUNT(*) + 1 AS c FROM t GROUP BY (SELECT 1 HAVING c)
-group_by	CODE 1247->1054	f72528341730	SELECT SUM(a) AS s FROM t GROUP BY (SELECT 1 HAVING s)
-group_by	CODE 1247->1054	35726d74de0c	SELECT SUM(a) + 1 AS s FROM t GROUP BY (SELECT 1 HAVING s)
-group_by	CODE 1247->1054	cfdafea0acae	SELECT (SELECT COUNT(*) AS c FROM t GROUP BY (SELECT 1 HAVING c))
-group_by	CODE 1247->1054	ce6f8357d6cd	SELECT (SELECT COUNT(*) AS c FROM t GROUP BY (SELECT 1 HAVING c) LIMIT 1)
-group_by	CODE 1247->1054	2cfa18d80438	SELECT (SELECT COUNT(*) + 1 AS c FROM t GROUP BY (SELECT 1 HAVING c))
-group_by	CODE 1247->1054	4b4bcc4077c4	SELECT COUNT(*) AS c1, (SELECT 1 HAVING c1) AS c2
-group_by	CODE 1247->1054	76b00c654e76	SELECT COUNT(*) + 1 AS c1, (SELECT 1 HAVING c1) + 1 AS c2
-group_by	STRICT 1054	c68eb41d8218	SELECT COUNT(*) AS c FROM t ORDER BY (SELECT 1 HAVING c)
-group_by	STRICT 1054	3cad8566b956	SELECT COUNT(*) AS c FROM t ORDER BY c+1
-group_by	STRICT 1054	8d2e131a55b3	SELECT COUNT(*) AS c FROM t ORDER BY c+c
-group_by	STRICT 1054	220e21450d11	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2
-group_by	STRICT 1054	082a1b73b3a3	SELECT SUM(a) AS s, (SELECT 1 HAVING s) FROM t
-group_by	STRICT 1054	a3255611841d	SELECT SUM(a) AS s, (SELECT 1 HAVING s IS NULL) FROM t
-group_by	STRICT 1054	557f086a1d65	SELECT COUNT(a) AS c, (SELECT 1 HAVING c) FROM t
-group_by	STRICT 1054	c9d23373fa1d	SELECT COUNT(a) AS c, (SELECT 1 HAVING c = 0) FROM t
-group_by	STRICT 1054	cabb9b372b09	SELECT a, COUNT(*) c FROM t GROUP BY a ORDER BY (SELECT -a HAVING c > 0)
-group_by	STRICT 1054	60d25b95f2e4	SELECT 1 FROM t t1 GROUP BY (SELECT SUM(t1.a) s FROM t t2 ORDER BY s + 1)
+group_by	LENIENT 1247	4b4bcc4077c4	SELECT COUNT(*) AS c1, (SELECT 1 HAVING c1) AS c2
+group_by	LENIENT 1247	76b00c654e76	SELECT COUNT(*) + 1 AS c1, (SELECT 1 HAVING c1) + 1 AS c2
+group_by	STRICT 1247	220e21450d11	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2
 group_by	LENIENT 1111	a700d4c01beb	SELECT * FROM t t1 WHERE (SELECT SUM(t1.a) s FROM t t2 HAVING s = 0)
 group_by	LENIENT 1111	bcf29f86b553	SELECT 1 FROM t t1 GROUP BY (SELECT SUM(t1.a) s FROM t t2 ORDER BY s)
-group_by	CODE 1111->1054	60d25b95f2e4	SELECT 1 FROM t t1 GROUP BY (SELECT SUM(t1.a) s FROM t t2 ORDER BY s + 1)
+group_by	LENIENT 1111	60d25b95f2e4	SELECT 1 FROM t t1 GROUP BY (SELECT SUM(t1.a) s FROM t t2 ORDER BY s + 1)
 group_by	LENIENT 1111	c5c81b60503f	SELECT 1 FROM t t1 GROUP BY (SELECT SUM(t1.a) s)
 group_by	LENIENT 1111	65a9ffdbec37	SELECT 1 FROM t WHERE (SELECT SUM(a)) > 0
 group_by	LENIENT 1111	4ba05ca0d607	SELECT 1 FROM t GROUP BY (SELECT SUM(a))
-group_by	CODE 1247->1054	56eafd4bfb9e	SELECT COUNT(*) AS c FROM t GROUP BY (SELECT c)
-group_by	CODE 1247->1054	eb754e80d17e	SELECT COUNT(*) + 1 AS c FROM t GROUP BY (SELECT c)
-group_by	CODE 1247->1054	9b7777e348ba	SELECT COUNT(*) AS c FROM t GROUP BY (SELECT 1 WHERE c)
-group_by	CODE 1247->1054	b37ff7fabab9	SELECT COUNT(*) + 1 AS c FROM t GROUP BY (SELECT 1 WHERE c)
-group_by	CODE 1247->1054	725832ceb643	SELECT COUNT(*) AS c FROM t GROUP BY (SELECT c HAVING c)
-group_by	CODE 1247->1054	198772b791f6	SELECT COUNT(*) + 1 AS c FROM t GROUP BY (SELECT c HAVING c)
-group_by	CODE 1247->1054	e686ac770e2f	SELECT COUNT(*) AS c FROM t GROUP BY (SELECT c WHERE c)
-group_by	CODE 1247->1054	f30ef37025d6	SELECT c FROM (SELECT COUNT(*) AS c FROM t GROUP BY (SELECT 1 ORDER BY c)) tt
-group_by	CODE 1247->1054	6de0e179449b	SELECT COUNT(*) AS c FROM t
-group_by	CODE 1247->1054	98f71f3c448a	SELECT COUNT(*) AS c FROM t
-group_by	LENIENT 1056	f87c9a910364	SELECT (SELECT COUNT(*) FROM t GROUP BY COUNT(*))
-group_by	CODE 1056->1054	a4e797134752	SELECT 1 FROM t t1 WHERE (SELECT SUM(t1.a) s FROM t t2 GROUP BY s+1)
-group_by	CODE 1056->1054	0feae226a9c8	SELECT 1 FROM t t1 ORDER BY (SELECT SUM(t1.a) s FROM t t2 GROUP BY s+1) > 0
-group_by	CODE 1247->1054	de93585458b8	SELECT 1 FROM t t1 ORDER BY (SELECT SUM(t1.a) s FROM t t2
-group_by	CODE 1247->1054	1833308ee7b1	SELECT 1 FROM t t1 ORDER BY (SELECT SUM(t1.a) s FROM t t2
-group_by	CODE 1056->1054	5959aab436d7	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2 GROUP BY s+1) > 0
-group_by	LENIENT 1247	f133fb931d60	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2
-group_by	CODE 1247->1054	86a0e7b370a2	SELECT COUNT(*) AS c FROM t ORDER BY (SELECT c)
-group_by	CODE 1247->1054	adc47809176f	SELECT COUNT(*) AS c FROM t ORDER BY (SELECT 1 ORDER BY c)
-group_by	CODE 1247->1054	cff2928f2f4f	SELECT COUNT(*) AS c FROM t ORDER BY (SELECT c ORDER BY c)
-group_by	LENIENT 1247	009f1069361d	SELECT COUNT(*) AS c FROM t HAVING (SELECT c)
-group_by	LENIENT 1247	3f3e64dfebb5	SELECT COUNT(*) AS c FROM t HAVING (SELECT 1 ORDER BY c)
-group_by	LENIENT 1247	3978ad23f386	SELECT COUNT(*) AS c FROM t HAVING (SELECT c ORDER BY c)
-group_by	LENIENT 1247	07d6df93ef98	SELECT a, COUNT(*) AS c FROM t GROUP BY a WITH ROLLUP
-group_by	LENIENT 1247	e5b4414e2654	SELECT a, COUNT(*) AS c FROM t GROUP BY a WITH ROLLUP
-group_by	LENIENT 1247	3bb3bb7d8203	SELECT a, COUNT(*) AS c FROM t GROUP BY a WITH ROLLUP
-group_by	CODE 1247->1054	79c0c8727607	SELECT COUNT(*) AS c FROM t ORDER BY (SELECT COUNT(*) FROM t HAVING (SELECT c))
-group_by	CODE 1247->1054	267d41c1f599	SELECT c FROM (SELECT COUNT(*) AS c FROM t ORDER BY (SELECT 1 ORDER BY c)) tt
-group_by	CODE 1247->1054	4f42b7743a4f	SELECT COUNT(*) AS c FROM t
-group_by	LENIENT 1247	122f77469ac6	SELECT COUNT(*) AS c FROM t
-group_by	CODE 1247->1054	5d26bc1d87d6	SELECT SUM(a) AS s, (SELECT s) FROM t
-group_by	CODE 1247->1054	429e92c21dda	SELECT EXISTS (SELECT SUM(t1.a) s FROM t t2 GROUP BY (SELECT s)) FROM t t1
-group_by	LENIENT 1247	a3018c0d9b7a	SELECT (SELECT SUM(t1.a) s FROM t t2 HAVING (SELECT s > 5)) FROM t t1
-group_by	LENIENT 1247	0195ec05f480	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2 HAVING (SELECT s) < 0)
-group_by	CODE 1247->1054	0c45cb4bdf6a	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2 GROUP BY (SELECT s))
-group_by	LENIENT 1247	74267a2589f5	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2 HAVING (SELECT -s) > 0)
-group_by	CODE 1247->1054	2ded439c8b34	SELECT 1 FROM t t1 HAVING (SELECT SUM(t1.a) s FROM t t2 GROUP BY (SELECT -s))
 group_by	RUNTIME 1690	f6fe09799fd2	SELECT MAX(FROM_UNIXTIME(1536999161)),
 group_by	RUNTIME 1242	86fcfb75b8e7	SELECT AVG(a2.a)
 group_by	DIFF column type int->bigint	740f6acce28a	SELECT DISTINCT a, COUNT(*) FROM t1 GROUP BY a WITH ROLLUP
 group_by	DIFF column type int->bigint	90e44ff4c93c	SELECT t1.x
 group_min_max_innodb	SCHEMA problems: unsupported construct ternary_option: ?	4209504f9258	insert into t1 values ( 1,"e"),(2,"a"),( 3,"c"),(4,"d")
 group_min_max_ps_protocol	RUNTIME 1242	0abe929386c4	DELETE FROM t3 WHERE (SELECT (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) x 
-having	STRICT 1054	022d624cf5ab	select a as foo, sum(b) as bar from t1
-having	STRICT 1054	2c7e71422766	select a as foo,
-having	STRICT 1054	2a46ce0c8b22	select a as foo,
+having	DIFF column type int->bigint	2c7e71422766	select a as foo,
+having	DIFF column type int->bigint	2a46ce0c8b22	select a as foo,
 having	STRICT 1054	4bddf331d669	SELECT a FROM (SELECT 1 FROM t1 AS From1) AS From2 
 having	STRICT 1054	45a403334906	SELECT a FROM (SELECT 1 FROM t1 AS From1) AS From2
 having	STRICT 1054	c1481c71e932	SELECT Outjoin3.a FROM (SELECT 1 FROM t1 AS From1) AS From2 
-having	CODE 1052->1054	6582a65e495a	SELECT (SELECT 1 FROM a HAVING g)
 having	LENIENT 1052	a701e0ec62ce	SELECT *
 having_myisam	RUNTIME 1242	9324da2a48fb	SELECT col_int_key
-heap_auto_increment	STRICT 1054	8b0f23ab011c	select _rowid,t1._rowid,skey,sval from t1
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	cb938e5a10f6	INSERT INTO t1 VALUES (1, 1, 1, 1)
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	c6852b774c9e	INSERT INTO t1 VALUES (1), (2)
 histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	306ce7a27f58	INSERT INTO t1 VALUES (1), (2), (3), (4), (5)
@@ -1175,15 +1046,7 @@ insert	RUNTIME 1292	1144c1a7cf0a	INSERT INTO default_date VALUES(DEFAULT)
 insert	LENIENT 1110	3588de707114	INSERT INTO t1(a,a) VALUES (1,1)
 insert	LENIENT 1110	40ca0f9540a6	INSERT INTO t1(a, a, b, c) VALUES (1, 1, DEFAULT, DEFAULT)
 insert	LENIENT 1110	86483264e825	INSERT INTO t1(b, b) VALUES (DEFAULT, DEFAULT)
-insert_debug	STRICT 1054	d3b2631c0274	INSERT INTO result(c1, c2, c3) SELECT * FROM t2 ON DUPLICATE KEY UPDATE c2=t2.c2, c3='UT2', update_c
-insert_select	STRICT 1054	a44e6752b629	insert into t1 select a from t2 on duplicate key update a= t1.a + t2.b
-insert_select	STRICT 1054	5e985e278f5c	insert into t1 select a+1 from t2 on duplicate key update t1.a= t1.a + t2.b+1
-insert_select	STRICT 1054	984a09e86794	insert into t1 select t3.c from t3 on duplicate key update a= a + t3.d
-insert_select	CODE 1052->1054	086a33bdab80	insert into t1 select t2.a from t2 on duplicate key update a= a + t2.b
-insert_select	STRICT 1054	8df8bc8bcda1	INSERT INTO t2 (f1, f2)
 insert_select_myisam	DIFF column name	9bc52dc15a9f	Select null, Field, Count From t1 Where Month=20030901 and Type=2
-insert_update	LENIENT 1052	69e3f32fd78d	INSERT t1 SELECT a,b,c FROM t2 WHERE d=2 ON DUPLICATE KEY UPDATE c=c+VALUES(a)
-insert_update	STRICT 1054	08492641ffb5	INSERT INTO t1 SELECT 1, a FROM t2 NATURAL JOIN t3 
 insert_update	RUNTIME 1048	02f8285d9aab	INSERT INTO t1 (id,c1) SELECT 1,NULL
 insert_update	RUNTIME 1366	30c3f0c893ac	INSERT INTO t1 values(x'8142', x'8142', x'8142')
 insert_update	RUNTIME 1366	9c29be3c9601	UPDATE t1 SET a=x'8243' where a=x'6162'
@@ -1197,18 +1060,6 @@ insert_update	RUNTIME 1366	1d676bd3b203	UPDATE v3 SET a=x'8243' where a=x'6162'
 insert_update	RUNTIME 1366	ae86deb766f7	INSERT INTO t_utf8 values(x'f4b8ad', x'f4b8ad', x'f4b8ad')
 insert_update	RUNTIME 1366	56a59f2b970f	UPDATE t_utf8 SET a=x'f69687' where a=x'e69687'
 insert_update	RUNTIME 1366	29b4e6529980	UPDATE v_utf8 SET a=x'f69687' where a=x'e69687'
-insert_update	STRICT 1054	a936bd5b9813	INSERT INTO t0
-insert_update	STRICT 1054	a465fa3ed4b0	INSERT INTO t0
-insert_update	STRICT 1054	ef9daace39fa	INSERT INTO t0
-insert_update	STRICT 1054	fc7d8e47322f	INSERT INTO t0
-insert_update	STRICT 1054	ffd9356882c5	INSERT INTO t0
-insert_update	STRICT 1054	5ad998816215	INSERT INTO t0
-insert_update	STRICT 1054	cecab3006c13	INSERT INTO t0
-insert_update	STRICT 1054	c45bdb55b05f	INSERT INTO t0
-insert_update	STRICT 1054	642b923d6ddd	INSERT INTO t1
-insert_update	STRICT 1054	f17fe6732174	INSERT INTO t1 SELECT * FROM t1 AS source
-insert_update_myisam	LENIENT 1052	93617fe366c9	insert into t1 select a from t1 on duplicate key update a=a+1
-insert_update_myisam	LENIENT 1052	e59fe7a89f2b	insert ignore into t1 select a from t1 on duplicate key update a=t1.a+1
 internal_tmp_disk_storage_engine	DIFF column type binary->string	f2b75bc06721	select distinct concat(c1, repeat('xx', 250)) as cc from t2 order by 1
 internal_tmp_disk_storage_engine	DIFF column type binary->string	5ec14fa15c95	select concat(c1, repeat('xx', 250)) as cc from t2 group by cc order by 1
 ipv6_debug	LENIENT 1193	4d2fbb345136	SELECT @@global.debug, @@global.bind_address
@@ -1534,7 +1385,6 @@ olap	LENIENT 3602	f14516653ed6	SELECT a, GROUPING(SUM(a)) FROM t1 GROUP BY (a) W
 olap	LENIENT 1111	dfc1fadab562	SELECT a, b, GROUPING(a) FROM t1 GROUP BY a,b
 olap	CODE 1111->1140	06bd63224832	SELECT a, b, GROUPING(a) FROM t1
 olap	LENIENT 1111	681dbdf4f397	SELECT a, b FROM t1 WHERE GROUPING(a)=1 GROUP BY a,b WITH ROLLUP
-olap	CODE 1056->1055	611199b450f2	SELECT a, b FROM t1 GROUP BY GROUPING(a),GROUPING(b) WITH ROLLUP
 olap	LENIENT 1210	7ff09624c10e	SELECT a, b, c, GROUPING(1) FROM t1 GROUP BY a,b,c WITH ROLLUP
 olap	LENIENT 1210	67e132a65433	SELECT a, GROUPING(1) FROM t1 GROUP BY 1 WITH ROLLUP
 olap	LENIENT 1210	f6e922da61bc	SELECT GROUPING(1) FROM t1 GROUP BY 1 WITH ROLLUP
@@ -1572,7 +1422,6 @@ olap	DIFF column type int->bigint	6d22692847b8	SELECT DISTINCT i, GROUPING(i+j),
 olap	DIFF column type int->bigint	8e1f2ae221aa	SELECT i, j, AVG(k) FROM t1 GROUP BY i,j WITH ROLLUP
 olap	DIFF column type int->bigint	f9e890716429	SELECT i, j, AVG(k) FROM t1 GROUP BY i,j WITH ROLLUP
 olap	DIFF column type int->bigint	1360dbe4541a	SELECT i, j, SUM(k) FROM t1 GROUP BY i,j WITH ROLLUP
-olap	STRICT 1054	5e4bcbf8af78	SELECT CONCAT(i,':',j) as ij, CONCAT(j,':',i) as ji FROM t1
 olap	DIFF column type int->bigint	ced7dc06eae1	SELECT i, 'sum' FROM (SELECT i, SUM(j) AS 'sum' FROM t1 GROUP BY i
 olap	DIFF column type int->bigint	2e980ae92e6d	SELECT i, j, i AS k, COUNT(*) AS count FROM t1 GROUP BY i, j, k WITH ROLLUP
 olap	DIFF column type int->bigint	983288a3b229	SELECT * FROM (SELECT i, j, SUM(k) FROM t1 GROUP BY i, j WITH ROLLUP
@@ -1583,7 +1432,6 @@ olap	DIFF column type int->bigint	b278f6cc5698	SELECT i, j, i+j, FIRST_VALUE(i) 
 olap	DIFF column type int->bigint	97ab38d12e4f	SELECT i, j, i+j, AVG(j), AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
 olap	DIFF column type int->bigint	b4d876d4be9c	SELECT i,j, SUM(k), GROUPING(i), GROUPING(j) FROM t1 GROUP BY i,j
 olap	DIFF column type int->bigint	9508714437ba	SELECT DISTINCT j, GROUPING(j) FROM t1 GROUP BY i,j WITH ROLLUP
-olap	CODE 1056->1055	6ee28453df13	SELECT i, j, AVG(k) FROM t1 GROUP BY i,j+GROUPING(i) WITH ROLLUP
 olap	DIFF column type int->bigint	e6ace04bad5c	SELECT  alias1.f1 AS field1, alias1.f1 AS field2, (alias1.f1 +1) AS field3 FROM
 olap	DIFF column type int->bigint	20e6bdfa137a	SELECT f1 FROM t1 WHERE pk = 3 GROUP BY f1 WITH ROLLUP ORDER BY f1
 olap	DIFF column name	0ef2e1964a47	SELECT (((@e:=`b`)) NOT BETWEEN 0x0b5f09 AND (CHAR(md5(@pub1),
@@ -1603,7 +1451,6 @@ olap	DIFF column type int->bigint	20e2d07e7709	SELECT DISTINCT i1, i2, GROUPING(
 olap	LENIENT 3066	cec9f915088c	SELECT DISTINCT i1, i2, GROUPING(i1), GROUPING(i2) FROM t GROUP BY i1, i2 WITH ROLLUP ORDER BY i1, i
 olap	LENIENT 3889	8ab95e211a16	SELECT 1
 olap_myisam	DIFF column type int->bigint	e46f6a501e43	SELECT c, a, SUM(c) OVER () FROM t1,t2 GROUP BY c,a WITH ROLLUP
-olap_myisam	STRICT 1054	02e6d6ab815b	SELECT ((table1.col_int) * (table1.col_int)) AS field2 FROM (t1 AS table1)
 opt_hint_timeout	LENIENT 3024	ccf6ea72a4bc	SELECT /*+ MAX_EXECUTION_TIME(1) */ * FROM t1 a, t1 b
 opt_hint_timeout	LENIENT 3024	7bfb425abf71	SELECT /*+ MAX_EXECUTION_TIME(1) */ *, SLEEP(1000) FROM t1
 opt_hint_timeout	LENIENT 3024	336da92d83fa	SELECT  /*+ MAX_EXECUTION_TIME(1) */ *, SLEEP(1000) FROM t1 UNION SELECT 1, 2, 3
@@ -2177,8 +2024,6 @@ row	STRICT 1241	bbd64e4d8357	SELECT i FROM t1 WHERE ROW(1,2) = (SELECT 1,3 FROM 
 row	LENIENT 1241	5c58849aee2f	SELECT row( 1, 1, 1 ) = row( 1, 1 ) FROM t1 GROUP BY a
 row	LENIENT 3037	c78bf40d3569	SELECT ROW(ST_Intersection(POINT(1, 1), 1), (SELECT 1))
 row	LENIENT 3037	d23538ec2869	SELECT ROW(1, ST_Intersection(POINT(1, 1), 1), (SELECT 1))
-row	RUNTIME 1690	7b7e7179d3ac	SELECT ROW(POW(1000, 1000), (SELECT 1))
-row	RUNTIME 1690	d00241b95116	SELECT ROW(1, 2, POW(1000, 1000), (SELECT 1))
 rpad	DIFF column type string->binary	2658193b5384	SELECT RPAD(NULL, 5, 'x') AS result
 rpad	DIFF column type string->binary	03e3f28eeab3	SELECT RPAD(NULL, NULL, 'x') AS result
 rpad	DIFF column type string->binary	31aff7eeccac	SELECT RPAD(NULL, NULL, NULL) AS result
@@ -2753,7 +2598,6 @@ type_newdecimal	LENIENT 1426	d898af9f0999	SELECT CAST(1 AS decimal(66,10))
 type_newdecimal	LENIENT 1425	33d42bcec451	SELECT CAST(1 AS decimal(65,31))
 type_newdecimal	LENIENT 1425	7c9512375129	SELECT a+CAST(1 AS decimal(65,31)) AS aa, SUM(b) FROM t1 GROUP BY aa
 type_newdecimal	DIFF column name	c5f4951382b4	select (1.20396873 * 0.89550000 * 0.68000000 * 1.08721696 * 0.99500000 *
-type_newdecimal	STRICT 1054	6b6bde693246	SELECT 1 FROM t1 WHERE EXISTS
 type_newdecimal	DIFF column type decimal unsigned->decimal	3abd07b0a7e7	SELECT * FROM t1
 type_newdecimal	RUNTIME 1690	a400e3397f17	SELECT a - b FROM t1
 type_newdecimal	RUNTIME 1690	9983964035f6	SELECT a - b FROM t2
@@ -2816,11 +2660,8 @@ udf	RUNTIME 1366	4de193fd8941	SELECT metaphon('a')
 udf	LENIENT 1305	d8fb9b46bf81	select f3(NULL)
 udf	LENIENT 1305	f5dea7304076	select f2(NULL)
 udf	LENIENT 1305	78604177118b	select f1(NULL)
-udf	STRICT 1054	53a683cd6d75	SELECT IF( a = 1, a, a ) AS `b` FROM t1 ORDER BY field( `b` + 1, 1 )
-udf	STRICT 1054	30558003e93f	SELECT IF( a = 1, a, a ) AS `b` FROM t1 ORDER BY field( `b`, 1 )
 udf_bug35242734	SCHEMA problems: unsupported construct ternary_option: ?	261029731293	SELECT udf_test('test')
 union	LENIENT 1234	8ce3da13c84c	select * from t1 union select SQL_BUFFER_RESULT * from t2
-union	STRICT 1054	da2b7092d15a	select 1 as a,(select a union select a)
 union	DIFF nullable true->false	b78d0bd457b1	SELECT(SELECT 0 AS a UNION SELECT 1 AS a ORDER BY a ASC  LIMIT 1) AS dev
 union	DIFF nullable true->false	208847a65d4f	SELECT(SELECT 0 AS a UNION SELECT 1 AS a ORDER BY a DESC LIMIT 1) AS dev
 union	DIFF nullable true->false	428eb39474c1	SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev
@@ -3098,11 +2939,6 @@ window_functions	DIFF column type bigint->int	620268b418d0	SELECT (SELECT FIRST_
 window_functions	DIFF column type bigint->int	d334a46ac1d0	SELECT (SELECT LAST_VALUE(j) OVER (ORDER BY upper.j) FROM t1 LIMIT 1)
 window_functions	DIFF column type bigint->int	a2ab3fb54977	SELECT (SELECT LAST_VALUE(j) OVER (ORDER BY upper.j DESC) FROM t1 LIMIT 1)
 window_functions	LENIENT 3593	a99b78830646	SELECT AVG(SUM(a) OVER ()) FROM t
-window_functions	CODE 3594->1054	fd26b6934536	SELECT SUM(a) OVER () AS c, (SELECT SUM(c))  FROM t
-window_functions	CODE 3594->1054	d6d9ae2bf313	SELECT SUM(a) OVER () AS c, (SELECT SUM(1 + (SELECT c FROM DUAL)))  FROM t
-window_functions	CODE 3594->1054	9b939550c5ca	SELECT 1+SUM(a) OVER () AS c, (SELECT SUM(1 + (SELECT c FROM DUAL)))  FROM t
-window_functions	CODE 3594->1054	6e9addcbaa3d	SELECT SUM(a) OVER () AS c, (SELECT 1 + (SELECT c FROM DUAL))  FROM t
-window_functions	CODE 3594->1054	31158119e355	SELECT 1+SUM(a) OVER () AS c, (SELECT 1 + (SELECT c FROM DUAL))  FROM t
 window_functions	LENIENT 3580	f728573f07e2	SELECT ROW_NUMBER() OVER w
 window_functions	LENIENT 3580	aa72ae3957b6	SELECT ROW_NUMBER() OVER w
 window_functions	LENIENT 3580	6ab8dfa59793	SELECT ROW_NUMBER() OVER w FROM t1 WINDOW w AS (w)
@@ -3148,13 +2984,10 @@ window_functions	DIFF column name	8ddd2fe44323	SELECT (3.14 DIV (
 window_functions_bugs	DIFF column type int->bigint	f86d557dc932	SELECT a, PERCENT_RANK() OVER w1 FROM t GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
 window_functions_bugs	DIFF column type int->bigint	dccfa60b121e	SELECT a, PERCENT_RANK() OVER w1 FROM v GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
 window_functions_bugs	LENIENT 1210	f9372aba0ec7	SELECT ((PERIOD_DIFF('7766-05-30','2955-06-11'))DIV(LAST_VALUE(';')OVER()))
-window_functions_bugs	RUNTIME 1690	a93e1d614a96	SELECT ((BIT_OR(COT('f?e')))DIV(LAG(' ',133,0xbb054701d650)OVER()))
-window_functions_bugs	RUNTIME 1690	360206bb139e	SELECT ((EXP(2778419536874221989))DIV(LAST_VALUE('{ }')OVER()))
 window_functions_bugs	LENIENT 1210	15d5eccc3d6f	SELECT ((PERIOD_ADD(-6001,16973))DIV(LAST_VALUE('')OVER()))
 window_functions_bugs	LENIENT 1210	df2d7a2d4572	SELECT((LAST_VALUE(PERIOD_ADD(32733,1518714932))OVER())DIV(NULL))
 window_functions_bugs	RUNTIME 1690	15f8239dce83	SELECT ((EXP(0x6108))DIV(LAG(NULL,21,' 4F')OVER()))
 window_functions_bugs	RUNTIME 1690	f389d4981be5	SELECT ((FIRST_VALUE(EXP(0x41a129))OVER())DIV(-969))
-window_functions_bugs	RUNTIME 1690	b503fb688b8c	SELECT MAKETIME('1',(!(999*1.421474e+308)),LAST_VALUE(-25038)RESPECT NULLS
 window_functions_bugs	DIFF column type binary->string	eb9b41ceace0	SELECT FIRST_VALUE(c) OVER w fv, LAST_VALUE(c) OVER w lv
 window_functions_bugs	DIFF nullable false->true	2b01efcf19c8	SELECT EXISTS
 window_functions_bugs	RUNTIME 1690	a34229f3c3c6	SELECT b, CUME_DIST() OVER (

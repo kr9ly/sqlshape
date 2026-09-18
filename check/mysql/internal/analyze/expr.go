@@ -101,7 +101,16 @@ func (a *analyzer) expr(sc scope, v mysqlast.Value, where string) (typed, error)
 		}
 		return unknown, nil
 	case *mysqlast.Node:
-		return a.node(sc, x, where)
+		a.parents = append(a.parents, x)
+		t, err := a.node(sc, x, where)
+		if err == nil {
+			if e := a.constCheck(sc, x, where); e != nil {
+				err = e
+				t = unknown
+			}
+		}
+		a.parents = a.parents[:len(a.parents)-1]
+		return t, err
 	}
 	return unknown, nil
 }
@@ -204,7 +213,7 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		return boolean(ts[0].nullable || ts[1].nullable), nil
 	case "Item_func_in":
 		list, _ := n.Arg("list").(mysqlast.List)
-		ts, err := a.exprs(sc, list, where)
+		ts, err := a.exprsDead(sc, list, where, a.inMatch(list))
 		if err != nil {
 			return unknown, err
 		}
@@ -224,12 +233,20 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		a.paramSources(sc, args)
 		return boolean(anyNullable(ts)), nil
 	case "Item_cond_and", "Item_cond_or", "Item_func_xor":
-		ts, err := a.exprs(sc, exprArgs(n), where)
+		ts, err := a.condArgs(sc, n, where)
 		if err != nil {
 			return unknown, err
 		}
 		return boolean(anyNullable(ts)), nil
 	case "Item_func_isnull", "Item_func_isnotnull":
+		if n.Class == "Item_func_isnull" {
+			// Item_func_isnull::fix_fields: over a never-NULL argument the predicate is
+			// the constant false, and the argument is never evaluated
+			if err := a.isNullArg(sc, n.Arg("a"), where); err != nil {
+				return unknown, err
+			}
+			return boolean(false), nil
+		}
 		if _, err := a.expr(sc, n.Arg("a"), where); err != nil {
 			return unknown, err
 		}
@@ -244,8 +261,25 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 		return boolean(false), nil
 	// subqueries: entered with this scope as the enclosing one, for correlated references
+	case "Item_insert_value":
+		// VALUES(c) of ON DUPLICATE KEY UPDATE: c is a column of the INSERT's target,
+		// whatever the SELECT's tables have (measured: `... SELECT x, z FROM t2 ON DUPLICATE
+		// KEY UPDATE x = VALUES(z)` is 1054 when the target has no z)
+		if a.insertTarget == nil {
+			// outside ON DUPLICATE KEY UPDATE the function is NULL (measured, the corpus's
+			// `SELECT VALUES(x) FROM t`), its argument still resolved
+			if _, err := a.expr(sc, n.Arg("a"), where); err != nil {
+				return unknown, err
+			}
+			return known("null", true), nil
+		}
+		sc = scope{rels: []relation{*a.insertTarget}}
+		return a.expr(sc, n.Arg("a"), where)
 	case "PTI_exists_subselect":
-		if _, err := a.subquery(n.Arg("subselect"), &sc); err != nil {
+		a.existsList = true // the subquery's select list is never evaluated (fold.go)
+		_, err := a.subquery(n.Arg("subselect"), &sc)
+		a.existsList = false
+		if err != nil {
 			return unknown, err
 		}
 		return boolean(false), nil
@@ -358,7 +392,14 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 	// branches: aggregate_type over the values a branch can produce
 	case "Item_func_if":
 		args := []mysqlast.Value{n.Arg("a"), n.Arg("b"), n.Arg("c")}
-		ts, err := a.exprs(sc, args, where)
+		dead := -1 // the branch a constant condition never takes
+		if b, null, ok := a.constBool(args[0]); ok {
+			dead = 1
+			if b && !null {
+				dead = 2
+			}
+		}
+		ts, err := a.exprsOff(sc, args, where, func(i int) bool { return i == dead })
 		if err != nil {
 			return unknown, err
 		}
@@ -380,27 +421,23 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		if first := n.Arg("first_expr"); first != nil {
 			whens = append(whens, first)
 		}
-		wt, err := a.exprs(sc, whens, where)
-		if err != nil {
-			return unknown, err
-		}
-		a.paramsFromOthers(whens, wt, "")
 		var results []mysqlast.Value
 		results = append(results, thens...)
 		if e := n.Arg("else_expr"); e != nil {
 			results = append(results, e)
 		}
-		rt, err := a.exprs(sc, results, where)
+		wt, rt, err := a.caseArgs(sc, n.Arg("first_expr"), whens, thens, results, where)
 		if err != nil {
 			return unknown, err
 		}
+		a.paramsFromOthers(whens, wt, "")
 		a.paramsFromOthers(results, rt, "")
 		t := aggregate(rt)
 		t.nullable = n.Arg("else_expr") == nil || anyNullable(rt)
 		return t, nil
 	case "Item_func_coalesce", "Item_func_ifnull", "Item_func_any_value":
 		args := exprArgs(n)
-		ts, err := a.exprs(sc, args, where)
+		ts, err := a.exprsDead(sc, args, where, a.firstNonNull(args))
 		if err != nil {
 			return unknown, err
 		}
@@ -538,7 +575,7 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 	if f.Min >= 0 && !f.Accepts(len(args)) {
 		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameter count in the call to native function '%s'", strings.ToUpper(name)), Code: 1582, Position: a.ph.Back(n.Start)}
 	}
-	ts, err := a.exprs(sc, args, where)
+	ts, err := a.callArgs(sc, f.Class, args, where)
 	if err != nil {
 		return unknown, err
 	}
@@ -1060,4 +1097,227 @@ func strToDateType(args []mysqlast.Value) string {
 		return "TIME"
 	}
 	return "DATE"
+}
+
+// condArgs types an AND / OR / XOR's operands. AND and OR stop at the first constant that
+// decides them (measured: `1 = 0 AND x` never evaluates x, `x AND 1 = 0` does): the
+// operands after it are typed with folding off. A NULL decides an AND only where the
+// optimizer folds the condition (WHERE / HAVING / ON: remove_eq_conds), not in a value
+// (Item_cond_and::val_int evaluates on through a NULL); and in a condition a nested
+// AND / OR is still simplified on its own, decided or not.
+func (a *analyzer) condArgs(sc scope, n *mysqlast.Node, where string) ([]typed, error) {
+	args := exprArgs(n)
+	if n.Class == "Item_func_xor" {
+		return a.exprs(sc, args, where)
+	}
+	and := n.Class == "Item_cond_and"
+	cond := condContext(where)
+	ts := make([]typed, len(args))
+	decided := false
+	for i, arg := range args {
+		skip := decided && !(cond && (isCondNode(arg) || hasSubquery(arg)))
+		if skip {
+			a.noFold++
+		}
+		t, err := a.expr(sc, arg, where)
+		if skip {
+			a.noFold--
+		}
+		if err != nil {
+			return nil, err
+		}
+		ts[i] = t
+		if !decided {
+			if b, null, ok := a.constBool(arg); ok {
+				switch {
+				case and && !null && !b, and && null && cond, !and && !null && b:
+					decided = true
+				}
+			}
+		}
+	}
+	return ts, nil
+}
+
+// exprsDead types args, those from index dead on (dead >= 0) with folding off: the
+// entries a constant settles the server never reaches (COALESCE, IN).
+func (a *analyzer) exprsDead(sc scope, args []mysqlast.Value, where string, dead int) ([]typed, error) {
+	return a.exprsOff(sc, args, where, func(i int) bool { return dead >= 0 && i >= dead })
+}
+
+// exprsOff types args, the ones off says with folding off.
+func (a *analyzer) exprsOff(sc scope, args []mysqlast.Value, where string, off func(int) bool) ([]typed, error) {
+	out := make([]typed, len(args))
+	for i, v := range args {
+		if off(i) {
+			a.noFold++
+		}
+		t, err := a.expr(sc, v, where)
+		if off(i) {
+			a.noFold--
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[i] = t
+	}
+	return out, nil
+}
+
+// caseArgs types a CASE's WHEN and THEN / ELSE expressions in evaluation order: a
+// constant WHEN (or a constant operand equal to a constant WHEN) picks its THEN and turns
+// folding off for what the server never evaluates (the later WHENs and THENs, the ELSE),
+// a constant false WHEN turns it off for its own THEN.
+func (a *analyzer) caseArgs(sc scope, first mysqlast.Value, whens, thens, results []mysqlast.Value, where string) ([]typed, []typed, error) {
+	wt := make([]typed, len(whens))
+	rt := make([]typed, len(results))
+	typeAt := func(v mysqlast.Value, off bool) (typed, error) {
+		if off {
+			a.noFold++
+			defer func() { a.noFold-- }()
+		}
+		return a.expr(sc, v, where)
+	}
+	decided := false
+	deadThen := map[int]bool{}
+	nWhens := len(thens) // whens may carry the operand as its last entry
+	for i := 0; i < nWhens; i++ {
+		t, err := typeAt(whens[i], decided)
+		if err != nil {
+			return nil, nil, err
+		}
+		wt[i] = t
+		if decided {
+			deadThen[i] = true
+			continue
+		}
+		if first == nil {
+			if b, null, ok := a.constBool(whens[i]); ok {
+				if b && !null {
+					decided = true
+				} else {
+					deadThen[i] = true
+				}
+			}
+		} else if eq, ok := a.constEqual(first, whens[i]); ok {
+			if eq {
+				decided = true
+			} else {
+				deadThen[i] = true
+			}
+		}
+	}
+	if first != nil && len(whens) > nWhens {
+		t, err := typeAt(whens[nWhens], false)
+		if err != nil {
+			return nil, nil, err
+		}
+		wt[nWhens] = t
+	}
+	for i, v := range results {
+		off := deadThen[i] || (i >= len(thens) && decided)
+		t, err := typeAt(v, off)
+		if err != nil {
+			return nil, nil, err
+		}
+		rt[i] = t
+	}
+	return wt, rt, nil
+}
+
+// firstNonNull is the index after the first constant non-NULL argument of a COALESCE /
+// IFNULL (the arguments the server never reaches), -1 when no constant settles it.
+func (a *analyzer) firstNonNull(args []mysqlast.Value) int {
+	for i, arg := range args {
+		c, ok, fail := a.fold(arg)
+		if !ok || fail != nil {
+			return -1
+		}
+		if !c.isNull() {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// inMatch is the index after the constant list entry a constant `x IN (...)` operand first
+// equals (the entries never compared), -1 when the operand is not a constant or nothing
+// constant matches.
+func (a *analyzer) inMatch(list mysqlast.List) int {
+	if len(list) < 2 {
+		return -1
+	}
+	if _, ok, fail := a.fold(list[0]); !ok || fail != nil {
+		return -1
+	}
+	for i := 1; i < len(list); i++ {
+		eq, ok := a.constEqual(list[0], list[i])
+		if !ok {
+			return -1
+		}
+		if eq {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// isNullArg types the argument of IS NULL / ISNULL: folding off, then judged only when the
+// argument can be NULL (a never-NULL argument makes the predicate a constant false the
+// server never evaluates the argument for).
+func (a *analyzer) isNullArg(sc scope, v mysqlast.Value, where string) error {
+	a.noFold++
+	t, err := a.expr(sc, v, where)
+	a.noFold--
+	if err != nil {
+		return err
+	}
+	if n, ok := v.(*mysqlast.Node); ok && (t.nullable || !t.known) {
+		a.parents = append(a.parents, n)
+		e := a.constCheck(sc, n, where)
+		a.parents = a.parents[:len(a.parents)-1]
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// callArgs types a native function's arguments, with the laziness of IFNULL (its second
+// argument is never evaluated when the first is a constant non-NULL) and ISNULL (isNullArg).
+func (a *analyzer) callArgs(sc scope, class string, args []mysqlast.Value, where string) ([]typed, error) {
+	switch class {
+	case "Item_func_ifnull":
+		return a.exprsDead(sc, args, where, a.firstNonNull(args))
+	case "Item_func_isnull":
+		if len(args) == 1 {
+			if err := a.isNullArg(sc, args[0], where); err != nil {
+				return nil, err
+			}
+			return []typed{boolean(false)}, nil
+		}
+	}
+	return a.exprs(sc, args, where)
+}
+
+// hasSubquery reports a PT_subquery anywhere under v.
+func hasSubquery(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case mysqlast.List:
+		for _, e := range x {
+			if hasSubquery(e) {
+				return true
+			}
+		}
+	case *mysqlast.Node:
+		if x.Class == "PT_subquery" {
+			return true
+		}
+		for _, arg := range x.Args {
+			if hasSubquery(arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
