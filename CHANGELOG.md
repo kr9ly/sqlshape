@@ -8,7 +8,7 @@ release it is a candidate for.
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-09-14
+## [2.0.0] - 2026-09-20
 
 ### Added
 
