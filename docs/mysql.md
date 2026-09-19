@@ -62,6 +62,16 @@ every built-in function in every argument combination), 65 error statements, the
 of the `ONLY_FULL_GROUP_BY` check, and 22 statements and 6 writes under non-default `sql_mode`
 values agree with 8.4.
 
+MySQL's own test corpus is replayed as well: the 1,281 files of `mysql-test/t` (some 137,000
+statements) run against a `mysqld` and the analyzer side by side, a SELECT's columns compared by
+name, type family and nullability, an error by its number. The statements on which the two
+knowingly disagree -- 2,580 -- are pinned one by one
+(`check/mysql/internal/analyze/testdata/corpus_baseline.txt`, each with the class of the
+disagreement: an error the analyzer does not predict or predicts under another number, a column
+typed differently, a schema construct the loader does not model), and a new disagreement fails
+the build. That file is the honest list of what the MySQL analyzer does not yet decide the way
+the server does.
+
 ## What the rules use
 
 Every rule in [checks.md](checks.md) applies to a MySQL schema the same way, judged by the MySQL

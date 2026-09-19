@@ -35,6 +35,8 @@ CREATE TABLE ...
 
 判定は動いている`mysqld`と照合してある。型を付けた5,033文（組み込み関数の全部について引数の組み合わせごとの結果型）、エラーになる65文、`ONLY_FULL_GROUP_BY`検査の376文、既定でない`sql_mode`の下の22文と6つの書き込みが8.4と一致する。
 
+MySQL自身のテストコーパスも並走させてある。`mysql-test/t`の1,281ファイル（約137,000文）を`mysqld`とアナライザーの両方に流し、SELECTの列は名前・型ファミリー・nullabilityで、エラーは番号で突き合わせる。両者が一致しないと分かっている文——2,580件——は1件ずつベースラインに固定してあり（`check/mysql/internal/analyze/testdata/corpus_baseline.txt`。各行に不一致の種別が付く: アナライザーが予測しないエラー、別の番号で予測するエラー、型の違う列、ローダーが扱わないスキーマ構文）、新しい不一致が出るとビルドが落ちる。このファイルが、MySQLアナライザーがまだサーバと同じには判定できないものの正直な一覧である。
+
 ## 規則が使うもの
 
 [checks.ja.md](checks.ja.md)の規則はMySQLのスキーマにも同じにかかる。判定するのがPostgreSQLではなくMySQLのアナライザーになるだけである。結果列とパラメータとGo型の対応、NULLの扱い、型の意味、失敗モード、`One`の証明、第2部の宣言すべて（`visible where`、`pinned`、`via view`、`EXISTS`、`aggregate`、`transitions`、`never`、`paired`、`single`、`sensitive`、`context`）。診断はMySQLのエラー番号とメッセージ文を運ぶ（`Unknown column 'nope' in 'field list' (MySQL error 1054)`）。`{{.X}}`はワイヤ上で`?`になる。

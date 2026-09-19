@@ -291,7 +291,10 @@ server with rows in its tables
 MySQL 8.4. The parser and lexer are MySQL's own, extracted from the server source, and the
 function catalog comes from the same source. The verdicts are checked against a running `mysqld`:
 the result types of every built-in function, the error statements, the `ONLY_FULL_GROUP_BY` check
-and the `sql_mode` variants agree with 8.4 ([docs/mysql.md](docs/mysql.md#what-the-checker-embeds)).
+and the `sql_mode` variants agree with 8.4, and MySQL's own test corpus (`mysql-test/t`, some
+137,000 statements) replays against the analyzer and the server side by side -- the 2,580
+statements they knowingly disagree on are pinned one by one as a baseline, and a new
+disagreement fails the build ([docs/mysql.md](docs/mysql.md#what-the-checker-embeds)).
 What has no MySQL counterpart (`Copy`, `MatView`, PL/pgSQL, domains, composite types and arrays,
 `-schemas`, `// sqlshape: type`, seeded tables in migrations) is listed there. Its migrations are
 judged against a running `mysqld` the same way as PostgreSQL's.

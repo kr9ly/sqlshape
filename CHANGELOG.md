@@ -31,30 +31,45 @@ release it is a candidate for.
   `SELECT ... INTO OUTFILE` / `DUMPFILE` (no result set) and a `SELECT` with a trailing
   `FOR UPDATE` / `FOR SHARE`; the loader applies `ALTER VIEW`. Inside a routine or trigger body
   the first three are the server's own 1314.
-- MySQL writes through views are analyzed as the server runs them (each rule measured): an
+- MySQL writes through views, analyzed as the server runs them (each rule measured): an
   `INSERT` / `REPLACE`, `UPDATE` or `DELETE` through a merged view lands on its base table,
-  with the base table's own failure modes and the view's own -- `WITH CHECK OPTION` as the
-  violation 1369 on `INSERT` and `REPLACE` too, an underlying view's option enforced under
-  a plain outer one, a base column with no default the statement leaves unassigned as the
-  view's 1423 (`Violates` matches 1369 and 1423 by the view's name) -- and the server's
-  refusals as statement errors: the view's updatable / insertable flags are computed over
-  its `FROM` leaves the way `sql_resolver.cc` computes them when it merges (a derived or
-  `TEMPTABLE` leaf blocks inserting, an outer join both), a non-insertable view is 1471
-  (a derived column among the insert's fields its 1348, a `COLLATE` wrapper transparent),
-  a join view takes an explicit column list (1394) over one base table (1393,
-  `ON DUPLICATE KEY UPDATE` included), `REPLACE` and `DELETE` never reach one (1395),
-  a non-updatable view or a CTE target stays 1288 (a materialized leaf's column assigned
-  through an updatable view too), and a subquery reading the written view itself is 1093.
+  with the base table's own failure modes and the view's own (`WITH CHECK OPTION` as the
+  violation 1369 -- on `INSERT` and `REPLACE` too -- and a base column with no default the
+  statement leaves unassigned as the view's 1423, both matched by `Violates` under the view's
+  name), and the server's refusals are statement errors under the server's own codes: the
+  view's updatable / insertable flags are computed over its `FROM` leaves the way
+  `sql_resolver.cc` computes them when it merges, a join view follows the server's rules for
+  each write kind, `REPLACE` and `DELETE` never reach one, and a subquery reading the written
+  view itself is 1093. The rules are [docs/mysql.md](docs/mysql.md#views)'s.
+- The run-time failures MySQL decides by a constant's value are judged (each measured against
+  mysqld; the rules are [docs/mysql.md](docs/mysql.md)'s): a literal a column can never store
+  (1264 / 1265 / 1292 / 1366 / 1406 / 1416, in strict mode outside `IGNORE`), a temporal
+  literal the server cannot read as its type (1525) or a `TIMESTAMP` column cannot hold, the
+  spatial rules (1210 / 3037 / 3516 / 1416), constant arithmetic the server cannot compute
+  (1690), the constant conversions a strict write escalates (1292; a temporal column compared
+  with a constant string that is no datetime is 1525 whatever the statement), and the
+  functions that judge a constant argument's value: `INET_ATON` / `INET6_ATON` / `UNHEX` /
+  `STR_TO_DATE` fail a strict write outside `IGNORE` (1411; `STR_TO_DATE` under a port of the
+  server's own `extract_date_time`), `UUID_TO_BIN` / `BIN_TO_UUID` (1411) and `PERIOD_ADD` /
+  `PERIOD_DIFF` (1210) fail every statement whatever the mode, and `NAME_CONST`, `ESCAPE`,
+  `NTILE`, `NTH_VALUE` and `MATCH ... AGAINST` are refused at resolution, rows or none. Each
+  is the statement's own error where the server evaluates it before reading rows, and a
+  failure mode `Violates` matches by number (`"1416"`, `"1690"`, `"1292"`, `"1411"`) where it
+  runs per row. A prefix key (`UNIQUE (c(10))`) or an expression key (`UNIQUE ((n * 2))`) is
+  a violable key (1062) for the writes that assign its columns.
+- A MySQL function call argument carrying an alias (`f(x AS a)`, the loadable function
+  syntax) is refused in the server's own order (1582 / 1583 / 1584, a data dictionary
+  function 3566), and an explicitly scoped system variable read must match the variable's
+  scope: `@@session.x` of a GLOBAL-only variable and `@@global.x` of a SESSION-only one are
+  the statement's 1238 wherever the read sits, over a scope table generated from the server
+  source (`sql/sys_vars.cc`) and pinned against mysqld entry by entry; a plugin's or
+  component's variable is not judged.
 - The statement facts the `One` proof and the obligations are judged on are tested against a
   running server the way the checker's types are: `x/stmtprobe` generates schemas with rows
   and statements over them (joins, views, derived tables, CTEs, `EXISTS` / `IN` subqueries,
   `GROUP BY`, `UNION ALL`, writes), and refutes every claim of the facts -- a predicate holding
   on every row, a fixed column, an at-most-one-row proof, the value a write stores -- with the
-  rows the server returns, on PostgreSQL 17 and MySQL 8.4. It found, and this release fixes:
-  MySQL accepted an `UPDATE` / `DELETE` whose subquery reads the table it writes (the server's
-  1093, or 1443 through a view), and PostgreSQL recorded a subquery's reference to a joined
-  table's column, when the subquery sits in the join's `ON` clause, as a value known before
-  the statement runs rather than as the row's own column. The same probe judges the predicted
+  rows the server returns, on PostgreSQL 17 and MySQL 8.4. The same probe judges the predicted
   failure modes: writes against a schema carrying every constraint kind (named and unnamed
   keys, foreign keys with each `ON DELETE` action, checks, `NOT NULL`; `IGNORE` / `REPLACE` /
   `ON DUPLICATE KEY UPDATE` and `ON CONFLICT`), with every constraint error the server raises
@@ -62,48 +77,14 @@ release it is a candidate for.
 - MySQL trigger, procedure and function bodies are tested against the server's own
   CREATE-time verdict the same way (the body probe in `check/mysql/internal/analyze`): every
   construct the server refuses when the body is created, mixed into generated bodies, must
-  be refused by the checker too, and nothing the server accepts may be. It found, and this
-  release fixes: `SET OLD.col` in an INSERT trigger is 1362, not 1363 (the server checks the
-  write before the event), `SET NEW.col` / `SET OLD.col` outside a trigger is 1193, and a
-  FUNCTION with no `RETURN` is a schema problem (1320) even when the checker stops at an
-  earlier run-time certainty of the same body.
+  be refused by the checker too, and nothing the server accepts may be.
 - MySQL's own test corpus (mysql-test/t: 1,281 files, 137,000 statements) replays against a
   running mysqld and the analyzer side by side (`check/mysql/internal/analyze`'s corpus probe,
   the counterpart of PostgreSQL's regress probe): each file on a server of its own, the
   analyzer's schema rebuilt from `SHOW CREATE` after every DDL under the session's `sql_mode`,
   a SELECT's columns compared by name, type family and nullability, an error by number; the
-  remaining disagreements are pinned as a baseline.
-- The run-time failures MySQL decides by a value are judged (each measured against mysqld;
-  the rules are docs/mysql.md's): a literal a column can never store (1264 / 1265 / 1292 /
-  1366 / 1406 / 1416, in strict mode outside `IGNORE`), a temporal literal the server cannot
-  read as its type (1525) or a `TIMESTAMP` column cannot hold, a value that is not the
-  spatial column's internal format and the other geometry rules (1210 / 3037 / 3516 / 1416),
-  constant arithmetic the server cannot compute (1690), and the constant conversions a
-  strict write escalates (1292; a temporal column compared with a constant string is 1525
-  whatever the statement). Each is the statement's own error where the server evaluates it
-  before reading rows, and a failure mode `Violates` matches (`"1416"`, `"1690"`, `"1292"`)
-  where it runs per row. A prefix key (`UNIQUE (c(10))`) or an expression key
-  (`UNIQUE ((n * 2))`) is a violable key (1062) for the writes that assign its columns.
-- A MySQL function call argument carrying an alias (`f(x AS a)`, the loadable function
-  syntax) is refused in the server's own order (each measured): a native function's argument
-  count first (1582), then the alias (1583); any other name, a stored function or one that
-  does not exist alike, is 1584 before the function is looked up, and a data dictionary
-  function (`INTERNAL_TABLE_ROWS` among them) is 3566 before either check. An explicitly scoped
-  system variable read must match the variable's scope: `@@session.x` of a GLOBAL-only
-  variable and `@@global.x` of a SESSION-only one are the statement's 1238 wherever the
-  read sits, over a scope table generated from the server source (`sql/sys_vars.cc`) and
-  pinned against mysqld entry by entry; a plugin's or component's variable is not judged.
-- The run-time failures a MySQL function decides by a constant argument's value (each
-  measured, docs/mysql.md's rules): `INET_ATON` / `INET6_ATON` / `UNHEX` / `STR_TO_DATE`
-  fail a strict write outside `IGNORE` when the constant does not parse (1411, or the
-  parsed date's non-space tail as 1292) -- `STR_TO_DATE` under a port of the server's own
-  `extract_date_time`, format specifiers, week numbers and zero-date flags included --
-  while `UUID_TO_BIN` / `BIN_TO_UUID` (1411) and `PERIOD_ADD` / `PERIOD_DIFF` (1210) fail
-  every statement whatever the mode. Each lands where the folded constants land: a
-  per-row position is a violation `Violates` matches by number. `NAME_CONST`'s literal
-  arguments (1210, a NULL name 1382), `ESCAPE`'s one constant character, `NTILE`'s and
-  `NTH_VALUE`'s positive positions, and `MATCH`'s one-relation columns with a constant
-  `AGAINST` (1210) are refused at resolution, rows or none.
+  remaining disagreements (2,580 statements) are pinned one by one as a baseline, and a new
+  one fails the build.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run
@@ -112,8 +93,8 @@ release it is a candidate for.
   sqlshape.Error("30001")`); `go vet` checks the declaration against the schema both ways, an
   expect line may use the Name, and `Violates` accepts the value.
 - `-- sqlshape: server <var> = <value>` declares the server settings the checker's judgments
-  depend on (MySQL: `sql_mode`, `lower_case_table_names`); the checker follows them, and
-  `mysqltest.Start` starts the server with them.
+  depend on (MySQL: `sql_mode`, `lower_case_table_names`, `max_sp_recursion_depth`); the
+  checker follows them, and `mysqltest.Start` starts the server with them.
 - The MySQL runtime, `github.com/kr9ly/sqlshape/mysql/v2` (`Run`, `Collect`, `First`, `Exec`,
   `Get` / `Find` / `ExecOne`, `ConstraintError`, `Violates`) over `database/sql`, and
   `github.com/kr9ly/sqlshape/mysqltest/v2`, which boots the `mysqld` on `PATH` with the
@@ -167,7 +148,7 @@ release it is a candidate for.
   that decision, so impossible expansions are no longer checked; a pointer parameter inside its
   own `{{if .X}}` branch is not NULL there; `-strict` advice about a table or column is reported
   only in packages that touch it.
-- PostgreSQL verdicts after a third adversarial round: `TRUNCATE` of a still-referenced table
+- PostgreSQL verdicts corrected against the server: `TRUNCATE` of a still-referenced table
   is certain to fail; `ON CONFLICT` absorbs a unique constraint only when it can be the
   arbiter (a `DEFERRABLE` key, or a partial index whose predicate is not repeated, keeps its
   23505); a domain's `NOT NULL` is keyed by the domain's name; `unnest(arr)` in the select list
@@ -175,26 +156,10 @@ release it is a candidate for.
   `[]T` for an array whose Go element cannot be NULL; `interval` into `time.Duration` carries a
   Lossy note; `paired` requires the write, not matching values; `RETURNING` a `sensitive` column
   is reading it.
-- MySQL verdicts after three adversarial rounds: `USING` / `NATURAL` joins coalesce their common
-  columns; `WITH ROLLUP` makes non-aggregated result columns nullable; `ON DUPLICATE KEY UPDATE`
-  and `REPLACE` count as the writes they are; a `HAVING` conjunct over `GROUP BY` columns is a
-  fact; a string column compared to a numeric literal fixes nothing; an expression the server
-  rejects in an INSERT's or UPDATE's value is that error, not an unknown type; two `DECLARE`s
-  of one condition, cursor or handler condition in a block are the server's own 1332 / 1333 /
-  1413, a SQLSTATE literal of other than five characters 1407, `FLUSH` in a trigger or
-  FUNCTION 1336, `SIGNAL ... MYSQL_ERRNO = 0` 1231, a FUNCTION calling itself 1424; a
-  trigger chain is followed through the routines it `CALL`s and through locking reads, and
-  a certain failure anywhere along it is reported on the firing statement; a string column
-  compared to `TRUE` or to a `CAST` to a number fixes nothing either, `(a, b) IN ((?, ?))`
-  is two equalities, and an unqualified column of a `USING` join pins both sides; a view's
-  `OR REPLACE` and `ALGORITHM` are read (a `TEMPTABLE` view is not written through), and
-  `WITH CHECK OPTION` on a view the server would not merge is refused as the server's 1368;
-  a `SIGNAL` impersonating a builtin number keeps that number as its key. `schema.sql` may
-  declare `max_sp_recursion_depth`; above 0 a PROCEDURE's self-recursion is not predicted.
 - Obligations on both databases: `require single` on an UPDATE or DELETE asks about the
   target table's rows alone, so a join that only filters no longer breaks the proof;
-  `transitions` reads MySQL's constants (both producers now spell a constant the same way).
-- Obligations on both databases: `pinned` propagates across a composite foreign key only into a
+  `transitions` reads MySQL's constants (both producers now spell a constant the same way);
+  `pinned` propagates across a composite foreign key only into a
   `NOT NULL` column (a NULL in a foreign-key column exempts the row from the constraint, so
   such a row joins the parent while agreeing on nothing); `WITH CHECK OPTION` follows every
   view of a chain the servers enforce -- an underlying view behind a join, and an underlying
@@ -204,6 +169,12 @@ release it is a candidate for.
   a column uses it stops `apply` as a problem. `pgtest` and `mysqltest` are sqlshape's own test
   tooling with no compatibility promise; the docs are reorganized per database
   ([docs/postgres.md](docs/postgres.md), [docs/mysql.md](docs/mysql.md)).
+
+### Fixed
+
+- A subquery in a join's `ON` clause referencing a joined table's column was recorded as a
+  value known before the statement runs rather than as the row's own column, so a proof or an
+  obligation could rest on it (found by `x/stmtprobe` against a running PostgreSQL).
 
 ## [1.2.0] - 2026-09-09
 
