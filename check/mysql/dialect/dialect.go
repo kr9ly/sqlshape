@@ -109,6 +109,8 @@ func describeViolation(v analyze.Violation) string {
 		return "NOT NULL on " + v.Table + "." + cols + code
 	case 3819:
 		return "CHECK " + v.Constraint + " on " + v.Table + " (" + cols + ")" + code
+	case 1423:
+		return "view " + v.Constraint + ": " + v.Table + "." + cols + " has no default and the INSERT does not assign it" + code
 	case 1172:
 		// a 1172 always originates in a trigger's or a routine's own body (body.go's
 		// walkSelect: a plain top-level statement never reaches it), reported here either

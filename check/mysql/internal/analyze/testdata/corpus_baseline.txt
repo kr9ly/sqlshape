@@ -36,8 +36,9 @@ archive	DIFF column type string->binary	1465de76230a	SELECT * FROM t6 ORDER BY a
 archive	DIFF column type string->binary	49922bef01c1	SELECT * FROM t6 ORDER BY a DESC
 archive	LENIENT 1031	2b6933d1b616	UPDATE t SET j = '[1]'
 archive	LENIENT 1031	f4a84fd0c683	DELETE FROM archive_table
+archive	LENIENT 1031	f3037b0cf55c	DELETE FROM v
 archive	LENIENT 1031	cae29f4a53e0	DELETE t1, t2 FROM archive_table AS t1, innodb_table AS t2
-archive	CODE 1031->1288	3c423823545d	DELETE t1 FROM v AS t1, innodb_table AS t2 WHERE t1.id = t2.id
+archive	LENIENT 1031	3c423823545d	DELETE t1 FROM v AS t1, innodb_table AS t2 WHERE t1.id = t2.id
 archive	LENIENT 1031	78d9626149c6	UPDATE archive_table SET x = 1000
 archive	LENIENT 1031	37c0cda45f4f	UPDATE archive_table AS t1, innodb_table AS t2
 archive	LENIENT 1031	b96a0a80f90d	UPDATE v SET x = 1000
@@ -89,6 +90,8 @@ check_constraints	RUNTIME 3819	b8787742eb7a	INSERT INTO t1 VALUES(1)
 check_constraints	RUNTIME 3819	0cfc54392caf	INSERT INTO t1 VALUES(10)
 check_constraints	RUNTIME 3819	3b1af52db195	INSERT INTO t1 VALUES()
 check_constraints	LENIENT 13	dd5c5b1614c5	LOAD DATA INFILE '../../std_data/loaddata3.dat' IGNORE INTO TABLE t1
+check_constraints	RUNTIME 3819	84ad7d42af66	INSERT INTO v1(f1) VALUES(3)
+check_constraints	RUNTIME 3819	187189ac231b	REPLACE INTO v1(f1) VALUES(3)
 check_constraints	RUNTIME 3819	93e7a4d7f7af	UPDATE v1 SET f1 = 8 WHERE f1 = 6
 clear_diag_area	LENIENT 1051	94b5cea3e05d	CALL p4_unhandled_exception_returned
 comments	DIFF column name	9848ceb3faf2	select 1 /*!32301 +1 */
@@ -98,6 +101,7 @@ commit	LENIENT 1792	95efa0eecccd	UPDATE t1 SET a= 3
 commit	LENIENT 1792	cd655d1ff73b	DELETE FROM t1
 commit	LENIENT 1792	3fc1e2aa76a6	SELECT f1()
 commit	LENIENT 1792	ae2cd589953d	CALL p1()
+commit	LENIENT 1792	6cb8c187ceaa	INSERT INTO v1 VALUES (1), (2)
 commit	LENIENT 1792	b84b6160630e	LOCK TABLE t1 WRITE
 commit	LENIENT 1792	60f251c8bd12	INSERT INTO t1 VALUES (1)
 commit	LENIENT 1792	dd17d6fe1ff7	UPDATE t1 SET a=2
@@ -305,7 +309,6 @@ delete	LENIENT 1109	b6261609e496	DELETE t1 FROM db1.t1, db2.t1 AS a1
 delete	CODE 1109->1066	b6e6b934ab14	DELETE t1 FROM db1.t1, db2.t1
 delete	LENIENT 1146	ef25e210a7af	DELETE t1, t2, t3 FROM t1, t2, t3
 delete	LENIENT 1442	15ba89d25e6a	DELETE IGNORE FROM t1
-delete	CODE 1395->1288	75f7bc00c795	DELETE v2 FROM v2
 delete	RUNTIME 1242	9308895fb05c	DELETE    OUTR1.* 
 delete	RUNTIME 1242	7fe4ef483069	DELETE OUTR1.* FROM e3 AS OUTR1 INNER JOIN d3 AS OUTR2 ON 
 delete	RUNTIME 1292	675d39c577f8	DELETE d2 FROM t AS d1, t AS d2 WHERE d1.a > d2.a
@@ -812,6 +815,7 @@ gis	LENIENT 3673	3a4e6eb3c86b	UPDATE t1 SET g=NULL
 gis	LENIENT 3673	68802a88a2df	UPDATE IGNORE t1 SET g=NULL
 gis	RUNTIME 1364	324f3481b2f0	INSERT IGNORE INTO t1 VALUES ()
 gis	RUNTIME 1364	d1977bd73a60	LOAD DATA INFILE 'bug26412713.csv' INTO TABLE t1 (x)
+gis	RUNTIME 1423	bd861e55558c	INSERT IGNORE INTO v1(id) VALUES(0)
 gis	LENIENT 3727	121ccbf072f4	SELECT ST_Contains(
 gis	LENIENT 3727	f7408ff9eeca	SELECT ST_Touches(
 gis	LENIENT 3616	fc4da108bcac	INSERT t(a) VALUES(
@@ -863,7 +867,6 @@ grant	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	
 grant2	DIFF column type string->binary	a42d37b8c8e5	select current_user()
 grant2	DIFF column type string->binary	055b08222849	select * from t1
 grant2	DIFF column type string->binary	78869acd3759	SELECT user,host,length(authentication_string),insert_priv FROM user WHERE user=@u AND host=@h
-grant_explain_non_select	STRICT 1288	dfac0487fc78	DELETE FROM v1 USING v1, t2 WHERE v1.a = t2.a
 group_by	DIFF column type binary->string	f9cb08507243	select value,description,bug_id from t2 left join t1 on t2.program=t1.product and t2.value=t1.compon
 group_by	DIFF column type binary->string	02b18e26f2b0	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
 group_by	DIFF column type binary->string	d10edc997e82	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
@@ -907,6 +910,7 @@ histograms	STRICT 1406	3981813324b7	WITH cte AS (
 histograms_debug	LENIENT 1792	d93129d8e95a	INSERT INTO t1 (col1) VALUES (1)
 host_cache_size_functionality	LENIENT 1238	4350eedf9322	SELECT COUNT(@@local.Host_Cache_Size)
 host_cache_size_functionality	LENIENT 1238	3e53bbf6d025	SELECT COUNT(@@SESSION.Host_Cache_Size)
+ignore_strict	LENIENT 1748	10d625c4db18	INSERT INTO v1 VALUES (10),(11)
 ignore_strict	LENIENT 1526	ddb6edcb0f0c	INSERT INTO t1 VALUES (2),(4)
 ignore_strict	LENIENT 1526	7ecb0b391ecf	UPDATE t1 SET a=a+1
 ignore_strict	LENIENT 1748	0d3f2b84efaf	UPDATE v1 SET a=11 WHERE a=2
@@ -967,6 +971,7 @@ insert	LENIENT 1110	dfa7fd752939	insert into t1 (a,a) values (1,1)
 insert	LENIENT 1110	256fe3852e2b	insert into t1 SET a=1,b=2,a=1
 insert	LENIENT 1110	015d473bdff8	insert into t1 (b,b) select 1,2
 insert	LENIENT 1110	0afb03236f07	INSERT INTO t1 (b,b) SELECT 0,0 ON DUPLICATE KEY UPDATE a = a + VALUES (a)
+insert	LENIENT 1393	290e9170123f	insert into v1 (f1) values (3) on duplicate key update f1= f3 + 10
 insert	RUNTIME 1406	9e870d5e685c	INSERT INTO t1(a,b,c) VALUES (1.225e-05, 1.225e-05, 1.225e-05)
 insert	RUNTIME 1406	3524fc138f78	INSERT INTO t1(a,c) VALUES (1.87e-3, 1.87e-3)
 insert	LENIENT 1110	85971cc28ddb	INSERT INTO t1 (a, a) VALUES (1, 1)
@@ -987,11 +992,15 @@ insert_update	RUNTIME 1366	78e199f9e95f	INSERT INTO t2 values(x'8142', x'8142', 
 insert_update	RUNTIME 1366	57d6f3081206	UPDATE t2 SET a=x'8243' where a=x'6162'
 insert_update	RUNTIME 1366	7931dbbe8aa4	INSERT INTO t3 values(x'8142', x'8142', x'8142')
 insert_update	RUNTIME 1366	60c152d4247e	UPDATE t3 SET a=x'8243' where a=x'6162'
+insert_update	RUNTIME 1366	1004eb1c3fb6	INSERT INTO v1 values(x'8142', x'8142', x'8142')
 insert_update	RUNTIME 1366	42b5d52a584c	UPDATE v1 SET a=x'8243' where a=x'6162'
+insert_update	RUNTIME 1366	54b404f8c267	INSERT INTO v2 values(x'8142', x'8142', x'8142')
 insert_update	RUNTIME 1366	291bd33b1821	UPDATE v2 SET a=x'8243' where a=x'6162'
+insert_update	RUNTIME 1366	40ed9f5eb5e0	INSERT INTO v3 values(x'8142', x'8142', x'8142')
 insert_update	RUNTIME 1366	1d676bd3b203	UPDATE v3 SET a=x'8243' where a=x'6162'
 insert_update	RUNTIME 1366	ae86deb766f7	INSERT INTO t_utf8 values(x'f4b8ad', x'f4b8ad', x'f4b8ad')
 insert_update	RUNTIME 1366	56a59f2b970f	UPDATE t_utf8 SET a=x'f69687' where a=x'e69687'
+insert_update	RUNTIME 1366	288a3d726d7b	INSERT INTO v_utf8 values(x'f4b8ad', x'f4b8ad', x'f4b8ad')
 insert_update	RUNTIME 1366	29b4e6529980	UPDATE v_utf8 SET a=x'f69687' where a=x'e69687'
 internal_tmp_disk_storage_engine	DIFF column type binary->string	f2b75bc06721	select distinct concat(c1, repeat('xx', 250)) as cc from t2 order by 1
 internal_tmp_disk_storage_engine	DIFF column type binary->string	5ec14fa15c95	select concat(c1, repeat('xx', 250)) as cc from t2 group by cc order by 1
@@ -1128,6 +1137,7 @@ loadxml	LENIENT 13	26c7392b18a0	LOAD XML INFILE '../../std_data/bug16171518_2.da
 loadxml	CODE 13->1288	ff26d0d69bf0	LOAD XML INFILE '../../std_data/bug16171518_2.dat' INTO TABLE v3
 loadxml	LENIENT 13	cb656f077b48	LOAD XML INFILE '../../std_data/bug16171518_2.dat' INTO TABLE t4 (col1, col2, col3) SET col4 = NULL
 loadxml	LENIENT 13	e8582bfb37e3	LOAD XML INFILE '../../std_data/bug30753708.dat' INTO TABLE t1 ROWS IDENTIFIED BY '<address>'
+lock_multi	LENIENT 1099	1ac6c4f2faa8	INSERT INTO v1 VALUES (1)
 lock_myisam	LENIENT 1099	2c881bd2655d	update t1 set id=1 where id=1
 lock_myisam	LENIENT 1100	e1d9ebdfa20b	insert into t1 select index1,nr from t1
 locking_clause	LENIENT 3568	c77081f2bb5c	SELECT * FROM t1 FOR SHARE OF t2
@@ -1524,6 +1534,8 @@ partition_error	LENIENT 1863	571ce7599f72	DELETE FROM t1 PARTITION (p1,p6) WHERE
 partition_error	LENIENT 1526	0b1162498b9e	DELETE FROM t1 WHERE a > 0
 partition_exchange	LENIENT 1735	e4361b76acb6	SELECT * FROM tsp PARTITION (sp2)
 partition_exchange	LENIENT 1735	5a4b83eb7bf8	SELECT * FROM tsp PARTITION (sp3)
+partition_explicit_prune	LENIENT 1748	79bd9e49999b	INSERT INTO v1 VALUES (11)
+partition_explicit_prune	LENIENT 1748	416a783de229	INSERT INTO v1 VALUES (21)
 partition_explicit_prune	LENIENT 1735	aef98e10ab62	INSERT INTO t1 PARTITION (pNonExisting) VALUES (1, "error")
 partition_explicit_prune	LENIENT 1735	c47dfc2f7a6c	INSERT INTO t1 PARTITION (pNeg, pNonExisting) VALUES (1, "error")
 partition_explicit_prune	LENIENT 1748	e6ce9f366d5c	INSERT INTO t1 PARTITION (pNeg, pNeg) VALUES (1, "error")
@@ -1557,6 +1569,8 @@ partition_list	SCHEMA problems: PARTITION LIST: definition not understood	66fb98
 partition_list	SCHEMA problems: PARTITION LIST: definition not understood	7d1bbde90ed9	INSERT INTO t1 VALUES (0x98000)
 partition_locking	DIFF column type decimal->bigint	d1e7f6658ca3	SELECT UNIX_TIMESTAMP('2011-01-01 00:00:00') as time_t,
 partition_locking	RUNTIME 1242	d13d4388d9d5	SELECT * FROM t4 WHERE a = (SELECT a FROM t3)
+partition_locking	LENIENT 1748	cd14dbdea3f7	INSERT INTO v1_25 VALUES (17, "Insert in v1_25 fail")
+partition_locking	LENIENT 1748	99afe43bd698	INSERT INTO v1_25_check VALUES (30, "Insert in v1_25_check fail")
 partition_locking	LENIENT 1748	613395965e1c	CALL sp_insert_partition("p8", 111, "Test111")
 partition_locking	LENIENT 1146	60f251c8bd12	INSERT INTO t1 VALUES (1)
 partition_order	DIFF column type double unsigned->double	64d695038816	select * from t1 force index (b) where b > 0 order by b
@@ -2046,6 +2060,8 @@ sp-error	LENIENT 1415	0afdecd0a3b4	SELECT bug13012_2()
 sp-error	LENIENT 1356	c9be3035bd25	select * from v1
 sp-error	LENIENT 1356	ce4b09fd45f2	select * from v2
 sp-error	LENIENT 1356	48bbdf97a2aa	select * from v3
+sp-error	LENIENT 1146	7560a5f1ce40	insert into v1 values (1)
+sp-error	LENIENT 1146	810bc153521e	insert into v1 values (2)
 sp-error	CODE 1109->1054	cbc8bb43a503	call bug15091()
 sp-error	LENIENT 1422	60f251c8bd12	INSERT INTO t1 VALUES (1)
 sp-error	LENIENT 1422	819d361c1fd8	SELECT bug18914_f1()
@@ -2244,7 +2260,6 @@ time_zone4	DIFF column type decimal->bigint	773665e6cb92	select unix_timestamp('
 transactional_acl_tables	LENIENT 1445	9777483d1789	SELECT f2()
 trigger	RUNTIME 1048	6599452e796b	insert into t1 values (4, "four", 1), (5, "five", 2)
 trigger	SCHEMA problems: syntax error	ec44976332ee	select @a
-trigger	STRICT 1288	dafb537e537b	delete v1.*, t2.* from v1, t2 where v1.id=1
 trigger	LENIENT 1051	83dcb9ca07a0	insert into table_25411_a values (1)
 trigger_before_not_null	RUNTIME 1048	0aabdfae5863	INSERT INTO t1 VALUES (1, 2, 3)
 trigger_before_not_null	RUNTIME 1048	667eca376330	INSERT INTO t1(a, b, c) VALUES (1, 2, 3)
@@ -2528,29 +2543,24 @@ variables_debug	LENIENT 1193	448b09a42039	SELECT @@session.debug, @@global.debug
 variables_debug	LENIENT 1193	f100db0cb9da	SELECT @@global.debug
 variables_debug	LENIENT 1193	f99d7cd77af5	SELECT @@debug
 version_token	LENIENT 1193	f6b5f6e49292	select @@version_tokens_session
-view	CODE 1348->1288	398e52d6a103	update v1 set c=a+c
-view	CODE 1348->1288	63c4842ed3c4	update t2,v1 set v1.c=v1.a+v1.c where t2.x=v1.a
-view	STRICT 1288	71efd01d0195	delete v1 from t2,v1 where t2.x=v1.a
 view	LENIENT 1288	462d774e27ec	update v2 set x=x+1 limit 1
+view	LENIENT 1288	5b1c1b49f8b7	delete from v2 limit 1
 view	SCHEMA dump: SHOW CREATE TABLE tNa`b: Error N (N): You have an error in y	c9be3035bd25	select * from v1
 view	CODE 1176->1054	af47778aed64	select b from v1 use index (some_index) where b=1
 view	SCHEMA dump: SHOW CREATE FUNCTION ?N`: Error N (N): You have an error in 	c9be3035bd25	select * from v1
 view	RUNTIME 1242	9619b9f8e4ba	select * from v4
-view	CODE 1093->1443	de6171fff1bc	update v2 set col1 = (select max(col1) from v2)
 view	CODE 1093->1443	90421ffc5409	update v1,t2 set v1.col1 = (select max(col1) from v1) where v1.col1 = t2.col1
 view	CODE 1093->1443	231fac35b6b8	update v2,t2 set v2.col1 = (select max(col1) from v2) where v2.col1 = t2.col1
-view	CODE 1093->1443	ffd3277abd03	update v3 set v3.col1 = (select max(col1) from v3)
-view	CODE 1443->1288	a0ec662a1b5a	delete v2 from v2,t2 where (select max(col1) from v1) > 0 and v2.col1 = t2.col1
-view	CODE 1093->1288	030ed36df000	delete v1 from v1,t2 where (select max(col1) from v1) > 0 and v1.col1 = t2.col1
-view	CODE 1093->1288	dab2f812366f	delete v2 from v2,t2 where (select max(col1) from v2) > 0 and v2.col1 = t2.col1
-view	CODE 1443->1288	89611ddb446f	delete v1 from v1,t2 where (select max(col1) from v2) > 0 and v1.col1 = t2.col1
-view	STRICT 1288	45db727820c7	update v1 set s1='b'
+view	LENIENT 1443	8ae060b39b31	insert into v2 values ((select max(col1) from v1))
+view	LENIENT 1093	8eb4aa89b05c	insert into v2 values ((select max(col1) from v2))
+view	LENIENT 1443	fa52b7bb6d9f	insert into v3 (col1) values ((select max(col1) from v1))
+view	LENIENT 1443	f4ad6c0c96f1	insert into v3 (col1) values ((select max(col1) from v2))
+view	LENIENT 1443	6cab887a803c	insert into v3 (col1) values ((select CONVERT_TZ('20050101000000','UTC','MET') from v2))
 view	CODE 13->1288	db16fe5dca36	load data infile '../../std_data/loaddata2.dat' into table v1 fields terminated by ',' enclosed by '
 view	CODE 13->1288	cea1b4ffd762	load data infile '../../std_data/loaddata2.dat' ignore into table v1 fields terminated by ',' enclos
 view	CODE 13->1288	8eba43730323	load data infile '../../std_data/loaddata3.dat' into table v1 fields terminated by '' enclosed by ''
 view	CODE 13->1288	61e553dbf75c	load data infile '../../std_data/loaddata3.dat' ignore into table v1 fields terminated by '' enclose
 view	LENIENT 1288	7607fe612e5c	update v2 set a= 10 where a=200 limit 1
-view	LENIENT 1393	e66084dac31d	update v3 set a=1,b=2
 view	LENIENT 1288	78614ecaa11c	update v1 set f60=2345
 view	SCHEMA dump: SHOW CREATE VIEW tN: Error N (HYN): ?.? contains view recurs	c9be3035bd25	select * from v1
 view	LENIENT 1424	c9be3035bd25	select * from v1
@@ -2568,25 +2578,7 @@ view	LENIENT 1176	e602425fabed	SELECT * FROM v1 FORCE INDEX (c2) WHERE c2=2
 view	LENIENT 1176	478fb6cfc941	SELECT * FROM v1 IGNORE INDEX (c2) WHERE c2=2
 view	LENIENT 1267	6e0fd12535b3	SELECT * FROM v1 WHERE c1 = 'text1'
 view	LENIENT 1267	3c999506e0d5	SELECT * FROM v1 WHERE c2 = 'text2'
-view	CODE 1395->1288	a64b15c2a8a6	DELETE vtt FROM vtt WHERE a1=8
-view	CODE 1395->1288	3ee572b9ea27	DELETE vtr FROM vtr WHERE a1=9
-view	CODE 1395->1288	7cc861cdb356	DELETE vtrd FROM vtrd WHERE a1=10
-view	CODE 1395->1288	a2d9c585011f	DELETE vrt FROM vrt WHERE a1=11
-view	CODE 1395->1288	7cd126821a00	DELETE vrtd FROM vrtd WHERE a1=12
-view	RUNTIME 1369	101c57ee702c	update v4n set a='v4n'
-view	RUNTIME 1369	4deda608750f	update v7n set a='v7n v5n v3l'
-view	RUNTIME 1369	0e1187d01926	update v7n set a='v7n v6c v3l'
-view	RUNTIME 1369	8c47c9866bad	update v7n set a='v7n v6c v5nà'
-view	LENIENT 1288	5b1038599838	UPDATE t1_view_N3 AS A JOIN t1_view_N4 B SET A. col_int = 1 , B. col_int = 2
-view	LENIENT 1288	b53f564a05d8	UPDATE v3 SET v3.a=3
-view	LENIENT 1288	c31179f4e346	UPDATE v3, v2 SET v3.a=3
-view	LENIENT 1288	c925d40f39a7	UPDATE v4 SET v4.a=6
-view	LENIENT 1288	cdfab4911e9e	UPDATE v4, v2 SET v4.a=6
-view	LENIENT 1288	1063878b65fb	UPDATE v5 SET v5.a=9
-view	LENIENT 1288	7e7b8ed71e27	UPDATE v5, v2 SET v5.a=9
 view	SCHEMA dump: SHOW CREATE VIEW vN: Error N (N): Table ? from one of the SE	681594f1015c	SELECT * FROM v0
-view_grant	STRICT 1288	ea2f5fafef5f	delete v1 from t2,v1 where t2.x=v1.c
-view_grant	STRICT 1288	9637edeeed71	delete v2 from t2,v2 where t2.x=v2.c
 view_grant	SCHEMA dump: SHOW CREATE VIEW vN: Error N (N): Unknown database ?	4a9b814c4204	select @v1def1, @v1def2, @v1def1=@v1def2
 view_grant	SCHEMA dump: SHOW CREATE VIEW vN: Error N (N): Unknown database ?	097b84695ed7	INSERT INTO mysqltest1.t1 VALUES (1), (2)
 view_grant	SCHEMA dump: SHOW CREATE VIEW vN: Error N (N): Unknown database ?	974762f1fc4b	SELECT * FROM mysqltest1.v_t1
@@ -2600,18 +2592,11 @@ view_grant	SCHEMA no database selected	43763b1cc37b	INSERT INTO mysqltest1.t1 VA
 view_grant	SCHEMA no database selected	dc276702af88	SELECT * FROM mysqltest1.t1
 view_grant	SCHEMA dump: SHOW CREATE VIEW vN: Error N (N): Unknown database ?	c9be3035bd25	select * from v1
 view_grant	LENIENT 1449	2c694dc433bf	LOCK TABLES v1 READ
-view_grant	STRICT 1288	c3c68c742374	DELETE test1.v1_none FROM test1.v1_none, test1.single WHERE cs='0'
-view_grant	STRICT 1288	91d5f77c1ab9	DELETE test1.v1_all FROM test1.v1_all, test1.single WHERE cs='0'
-view_grant	STRICT 1288	d0cbb3c389c1	DELETE test1.v1_same FROM test1.v1_same, test1.single WHERE cs='0'
-view_grant	STRICT 1288	b9997ee133e4	DELETE test1.v1_cross FROM test1.v1_cross, test1.single WHERE cs='0'
-view_grant	STRICT 1288	d7b6c230f905	DELETE test1.v1_multi FROM test1.v1_multi WHERE cs='0'
 view_grant	LENIENT 1356	180ddce8c027	SELECT cs FROM test1.v1_none
 view_grant	LENIENT 1356	684c6ba8647c	SELECT cs FROM test1.v1_multi
 view_grant	SCHEMA no database selected	c5ca48542825	UPDATE test1.v1_all SET cn='x'
 view_myisam	CODE 13->1288	8eba43730323	load data infile '../../std_data/loaddata3.dat' into table v1 fields terminated by '' enclosed by ''
 view_myisam	CODE 13->1288	61e553dbf75c	load data infile '../../std_data/loaddata3.dat' ignore into table v1 fields terminated by '' enclose
-view_myisam	CODE 1395->1288	8929f19c5e9f	delete v3,t1 from v3,t1
-view_myisam	CODE 1395->1288	a9ef93588cb2	delete t1,v3 from t1,v3
 warnings	LENIENT 13	4e7a6b8c321c	load data infile '../../std_data/warnings_loaddata.dat' into table t1 fields terminated by ','
 warnings	RUNTIME 1406	5be37371a551	insert into t2 values(@c)
 warnings	RUNTIME 1406	fe25e51d3534	insert into t1 values(@q, NULL, NULL)

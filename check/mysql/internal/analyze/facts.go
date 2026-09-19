@@ -94,7 +94,10 @@ func (a *analyzer) checkOptionFacts(sc *scope, fs *facts.Scope) {
 			continue
 		}
 		v := a.s.View(r.view)
-		if v == nil || v.CheckOption == "" || v.CheckOption == "NONE" {
+		if v == nil || !a.chainHasCheckOption(v, nil) {
+			// an underlying view's own option is enforced whatever the target view says,
+			// and the 1369 still names the target (measured: an INSERT through a plain
+			// view over a WITH CHECK OPTION one fails naming the outer view)
 			continue
 		}
 		for _, pr := range facts.LiftThroughView(fs.Leaves[i], i) {
@@ -1041,8 +1044,14 @@ func closeFixed(fs *facts.Scope) {
 
 // writeFacts is the record of a write: its target, the columns it assigns and the terms
 // stored in them (parallel to assigned; the first row's for a multi-row INSERT).
-func (a *analyzer) writeFacts(kind facts.StmtKind, rel *relation, assigned []*schema.Column, values []facts.Term) facts.Write {
-	w := facts.Write{Table: rel.table.Name, Kind: kind, Position: int32(a.ph.Back(rel.pos))}
+func (a *analyzer) writeFacts(kind facts.StmtKind, rel *relation, table *schema.Table, assigned []*schema.Column, values []facts.Term) facts.Write {
+	if table == nil {
+		table = rel.table
+	}
+	if table == nil {
+		table = baseTableOf(rel.cols) // a write through a view lands on its base table
+	}
+	w := facts.Write{Table: table.Name, Kind: kind, Position: int32(a.ph.Back(rel.pos))}
 	for i, c := range assigned {
 		dup := false
 		for _, name := range w.Assigned {

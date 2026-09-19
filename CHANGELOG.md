@@ -31,6 +31,20 @@ release it is a candidate for.
   `SELECT ... INTO OUTFILE` / `DUMPFILE` (no result set) and a `SELECT` with a trailing
   `FOR UPDATE` / `FOR SHARE`; the loader applies `ALTER VIEW`. Inside a routine or trigger body
   the first three are the server's own 1314.
+- MySQL writes through views are analyzed as the server runs them (each rule measured): an
+  `INSERT` / `REPLACE`, `UPDATE` or `DELETE` through a merged view lands on its base table,
+  with the base table's own failure modes and the view's own -- `WITH CHECK OPTION` as the
+  violation 1369 on `INSERT` and `REPLACE` too, an underlying view's option enforced under
+  a plain outer one, a base column with no default the statement leaves unassigned as the
+  view's 1423 (`Violates` matches 1369 and 1423 by the view's name) -- and the server's
+  refusals as statement errors: the view's updatable / insertable flags are computed over
+  its `FROM` leaves the way `sql_resolver.cc` computes them when it merges (a derived or
+  `TEMPTABLE` leaf blocks inserting, an outer join both), a non-insertable view is 1471
+  (a derived column among the insert's fields its 1348, a `COLLATE` wrapper transparent),
+  a join view takes an explicit column list (1394) over one base table (1393,
+  `ON DUPLICATE KEY UPDATE` included), `REPLACE` and `DELETE` never reach one (1395),
+  a non-updatable view or a CTE target stays 1288 (a materialized leaf's column assigned
+  through an updatable view too), and a subquery reading the written view itself is 1093.
 - The statement facts the `One` proof and the obligations are judged on are tested against a
   running server the way the checker's types are: `x/stmtprobe` generates schemas with rows
   and statements over them (joins, views, derived tables, CTEs, `EXISTS` / `IN` subqueries,

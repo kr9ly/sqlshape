@@ -658,12 +658,12 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 
 // runtimeCode: an error the data decides at run time, which the analyzer predicts as a
 // violation (an expect line's key) rather than raises: constraints (1048 / 1062 / 1451 /
-// 1452 / 3819 / 1369 / 1364 / 1263), conversions and ranges (1264 / 1265 / 1292 / 1366 /
+// 1452 / 3819 / 1369 / 1364 / 1423 / 1263), conversions and ranges (1264 / 1265 / 1292 / 1366 /
 // 1406 / 3854 / 1690 / 1441), a scalar subquery's or SELECT INTO's row count (1242 / 1172),
 // SIGNALs (1644 / 1643), a division by zero (1365), a duplicate under a locking read.
 func runtimeCode(code int) bool {
 	switch code {
-	case 1048, 1062, 1451, 1452, 3819, 1369, 1364, 1263, 1264, 1265, 1292, 1366, 1406, 3854, 1690, 1441, 1242, 1172, 1644, 1643, 1365, 1329, 1213, 1205, 1105, 3105, 1216, 1217, 1586, 1416:
+	case 1048, 1062, 1451, 1452, 3819, 1369, 1364, 1423, 1263, 1264, 1265, 1292, 1366, 1406, 3854, 1690, 1441, 1242, 1172, 1644, 1643, 1365, 1329, 1213, 1205, 1105, 3105, 1216, 1217, 1586, 1416:
 		return true
 	}
 	return false

@@ -129,7 +129,7 @@ func (a *analyzer) loadData(n *mysqlast.Node) error {
 		}
 	}
 	a.facts = &facts.Facts{Kind: facts.Insert, Top: &facts.Scope{At: -1, Leaves: []facts.Leaf{a.leafFacts(*rel)}, Many: "LOAD DATA loads every row of the file"}}
-	a.facts.Writes = []facts.Write{a.writeFacts(facts.Insert, rel, targets, values)}
+	a.facts.Writes = []facts.Write{a.writeFacts(facts.Insert, rel, nil, targets, values)}
 	if w.replace {
 		a.facts.Writes = append(a.facts.Writes, facts.Write{Table: rel.table.Name, Kind: facts.Delete, Position: int32(a.ph.Back(rel.pos))})
 	}

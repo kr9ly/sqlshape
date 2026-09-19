@@ -124,6 +124,7 @@ A failure mode is named as MySQL names the constraint, and numbered as MySQL num
 | `CHECK` | the `CONSTRAINT` name, or `<table>_chk_<n>` | 3819 |
 | `NOT NULL` | `<table>.<column>` | 1048 |
 | a view's `WITH CHECK OPTION` | the view's own name (MySQL's own message names it, unlike PostgreSQL's unnamed 44000) | 1369 |
+| a base column with no default an INSERT through a view leaves unassigned | the view's own name (the server's message names the view, not the column -- whether or not the view exposes it) | 1423 |
 
 What a statement's own form does to the list:
 
@@ -229,8 +230,9 @@ base table (`Discharge.Path` `ByView`):
   declares a check option of its own, which the server keeps enforcing (measured);
 - the 1369 above is what makes the pin genuine: a view without the clause never discharges it
   (a write through it moves the row out of the view's `WHERE` silently);
-- for `UPDATE` only so far: `INSERT` and `DELETE` through a view are not analyzed yet, a gap
-  older than this.
+- for `UPDATE`, `INSERT` and `REPLACE` alike (a `DELETE` never checks the option, measured);
+  an underlying view's own check option is enforced whatever the view written through says,
+  and the 1369 still names the latter (measured).
 
 Not a failure mode here: a length, range or `ENUM` value truncation (1265 / 1406 / 1366 /
 1264). It is a property of the type (a parameter's Go type, a literal's own value set), caught
@@ -489,7 +491,34 @@ from the same table (measured).
 A view is merged into the query that reads it unless it says `ALGORITHM=TEMPTABLE` or its
 query cannot be merged (`GROUP BY`, `HAVING`, `DISTINCT`, `LIMIT`, a set operation, a window
 function or a subquery in the select list) -- the server's own `is_mergeable`. A write through a
-merged view lands on its base table; through any other view it is 1288. `WITH CHECK OPTION` on
+merged view lands on its base table; through any other view it is 1288 (an `INSERT`'s spelling
+of the same refusal is 1471). A merged view carries the server's own two write flags, computed
+over the `FROM` leaves of its query: it is updatable when any leaf is (a base table, or an
+updatable view), insertable when every leaf is, and neither when any leaf sits on the nullable
+side of an outer join -- so a join with a derived table or a `TEMPTABLE` view stays updatable
+but is never insertable, and a view over a `TEMPTABLE` view is neither. Each write's own
+rules, measured against the server:
+
+- `INSERT` needs the insertable flag (else 1471). The fields -- the column list, or without
+  one every view column -- resolve against the view (1054, 1136); a derived column among them
+  is that column's 1348, one outside them, or the same base column behind two view columns,
+  is 1471. A `COLLATE` wrapper is transparent (the server's `field_for_view_update`): such a
+  column stays plain. A join view additionally needs an explicit column list (1394) naming
+  columns of exactly one base table, the `ON DUPLICATE KEY UPDATE` assignments included
+  (1393), and `REPLACE` never reaches one (1395: the delete half). The write's failure modes
+  are the base table's own (1062 and the rest), and a base column with no default the
+  statement leaves unassigned is the view's 1423 rather than the table's 1364.
+- `UPDATE` needs the updatable flag (else 1288) and may then assign any plain column: an
+  expression of the view's own select list is that column's 1348, a column of a materialized
+  leaf inside the view the view's 1288, and the assignments through a join view must keep to
+  one base table (1393).
+- `DELETE` takes any updatable single-leaf view -- derived columns included, even a view of
+  only expressions; a view of more than one leaf is 1395, anything else (a CTE target
+  included) 1288.
+- a subquery reading the very view the statement writes is the target itself: 1093, not the
+  1443 a different view over the same base table gets.
+
+`WITH CHECK OPTION` on
 a view the server would not merge is refused when the schema loads, as the server refuses the
 `CREATE` (1368). `CREATE OR REPLACE VIEW` replaces the earlier definition, and so does `ALTER
 VIEW` (the view must exist, 1146, and be a view, 1347).

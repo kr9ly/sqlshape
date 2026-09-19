@@ -322,7 +322,6 @@ func TestUnsupported(t *testing.T) {
 	s := load(t)
 	for _, sql := range []string{
 		"SHOW TABLES",
-		"INSERT INTO v_users (name) VALUES ('x')",
 	} {
 		_, err := Analyze(s, sql)
 		if err == nil {

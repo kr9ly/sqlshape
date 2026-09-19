@@ -70,6 +70,7 @@ var (
 	reCheck       = regexp.MustCompile(`^Check constraint '([^']+)' is violated\.$`)     // 3819
 	reBadNull     = regexp.MustCompile(`^Field '([^']+)' doesn't have a default value$`) // 1364
 	reCheckOption = regexp.MustCompile(`^CHECK OPTION failed '(?:[^'.]+\.)?([^']+)'$`)   // 1369: "CHECK OPTION failed 'db.view'"
+	reViewDefault = regexp.MustCompile(`^Field of view '(?:[^'.]+\.)?([^']+)' underlying table doesn't have a default value$`) // 1423
 )
 
 // WrapError is the error Run / Exec would return for err when it came from a statement run
@@ -109,6 +110,10 @@ func wrapErr(err error) error {
 		}
 	case 1369: // ER_VIEW_CHECK_FAILED
 		if m := reCheckOption.FindStringSubmatch(me.Message); m != nil {
+			c.Key = m[1]
+		}
+	case 1423: // ER_NO_DEFAULT_FOR_VIEW_FIELD: 1364 through a view, keyed by the view's name
+		if m := reViewDefault.FindStringSubmatch(me.Message); m != nil {
 			c.Key = m[1]
 		}
 	case 1644, 1643: // SIGNAL / RESIGNAL (ER_SIGNAL_EXCEPTION, ER_SIGNAL_NOT_FOUND)

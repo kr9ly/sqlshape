@@ -63,6 +63,7 @@ const (
 	code1172           = 1172 // SELECT ... INTO with more than one row
 	codeNoDefault      = 1364 // "Field '...' doesn't have a default value"
 	codeViewCheck      = 1369 // ER_VIEW_CHECK_FAILED: a write through a WITH CHECK OPTION view
+	codeViewNoDefault  = 1423 // ER_NO_DEFAULT_FOR_VIEW_FIELD: 1364 through a view, naming the view
 	code1690           = 1690 // ER_DATA_OUT_OF_RANGE: a constant the server cannot compute, run per row (fold.go)
 	code1292           = 1292 // ER_TRUNCATED_WRONG_VALUE: a constant cast or conversion the value does not survive, in a strict write (fold.go)
 )
@@ -91,6 +92,7 @@ func (a *analyzer) violations() []Violation {
 			switch w.kind {
 			case facts.Insert:
 				out = a.insertViolations(w)
+				out = append(out, a.checkOptionViolations(w.table)...)
 			case facts.Update:
 				out = a.updateViolations(w.table, w.values, nil, a.strictFor(w.table))
 				out = append(out, a.checkOptionViolations(w.table)...)
@@ -380,7 +382,17 @@ func (a *analyzer) insertViolations(w *write) []Violation {
 	if notNull {
 		out = append(out, notNullViolations(t, w.values)...)
 		if !w.load {
-			out = append(out, omittedNotNullViolations(t, w.inserted)...)
+			omitted := omittedNotNullViolations(t, w.inserted)
+			if w.view != "" {
+				// through a view the omitted-column failure is the view's own 1423 ("Field
+				// of view ... underlying table doesn't have a default value", measured --
+				// whether or not the view exposes the column), not the table's 1364
+				for i := range omitted {
+					omitted[i].Code = codeViewNoDefault
+					omitted[i].Constraint = w.view
+				}
+			}
+			out = append(out, omitted...)
 		}
 	}
 	if w.onDuplicate != nil {

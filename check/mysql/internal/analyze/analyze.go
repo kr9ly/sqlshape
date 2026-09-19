@@ -64,6 +64,12 @@ type Column struct {
 	base      *schema.Column // the base table column this is a plain reference to, if any
 	baseTable *schema.Table  // its table
 	aliased   bool           // a select item written with an alias (find_item_in_list prefers these)
+	// matLeaf: a plain reference into a materialized relation (a TEMPTABLE view, a derived
+	// table), whose every column -- an expression of its own query included -- is a field
+	// of that non-updatable leaf: assigning it through a view is the view's 1288, where an
+	// expression of the view's own select list is the column's 1348 (measured,
+	// TestViewWriteServer)
+	matLeaf bool
 	// leaf1 / leafCol: the relation of the producing block (1-based index into its rels,
 	// 0 when the column is not a plain reference) and the column's name there
 	leaf1   int
@@ -319,9 +325,29 @@ type write struct {
 	// load: LOAD DATA -- a NOT NULL column the column list leaves out takes its type's
 	// implicit default, not 1364 (measured)
 	load bool
+	// targetViews: every view a write targets (lower-cased), for targetInSubquery: a
+	// subquery reading the very view the statement writes is the server's 1093, not the
+	// 1443 a view over the same base table gets (measured, TestViewWriteServer)
+	targetViews map[string]bool
+	// view: the view an INSERT / REPLACE writes through, "" for a base table. A base
+	// column with no default the write leaves unassigned is then the view's 1423 ("Field
+	// of view ... underlying table doesn't have a default value", measured -- whether the
+	// view exposes the column or not), not the table's own 1364.
+	view string
 	// more are the further tables a multi-table UPDATE assigns or a multi-table DELETE
 	// deletes from, each with its own assignments; table / values are the first's
 	more []moreTarget
+}
+
+// targetView records a view the write goes through (see write.targetViews).
+func (w *write) targetView(name string) {
+	if name == "" {
+		return
+	}
+	if w.targetViews == nil {
+		w.targetViews = map[string]bool{}
+	}
+	w.targetViews[strings.ToLower(name)] = true
 }
 
 // moreTarget is one further table of a multi-table write.
@@ -353,17 +379,26 @@ type assignment struct {
 // relation is a table in scope, under its alias: a base table, or a derived one (a
 // derived table, a view, a common table expression) whose columns are its query's.
 type relation struct {
-	alias     string
-	table     *schema.Table // nil for a derived relation
-	cols      []Column      // the derived relation's columns
-	updatable bool          // a derived relation whose plain column references write through (a mergeable view)
-	nullable  bool          // on the nullable side of an outer join
-	pos       int           // offset of the reference in the text
-	view      string        // the view's name when the relation is a view
-	target    bool          // a write's target
-	body      *facts.Scope  // a derived relation's own block, for the proof to look into
-	cte       bool          // a common table expression
-	merged    bool          // a derived relation the server merges into the query (not materialized)
+	alias string
+	table *schema.Table // nil for a derived relation
+	cols  []Column      // the derived relation's columns
+	// updatable / insertable are the server's own view flags, computed when it merges the
+	// view (sql_resolver.cc): updatable when any FROM leaf is updatable, insertable when
+	// every one is, neither when any leaf sits on the nullable side of an outer join
+	// (viewWritability). leaves counts the FROM leaves (a join view has more than one),
+	// viewBase is the single leaf's base table when there is exactly one and it bottoms
+	// out in a base table. All zero for anything but a merged view.
+	updatable  bool
+	insertable bool
+	leaves     int
+	viewBase   *schema.Table
+	nullable   bool         // on the nullable side of an outer join
+	pos        int          // offset of the reference in the text
+	view       string       // the view's name when the relation is a view
+	target     bool         // a write's target
+	body       *facts.Scope // a derived relation's own block, for the proof to look into
+	cte        bool         // a common table expression
+	merged     bool         // a derived relation the server merges into the query (not materialized)
 }
 
 // columns lists the relation's columns as a SELECT * expands them (a base table's
@@ -373,6 +408,9 @@ func (r *relation) columns() []Column {
 		out := make([]Column, len(r.cols))
 		for i, c := range r.cols {
 			c.Nullable = c.Nullable || r.nullable
+			if !r.merged {
+				c.matLeaf = true // a materialized relation's column, expression or not
+			}
 			out[i] = c
 		}
 		return out
@@ -393,6 +431,9 @@ func (r *relation) column(name string) (colRef, bool) {
 		for _, c := range r.cols {
 			if strings.EqualFold(c.Name, name) {
 				c.Nullable = c.Nullable || r.nullable
+				if !r.merged {
+					c.matLeaf = true // a materialized relation's column, expression or not
+				}
 				ref := colRef{rel: r, c: c}
 				if r.updatable {
 					ref.col = c.base
@@ -652,6 +693,12 @@ func (a *analyzer) targetInSubquery(op string) error {
 					return &Error{Message: fmt.Sprintf("You can't specify target table '%s' for update in FROM clause", alias), Code: 1093, Position: int(l.Position)}
 				}
 			case facts.View:
+				if a.write != nil && a.write.targetViews[strings.ToLower(l.Table)] {
+					// the subquery reads the very view the statement writes: the server
+					// treats it as the target itself (measured: 1093, not the 1443 a view
+					// over the same base table gets)
+					return &Error{Message: fmt.Sprintf("You can't specify target table '%s' for update in FROM clause", alias), Code: 1093, Position: int(l.Position)}
+				}
 				if a.viewReads(l.Body, target) {
 					return &Error{Message: fmt.Sprintf("The definition of table '%s' prevents operation %s on table '%s'.", l.Alias, op, alias), Code: 1443, Position: int(l.Position)}
 				}
@@ -721,31 +768,94 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 	if err != nil {
 		return err
 	}
-	if rel.table == nil {
-		return fmt.Errorf("analyze: INSERT into a view is not supported yet")
+	replace := isTrue(n.Arg("is_replace"))
+	base := rel.table
+	if base == nil {
+		// a view. The server's checks, in its order (measured, TestViewWriteServer): the
+		// view must be insertable (every FROM leaf insertable, no outer join: 1471), a
+		// join view under REPLACE never works (1395: the delete half) and needs an
+		// explicit column list (1394) naming columns of exactly one base table
+		// (insertColumn's 1393, the ON DUPLICATE KEY UPDATE assignments included); the
+		// fields resolve against the view (1054; a derived one among them is its 1348);
+		// and the columns outside the fields must all be plain, distinct base columns
+		// (check_view_insertability: 1471).
+		if !rel.insertable || rel.cte {
+			return &Error{Message: fmt.Sprintf("The target table %s of the INSERT is not insertable-into", rel.alias), Code: 1471, Position: a.ph.Back(rel.pos)}
+		}
+		if rel.leaves > 1 {
+			if replace {
+				return &Error{Message: fmt.Sprintf("Can not delete from join view '%s'", rel.view), Code: 1395, Position: a.ph.Back(rel.pos)}
+			}
+			if cols, ok := arg(n, "column_list", 5).(mysqlast.List); !ok || len(cols) == 0 {
+				return &Error{Message: fmt.Sprintf("Can not insert into join view '%s' without fields list", rel.view), Code: 1394, Position: a.ph.Back(rel.pos)}
+			}
+		} else {
+			base = rel.viewBase
+		}
+		if base != nil && a.viewBodyRereads(rel.body, base.Name) {
+			// the view's own body reads the target base table again in a subquery: the
+			// server refuses the INSERT as non-insertable (measured: 1471, where the same
+			// re-read on UPDATE / DELETE is targetInSubquery's 1093 / 1443)
+			return &Error{Message: fmt.Sprintf("The target table %s of the INSERT is not insertable-into", rel.alias), Code: 1471, Position: a.ph.Back(rel.pos)}
+		}
 	}
 	rel.target = true
-	w := &write{kind: facts.Insert, table: rel.table, ignore: isTrue(arg(n, "ignore", 2)), inserted: map[string]bool{}, replace: isTrue(n.Arg("is_replace"))}
+	w := &write{kind: facts.Insert, table: base, view: rel.view, ignore: isTrue(arg(n, "ignore", 2)), inserted: map[string]bool{}, replace: replace}
+	w.targetView(rel.view)
 	a.write = w
 	// the column list names the targets; without one the row lists every column in order
+	// (a view's own columns, each mapped to its base column)
 	var targets []*schema.Column
 	if cols, ok := arg(n, "column_list", 5).(mysqlast.List); ok && len(cols) > 0 {
 		for _, c := range cols {
 			a.assigning = true
-			col, err := a.targetColumn(rel, c, "field list")
+			col, err := a.insertColumn(rel, &base, c)
 			a.assigning = false
 			if err != nil {
 				return err
 			}
 			targets = append(targets, col)
 		}
-	} else {
+	} else if rel.table != nil {
 		targets = rel.table.Columns
+	} else {
+		// no column list: the view's own columns are the fields, a derived one among them
+		// its own 1348 (measured: `INSERT INTO v4 VALUES ...` over `SELECT c+1 AS x, ...`
+		// is 1348 on x, where the same view under a list of plain columns is 1471 below)
+		for _, c := range rel.cols {
+			if c.base == nil {
+				return &Error{Message: fmt.Sprintf("Column '%s' is not updatable", c.Name), Code: 1348, Position: a.ph.Back(rel.pos)}
+			}
+			targets = append(targets, c.base)
+		}
+	}
+	if rel.table == nil {
+		// check_view_insertability: every view column -- a field or not -- must be a plain
+		// base column (a derived field already failed above, so any left is 1471), and no
+		// base column of the target table may stand behind two view columns
+		seen := map[*schema.Column]bool{}
+		for _, c := range rel.cols {
+			if c.base == nil || c.baseTable == base && seen[c.base] {
+				return &Error{Message: fmt.Sprintf("The target table %s of the INSERT is not insertable-into", rel.alias), Code: 1471, Position: a.ph.Back(rel.pos)}
+			}
+			if c.baseTable == base {
+				seen[c.base] = true
+			}
+		}
+		if base == nil {
+			base = baseTableOf(rel.cols)
+		}
+		w.table = base
 	}
 	for _, c := range targets {
 		w.inserted[c.Name] = true
 	}
 	a.facts = &facts.Facts{Kind: facts.Insert, Top: &facts.Scope{At: -1, Leaves: []facts.Leaf{a.leafFacts(*rel)}}}
+	if rel.view != "" {
+		// a WITH CHECK OPTION view pins the inserted rows and is one of the write's failure
+		// modes (1369), exactly as a write reached through update()'s scope is
+		a.checkOptionFacts(&scope{rels: []relation{*rel}}, a.facts.Top)
+	}
 	var values []facts.Term
 	dupScope := scope{rels: []relation{*rel}}
 	a.insertTarget = rel
@@ -775,7 +885,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			w.values = append(w.values, assignment{col: targets[i], nullable: c.Nullable || !c.Known})
 			values = append(values, facts.Term{Kind: facts.Known, Text: "?"})
 			if a.routine == nil && a.trig == nil && c.Known {
-				if e, viol := a.geometryStore(rel.table, targets[i], nil, typed{typ: c.Type, known: true, nullable: c.Nullable}); e != nil {
+				if e, viol := a.geometryStore(base, targets[i], nil, typed{typ: c.Type, known: true, nullable: c.Nullable}); e != nil {
 					e.Position = a.ph.Back(nodeStart(q))
 					return e
 				} else if viol != nil {
@@ -789,7 +899,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 				for i, item := range items {
 					if it, ok := item.(*mysqlast.Node); ok && it.Class == "PTI_expr_with_alias" && isParam(it.Arg("expr")) && i < len(targets) {
 						a.setParam(it.Arg("expr"), targets[i].Type)
-						a.noteParamSource(it.Arg("expr"), rel.table, targets[i], true)
+						a.noteParamSource(it.Arg("expr"), base, targets[i], true)
 					}
 				}
 			}
@@ -831,7 +941,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		}
 		for i, v := range vals {
 			a.storeRow = ri + 1
-			as, err := a.assign(scope{rels: []relation{*rel}}, rel.table, targets[i], v)
+			as, err := a.assign(scope{rels: []relation{*rel}}, base, targets[i], v)
 			a.storeRow = 0
 			if err != nil {
 				return err
@@ -842,13 +952,13 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 			}
 		}
 	}
-	a.facts.Writes = []facts.Write{a.writeFacts(facts.Insert, rel, targets, values)}
+	a.facts.Writes = []facts.Write{a.writeFacts(facts.Insert, rel, base, targets, values)}
 	if w.replace {
 		// REPLACE deletes the colliding row before it inserts the new one (measured: an
 		// AFTER DELETE trigger on the table fires) -- a second write, of Kind Delete, so
 		// `require never on delete` and other OnDelete obligations see it (x/obligation's
 		// writes() keys off facts.Write.Kind, not the statement's own top-level Kind).
-		a.facts.Writes = append(a.facts.Writes, facts.Write{Table: rel.table.Name, Kind: facts.Delete, Position: int32(a.ph.Back(rel.pos))})
+		a.facts.Writes = append(a.facts.Writes, facts.Write{Table: base.Name, Kind: facts.Delete, Position: int32(a.ph.Back(rel.pos))})
 	}
 	dupCols, _ := arg(n, "opt_on_duplicate_column_list", 10).(mysqlast.List)
 	dupVals, _ := arg(n, "opt_on_duplicate_value_list", 11).(mysqlast.List)
@@ -859,14 +969,14 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 	var dupTerms []facts.Term
 	for i, c := range dupCols {
 		a.assigning = true
-		col, err := a.targetColumn(rel, c, "field list")
+		col, err := a.insertColumn(rel, &base, c)
 		a.assigning = false
 		if err != nil {
 			return err
 		}
 		if i < len(dupVals) {
 			a.foldPerRow = true // the update runs per colliding row (fold.go)
-			as, err := a.assign(dupScope, rel.table, col, dupVals[i])
+			as, err := a.assign(dupScope, base, col, dupVals[i])
 			a.foldPerRow = false
 			if err != nil {
 				return err
@@ -882,7 +992,7 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		// has a case for on PostgreSQL's ON CONFLICT DO UPDATE (a branch reassigning a
 		// pinned column needs its own WHERE-less write checked, since nothing in the
 		// UPDATE branch itself fixes the row it moves).
-		a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Update, rel, dupTargets, dupTerms))
+		a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Update, rel, base, dupTargets, dupTerms))
 	}
 	return nil
 }
@@ -932,9 +1042,21 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 			col = colRef{rel: found, col: found.table.Column(name)}
 		}
 		if col.col == nil {
+			if col.rel.table == nil && col.rel.merged && col.rel.updatable && !col.rel.cte && !col.c.matLeaf {
+				// an updatable view's own derived column: the column's error, not the view's
+				// (measured: `UPDATE v SET expr_col = 1` is 1348; a non-updatable view, or a
+				// column of a materialized leaf inside an updatable one, is the view's 1288)
+				return &Error{Message: fmt.Sprintf("Column '%s' is not updatable", identName(c)), Code: 1348, Position: a.ph.Back(nodeStart(c))}
+			}
 			return &Error{Message: fmt.Sprintf("The target table %s of the UPDATE is not updatable", col.rel.alias), Code: 1288, Position: a.ph.Back(nodeStart(c))}
 		}
 		col.rel.target = true
+		if len(sc.rels) == 1 {
+			// a single-table UPDATE reading its own view in a subquery is 1093, the target
+			// itself; in the multi-table form the server spells it as the view preventing
+			// the operation (1443, measured), which targetInSubquery's view branch keeps
+			a.write.targetView(col.rel.view)
+		}
 		table := col.rel.table
 		if table == nil {
 			table = col.c.baseTable // an updatable view: the write reaches its base table
@@ -944,6 +1066,11 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 			if t.rel == col.rel {
 				tg = t
 			}
+		}
+		if tg != nil && col.rel.table == nil && tg.table != table {
+			// a join view's SET naming columns of two base tables (measured: 1393 whatever
+			// the values)
+			return &Error{Message: fmt.Sprintf("Can not modify more than one base table through a join view '%s'", col.rel.view), Code: 1393, Position: a.ph.Back(nodeStart(c))}
 		}
 		if tg == nil {
 			tg = &perTarget{rel: col.rel, table: table}
@@ -979,8 +1106,8 @@ func (a *analyzer) update(n *mysqlast.Node) error {
 	}
 	a.facts = &facts.Facts{Kind: facts.Update, AtMostOne: limitOne(n.Arg("opt_limit_clause"))}
 	for _, tg := range targets {
-		if tg.rel.table != nil {
-			a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Update, tg.rel, tg.assigned, tg.values))
+		if tg.rel.table != nil || tg.table != nil {
+			a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Update, tg.rel, tg.table, tg.assigned, tg.values))
 		}
 	}
 	a.facts.Top = a.block(&sc, n)
@@ -1000,11 +1127,13 @@ func (a *analyzer) delete(n *mysqlast.Node) error {
 	if err != nil {
 		return err
 	}
-	if rel.table == nil {
-		return fmt.Errorf("analyze: DELETE from a view or a common table expression is not supported yet")
+	base, derr := a.deleteTarget(rel, rel.pos)
+	if derr != nil {
+		return derr
 	}
 	rel.target = true
-	a.write = &write{kind: facts.Delete, table: rel.table, ignore: deleteIgnore(n.Arg("opt_delete_options"))}
+	a.write = &write{kind: facts.Delete, table: base, ignore: deleteIgnore(n.Arg("opt_delete_options"))}
+	a.write.targetView(rel.view)
 	sc := scope{rels: []relation{*rel}, ctes: ctes, kids: new([]*facts.Scope)}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
 		return err
@@ -1015,10 +1144,30 @@ func (a *analyzer) delete(n *mysqlast.Node) error {
 	if err := a.limit(n.Arg("opt_delete_limit_clause")); err != nil {
 		return err
 	}
-	a.facts = &facts.Facts{Kind: facts.Delete, AtMostOne: limitOne(n.Arg("opt_delete_limit_clause")), Writes: []facts.Write{a.writeFacts(facts.Delete, rel, nil, nil)}}
+	a.facts = &facts.Facts{Kind: facts.Delete, AtMostOne: limitOne(n.Arg("opt_delete_limit_clause")), Writes: []facts.Write{a.writeFacts(facts.Delete, rel, base, nil, nil)}}
 	a.facts.Top = a.block(&sc, n)
 	a.facts.Top.Children = append(a.facts.Top.Children, cteBodies(ctes)...)
 	return nil
+}
+
+// deleteTarget is the base table a DELETE's target lands on: the table itself, or an
+// updatable single-leaf view's base (derived columns do not block a DELETE the way they
+// block an INSERT). A CTE or a non-updatable view is the statement's 1288, a join view its
+// 1395 (measured, TestViewWriteServer).
+func (a *analyzer) deleteTarget(rel *relation, at int) (*schema.Table, error) {
+	if rel.table != nil {
+		return rel.table, nil
+	}
+	if rel.cte || !rel.updatable {
+		return nil, &Error{Message: fmt.Sprintf("The target table %s of the DELETE is not updatable", rel.alias), Code: 1288, Position: a.ph.Back(at)}
+	}
+	if rel.leaves > 1 {
+		return nil, &Error{Message: fmt.Sprintf("Can not delete from join view '%s'", rel.view), Code: 1395, Position: a.ph.Back(at)}
+	}
+	if rel.viewBase == nil {
+		return nil, &Error{Message: fmt.Sprintf("The target table %s of the DELETE is not updatable", rel.alias), Code: 1288, Position: a.ph.Back(at)}
+	}
+	return rel.viewBase, nil
 }
 
 // deleteIgnore reads IGNORE among DELETE's options.
@@ -1094,16 +1243,18 @@ func (a *analyzer) multiDelete(n *mysqlast.Node, list mysqlast.List, ctes []rela
 		if rel == nil {
 			return &Error{Message: fmt.Sprintf("Unknown table '%s' in MULTI DELETE", name), Code: 1109, Position: a.ph.Back(ti.Start)}
 		}
-		if rel.table == nil {
-			return &Error{Message: fmt.Sprintf("The target table %s of the DELETE is not updatable", rel.alias), Code: 1288, Position: a.ph.Back(ti.Start)}
+		base, derr := a.deleteTarget(rel, ti.Start)
+		if derr != nil {
+			return derr
 		}
 		rel.target = true
+		w.targetView(rel.view)
 		if w.table == nil {
-			w.table = rel.table
+			w.table = base
 		} else {
-			w.more = append(w.more, moreTarget{table: rel.table})
+			w.more = append(w.more, moreTarget{table: base})
 		}
-		a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Delete, rel, nil, nil))
+		a.facts.Writes = append(a.facts.Writes, a.writeFacts(facts.Delete, rel, base, nil, nil))
 	}
 	if err := a.condition(sc, n.Arg("opt_where_clause"), "where clause"); err != nil {
 		return err
@@ -1292,10 +1443,12 @@ func (a *analyzer) target(ident, alias mysqlast.Value, sc *scope) (*relation, er
 				return nil, err
 			}
 			// a view is merged into the query unless it says TEMPTABLE or its query cannot be
-			// merged; a merged view's plain column references are updatable
-			rel = &relation{alias: v.Name, cols: cols, updatable: true, view: v.Name, body: body, merged: true}
+			// merged; a merged view carries the server's own writability flags
+			rel = &relation{alias: v.Name, cols: cols, view: v.Name, body: body, merged: true}
+			w := a.viewWritability(v, nil)
+			rel.updatable, rel.insertable, rel.leaves, rel.viewBase = w.updatable, w.insertable, w.leaves, w.base
 			if v.Algorithm == "TEMPTABLE" || !mergeable(v.Query) {
-				rel.cols, rel.updatable, rel.merged = materialized(cols, v.Query), false, false
+				rel.cols, rel.merged = materialized(cols, v.Query), false
 			}
 		} else {
 			return nil, &Error{Message: fmt.Sprintf("Table '%s' doesn't exist", name), Code: 1146, Position: a.ph.Back(n.Start)}
@@ -1371,6 +1524,231 @@ func renamed(cols []Column, names mysqlast.List, alias string, at int) ([]Column
 }
 
 // targetColumn resolves a column name against one relation (INSERT's column list).
+// writability is a merged view's server-computed write flags (viewWritability).
+type writability struct {
+	updatable  bool
+	insertable bool
+	leaves     int
+	base       *schema.Table
+}
+
+// viewWritability computes a view's is_updatable / is_insertable the way sql_resolver.cc
+// does when it merges it: over the FROM leaves of the view's own query, updatable when any
+// leaf is updatable, insertable when every one is, and neither when any leaf sits on the
+// nullable side of an outer join. A base table is both; a derived table, a table function
+// or anything unknown is neither; a view recurses (a non-merged one is neither). leaves is
+// the leaf count (a join view has more than one) and base the single leaf's base table,
+// through however many single-leaf views (what a DELETE through the view deletes from even
+// when no view column maps a base column plainly).
+func (a *analyzer) viewWritability(v *schema.View, seen map[string]bool) writability {
+	if seen[strings.ToLower(v.Name)] {
+		return writability{}
+	}
+	if seen == nil {
+		seen = map[string]bool{}
+	}
+	seen[strings.ToLower(v.Name)] = true
+	if v.Algorithm == "TEMPTABLE" || !mergeable(v.Query) {
+		return writability{}
+	}
+	w := writability{insertable: true}
+	outer := false
+	viewFromLeaves(v.Query, func(n *mysqlast.Node, nullable bool) {
+		w.leaves++
+		outer = outer || nullable
+		if n.Class != "PT_table_factor_table_ident" {
+			w.insertable = false
+			return
+		}
+		name := targetTableName(n.Arg("table_ident"))
+		if t := a.s.Table(name); t != nil {
+			w.updatable = true
+			if w.leaves == 1 {
+				w.base = t
+			}
+			return
+		}
+		if uv := a.s.View(name); uv != nil {
+			uw := a.viewWritability(uv, seen)
+			if uw.leaves > 1 {
+				// a merged view flattens into its own leaves (measured: a single-leaf view
+				// over a join view is still "Can not delete from join view", 1395)
+				w.leaves += uw.leaves - 1
+			}
+			w.updatable = w.updatable || uw.updatable
+			w.insertable = w.insertable && uw.insertable
+			if w.leaves == 1 {
+				w.base = uw.base
+			}
+			return
+		}
+		w.insertable = false
+	})
+	if outer || w.leaves == 0 {
+		return writability{leaves: w.leaves}
+	}
+	if w.leaves > 1 {
+		w.base = nil
+	}
+	return w
+}
+
+// viewFromLeaves walks the FROM clause of a view's (single-block) query, calling fn once
+// per leaf table factor; nullable says the leaf sits on the nullable side of an outer join.
+func viewFromLeaves(q mysqlast.Value, fn func(n *mysqlast.Node, nullable bool)) {
+	n, ok := q.(*mysqlast.Node)
+	if !ok {
+		return
+	}
+	switch n.Class {
+	case "PT_query_expression":
+		viewFromLeaves(n.Arg("body"), fn)
+		return
+	case "PT_query_specification":
+		list, _ := n.Arg("from_clause").(mysqlast.List)
+		for _, t := range list {
+			walkFromLeaf(t, false, fn)
+		}
+	}
+}
+
+func walkFromLeaf(v mysqlast.Value, nullable bool, fn func(n *mysqlast.Node, nullable bool)) {
+	n, ok := v.(*mysqlast.Node)
+	if !ok {
+		return
+	}
+	switch n.Class {
+	case "PT_joined_table_on", "PT_joined_table_using", "PT_cross_join":
+		jt := str(n.Arg("type"))
+		left, right := nullable, nullable
+		switch {
+		case strings.Contains(jt, "LEFT"):
+			right = true
+		case strings.Contains(jt, "RIGHT"):
+			left = true
+		}
+		walkFromLeaf(n.Arg("tab1_node"), left, fn)
+		walkFromLeaf(n.Arg("tab2_node"), right, fn)
+	case "PT_table_factor_joined_table":
+		walkFromLeaf(n.Arg("joined_table"), nullable, fn)
+	case "PT_table_reference_list_parens":
+		list, _ := n.Arg("table_list").(mysqlast.List)
+		for _, t := range list {
+			walkFromLeaf(t, nullable, fn)
+		}
+	default:
+		fn(n, nullable)
+	}
+}
+
+// viewBodyRereads reports whether a view body reads table anywhere but its own FROM
+// leaves: in a predicate's subquery, or a nested block (the reason mysqld refuses an
+// INSERT through the view as non-insertable).
+func (a *analyzer) viewBodyRereads(body *facts.Scope, table string) bool {
+	if body == nil {
+		return false
+	}
+	for _, p := range body.Preds {
+		if a.viewReads(p.Sub, table) {
+			return true
+		}
+	}
+	for _, ch := range body.Children {
+		if a.viewReads(ch, table) {
+			return true
+		}
+	}
+	for _, l := range body.Leaves {
+		if l.Kind == facts.View && a.viewBodyRereads(l.Body, table) {
+			return true
+		}
+	}
+	return false
+}
+
+// viewUpdateField unwraps the wrappers the server's field_for_view_update sees through (a
+// COLLATE clause, however nested), returning the wrapped expression, or nil when expr is
+// no such wrapper.
+func viewUpdateField(expr mysqlast.Value) mysqlast.Value {
+	n, ok := expr.(*mysqlast.Node)
+	if !ok || n.Class != "Item_func_set_collation" {
+		return nil
+	}
+	inner := n.Arg("a")
+	if deeper := viewUpdateField(inner); deeper != nil {
+		return deeper
+	}
+	return inner
+}
+
+// targetTableName is a Table_ident's bare table name.
+func targetTableName(v mysqlast.Value) string {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "Table_ident" {
+		return ""
+	}
+	name := str(n.Arg("table"))
+	if name == "" && len(n.Args) > 0 {
+		name = str(n.Args[len(n.Args)-1])
+	}
+	return name
+}
+
+// chainHasCheckOption reports whether writing through v is checked by some WITH CHECK
+// OPTION: v's own, or one declared by any view below it (an underlying view's own option
+// is enforced whatever the outer view says -- the server's 1369 then still names the view
+// written through).
+func (a *analyzer) chainHasCheckOption(v *schema.View, seen map[string]bool) bool {
+	if v.CheckOption != "" && v.CheckOption != "NONE" {
+		return true
+	}
+	if seen[strings.ToLower(v.Name)] {
+		return false
+	}
+	if seen == nil {
+		seen = map[string]bool{}
+	}
+	seen[strings.ToLower(v.Name)] = true
+	found := false
+	viewFromLeaves(v.Query, func(n *mysqlast.Node, _ bool) {
+		if n.Class != "PT_table_factor_table_ident" {
+			return
+		}
+		if uv := a.s.View(targetTableName(n.Arg("table_ident"))); uv != nil && a.chainHasCheckOption(uv, seen) {
+			found = true
+		}
+	})
+	return found
+}
+
+// insertColumn resolves one column of an INSERT's list (or its ON DUPLICATE KEY UPDATE's)
+// against the target: a base table's column as targetColumn does, or a view's own column,
+// mapped to its base column -- a derived one is the column's 1348 (measured), and a column
+// of another base table than the ones before it, through a join view, the statement's 1393.
+// base carries the one base table the write lands on across the calls (nil until the first
+// view column fixes it).
+func (a *analyzer) insertColumn(rel *relation, base **schema.Table, v mysqlast.Value) (*schema.Column, error) {
+	if rel.table != nil {
+		return a.targetColumn(rel, v, "field list")
+	}
+	name := identName(v)
+	for _, c := range rel.cols {
+		if !strings.EqualFold(c.Name, name) {
+			continue
+		}
+		if c.base == nil {
+			return nil, &Error{Message: fmt.Sprintf("Column '%s' is not updatable", name), Code: 1348, Position: a.ph.Back(nodeStart(v))}
+		}
+		if *base == nil {
+			*base = c.baseTable
+		} else if *base != c.baseTable {
+			return nil, &Error{Message: fmt.Sprintf("Can not modify more than one base table through a join view '%s'", rel.view), Code: 1393, Position: a.ph.Back(nodeStart(v))}
+		}
+		return c.base, nil
+	}
+	return nil, &Error{Message: fmt.Sprintf("Unknown column '%s' in 'field list'", name), Code: 1054, Position: a.ph.Back(nodeStart(v))}
+}
+
 func (a *analyzer) targetColumn(rel *relation, v mysqlast.Value, where string) (*schema.Column, error) {
 	ref, err := a.column(scope{rels: []relation{*rel}}, v, where)
 	if err != nil {
@@ -1713,7 +2091,7 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			}
 			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable, aliased: str(n.Arg("alias")) != ""}
 			if ref, ok := a.plainColumn(sc, expr); ok {
-				c.base, c.baseTable = ref.c.base, ref.c.baseTable
+				c.base, c.baseTable, c.matLeaf = ref.c.base, ref.c.baseTable, ref.c.matLeaf
 				if ref.rel != nil { // nil for a body-walk variable/NEW/OLD reference: no leaf to record
 					for i := range sc.rels {
 						if &sc.rels[i] == ref.rel || sc.rels[i].alias == ref.rel.alias {
@@ -1721,6 +2099,15 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 							break
 						}
 					}
+				}
+			} else if inner := viewUpdateField(expr); inner != nil {
+				// a COLLATE wrapper is transparent for view updating (the server's
+				// field_for_view_update; measured: `SELECT s1 COLLATE x AS s1` stays an
+				// updatable, insertable column) -- for the write mapping alone, not for the
+				// proof's outputs (the wrapper changes what an equality on the view's
+				// column says about the base one)
+				if r2, ok := a.plainColumn(sc, inner); ok {
+					c.base, c.baseTable, c.matLeaf = r2.c.base, r2.c.baseTable, r2.c.matLeaf
 				}
 			}
 			out = append(out, c)
