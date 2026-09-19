@@ -241,7 +241,10 @@ func (a *analyzer) bodyScope(v mysqlast.Value, sc scope) ([]Column, *scope, *fac
 		}
 		return cols, block, block.facts, err
 	case "PT_query_expression":
-		cols, body, err := a.queryExpressionFacts(n, sc.outer)
+		// a parenthesized body: `WITH cte AS (...) (SELECT * FROM cte)` nests a query
+		// expression here, and the enclosing WITH's CTEs stay visible in it (measured;
+		// sc.rels is still empty at this point, so passing sc only adds the CTEs)
+		cols, body, err := a.queryExpressionFacts(n, &sc)
 		return cols, nil, body, err
 	case "PT_union", "PT_except", "PT_intersect":
 		cols, fs, err := a.setOperation(n, sc)

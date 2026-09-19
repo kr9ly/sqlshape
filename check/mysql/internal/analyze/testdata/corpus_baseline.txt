@@ -908,8 +908,6 @@ having	LENIENT 1052	a701e0ec62ce	SELECT *
 having_myisam	RUNTIME 1242	9324da2a48fb	SELECT col_int_key
 histograms	STRICT 1406	3981813324b7	WITH cte AS (
 histograms_debug	LENIENT 1792	d93129d8e95a	INSERT INTO t1 (col1) VALUES (1)
-host_cache_size_functionality	LENIENT 1238	4350eedf9322	SELECT COUNT(@@local.Host_Cache_Size)
-host_cache_size_functionality	LENIENT 1238	3e53bbf6d025	SELECT COUNT(@@SESSION.Host_Cache_Size)
 ignore_strict	LENIENT 1748	10d625c4db18	INSERT INTO v1 VALUES (10),(11)
 ignore_strict	LENIENT 1526	ddb6edcb0f0c	INSERT INTO t1 VALUES (2),(4)
 ignore_strict	LENIENT 1526	7ecb0b391ecf	UPDATE t1 SET a=a+1
@@ -936,32 +934,6 @@ information_schema_cs	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZ
 information_schema_cs	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	3ff83bb877ee	select 1 from (select 1 from test.t1) a
 information_schema_cs	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	07941e7c0a6e	SELECT *
 information_schema_cs	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	16d6afaf0d99	INSERT IGNORE INTO ubig VALUES (0xFFFFFFFFFFFFFFFF,0xFFFFFFFFFFFFFFFF)
-information_schema_cs	CODE 3566->1582	c7bf4e8f11e5	SELECT INTERNAL_TABLE_ROWS(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	f4eb5c9e1467	SELECT INTERNAL_AVG_ROW_LENGTH(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	3c01049d667b	SELECT INTERNAL_DATA_LENGTH(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	6c7c403e1209	SELECT INTERNAL_MAX_DATA_LENGTH(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	68e87c369386	SELECT INTERNAL_INDEX_LENGTH(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	bf2d4809a1f7	SELECT INTERNAL_DATA_FREE(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	77271472cec0	SELECT INTERNAL_AUTO_INCREMENT(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	4c568cb3a844	SELECT INTERNAL_UPDATE_TIME(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	8289308a1da7	SELECT INTERNAL_CHECK_TIME(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	5166d86379bf	SELECT INTERNAL_CHECKSUM(NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	bf1dd7d24ae1	SELECT INTERNAL_DD_CHAR_LENGTH(NULL, NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	6f2cc9208b6b	SELECT INTERNAL_INDEX_COLUMN_CARDINALITY(NULL, NULL, NULL, NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	256903067978	SELECT GET_DD_INDEX_SUB_PART_LENGTH(NULL, NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	9b716f33bec3	SELECT GET_DD_COLUMN_PRIVILEGES(NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	4cdc560501e1	SELECT INTERNAL_GET_VIEW_WARNING_OR_ERROR(NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	33e3c53bfe22	SELECT INTERNAL_GET_COMMENT_OR_ERROR(NULL, NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	021538501ec3	SELECT INTERNAL_KEYS_DISABLED(NULL)
-information_schema_cs	LENIENT 3566	d9e06373cc78	SELECT CAN_ACCESS_DATABASE(NULL)
-information_schema_cs	LENIENT 3566	ce4e9c580335	SELECT CAN_ACCESS_TABLE(NULL, NULL)
-information_schema_cs	LENIENT 3566	1a1a2059bd98	SELECT CAN_ACCESS_VIEW(NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	511ded2f7d73	SELECT CAN_ACCESS_COLUMN(NULL, NULL, NULL)
-information_schema_cs	CODE 3566->1582	5cf2a24bf413	SELECT GET_DD_CREATE_OPTIONS(NULL, NULL)
-information_schema_cs	LENIENT 3566	a1b9f13ec826	SELECT CAN_ACCESS_TRIGGER(NULL, NULL)
-information_schema_cs	LENIENT 3566	b1d317e6f028	SELECT CAN_ACCESS_ROUTINE(NULL, NULL, NULL, NULL, NULL)
-information_schema_cs	LENIENT 3566	534049564884	SELECT CAN_ACCESS_EVENT(NULL)
-information_schema_cs	LENIENT 3566	da052b6d16fc	SELECT CAN_ACCESS_USER(NULL, NULL)
 init_file	DIFF column type bigint->bigint unsigned	d136e7b5a743	SELECT YEAR(@X)-YEAR(@Y)
 insert	RUNTIME 1265	97cdab2cb371	insert into t1 values(null,@value,@value,@value,@value,@value,@value,@value,@value,@value)
 insert	RUNTIME 1264	97cdab2cb371	insert into t1 values(null,@value,@value,@value,@value,@value,@value,@value,@value,@value)
@@ -1203,8 +1175,6 @@ lpad	DIFF column type string->binary	45e31d752915	SELECT LPAD(NULL, NULL, 'x') A
 lpad	DIFF column type string->binary	85e89b9057e6	SELECT LPAD(NULL, NULL, NULL) AS result
 lpad	DIFF column type string->binary	26dfaf692377	SELECT LPAD(NULL, 5, NULL) AS result
 max_statement_time	LENIENT 3024	0aff871040ee	SELECT *, SLEEP(0.5) from t1
-max_statement_time	LENIENT 3024	3abd07b0a7e7	SELECT * FROM t1
-max_statement_time	LENIENT 3024	4db2fbef5ea4	SELECT /*+ MAX_EXECUTION_TIME(1) */ * FROM t1
 max_statement_time	LENIENT 3024	3fc1e2aa76a6	SELECT f1()
 mem_cnt_sql_keys	LENIENT 1	f754a353fea6	SELECT 1 INTO OUTFILE '../../tmp/f1.txt'
 merge_innodb	SCHEMA dump: SHOW CREATE TABLE tN: Error N (HYN): Unable to open underlyi	c64899c9e086	SELECT * FROM t5
@@ -1266,7 +1236,6 @@ mysqlbinlog	LENIENT 13	5c7fe6b9eec8	load data infile '../../std_data/loaddata6.d
 mysqldump	STRICT 1136	c3b45014f5c5	INSERT INTO t1 VALUES (1), (3), (7), (8), (4)
 mysqldump	STRICT 1136	cb1e052f8b3d	INSERT INTO t2 VALUES (1), (3), (7), (8), (4)
 mysqldump_restore	RUNTIME 1366	96d5216ecc51	INSERT INTO t1  VALUES (_koi8r x'C1C2C3C4C5'), (NULL)
-no-threads	LENIENT 1238	5b3bfdf7bb5c	select @@session.thread_handling
 no_binlog_gtid_empty_transaction	LENIENT 1781	ae2cd589953d	CALL p1()
 nth	DIFF column type int->bigint	13775ae0be3c	SELECT NTH_VALUE(6,1)    OVER ()
 nth	DIFF column type int->bigint	e93172c7ee70	SELECT NTH_VALUE(6,2)    OVER ()
@@ -1397,45 +1366,6 @@ packet	LENIENT 1301	e2269c463b7d	DELETE FROM t1
 packet	LENIENT 1301	e917c2331c36	DELETE FROM t1, t2
 packet_myisam	LENIENT 1301	b02bbd7b5d7c	UPDATE t3
 parser	LENIENT 1210	7c9de647673a	select source_pos_wait('binlog.999999', 4, -1)
-parser	LENIENT 1583	ceb43252828d	select abs(3 AS three)
-parser	LENIENT 1583	0a169fc3cb56	select abs(3 three)
-parser	LENIENT 1583	fc3777908515	select abs(3 AS "three")
-parser	LENIENT 1583	df01af4a60d2	select abs(3 "three")
-parser	LENIENT 1583	a8c23e6c3934	select instr("foobar" AS p1, "bar")
-parser	LENIENT 1583	3526e3faeb8d	select instr("foobar" p1, "bar")
-parser	LENIENT 1583	e14dff30d6e7	select instr("foobar" AS "p1", "bar")
-parser	LENIENT 1583	e10b1fc46242	select instr(@foobar "p1", "bar")
-parser	LENIENT 1583	7b86684c78d7	select instr("foobar", "bar" AS p2)
-parser	LENIENT 1583	c4236b8c3480	select instr("foobar", "bar" p2)
-parser	LENIENT 1583	e2103c0135c1	select instr("foobar", "bar" AS "p2")
-parser	LENIENT 1583	9d8479279966	select instr("foobar", @bar "p2")
-parser	LENIENT 1583	2b2d9d213a0d	select instr("foobar" AS p1, "bar" AS p2)
-parser	LENIENT 1583	831ebf1c0a6b	select conv(255 AS p1, 10, 16)
-parser	LENIENT 1583	589bf9724435	select conv(255 p1, 10, 16)
-parser	LENIENT 1583	493953cd6003	select conv(255 AS "p1", 10, 16)
-parser	LENIENT 1583	73101c50d258	select conv(255 "p1", 10, 16)
-parser	LENIENT 1583	58fe14acf0a2	select conv(255, 10 AS p2, 16)
-parser	LENIENT 1583	7f1c613bcc8e	select conv(255, 10 p2, 16)
-parser	LENIENT 1583	20b526c09884	select conv(255, 10 AS "p2", 16)
-parser	LENIENT 1583	723f8e5fb82f	select conv(255, 10 "p2", 16)
-parser	LENIENT 1583	f2011428359b	select conv(255, 10, 16 AS p3)
-parser	LENIENT 1583	05d55badae3f	select conv(255, 10, 16 p3)
-parser	LENIENT 1583	1c73eec7e233	select conv(255, 10, 16 AS "p3")
-parser	LENIENT 1583	c07ac7f259b6	select conv(255, 10, 16 "p3")
-parser	LENIENT 1583	c2e58533351f	select conv(255 AS p1, 10 AS p2, 16 AS p3)
-parser	LENIENT 1583	440c2211cee8	select atan(10 AS p1)
-parser	LENIENT 1583	ae5dc1ca7ab3	select atan(10 p1)
-parser	LENIENT 1583	7eeb664e77b7	select atan(10 AS "p1")
-parser	LENIENT 1583	ca71c1a345ad	select atan(10 "p1")
-parser	LENIENT 1583	5760cfed85f0	select atan(10 AS p1, 20)
-parser	LENIENT 1583	4cb107e3f51e	select atan(10 p1, 20)
-parser	LENIENT 1583	a45277dbf99c	select atan(10 AS "p1", 20)
-parser	LENIENT 1583	2bf075de97ed	select atan(10 "p1", 20)
-parser	LENIENT 1583	5808c7efcce0	select atan(10, 20 AS p2)
-parser	LENIENT 1583	15edcaabaa56	select atan(10, 20 p2)
-parser	LENIENT 1583	95f4d987296a	select atan(10, 20 AS "p2")
-parser	LENIENT 1583	bc15b5a6469d	select atan(10, 20 "p2")
-parser	LENIENT 1583	34d072653b6f	select atan(10 AS p1, 20 AS p2)
 parser	LENIENT 3953	81460d4850d5	SELECT 1 INTO @var17727401_1 FROM t1 INTO @var17727401_2
 parser	LENIENT 3953	fbe6d1c708e2	SELECT 1 INTO @var17727401_1 FROM DUAL
 parser	LENIENT 3953	0189d894428f	SELECT 1 INTO @var17727401_1
@@ -1616,8 +1546,6 @@ plugin	LENIENT 1193	e2366c8dbb50	SELECT @@SESSION.example_signed_long_thdvar IN 
 plugin	LENIENT 1193	4e41bed82967	SELECT @@SESSION.example_signed_long_thdvar IN (2147483647, 9223372036854775807)
 plugin	LENIENT 1193	4e04464f879b	SELECT @@GLOBAL.example_signed_longlong_var
 plugin	LENIENT 1193	a57c32df254b	SELECT @@SESSION.example_signed_longlong_thdvar
-plugin_auth	LENIENT 1238	1ec7d4efd421	SELECT @@GLOBAL.proxy_user
-plugin_auth	LENIENT 1238	b110605eb394	SELECT @@GLOBAL.external_user
 plugin_load	LENIENT 1193	54c9fbddc9c3	SELECT @@global.example_enum_var = 'e2'
 plugin_load_early	LENIENT 1193	54c9fbddc9c3	SELECT @@global.example_enum_var = 'e2'
 ps	STRICT 1066	b4687d93ee1f	select * from t1, mysqltest1.t1
@@ -1959,7 +1887,6 @@ signal_demo3	SCHEMA no database selected	378479c5b33e	SELECT @@session.max_error
 signal_sqlmode	RUNTIME 1406	4c4fb09e54f4	call p
 signal_sqlmode	LENIENT 1648	9537a00334f9	call p2
 signal_sqlmode	LENIENT 1648	55670a79d079	call p3
-skip_name_resolve	LENIENT 1238	d828a064ae1d	SELECT @@LOCAL.skip_name_resolve
 sp	STRICT 1146	70edbe46b408	select * from t1, t3
 sp	STRICT 1136	98d9c1fc7eff	call hndlr1(42)
 sp	STRICT 1136	ffed74595d30	call hndlr2(42)
@@ -2232,10 +2159,6 @@ subquery_table_to_derived	LENIENT 1267	0786c04b7fea	SELECT col
 subselect	LENIENT 3037	854cce12c5a5	SELECT * FROM (SELECT ST_EXTERIORRING(1)) AS t1, (SELECT 1) AS t2
 subselect_debug	RUNTIME 1242	bcc587010314	SELECT ((SELECT 1 FROM t1) IN (SELECT 1 FROM t1)) - (11111111111111111111)
 subselect_innodb	DIFF column type string->binary	eadf17b672df	SELECT t2.*, t4.DOCTYPENAME, t1.CONTENTSIZE,t1.MIMETYPE FROM t2 INNER JOIN t4 ON t2.DOCTYPEID = t4.D
-table_definition_cache_functionality	LENIENT 1238	d3be72a57c8e	SELECT COUNT(@@local.table_definition_cache)
-table_definition_cache_functionality	LENIENT 1238	35e7b4a5249a	SELECT COUNT(@@SESSION.table_definition_cache)
-table_open_cache_functionality	LENIENT 1238	046d85b631f0	SELECT COUNT(@@local.table_open_cache)
-table_open_cache_functionality	LENIENT 1238	a58ba21e5bff	SELECT COUNT(@@SESSION.table_open_cache)
 tablelock	LENIENT 1422	3fc1e2aa76a6	SELECT f1()
 tablesample	LENIENT 3889	caff43402cf2	SELECT * FROM t3 TABLESAMPLE SYSTEM (100)
 tablesample	LENIENT 6107	09d4783143ee	SELECT * FROM t3 TABLESAMPLE SYSTEM (101)
@@ -2421,16 +2344,8 @@ type_timestamp	DIFF column type double->bigint	a4ce02315347	SELECT TIMESTAMP('20
 type_year	RUNTIME 1690	219c347d8fb3	SELECT ((year(QC_DATE) - year(QC_TIMESTAMP))) FROM t
 type_year	RUNTIME 1690	467c549d1239	SELECT y1-y2 FROM y
 type_year	DIFF column type year->int unsigned	3f317b9e437c	SELECT c0 FROM v1
-udf	CODE 1584->1305	cd5cf771408d	SELECT myfunc_int(a AS attr_name) FROM t1
-udf	LENIENT 1584	8d97c6c6c13a	SELECT a, fn(MIN(b) xx) as c FROM t1 GROUP BY a
 udf	CODE 1584->1305	9ed0f98b2e7c	SELECT myfunc_int(fn(MIN(b) xx)) as c FROM t1 GROUP BY a
-udf	CODE 1584->1305	defec3ad3a73	SELECT myfunc_int(fn(MIN(b)) xx) as c FROM t1 GROUP BY a
-udf	CODE 1584->1305	ecbea788e7e3	SELECT myfunc_int(MIN(b) xx) as c FROM t1 GROUP BY a
-udf	CODE 1584->1305	71aa36c54c14	select myfunc_double(3 AS three)
-udf	CODE 1584->1305	bde1c0a54932	select myfunc_double(abs(3) AS named_param)
-udf	CODE 1584->1305	b2775a0a9b91	select abs(myfunc_double(3 AS three))
 udf	CODE 1583->1305	a8be87b0b2d8	select myfunc_double(abs(3 AS wrong))
-udf	CODE 1583->1305	bef0afb06689	select abs(myfunc_double(3) AS wrong)
 udf	RUNTIME 1366	4de193fd8941	SELECT metaphon('a')
 udf	LENIENT 1305	d8fb9b46bf81	select f3(NULL)
 udf	LENIENT 1305	f5dea7304076	select f2(NULL)
@@ -2498,46 +2413,11 @@ varbinary	DIFF column type decimal->double	517bb619ff13	SELECT
 varbinary	DIFF column type decimal->double	29cb9f240375	SELECT
 varbinary	DIFF column type decimal->double	9ec03b4ffceb	SELECT
 varbinary	DIFF column type decimal->double	f965dd0f1228	SELECT
-variables	LENIENT 1238	b02ab5b8411a	select @@global.timestamp
 variables	LENIENT 1193	9435362f3716	select @@xxxxxxxxxx
-variables	LENIENT 1238	0da901f069c6	select @@session.key_buffer_size
 variables	LENIENT 1064	8d7d294acf97	SELECT @@global.global.key_buffer_size
 variables	LENIENT 1064	a2e440f3a0b8	SELECT @@global.session.key_buffer_size
 variables	LENIENT 1064	83fc7bd29530	SELECT @@global.local.key_buffer_size
-variables	LENIENT 1238	4816fc9fccce	SELECT @@session.ft_max_word_len
-variables	LENIENT 1238	027b3dbaa34a	SELECT @@session.ft_min_word_len
-variables	LENIENT 1238	67cb864e71b1	SELECT @@session.ft_query_expansion_limit
-variables	LENIENT 1238	6bab855e927c	SELECT @@session.ft_stopword_file
-variables	LENIENT 1238	543bcc03b6de	SELECT @@session.back_log
-variables	LENIENT 1238	d33289e1cc1c	SELECT @@session.large_files_support
-variables	LENIENT 1238	12fbd5724645	SELECT @@session.character_sets_dir
-variables	LENIENT 1238	b57600e1821e	SELECT @@session.init_file
-variables	LENIENT 1238	df20c52cc9c4	SELECT @@session.lc_messages_dir
-variables	LENIENT 1238	f1ed34a91373	SELECT @@session.large_page_size
-variables	LENIENT 1238	5cb9fc5f813b	SELECT @@session.large_pages
-variables	LENIENT 1238	b970651bc47e	SELECT @@session.log_bin
-variables	LENIENT 1238	fc26822ab72c	SELECT @@session.log_error
-variables	LENIENT 1238	d7ec9ec5d68e	SELECT @@session.lower_case_file_system
-variables	LENIENT 1238	28a32f5f2873	SELECT @@session.lower_case_table_names
 variables	LENIENT 1238	4427d9383f84	SELECT @@session.myisam_recover_options
-variables	LENIENT 1238	6a02ede2cb8b	SELECT @@session.open_files_limit
-variables	LENIENT 1238	76ed0909cbeb	SELECT @@session.pid_file
-variables	LENIENT 1238	03954ba2d27e	SELECT @@session.plugin_dir
-variables	LENIENT 1238	54096f9c6966	SELECT @@session.port
-variables	LENIENT 1238	8440a2cbbb17	SELECT @@session.protocol_version
-variables	LENIENT 1238	a7ff62ce3511	SELECT @@session.skip_external_locking
-variables	LENIENT 1238	f9a98c156a95	SELECT @@session.skip_networking
-variables	LENIENT 1238	a7415b3200de	SELECT @@session.skip_show_database
-variables	LENIENT 1238	04611f030b59	SELECT @@session.thread_stack
-variables	LENIENT 1238	e18c517e8335	SELECT @@session.log_replica_updates
-variables	LENIENT 1238	22bb9ce4c7cb	SELECT @@session.relay_log
-variables	LENIENT 1238	336ccd706c36	SELECT @@session.relay_log_basename
-variables	LENIENT 1238	2c945bffb583	SELECT @@session.log_bin_basename
-variables	LENIENT 1238	b429e2c607a7	SELECT @@session.relay_log_index
-variables	LENIENT 1238	718bbba9cfdc	SELECT @@session.log_bin_index
-variables	LENIENT 1238	67e207199fd3	SELECT @@session.relay_log_space_limit
-variables	LENIENT 1238	d40e335c9e81	SELECT @@session.replica_load_tmpdir
-variables	LENIENT 1238	e3f372b00008	SELECT @@session.replica_skip_errors
 variables_debug	LENIENT 1193	7ae92f9ec76e	select @@debug
 variables_debug	LENIENT 1193	448b09a42039	SELECT @@session.debug, @@global.debug
 variables_debug	LENIENT 1193	f100db0cb9da	SELECT @@global.debug
@@ -2750,12 +2630,6 @@ window_min_max	LENIENT 3589	fc68f5dbe693	SELECT NTILE(5) OVER w, ROW_NUMBER() OV
 window_min_max	LENIENT 3587	c7c00642717a	SELECT j, JSON_TYPE(j), JSON_TYPE(MIN(j) OVER (ORDER BY j RANGE 3 PRECEDING)) FROM tj
 window_min_max	DIFF column type bigint->int	2794b67edc05	SELECT i, MIN(i) OVER (ORDER BY i) FROM tj UNION ALL SELECT i, MIN(i) OVER (ORDER BY i) FROM tj
 windows	LENIENT 1126	97ae6d0cd549	call proc_1()
-with_non_recursive_bugs	STRICT 1146	cedd6f16c4fc	with cte as (select * from t1) (select * from cte)
-with_non_recursive_bugs	STRICT 1146	867728e9ad24	with cte as (select * from t1) (select * from cte) ORDER BY i
-with_non_recursive_bugs	STRICT 1146	1bd08c5dbb92	with cte as (select * from t1) (select * from cte) LIMIT 1
-with_non_recursive_bugs	STRICT 1146	a878b9a06297	with cte as (select * from t1) (select * from cte UNION select * from cte)
-with_non_recursive_bugs	STRICT 1146	ec5e0860b170	with cte as (select * from t1) (select * from cte UNION select * from cte) ORDER BY i
-with_non_recursive_bugs	STRICT 1146	d541ab355a1e	with cte as (select * from t1) (select * from cte UNION select * from cte) LIMIT 1
 with_non_recursive_bugs	RUNTIME 1292	87ba43ca6159	WITH cte AS (
 with_non_recursive_bugs	CODE 1054->1093	93272d9c4dad	WITH cte AS (
 with_non_recursive_bugs	LENIENT 1054	8d063557f88c	SELECT COUNT(sq1_t1.a) AS sq1_field1

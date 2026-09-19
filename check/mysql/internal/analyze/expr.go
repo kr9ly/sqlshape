@@ -138,6 +138,27 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		return typeOfColumn(ref.c), nil
 	case "Item_param", "PTI_user_variable":
 		return unknown, nil
+	case "PTI_get_system_variable":
+		// @@scope.name: an explicitly scoped read must match the variable's own scope
+		// (1238, measured: a statement error wherever the read sits, dead branches and
+		// subqueries included). The generated catalog.SysVars carries every stock
+		// server variable's scope; a name outside it (a plugin's or component's
+		// variable, and any `@@prefix.name` component read) is not judged, and an
+		// unqualified @@name never scope-fails.
+		if qual, name := bipartite(n.Arg("name")); qual == "" && name != "" {
+			scope, _ := n.Arg("scope").(mysqlast.Const)
+			switch catalog.SysVars[strings.ToLower(name)] {
+			case 'g':
+				if scope == "OPT_SESSION" {
+					return unknown, &Error{Message: fmt.Sprintf("Variable '%s' is a GLOBAL variable", strings.ToLower(name)), Code: 1238, Position: a.ph.Back(n.Start)}
+				}
+			case 's':
+				if scope == "OPT_GLOBAL" {
+					return unknown, &Error{Message: fmt.Sprintf("Variable '%s' is a SESSION variable", strings.ToLower(name)), Code: 1238, Position: a.ph.Back(n.Start)}
+				}
+			}
+		}
+		return unknown, nil
 
 	// literals
 	case "Item_int":
@@ -546,21 +567,33 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 // name alone regardless of how the call qualifies it (measured on mysqld 8.4: `SELECT
 // db.f2(1)` and `SELECT f2(1)` both reach the same stored function).
 func funcCallParts(n *mysqlast.Node) (string, []mysqlast.Value) {
+	name, args, _ := funcCallPartsAlias(n)
+	return name, args
+}
+
+// funcCallPartsAlias also reports whether any argument carries an alias (`f(x AS a)`,
+// the loadable function syntax): a native function refuses one with 1583, anything
+// else -- a stored function, even one that does not exist -- with 1584, both measured.
+func funcCallPartsAlias(n *mysqlast.Node) (string, []mysqlast.Value, bool) {
 	if n.Class == "PTI_function_call_generic_2d" {
 		list, _ := n.Arg("opt_expr_list").(mysqlast.List)
-		return str(n.Arg("func")), []mysqlast.Value(list)
+		return str(n.Arg("func")), []mysqlast.Value(list), false
 	}
 	name := str(n.Arg("ident"))
 	var args []mysqlast.Value
+	aliased := false
 	list, _ := n.Arg("opt_udf_expr_list").(mysqlast.List)
 	for _, e := range list {
 		if u, ok := e.(*mysqlast.Node); ok && u.Class == "PTI_udf_expr" {
+			if u.Arg("select_alias") != nil {
+				aliased = true
+			}
 			args = append(args, u.Arg("expr"))
 		} else {
 			args = append(args, e)
 		}
 	}
-	return name, args
+	return name, args, aliased
 }
 
 // call types a function of the native registry, or -- when no native function has that
@@ -572,7 +605,7 @@ func funcCallParts(n *mysqlast.Node) (string, []mysqlast.Value) {
 // does not exist", never a native function). The db itself is not compared, the way a
 // table's qualifier is not (sqlshape loads a single schema).
 func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error) {
-	name, args := funcCallParts(n)
+	name, args, aliased := funcCallPartsAlias(n)
 	if n.Class == "PTI_function_call_generic_2d" && str(n.Arg("db")) != "" {
 		if r := a.s.RoutineOf(schema.Function, name); r != nil {
 			return a.storedFuncCall(sc, r, args, n.Start, where)
@@ -581,13 +614,29 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 	}
 	f := catalog.Lookup(name)
 	if f == nil {
+		if aliased {
+			// `f(x AS a)` outside the native registry is refused before the function
+			// is even looked up (measured: a nonexistent name gets 1584, not 1305)
+			return unknown, &Error{Message: fmt.Sprintf("Incorrect parameters in the call to stored function `%s`", name), Code: 1584, Position: a.ph.Back(n.Start)}
+		}
 		if r := a.s.RoutineOf(schema.Function, name); r != nil {
 			return a.storedFuncCall(sc, r, args, n.Start, where)
 		}
 		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
 	}
+	if f.Internal {
+		// the data dictionary's own functions (INTERNAL_TABLE_ROWS and friends) are
+		// refused whenever a statement names them, before the argument count and the
+		// alias check alike (measured), the name spelt as written
+		return unknown, &Error{Message: fmt.Sprintf("Access to native function '%s' is rejected.", name), Code: 3566, Position: a.ph.Back(n.Start)}
+	}
 	if f.Min >= 0 && !f.Accepts(len(args)) {
-		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameter count in the call to native function '%s'", strings.ToUpper(name)), Code: 1582, Position: a.ph.Back(n.Start)}
+		// the count check comes first (measured: `abs(1 AS x, 2)` is 1582, not 1583),
+		// and its message spells the name as written where 1583's lowercases it
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameter count in the call to native function '%s'", name), Code: 1582, Position: a.ph.Back(n.Start)}
+	}
+	if aliased {
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameters in the call to native function '%s'", strings.ToLower(name)), Code: 1583, Position: a.ph.Back(n.Start)}
 	}
 	ts, err := a.callArgs(sc, f.Class, args, where)
 	if err != nil {

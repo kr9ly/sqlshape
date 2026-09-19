@@ -84,6 +84,15 @@ release it is a candidate for.
   before reading rows, and a failure mode `Violates` matches (`"1416"`, `"1690"`, `"1292"`)
   where it runs per row. A prefix key (`UNIQUE (c(10))`) or an expression key
   (`UNIQUE ((n * 2))`) is a violable key (1062) for the writes that assign its columns.
+- A MySQL function call argument carrying an alias (`f(x AS a)`, the loadable function
+  syntax) is refused in the server's own order (each measured): a native function's argument
+  count first (1582), then the alias (1583); any other name, a stored function or one that
+  does not exist alike, is 1584 before the function is looked up, and a data dictionary
+  function (`INTERNAL_TABLE_ROWS` among them) is 3566 before either check. An explicitly scoped
+  system variable read must match the variable's scope: `@@session.x` of a GLOBAL-only
+  variable and `@@global.x` of a SESSION-only one are the statement's 1238 wherever the
+  read sits, over a scope table generated from the server source (`sql/sys_vars.cc`) and
+  pinned against mysqld entry by entry; a plugin's or component's variable is not judged.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

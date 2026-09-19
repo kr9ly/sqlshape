@@ -287,6 +287,23 @@ into the column store, an `UPDATE`'s `ORDER BY` constant, a scalar subquery's co
 compared with a temporal column, a column `DEFAULT` the current mode cannot store, a `TIME`
 column's own per-row string conversion.
 
+### Function call arguments and system variable reads
+
+A function call argument carrying an alias (`f(x AS a)`, the loadable function syntax) is
+refused as the server refuses it, before the argument is even resolved: a native function
+checks its argument count first (1582, spelling the name as written), then the alias is 1583
+with the name lowercased (`SELECT ABS(3 AS three)` is `... native function 'abs'`); any other
+name -- a stored function, even one that does not exist -- is 1584 before the function is
+looked up. The data dictionary's own functions (`INTERNAL_TABLE_ROWS` and the rest the
+server marks internal) are 3566 whenever a statement names them, before either check.
+
+An explicitly scoped system variable read must match the variable's own scope: `@@session.x`
+(`@@local.x` means the same) of a GLOBAL-only variable and `@@global.x` of a SESSION-only one
+are the statement's 1238, wherever the read sits -- a dead branch, a subquery, a `SELECT`
+with no rows. The scope table is generated from the server source (`sql/sys_vars.cc`), so it
+covers every stock variable; a plugin's or component's variable (`@@x.y` included) and an
+unqualified `@@x` are never judged, and an unknown name is left to the server's own 1193.
+
 ### Triggers and stored routines
 
 The loader reads `CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION` (`DEFINER`,

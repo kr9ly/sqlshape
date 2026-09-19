@@ -27,10 +27,31 @@ func main() {
 	guards := flag.Bool("guards", false, "with -actions: list the error checks dropped from the actions (with -roots: only those reachable)")
 	roots := flag.String("roots", "", "with -actions: comma-separated start rules; report the unread actions reachable from them")
 	catpkg := flag.String("catpkg", "", "directory of package catalog: write functions.go there")
+	sysvars := flag.Bool("sysvars", false, "write the system variable scope table (sysvars.go) to -catpkg and exit")
 	astpkg := flag.String("astpkg", "", "directory of package mysqlast: write views.go there")
 	pkg := flag.String("pkg", "", "directory of package mysqlparse: write kinds.go there and, with -wasm, install the module")
 	flag.Parse()
 
+	if *sysvars {
+		vars, err := parsegen.ReadSysVars(*src)
+		if err != nil {
+			fatal(err)
+		}
+		v, err := parsegen.ReadVersion(*src)
+		if err != nil {
+			fatal(err)
+		}
+		code := parsegen.SysVarsGo("catalog", v.String(), vars)
+		if *catpkg == "" {
+			fmt.Print(code)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(*catpkg, "sysvars.go"), []byte(code), 0o644); err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "sysvars.go: %d variables\n", len(vars))
+		return
+	}
 	if *catalog {
 		cat, err := parsegen.ReadCatalog(*src)
 		if err != nil {
