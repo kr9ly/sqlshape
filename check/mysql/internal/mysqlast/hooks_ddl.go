@@ -85,6 +85,17 @@ func init() {
 		l, _ := kids[0].(List)
 		return append(l, field(kids[2], "str")), nil
 	})
+	// standalone_alter_commands: DROP PARTITION and REORGANIZE PARTITION ... INTO read their
+	// ident_string_list through a pointer deref (*$N) in the server's action, which the
+	// generated shape keeps as marker text, so the two alternatives are folded by hand
+	register("standalone_alter_commands", "DROP PARTITION_SYM ident_string_list", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "PT_alter_table_drop_partition", Names: []string{"partitions"},
+			Args: []Value{kids[2]}, Start: n.Start, End: n.End}, nil
+	})
+	register("standalone_alter_commands", "REORGANIZE_SYM PARTITION_SYM opt_no_write_to_binlog ident_string_list INTO '(' part_def_list ')'", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "PT_alter_table_reorganize_partition_into", Names: []string{"no_write_to_binlog", "partition_names", "into"},
+			Args: []Value{kids[2], kids[3], kids[6]}, Start: n.Start, End: n.End}, nil
+	})
 	// ternary_option: ulong_num -> OFF / ON; any other value is the server's own syntax error
 	register("ternary_option", "ulong_num", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		switch kids[0] {
