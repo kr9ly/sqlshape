@@ -199,12 +199,22 @@ var convertCodeOnly = []struct {
 	{"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'1970-01-01 00:00:00.000001+00:00')", 1292},
 	{"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'2038-01-19 03:14:07.999999+00:00')", 1292},
 	{"INSERT INTO tt (i, ts6) VALUES (1, TIMESTAMP'1970-01-01 00:00:00.999999+00:00')", 1292},
-	{"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'9999-12-31 23:59:59.999999+00:00')", 1292},
 	{"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'2038-01-19 12:14:07+09:00')", 0},
 	{"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'2040-01-01 00:00:00')", 1292},
 	{"INSERT INTO tt (i, ts) VALUES (1, DATE'2020-01-01')", 0},
 	{"INSERT INTO tt (i, dt) VALUES (1, TIMESTAMP'9999-12-31 23:59:59+00:00')", 0},
 	{"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'0000-10-31 15:30:00')", 1292},
+}
+
+// convertTZEdge is the one displaced literal whose error number depends on the session's
+// time zone (measured on 8.4.11): rounding .999999 to TIMESTAMP(0) carries past the
+// DATETIME maximum. A session at exactly +00:00 overflows in the rounding itself (1441
+// "Datetime function: datetime field overflow"); at any other offset the literal converts
+// first -- an eastern session wraps past year 9999 to year 0, a western one lands inside
+// the range -- and the store then fails the TIMESTAMP range (1292). The checker does not
+// know the session time zone and keeps the range verdict, 1292.
+var convertTZEdge = []string{
+	"INSERT INTO tt (i, ts) VALUES (1, TIMESTAMP'9999-12-31 23:59:59.999999+00:00')",
 }
 
 // convertInvalidDatesCases run under STRICT_ALL_TABLES,ALLOW_INVALID_DATES: a DATETIME
@@ -351,6 +361,17 @@ func TestConvertServer(t *testing.T) {
 		var e *Error
 		if !errors.As(err, &e) || e.Code != c.want {
 			t.Errorf("%s: analyzer %v, want %d", c.sql, err, c.want)
+		}
+	}
+	for _, sql := range convertTZEdge {
+		got, msg := run(sql)
+		if got != 1292 && got != 1441 && got >= 0 {
+			t.Errorf("%s: the server says %d %s, want 1292 or 1441", sql, got, msg)
+		}
+		_, err := Analyze(s, sql)
+		var e *Error
+		if !errors.As(err, &e) || e.Code != 1292 {
+			t.Errorf("%s: analyzer %v, want 1292", sql, err)
 		}
 	}
 	for _, sql := range convertPerRow {

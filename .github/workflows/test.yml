@@ -87,6 +87,12 @@ jobs:
       # from the sources of that run; after an edit to a package the cached package does not
       # depend on, the stale blocks no longer line up and the merged total drops by ten points
       - name: Test
+        # the test servers put their data directories on /dev/shm by default; the runner's
+        # tmpfs (RAM/2) is too small for the parallel suite ("No space left on device"), so
+        # both escape hatches point at the disk, which the free-space step cleared
+        env:
+          SQLSHAPE_ORACLE_DIR: ${{ runner.temp }}
+          SQLSHAPE_MYSQLTEST_DIR: ${{ runner.temp }}
         run: |
           # ./... is the root module; the other modules of the workspace are named one by one
           pkgs=$(go list ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /check/postgres/catalog/gen -e /parsegen/cmd | paste -sd,)
