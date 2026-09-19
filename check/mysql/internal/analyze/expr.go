@@ -129,6 +129,9 @@ func (a *analyzer) exprs(sc scope, vs []mysqlast.Value, where string) ([]typed, 
 }
 
 func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error) {
+	if e := a.wrongArguments(sc, n, where); e != nil {
+		return unknown, e
+	}
 	switch n.Class {
 	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident", "PTI_simple_ident_q_2d", "PTI_simple_ident_q_3d":
 		ref, err := a.column(sc, n, where)
@@ -637,6 +640,11 @@ func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error)
 	}
 	if aliased {
 		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameters in the call to native function '%s'", strings.ToLower(name)), Code: 1583, Position: a.ph.Back(n.Start)}
+	}
+	if strings.EqualFold(name, "NAME_CONST") {
+		if e := a.nameConstArgs(args, n.Start); e != nil {
+			return unknown, e
+		}
 	}
 	ts, err := a.callArgs(sc, f.Class, args, where)
 	if err != nil {

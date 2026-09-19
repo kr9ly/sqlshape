@@ -93,6 +93,17 @@ release it is a candidate for.
   variable and `@@global.x` of a SESSION-only one are the statement's 1238 wherever the
   read sits, over a scope table generated from the server source (`sql/sys_vars.cc`) and
   pinned against mysqld entry by entry; a plugin's or component's variable is not judged.
+- The run-time failures a MySQL function decides by a constant argument's value (each
+  measured, docs/mysql.md's rules): `INET_ATON` / `INET6_ATON` / `UNHEX` / `STR_TO_DATE`
+  fail a strict write outside `IGNORE` when the constant does not parse (1411, or the
+  parsed date's non-space tail as 1292) -- `STR_TO_DATE` under a port of the server's own
+  `extract_date_time`, format specifiers, week numbers and zero-date flags included --
+  while `UUID_TO_BIN` / `BIN_TO_UUID` (1411) and `PERIOD_ADD` / `PERIOD_DIFF` (1210) fail
+  every statement whatever the mode. Each lands where the folded constants land: a
+  per-row position is a violation `Violates` matches by number. `NAME_CONST`'s literal
+  arguments (1210, a NULL name 1382), `ESCAPE`'s one constant character, `NTILE`'s and
+  `NTH_VALUE`'s positive positions, and `MATCH`'s one-relation columns with a constant
+  `AGAINST` (1210) are refused at resolution, rows or none.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

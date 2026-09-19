@@ -287,6 +287,31 @@ into the column store, an `UPDATE`'s `ORDER BY` constant, a scalar subquery's co
 compared with a temporal column, a column `DEFAULT` the current mode cannot store, a `TIME`
 column's own per-row string conversion.
 
+### Constant function arguments
+
+A function that decides a run-time failure by an argument's value is judged when the
+argument is a constant, where the constant-arithmetic rules above place the failure (a
+folded term fails the statement, a per-row term is the violation keyed by its own number,
+and a query over no rows does not fail):
+
+| function | fails when | error |
+|---|---|---|
+| `INET_ATON` | the value is not digit groups of at most 255 separated by up to three dots (`'122.256'`, a trailing dot; `'1.2.3'` runs) | 1411, in a strict write outside `IGNORE` |
+| `INET6_ATON` | the value is neither a full dotted IPv4 (four groups, no leading `0x`) nor a valid IPv6 text (one `::` gap at most, four hex digits per group) | 1411, the same gate |
+| `UNHEX` | the value holds a non-hex character | 1411, the same gate |
+| `STR_TO_DATE` | the value does not parse under the format (`extract_date_time`'s specifiers, the en_US month and day names, `%V`/`%v` weeks with their `%X`/`%x` years), or the date fails the session's zero-date flags (under `NO_ZERO_DATE` any zero year, month or day of a date result) | 1411; a parsed value with a non-space tail is 1292, spelt with the format's own result type |
+| `UUID_TO_BIN` | the value is not 32 hex digits, the dashed 8-4-4-4-12 form, or that form in braces | 1411, every statement and mode |
+| `BIN_TO_UUID` | the value is not exactly 16 bytes | 1411, every statement and mode |
+| `PERIOD_ADD` / `PERIOD_DIFF` | a period argument is not a positive `[YY]YYMM` with month 1 to 12 | 1210, every statement and mode |
+
+`mysql.Violates(err, "1411")` / `"1210"` match the per-row violations. A second family is
+refused at resolution, wherever the expression sits and rows or none: `NAME_CONST` takes
+two literals (one unary minus or a `COLLATE` wrapper is fine, a folded `1+1` or `TRUE` is
+not; a NULL name is 1382), `LIKE`'s `ESCAPE` takes a constant of at most one character,
+`NTILE` a positive count and `NTH_VALUE` a positive integer position, and `MATCH` columns
+of one relation (a select alias or two tables is 1210 `to MATCH`) with a constant
+`AGAINST` (a column in it is 1210 `to AGAINST`).
+
 ### Function call arguments and system variable reads
 
 A function call argument carrying an alias (`f(x AS a)`, the loadable function syntax) is

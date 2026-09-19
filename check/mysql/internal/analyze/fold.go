@@ -244,7 +244,8 @@ func foldable(n *mysqlast.Node) bool {
 		return true
 	case "PTI_function_call_generic_ident_sys":
 		switch strings.ToUpper(str(n.Arg("ident"))) {
-		case "ABS", "EXP", "POW", "POWER", "COT", "DEGREES", "ROUND", "RANDOM_BYTES":
+		case "ABS", "EXP", "POW", "POWER", "COT", "DEGREES", "ROUND", "RANDOM_BYTES",
+			"INET_ATON", "INET6_ATON", "UNHEX", "STR_TO_DATE", "UUID_TO_BIN", "BIN_TO_UUID", "PERIOD_ADD", "PERIOD_DIFF":
 			return true
 		}
 	case "Item_typecast_datetime": // TIMESTAMP(x)
@@ -838,6 +839,11 @@ func castTarget(a *analyzer, n *mysqlast.Node) string {
 func (a *analyzer) foldCall(n *mysqlast.Node) (cval, bool, *foldFail) {
 	name, args := funcCallParts(n)
 	name = strings.ToUpper(name)
+	if handled, c, valued, fail := a.foldFuncVal(name, n, args); handled {
+		// a function judged by a constant argument's value (funcval.go): only UNHEX
+		// carries its result on, for BIN_TO_UUID(UNHEX(...))
+		return c, valued, fail
+	}
 	vals := make([]cval, len(args))
 	for i, arg := range args {
 		v, ok, fail := a.fold(arg)

@@ -5111,20 +5111,20 @@ x SELECT LIKE_RANGE_MIN(s, i) FROM t	string null	1305 FUNCTION sqlshape.LIKE_RAN
 x SELECT LIKE_RANGE_MIN(s, s) FROM t	string null	1305 FUNCTION sqlshape.LIKE_RANGE_MIN does not exist
 x SELECT LIKE_RANGE_MIN(tm, tm) FROM t	string null	1305 FUNCTION sqlshape.LIKE_RANGE_MIN does not exist
 x SELECT LIKE_RANGE_MIN(u, u) FROM t	string null	1305 FUNCTION sqlshape.LIKE_RANGE_MIN does not exist
-x SELECT NAME_CONST(b, b) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(d, d) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(da, da) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(dt, dt) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(dt, i) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(f, f) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(i, i) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(i, s) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(j, j) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(n, n) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(s, i) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(s, s) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(tm, tm) FROM t	?	1210 Incorrect arguments to NAME_CONST
-x SELECT NAME_CONST(u, u) FROM t	?	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(b, b) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(d, d) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(da, da) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(dt, dt) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(dt, i) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(f, f) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(i, i) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(i, s) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(j, j) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(n, n) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(s, i) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(s, s) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(tm, tm) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
+x SELECT NAME_CONST(u, u) FROM t	Incorrect arguments to NAME_CONST (MySQL error 1210)	1210 Incorrect arguments to NAME_CONST
 x SELECT ST_ASGEOJSON(b, b) FROM t	json null	3064 Incorrect type for argument max decimal digits in function st_asgeojson.
 x SELECT ST_ASGEOJSON(b, b, b) FROM t	json null	3064 Incorrect type for argument max decimal digits in function st_asgeojson.
 x SELECT ST_ASGEOJSON(d) FROM t	json null	3064 Incorrect type for argument geometry in function st_asgeojson.

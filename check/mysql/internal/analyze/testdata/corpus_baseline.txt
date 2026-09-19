@@ -392,21 +392,15 @@ foreign_key	LENIENT 1100	6a9fb01e4dc6	DELETE FROM parent1
 foreign_key	LENIENT 1099	81f78db3fa23	UPDATE t1 SET pk = 10
 fulltext	LENIENT 1191	4dac848f94d6	select * from t1 where MATCH a AGAINST ("search" IN BOOLEAN MODE)
 fulltext	LENIENT 1191	32ecb65961e3	select * from t1 where MATCH b AGAINST ("sear*" IN BOOLEAN MODE)
-fulltext	LENIENT 1210	85b989540478	select * from t2 where MATCH inhalt AGAINST (t2.inhalt)
 fulltext	LENIENT 1191	cdbf25598a91	select * from t2 where MATCH ticket AGAINST ('foobar')
-fulltext	LENIENT 1210	2515dec14aa9	select * from t2,t3 where MATCH (t2.inhalt,t3.inhalt) AGAINST ('foobar')
-fulltext	LENIENT 1210	96f5cc6043e1	select * from t1 join t2 using(`t1_id`) where match (t1.name, t2.name) against('xxfoo' in boolean mo
 fulltext	LENIENT 1191	b0f2b52aee23	select * from t2 where match name against ('*a*b*c*d*e*f*' in boolean mode)
 fulltext	LENIENT 1191	ad9adb717737	SELECT * FROM t1 WHERE MATCH(a) AGAINST ('"aaaa"' IN BOOLEAN MODE)
 fulltext	LENIENT 1191	f6d0cd1ba764	SELECT MATCH(a) AGAINST('aaa1* aaa14 aaa16' IN BOOLEAN MODE) FROM t1
 fulltext	LENIENT 1191	3651e802dc35	SELECT MATCH(a) AGAINST('aaa1* aaa14 aaa15 aaa16' IN BOOLEAN MODE) FROM t1
-fulltext	LENIENT 1210	c315aae314e6	SELECT GROUP_CONCAT(a) AS st FROM t1 HAVING MATCH(st) AGAINST('test' IN BOOLEAN MODE)
 fulltext	LENIENT 1191	d2dd0e193cf7	SELECT count(*) FROM t1 WHERE 
 fulltext	LENIENT 1191	7ba63484dee1	SELECT * FROM t WHERE MATCH(x) AGAINST('abc' IN BOOLEAN MODE) AND x = 1
 fulltext3	LENIENT 1210	1cc4bec65181	SELECT (SELECT 1 FROM (SELECT 1) foo WHERE MATCH(`a`) AGAINST ('')) FROM t1
 fulltext_left_join	LENIENT 1191	babe53ddb946	select * from t1 where match(d, e) against ('+aword +bword' in boolean mode)
-fulltext_left_join	LENIENT 1210	fd51c68f5151	select * from t1 left join t2 on m_id = id where match(d, e, f) against ('+aword +bword' in boolean 
-fulltext_left_join	LENIENT 1210	ca9052442f45	SELECT t1.*, MATCH(t1.name) AGAINST('string') AS relevance 
 fulltext_left_join	LENIENT 1191	723c38a166bc	SELECT * FROM t1 LEFT JOIN t2 ON a=b WHERE MATCH(c) AGAINST('+castle' IN BOOLEAN MODE)
 fulltext_order_by	CODE 1250->1054	14967c1f8841	select a.text, b.id, b.betreff
 fulltext_order_by	CODE 1250->1054	29554239caaf	select a.text, b.id, b.betreff
@@ -515,7 +509,6 @@ func_like	LENIENT 1210	5ed7e5d39921	SELECT '' LIKE '1' ESCAPE COUNT(1)
 func_like	LENIENT 1210	9d3f271ef7d6	SELECT ('a%b' LIKE 'ax%b' ESCAPE (SELECT 'xy' FROM t1))
 func_like	RUNTIME 1242	2b70d63e2936	SELECT ('a%b' LIKE 'ax%b' ESCAPE (SELECT x FROM t1))
 func_like	LENIENT 1241	2b1788ce01fc	SELECT ('a%b' LIKE 'ax%b' ESCAPE ('x', 'y'))
-func_like	LENIENT 1210	842021b5350c	SELECT ('a%b' LIKE 'ax%b' ESCAPE x) FROM t1
 func_like	RUNTIME 1690	51d55944de2b	SELECT 1 FROM t1 HAVING (SELECT 1 FROM t1) LIKE EXP(NOW())
 func_like	LENIENT 3141	710a5fdc0ffd	SELECT 'a' LIKE '%' ESCAPE CAST('' AS JSON)
 func_like	CODE 1292->1096	b2e02fcc4680	DELETE FROM t1 WHERE
@@ -542,33 +535,16 @@ func_math	RUNTIME 1690	11eb49c027f0	SELECT a, 1-a FROM t1
 func_math	DIFF column type bigint->int	42d218a0b50a	SELECT * FROM (SELECT -TRUE AS a, --TRUE AS b) AS dt
 func_math	DIFF column type bigint->int	35ddc7e2e9a9	SELECT * FROM v
 func_misc	RUNTIME 1242	67ba1b836c25	select benchmark(100, (select (a) from table_26093))
-func_misc	LENIENT 1210	11f6a434e572	SELECT NAME_CONST('test', NOW())
-func_misc	LENIENT 1210	70063942b1ba	SELECT NAME_CONST('test', UPPER('test'))
 func_misc	DIFF column name	c1e199b1dd3b	SELECT NAME_CONST('test', NULL)
 func_misc	DIFF column name	962c51041c68	SELECT NAME_CONST('test', 1)
 func_misc	DIFF column name	235db940beda	SELECT NAME_CONST('test', -1)
 func_misc	DIFF column name	d764689df77c	SELECT NAME_CONST('test', 1.0)
 func_misc	DIFF column name	ca7ea687fb58	SELECT NAME_CONST('test', -1.0)
 func_misc	DIFF column name	1b7537119527	SELECT NAME_CONST('test', 'test')
-func_misc	LENIENT 1210	6f2d892f1052	SELECT NAME_CONST('flag', SQRT(4)) * MAX(a) FROM t1
-func_misc	LENIENT 1210	aff29a21e8ff	SELECT NAME_CONST('flag',-SQRT(4)) * MAX(a) FROM t1
-func_misc	LENIENT 1210	87eb048245a3	SELECT NAME_CONST(x,2) FROM (SELECT a x FROM t1) t
-func_misc	LENIENT 1210	91a6eca2cd4f	SELECT NAME_CONST(a, '1') FROM t1
-func_misc	LENIENT 1210	0f9f91800abf	SELECT NAME_CONST('a', -(1 OR 2)) OR 1
-func_misc	LENIENT 1210	f992cf926a6a	SELECT NAME_CONST('a', -(1 AND 2)) OR 1
 func_misc	DIFF column type string->binary	2c3d91662011	SELECT DISTINCT LEAST(a, (SELECT b FROM t1 LIMIT 1)) FROM t1 UNION SELECT 1
 func_misc	DIFF column type string->binary	1894448a655c	SELECT DISTINCT GREATEST(a, (SELECT b FROM t1 LIMIT 1)) FROM t1 UNION SELECT 1
-func_misc	CODE 1210->1054	2ed3f0d4282b	SELECT 1 from t1 HAVING NAME_CONST('', a)
 func_misc	DIFF nullable true->false	5157b74e5589	SELECT IS_IPV4(BINARY('1.2.3.4'))
 func_misc	DIFF nullable true->false	33b9cebc6808	SELECT IS_IPV6(BINARY('0000:0000:0000:0000:0000:0000:0000:0001'))
-func_misc	LENIENT 1411	01da7f7b61f6	INSERT INTO t2 VALUES (INET6_ATON('1.0002.3.4'))
-func_misc	LENIENT 1411	d1f3753e8f92	INSERT INTO t2 VALUES (INET6_ATON('1.2.255'))
-func_misc	LENIENT 1411	0049c0437fb4	INSERT INTO t2 VALUES (INET6_ATON('1.2.256'))
-func_misc	LENIENT 1411	7e9cc9beaa4b	INSERT INTO t2 VALUES (INET6_ATON('192.168.0x8.2'))
-func_misc	LENIENT 1411	27bc94255d80	INSERT INTO t2 VALUES (inet_aton("122.256"))
-func_misc	LENIENT 1411	8272dd4e6130	INSERT INTO t2 VALUES (inet_aton("122.226."))
-func_misc	LENIENT 1411	809aa564aae3	INSERT INTO t2 VALUES (inet_aton(""))
-func_misc	LENIENT 1411	6a6fac576333	INSERT INTO t2 VALUES (UNHEX('Z0Q80F02'))
 func_prefix_key	LENIENT 3141	d170099c489e	SELECT 1 FROM t1 WHERE f1 LIKE json_contains('key2' ,'key4' )
 func_rollback	LENIENT 1146	fe5ced7823c7	SELECT f1_simple_insert(1)
 func_rollback	LENIENT 1146	e475bfa125f8	SELECT f1_simple_insert(1) FROM t1_select
@@ -703,11 +679,6 @@ func_time	LENIENT 1305	abbf0ba65cbe	insert into t1 set a = sysdate()
 func_time	CODE 1267->1140	73b3636e060f	select concat(a,ifnull(min(date_format(now(), '%Y-%m-%d')),' ull')) from t1
 func_time	DIFF column type datetime->date	c804874e72b7	SELECT min(timestampadd(month, 1>'', from_days('%Z')))
 func_time	DIFF column type decimal->bigint	c262b2f37b36	SELECT a, UNIX_TIMESTAMP(a), UNIX_TIMESTAMP('5000-01-01 00:00:00') FROM t1
-func_time	LENIENT 1210	daf354ffeada	SELECT PERIOD_ADD(-11924, 2892462180)
-func_time	LENIENT 1210	0b7e8c1c1799	SELECT PERIOD_DIFF(200024, 200012)
-func_time	LENIENT 1210	4847a1601c08	SELECT PERIOD_DIFF(200012, 200024)
-func_time	LENIENT 1210	f7d20eefee9b	select period_add(-9223372036854775808,29880)
-func_time	LENIENT 1210	903efc5f42e6	select period_diff(-9223372036854775808,201902)
 func_time	LENIENT 1525	d559304fc831	WITH cte1 AS
 func_unixtime	DIFF column type decimal->bigint	44a6d6cda70e	SELECT UNIX_TIMESTAMP('3001-01-18 23:59:59')
 func_unixtime	DIFF column type decimal->bigint	52f3dad5d75c	SELECT UNIX_TIMESTAMP('3001-01-19 00:00:00')
@@ -718,22 +689,6 @@ func_unixtime	DIFF column type decimal->bigint	8b4df314881d	SELECT UNIX_TIMESTAM
 func_unixtime	DIFF column type decimal->bigint	13e1f6fe4889	SELECT UNIX_TIMESTAMP('3001-01-18 22:59:59')
 func_unixtime	DIFF column type decimal->bigint	36785ecb8b4c	SELECT UNIX_TIMESTAMP('3001-01-18 15:59:59')
 func_unixtime	DIFF column type decimal->bigint	f0007a4ef0ec	SELECT UNIX_TIMESTAMP('3001-01-18 16:00:00')
-func_uuid	LENIENT 1411	7de5424441ab	SELECT uuid_to_bin('c8eb4b15-cb09-48bb-bbb2-e6a0b6b4d5cc7', TRUE) AS a
-func_uuid	LENIENT 1411	ae3b0d2f8c55	SELECT uuid_to_bin('12345678123456Z81234567812345678', TRUE) AS a
-func_uuid	LENIENT 1411	8b76cc8ed5a3	SELECT uuid_to_bin('12345678-1234-5678-1234-56781234567Z', TRUE) AS a
-func_uuid	LENIENT 1411	a467093b1c11	SELECT uuid_to_bin('e60c88ba-083f-4ceb-be59-f67636d718aa2', TRUE) AS b
-func_uuid	LENIENT 1411	9a845904e190	SELECT uuid_to_bin('c8eb4b15-cb09-48bb-bbb2-e6a04d5cc7', TRUE) AS a
-func_uuid	LENIENT 1411	618fc2a67286	SELECT uuid_to_bin('e60c88ba-083f-4ceb-be59-f676318aa2', TRUE) AS b
-func_uuid	LENIENT 1411	8ebd0258baf8	SELECT bin_to_uuid(unhex('7f9d04ae61b34468ac798ffcc984ab668')) AS a
-func_uuid	LENIENT 1411	840afb28ff6e	SELECT bin_to_uuid(unhex('7f9d04ae61b34468ac898ffcc984ab668'), TRUE) AS b
-func_uuid	LENIENT 1411	889a0ca0f27c	SELECT bin_to_uuid(unhex('7f9d04ae61b34468ac798ffcc98468')) AS a
-func_uuid	LENIENT 1411	d0eb32faadd5	SELECT bin_to_uuid(unhex('7f9d04ab34468ac898ffcc984ab668'), TRUE) AS b
-func_uuid	LENIENT 1411	6f60efa7ced5	SELECT bin_to_uuid(2)
-func_uuid	LENIENT 1411	888b411967f5	SELECT uuid_to_bin(2)
-func_uuid	LENIENT 1411	88a97a906fe1	SELECT bin_to_uuid(x'')
-func_uuid	LENIENT 1411	cddfe2de04d2	SELECT bin_to_uuid(x'', true)
-func_uuid	LENIENT 1411	96ab52997766	SELECT uuid_to_bin('')
-func_uuid	LENIENT 1411	e07c28a6357f	SELECT uuid_to_bin('', true)
 func_weight_string	LENIENT 1064	a004d59c56a7	select hex(weight_string('a' as char(0)))
 functional_index	LENIENT 3752	951ca7511025	INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON))
 functional_index	LENIENT 3751	3f86c17a619b	INSERT INTO t1 (f2) VALUES ("lorem ipsum")
@@ -914,7 +869,6 @@ ignore_strict	LENIENT 1526	7ecb0b391ecf	UPDATE t1 SET a=a+1
 ignore_strict	LENIENT 1748	0d3f2b84efaf	UPDATE v1 SET a=11 WHERE a=2
 ignore_strict	LENIENT 1526	acd092d63e7d	UPDATE t1 SET a=4 WHERE a=5
 ignore_strict	RUNTIME 1242	5d4a49f0e467	DELETE FROM t11 WHERE t11.b = (SELECT b FROM t2 WHERE t11.a < t2.a)
-ignore_strict	LENIENT 1411	02c7e3a0fb21	INSERT INTO t1 VALUES(STR_TO_DATE('32.10.2004 15.30','%D.%D.%Y %H.%I'))
 ignore_strict	RUNTIME 1441	6ff24bdce819	INSERT INTO t1 (d) SELECT DATE_SUB('2000-01-01', INTERVAL 2001 YEAR)
 ignore_strict	RUNTIME 1365	42674097b74b	INSERT INTO t1 VALUES(2/0)
 ignore_strict	LENIENT 1210	316901552400	INSERT INTO t1(SELECT SLEEP(NULL))
@@ -1175,6 +1129,8 @@ lpad	DIFF column type string->binary	45e31d752915	SELECT LPAD(NULL, NULL, 'x') A
 lpad	DIFF column type string->binary	85e89b9057e6	SELECT LPAD(NULL, NULL, NULL) AS result
 lpad	DIFF column type string->binary	26dfaf692377	SELECT LPAD(NULL, 5, NULL) AS result
 max_statement_time	LENIENT 3024	0aff871040ee	SELECT *, SLEEP(0.5) from t1
+max_statement_time	LENIENT 3024	3abd07b0a7e7	SELECT * FROM t1
+max_statement_time	LENIENT 3024	4db2fbef5ea4	SELECT /*+ MAX_EXECUTION_TIME(1) */ * FROM t1
 max_statement_time	LENIENT 3024	3fc1e2aa76a6	SELECT f1()
 mem_cnt_sql_keys	LENIENT 1	f754a353fea6	SELECT 1 INTO OUTFILE '../../tmp/f1.txt'
 merge_innodb	SCHEMA dump: SHOW CREATE TABLE tN: Error N (HYN): Unable to open underlyi	c64899c9e086	SELECT * FROM t5
@@ -1243,9 +1199,6 @@ nth	DIFF column type int->bigint	243ce1628136	SELECT NTH_VALUE(6,1)    OVER (ROW
 nth	DIFF column type int->bigint	eb17ab2a3dda	SELECT NTH_VALUE(6,2)    OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 nth	LENIENT 1235	09a821505a0d	SELECT id, sex, NTH_VALUE(id, 1) FROM LAST OVER () FROM t1
 nth	LENIENT 1235	8181fd370123	SELECT id, sex, NTH_VALUE(id, 1) IGNORE NULLS OVER () FROM t1
-nth	LENIENT 1210	32a141336fe3	SELECT id, sex, NTH_VALUE(id, 1.2) OVER () FROM t1
-nth	LENIENT 1210	76bb9235339c	SELECT id, sex, NTH_VALUE(id, 'a') OVER () FROM t1
-nth	LENIENT 1210	111f413d65c8	SELECT id, sex, NTH_VALUE(id, -3) OVER () le1 FROM t1
 nth	LENIENT 1210	e5360ce8fd89	SELECT id, sex, NTH_VALUE(id, NULL) OVER () FROM t1
 nth	DIFF column type null->binary	e66004afec75	SELECT id, sex, NTH_VALUE(NULL, 1) RESPECT NULLS OVER () FROM t1
 nth	LENIENT 3146	758b2b79f749	SELECT ((NTH_VALUE(JSON_MERGE_PATCH(1.755913e+308,'{ }'),1)OVER())<=(1))
@@ -2057,30 +2010,6 @@ sp_validation	LENIENT 1241	9777483d1789	SELECT f2()
 sp_validation	LENIENT 1241	47395f84d85f	UPDATE t2 SET a = 20
 sp_validation	STRICT 1146	a782e71a13d9	SELECT * FROM t1_result_set
 ssl_dynamic	LENIENT 1193	5fb33d2b441a	SELECT @@global.mysqlx_ssl_ca = @orig_mysqlx_ssl_ca,
-strict	LENIENT 1411	8a1e7de90059	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('31.10.0000 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	6e4d83a9ee45	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('31.0.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	4310c19afcc8	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('0.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	d17d51632e8f	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('31.9.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	30302191ede1	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('32.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	a642647607fb	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('29.02.2003 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	0a382ca2cf09	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('15.13.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	dc9743e17441	INSERT INTO t1 (col1) VALUES(STR_TO_DATE('00.00.0000','%d.%m.%Y'))
-strict	LENIENT 1411	51c6b51fd8ca	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('31.10.0000 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	97cb88900293	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('31.0.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	2ce727d57fe2	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('0.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	52236037bd0b	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('31.9.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	1df999e49cfd	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('32.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	13b09e058cda	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('29.02.2003 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	1ef50b0953ad	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('15.13.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	86006e3f97d1	INSERT INTO t1 (col2) VALUES(STR_TO_DATE('00.00.0000','%d.%m.%Y'))
-strict	LENIENT 1411	d0562b78a175	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('31.10.0000 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	84489cfdae1a	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('31.0.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	865fb8076458	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('0.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	8cf1b37809ab	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('31.9.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	ed57f1530d22	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('32.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	c4f13b6e1e68	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('29.02.2003 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	77c836525345	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('15.13.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	e37e95b7a7e6	INSERT INTO t1 (col3) VALUES(STR_TO_DATE('00.00.0000','%d.%m.%Y'))
 strict	RUNTIME 1292	a50b69bcf9f4	INSERT INTO t1 (col3) VALUES(CAST('0000-10-31 15:30' AS DATETIME))
 strict	RUNTIME 1292	23f441ac4438	INSERT INTO t1 (col3) VALUES(CONVERT('0000-10-31 15:30',DATETIME))
 strict	RUNTIME 1264	9459755d7792	UPDATE t1 SET col1 = col1 - 50 WHERE col1 < 0
@@ -2118,10 +2047,6 @@ strict	RUNTIME 1406	a0d64b947738	insert into t1 (varbinarycol) values (repeat('x
 strict	RUNTIME 1406	5162a4320d94	insert into t1 (tinytextcol) values (repeat('x',256))
 strict	RUNTIME 1406	74fe77b0fac3	insert into t1 (tinyblobcol) values (repeat('x',256))
 strict	DIFF column type binary->string	055b08222849	select * from t1
-strict	RUNTIME 1292	88091a7051b3	insert into t1 values(STR_TO_DATE('31.10.2004 15.30 abc','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	2ea18631e3c5	insert into t1 values(STR_TO_DATE('32.10.2004 15.30','%d.%m.%Y %H.%i'))
-strict	LENIENT 1411	ae09cffcd5ae	insert into t1 values(STR_TO_DATE('2004.12.12 22:22:33 AM','%Y.%m.%d %r'))
-strict	LENIENT 1411	7ff4493e9d25	insert into t1 values(STR_TO_DATE('2004.12.12 abc','%Y.%m.%d %T'))
 strict	RUNTIME 1292	f1c4aafe1e5f	insert into t1 select * from t1
 strict	RUNTIME 1364	3eb4d0be2024	INSERT INTO t1 VALUES (DEFAULT)
 strict	RUNTIME 1364	935d23867fc8	INSERT INTO t1 VALUES (DEFAULT(i))
@@ -2501,7 +2426,6 @@ window_functions	LENIENT 3586	3592bb3f3956	SELECT t, FIRST_VALUE(t) OVER (ORDER 
 window_functions	LENIENT 1054	101a21312a4c	SELECT  sex, AVG(DISTINCT id),
 window_functions	LENIENT 1054	05c512018776	SELECT  sex, AVG(DISTINCT id),
 window_functions	LENIENT 1210	d7b731aea57c	SELECT NTH_VALUE(id, id) OVER w FROM (SELECT * FROM t1,t2 WHERE t1.id=t2.user_id) t WINDOW w AS (PAR
-window_functions	LENIENT 1210	3dfd314ba9cf	SELECT id, NTILE(0) OVER w FROM t1 WINDOW w AS ()
 window_functions	LENIENT 1210	ac5699fe2f7e	SELECT id, NTILE(@s) OVER w FROM t1 WINDOW w AS (ORDER BY id)
 window_functions	DIFF column type int->bigint	a813611368f0	SELECT FIRST_VALUE(6) OVER ()
 window_functions	DIFF column type int->bigint	f5a6de05dc02	SELECT FIRST_VALUE(6)    OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
@@ -2594,14 +2518,10 @@ window_functions	LENIENT 3146	ab7c935f63d2	SELECT ((FIRST_VALUE(JSON_MERGE_PATCH
 window_functions	LENIENT 3146	0124fada5988	SELECT ((QUOTE(JSON_KEYS(FIRST_VALUE(JSON_KEYS(EXP(-15676),ABS('d0'))
 window_functions	LENIENT 1140	9b0a327241d5	SELECT AVG(i) FROM t1 ORDER BY RANK() OVER (PARTITION BY AVG(i) ORDER BY i)
 window_functions	LENIENT 3146	4e4301907e46	SELECT IFNULL(JSON_TYPE(CASE WHEN(1) THEN(1) ELSE(1) END),
-window_functions	LENIENT 1411	763fe1427740	SELECT IFNULL((UUID_TO_BIN(0xAB8631)),(FIRST_VALUE(2.469566E+307)OVER()))
 window_functions	DIFF column type bigint->int	796ba8e68343	SELECT PERCENT_RANK() OVER(),
 window_functions	DIFF column type bigint->int	b02bdb03bc76	SELECT PERCENT_RANK() OVER(),
 window_functions_bugs	DIFF column type int->bigint	f86d557dc932	SELECT a, PERCENT_RANK() OVER w1 FROM t GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
 window_functions_bugs	DIFF column type int->bigint	dccfa60b121e	SELECT a, PERCENT_RANK() OVER w1 FROM v GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
-window_functions_bugs	LENIENT 1210	f9372aba0ec7	SELECT ((PERIOD_DIFF('7766-05-30','2955-06-11'))DIV(LAST_VALUE(';')OVER()))
-window_functions_bugs	LENIENT 1210	15d5eccc3d6f	SELECT ((PERIOD_ADD(-6001,16973))DIV(LAST_VALUE('')OVER()))
-window_functions_bugs	LENIENT 1210	df2d7a2d4572	SELECT((LAST_VALUE(PERIOD_ADD(32733,1518714932))OVER())DIV(NULL))
 window_functions_bugs	RUNTIME 1690	15f8239dce83	SELECT ((EXP(0x6108))DIV(LAG(NULL,21,' 4F')OVER()))
 window_functions_bugs	RUNTIME 1690	f389d4981be5	SELECT ((FIRST_VALUE(EXP(0x41a129))OVER())DIV(-969))
 window_functions_bugs	DIFF column type binary->string	eb9b41ceace0	SELECT FIRST_VALUE(c) OVER w fv, LAST_VALUE(c) OVER w lv
