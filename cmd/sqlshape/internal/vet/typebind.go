@@ -71,8 +71,13 @@ func (c *checker) collectDeclaredTypes() {
 				if c.sch != nil {
 					if t, ok := c.sch.Type(m[1]); ok {
 						dt.named = t.Named
-					} else {
+					} else if c.ls.dialectName == dialect.Postgres {
 						c.pass.Reportf(ts.Name.Pos(), "sqlshape: type %s: PostgreSQL type %q does not exist in the schema", obj.Name(), m[1])
+					} else {
+						// MySQL (and any dialect without named types) has nothing for the
+						// directive to bind to; saying "type %q does not exist" would send
+						// the reader hunting for a spelling
+						c.pass.Reportf(ts.Name.Pos(), "sqlshape: type %s: `// sqlshape: type` binds to a named type of the schema, and %s has none", obj.Name(), c.ls.dialectName)
 					}
 				}
 				c.declared[obj] = dt

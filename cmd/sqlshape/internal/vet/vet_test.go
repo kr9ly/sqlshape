@@ -234,3 +234,26 @@ func TestErrorNames(t *testing.T) {
 	defer Analyzer.Flags.Set("schema", "")
 	analysistest.Run(t, td, Analyzer, "errnameok", "errnamewrong", "errnameunknown", "errnamemissing", "errnamedup")
 }
+
+// TestMySQL runs the analyzer against a MySQL schema in-process: the dialect adapter's
+// view obligations and the type-binding directive (mysqlvet), plainly.
+func TestMySQL(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema-mysql.sql")); err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, td, Analyzer, "mysqlvet")
+}
+
+// TestMySQLStrict is the MySQL side of TestStrict: the schema-level advisories.
+func TestMySQLStrict(t *testing.T) {
+	td := analysistest.TestData()
+	if err := Analyzer.Flags.Set("schema", filepath.Join(td, "schema-mysql.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Analyzer.Flags.Set("strict", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer Analyzer.Flags.Set("strict", "false")
+	analysistest.Run(t, td, Analyzer, "mysqlstrict")
+}

@@ -276,7 +276,6 @@ type Schema interface {
 	// Relation resolves a name the way a program writes it ("orders", "sales.orders");
 	// nil when the schema has none.
 	Relation(name string) *Relation
-	Relations() []*Relation
 	// Definitions are the schema's own statements — view bodies, function bodies, policy
 	// predicates — each with the facts the obligations are judged on, its notes, and the
 	// error that stopped its analysis.

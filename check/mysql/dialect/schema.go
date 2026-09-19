@@ -45,18 +45,6 @@ func (m *mysql) Relation(name string) *dialect.Relation {
 	return nil
 }
 
-// Relations lists every relation: the tables, then the views, in declaration order.
-func (m *mysql) Relations() []*dialect.Relation {
-	var out []*dialect.Relation
-	for _, t := range m.s.Tables {
-		out = append(out, m.tableRelation(t))
-	}
-	for _, v := range m.s.Views {
-		out = append(out, m.viewRelation(v))
-	}
-	return out
-}
-
 func (m *mysql) tableRelation(t *schema.Table) *dialect.Relation {
 	r := &dialect.Relation{Name: t.Name, Kind: facts.Table, Comment: t.Comment}
 	for _, c := range t.Columns {

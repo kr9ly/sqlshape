@@ -90,15 +90,6 @@ func typeOf(s *schema.Schema, ref schema.TypeRef, depth int) dialect.Type {
 	return t
 }
 
-// NamedOf is the canonical name of a type (dialect.Type.Named), what a `// sqlshape: type
-// X` declaration resolves to.
-func NamedOf(s *schema.Schema, oid catalog.OID) string {
-	pt := s.Types.ByOID(oid)
-	if pt == nil {
-		return ""
-	}
-	return qualified(s, pt)
-}
 
 // qualified is the name a `// sqlshape: type X` declaration uses for a user type.
 func qualified(s *schema.Schema, pt *catalog.Type) string {

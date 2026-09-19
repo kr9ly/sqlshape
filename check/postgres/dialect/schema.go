@@ -79,15 +79,6 @@ func (a *Analyzer) Relation(name string) *dialect.Relation {
 	return a.relation(rel)
 }
 
-// Relations lists every relation, in declaration order.
-func (a *Analyzer) Relations() []*dialect.Relation {
-	out := make([]*dialect.Relation, 0, len(a.S.Relations))
-	for _, rel := range a.S.Relations {
-		out = append(out, a.relation(rel))
-	}
-	return out
-}
-
 func (a *Analyzer) relation(rel *schema.Relation) *dialect.Relation {
 	r := &dialect.Relation{Name: rel.FullName(), Schema: rel.Schema, Kind: facts.Table, Comment: a.S.Comments[rel.FullName()]}
 	switch rel.Kind {
