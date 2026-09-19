@@ -537,13 +537,9 @@ func (a *analyzer) referencingViolations(t *schema.Table, changed map[string]boo
 				action = fk.OnDelete
 			}
 			if !del {
-				ref := fk.RefColumns
-				if len(ref) == 0 {
-					if pk := t.PrimaryKey(); pk != nil {
-						ref, _ = keyColumns(pk)
-					}
-				}
-				if !anyIn(ref, changed) {
+				// RefColumns is never empty: the loader refuses a foreign key whose
+				// reference list is missing or mismatched, as the server does (1239)
+				if !anyIn(fk.RefColumns, changed) {
 					continue
 				}
 			}
@@ -583,19 +579,6 @@ func violableKeyColumns(k *schema.Key) ([]string, bool) {
 			continue
 		}
 		add(p.Column)
-	}
-	return cols, len(cols) > 0
-}
-
-// keyColumns lists a key's columns when every part is a whole column (a prefix or an
-// expression part is not something an equality on the column fixes).
-func keyColumns(k *schema.Key) ([]string, bool) {
-	cols := make([]string, 0, len(k.Parts))
-	for _, p := range k.Parts {
-		if p.Expr != nil || p.Length != 0 || p.Column == "" {
-			return nil, false
-		}
-		cols = append(cols, p.Column)
 	}
 	return cols, len(cols) > 0
 }

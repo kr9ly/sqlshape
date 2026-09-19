@@ -240,7 +240,6 @@ type Catalog struct {
 	typeByName map[string]*Type
 	funcByOID  map[OID]*Func
 	funcByName map[string][]*Func
-	opByOID    map[OID]*Operator
 	opByName   map[string][]*Operator
 	castByPair map[[2]OID]*Cast
 	aggByFn    map[OID]*Aggregate
@@ -299,9 +298,6 @@ func (c *Catalog) FuncByOID(oid OID) *Func { return c.funcByOID[oid] }
 // FuncsByName returns all pg_catalog functions named name (overloads), in oid order.
 func (c *Catalog) FuncsByName(name string) []*Func { return c.funcByName[name] }
 
-// OperatorByOID returns the operator with the given oid, or nil.
-func (c *Catalog) OperatorByOID(oid OID) *Operator { return c.opByOID[oid] }
-
 // OperatorsByName returns all pg_catalog operators with the given symbol (e.g. "="), in oid order.
 func (c *Catalog) OperatorsByName(name string) []*Operator { return c.opByName[name] }
 
@@ -335,7 +331,6 @@ func newCatalog() *Catalog {
 		typeByName: map[string]*Type{},
 		funcByOID:  map[OID]*Func{},
 		funcByName: map[string][]*Func{},
-		opByOID:    map[OID]*Operator{},
 		opByName:   map[string][]*Operator{},
 		castByPair: map[[2]OID]*Cast{},
 		aggByFn:    map[OID]*Aggregate{},
@@ -450,7 +445,6 @@ func (c *Catalog) index() {
 	}
 	for i := range c.Operators {
 		op := &c.Operators[i]
-		c.opByOID[op.OID] = op
 		c.opByName[op.Name] = append(c.opByName[op.Name], op)
 	}
 	for i := range c.Casts {

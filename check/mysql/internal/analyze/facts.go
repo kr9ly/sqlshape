@@ -956,29 +956,6 @@ func isNullLiteral(v mysqlast.Value) bool {
 	return ok && n.Class == "Item_null"
 }
 
-// literalText renders a literal of the schema text (a column's DEFAULT) as the statement
-// would spell it: the source text of its tokens. "" when v is not made of tokens alone.
-func literalText(v mysqlast.Value) string {
-	switch x := v.(type) {
-	case mysqlast.Token:
-		return x.Text
-	case *mysqlast.Node:
-		var b strings.Builder
-		for _, arg := range x.Args {
-			switch arg.(type) {
-			case mysqlast.Token, *mysqlast.Node:
-				t := literalText(arg)
-				if t == "" {
-					return ""
-				}
-				b.WriteString(t)
-			}
-		}
-		return b.String() // the constructor's other arguments (flags, THD state) spell nothing
-	}
-	return ""
-}
-
 // readsBlock reports whether v references a column of this block.
 func (a *analyzer) readsBlock(sc *scope, v mysqlast.Value) bool {
 	switch x := v.(type) {

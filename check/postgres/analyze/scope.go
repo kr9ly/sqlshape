@@ -255,12 +255,7 @@ func newScope(parent *scope) *scope {
 	return &scope{parent: parent, ctes: map[string]*cte{}}
 }
 
-func (sc *scope) findCTE(name string) *cte {
-	c, _ := sc.findCTEScope(name)
-	return c
-}
-
-// findCTEScope is findCTE returning the scope that defines the CTE too.
+// findCTEScope resolves a CTE by name, returning the scope that defines it too.
 func (sc *scope) findCTEScope(name string) (*cte, *scope) {
 	for s := sc; s != nil; s = s.parent {
 		if c, ok := s.ctes[name]; ok {

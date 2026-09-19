@@ -822,6 +822,35 @@ DECLARE rec record;
 BEGIN
   rec := (SELECT nope FROM orders);
 END $$;`, want: `column "nope" does not exist`},
+		// RETURN of a plain variable: the PL parser records the variable (retvarno), not an
+		// expression, so these travel retType, not ret
+		{name: "RETURN of a variable in a void function", def: `
+CREATE FUNCTION p114() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v int;
+BEGIN
+  v := 1;
+  RETURN v;
+END $$;`, want: "RETURN cannot have a parameter in function returning void"},
+		{name: "RETURN of a variable in a SETOF function", def: `
+CREATE FUNCTION p115() RETURNS SETOF integer LANGUAGE plpgsql AS $$
+DECLARE v int;
+BEGIN
+  RETURN v;
+END $$;`, want: "use RETURN NEXT or RETURN QUERY"},
+		{name: "RETURN of a matching variable", def: `
+CREATE FUNCTION p116() RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE v int;
+BEGIN
+  v := 1;
+  RETURN v;
+END $$;`},
+		{name: "RETURN of a scalar variable in a trigger function", def: `
+CREATE FUNCTION p117() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v int;
+BEGIN
+  RETURN v;
+END $$;
+CREATE TRIGGER p117_t BEFORE INSERT ON orders FOR EACH ROW EXECUTE FUNCTION p117();`, want: "a trigger function returns NEW, OLD or NULL"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

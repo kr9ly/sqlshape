@@ -310,20 +310,13 @@ func (c contractTable) ForceRowSecurity() bool { return false }
 
 func (c contractTable) ViewSource(col string) (string, string, bool) { return "", "", false }
 
-// ForeignKeys lists the REFERENCES constraints; a key with no column list references the
-// parent's primary key, spelled out here.
+// ForeignKeys lists the REFERENCES constraints. RefColumns is always filled: the loader
+// refuses a foreign key whose reference list is missing or mismatched, as the server
+// does (1239), so there is no primary-key fallback to spell out.
 func (c contractTable) ForeignKeys() []obligation.ForeignKey {
 	var out []obligation.ForeignKey
 	for _, fk := range c.t.ForeignKeys {
-		o := obligation.ForeignKey{Columns: fk.Columns, RefTable: fk.RefTable, RefColumns: fk.RefColumns}
-		if len(o.RefColumns) == 0 {
-			if parent := c.m.s.Table(fk.RefTable); parent != nil {
-				if pk := parent.PrimaryKey(); pk != nil {
-					o.RefColumns, _ = wholeColumns(pk)
-				}
-			}
-		}
-		out = append(out, o)
+		out = append(out, obligation.ForeignKey{Columns: fk.Columns, RefTable: fk.RefTable, RefColumns: fk.RefColumns})
 	}
 	return out
 }

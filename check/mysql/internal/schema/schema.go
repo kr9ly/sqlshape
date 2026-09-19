@@ -1058,6 +1058,17 @@ func (s *Schema) tableElement(t *Table, el mysqlast.Value, at func(mysqlast.Valu
 		for _, p := range list(x.RefList()) {
 			fk.RefColumns = append(fk.RefColumns, keyPart(p).Column)
 		}
+		if len(fk.RefColumns) != len(fk.Columns) {
+			// the server refuses the definition at CREATE time -- a bare REFERENCES t with
+			// no column list the same as a count mismatch (1239 "Key reference and table
+			// reference don't match", measured on 8.4); it never falls back to t's primary key
+			name := fk.Name
+			if name == "" {
+				name = "foreign key without name"
+			}
+			s.problem(at(n), "Incorrect foreign key definition for '%s': Key reference and table reference don't match (1239)", name)
+			return
+		}
 		t.ForeignKeys = append(t.ForeignKeys, fk)
 	case "PT_check_constraint":
 		x, _ := mysqlast.AsPTCheckConstraint(n)

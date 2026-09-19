@@ -65,7 +65,7 @@ values agree with 8.4.
 MySQL's own test corpus is replayed as well: the 1,281 files of `mysql-test/t` (some 137,000
 statements) run against a `mysqld` and the analyzer side by side, a SELECT's columns compared by
 name, type family and nullability, an error by its number. The statements on which the two
-knowingly disagree -- 2,594 -- are pinned one by one
+knowingly disagree -- 2,534 -- are pinned one by one
 (`check/mysql/internal/analyze/testdata/corpus_baseline.txt`, each with the class of the
 disagreement: an error the analyzer does not predict or predicts under another number, a column
 typed differently, a schema construct the loader does not model), and a new disagreement fails

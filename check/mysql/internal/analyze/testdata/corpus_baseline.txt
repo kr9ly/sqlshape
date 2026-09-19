@@ -24,16 +24,6 @@ archive	LENIENT 1031	c2422558d986	DELETE FROM t2
 archive	DIFF column type int->int unsigned	7a3e82da2c6e	SELECT * FROM t2 WHERE auto != 100000
 archive	LENIENT 1022	1c858b33c23f	INSERT INTO t5 VALUES (23, "foo")
 archive	LENIENT 1022	c91321bd7756	INSERT INTO t5 VALUES (3, "foo")
-archive	DIFF column type string->binary	c64899c9e086	SELECT * FROM t5
-archive	DIFF column type string->binary	ca47353b3290	SELECT b FROM t5
-archive	DIFF column type string->binary	3c74e6d490cb	SELECT b FROM t5 WHERE a =3
-archive	DIFF column type string->binary	d55363fa4526	SELECT b FROM t5 WHERE a IN (32, 23, 5)
-archive	DIFF column type string->binary	7df87a33ade3	SELECT c FROM t5
-archive	DIFF column type string->binary	d003a83907c8	SELECT c FROM t5 WHERE a =3
-archive	DIFF column type string->binary	62ba5ab997d7	SELECT c FROM t5 WHERE a IN (32, 23, 5)
-archive	DIFF column type string->binary	9c6a49fc1e51	SELECT * FROM t6
-archive	DIFF column type string->binary	1465de76230a	SELECT * FROM t6 ORDER BY a
-archive	DIFF column type string->binary	49922bef01c1	SELECT * FROM t6 ORDER BY a DESC
 archive	LENIENT 1031	2b6933d1b616	UPDATE t SET j = '[1]'
 archive	LENIENT 1031	f4a84fd0c683	DELETE FROM archive_table
 archive	LENIENT 1031	f3037b0cf55c	DELETE FROM v
@@ -62,10 +52,6 @@ bigint	DIFF column type decimal unsigned->decimal	055b08222849	select * from t1
 bigint	DIFF column type bigint->decimal	fefd134ec714	select -(-(9223372036854775808))
 bigint	DIFF column type bigint->decimal	16abe0dd104f	select --9223372036854775808, ---9223372036854775808, ----9223372036854775808
 bigint	DIFF column type bigint->decimal	6b713dd8c12b	select -(-9223372036854775808), -(-(-9223372036854775808))
-binary	DIFF column type binary->string	5fdaf49951fe	select concat("-",a,"-",b,"-") from t1
-binary	DIFF column type binary->string	3507c6cecf58	select concat("-",a,"-",b,"-") from t1 where b="hello "
-binary	DIFF column type binary->string	bb59e7efa57a	select concat("-",a,"-",b,"-") from t1 ignore index (b) where b="hello "
-binary_to_hex	DIFF column type string->binary	3abd07b0a7e7	SELECT * FROM t1
 case	DIFF column type bigint->int	92afc20d74cb	select case a when 1 then 2 when 2 then 3 else 0 end as fcase, count(*) from t1 group by fcase
 case	LENIENT 1267	48ee974fddc8	SELECT CASE 
 case	LENIENT 1270	c95dbc13f467	SELECT CASE _latin1'a' COLLATE latin1_general_ci
@@ -123,7 +109,6 @@ csv	DIFF column type tinyint->tinyint unsigned	28d175eef713	select t2.fld3,compa
 csv	DIFF column type tinyint->tinyint unsigned	d5a654516d39	select fld3,companynr from t2 where companynr = 58 order by fld3
 csv	DIFF column type int->int unsigned	fca878159cf2	SELECT * FROM test_repair_table4
 csv	DIFF column type int->int unsigned	63d219934bf6	SELECT * FROM test_repair_table5
-csv	DIFF column type string->binary	055b08222849	select * from t1
 csv_not_null	RUNTIME 1364	01f74cae3e59	INSERT INTO t1 VALUES(default(a),default(b), default(c), default(d),
 ctype_ascii	RUNTIME 1366	ee487ad92119	INSERT INTO t1 VALUES(0xe5)
 ctype_binary_myisam	DIFF column type string->binary	c0e5175c556d	SELECT GROUP_CONCAT(IFNULL(a,'')) FROM t1
@@ -287,10 +272,7 @@ date_formats	DIFF column type datetime->date	d9c8c571d6c4	select str_to_date('15
 date_formats	DIFF column type datetime->date	5b15fe1bfbb4	select str_to_date( NULL, 1 )
 ddl_i18n_koi8r	SCHEMA no database selected	102c4650f61e	CALL mysqltest2.p3(@a, @b)
 ddl_i18n_utf8	SCHEMA no database selected	102c4650f61e	CALL mysqltest2.p3(@a, @b)
-default	DIFF column type string->binary	d7728f67202e	SELECT * from t1
-default	DIFF column type string->binary	a88bf18cac5b	SELECT * from t2
 default	RUNTIME 1364	74fda82808c4	insert into bug20691 values (7, DEFAULT, DEFAULT), (7, '1975-07-10 07:10:03', '1978-01-13 14:08:51')
-default	DIFF column type binary->string	8407f023a6c9	select * from bug20691 order by x asc
 default_as_expr	RUNTIME 1406	05c4d69658f6	INSERT INTO t1 VALUES (),(),()
 default_as_expr	LENIENT 3773	7875912a4791	SELECT DEFAULT(d) from t3
 default_as_expr	LENIENT 3773	72e22ef8a41d	SELECT DEFAULT(c) from t3
@@ -330,10 +312,7 @@ derived	DIFF column type int->bigint	021d76adff69	SELECT * FROM (SELECT (SELECT 
 derived	RUNTIME 1242	0612a6733495	SELECT * FROM (SELECT (SELECT a.a FROM t1 AS a WHERE a.a = b.a) FROM t1 AS b) AS c
 derived	LENIENT 1060	9ea26760cbe7	select * from (select * from t1,t2) foo
 derived	STRICT 1055	3c043cdfe782	SELECT *
-derived	DIFF column type binary->string	3727da1c2332	SELECT alias1.col_text AS field1 ,
 derived	DIFF column type bigint->int	8f90cf02b279	SELECT * FROM t1 LEFT JOIN ( SELECT 1 FROM t1 ) d1 ON TRUE ORDER BY a
-derived	DIFF column type binary->string	fbeb1102d899	SELECT f1
-derived	DIFF column type binary->string	ec659403cf08	SELECT a, b
 derived_ci	LENIENT 1054	27f9218dfd2f	select QN.a from (select 1 as a) as qn
 derived_ci	LENIENT 1054	f633e599218b	select qn.a from (select 1 as a) as QN
 derived_ci	STRICT 1066	37b50d11be03	select 3 from (select 1) as qn, (select 2) as QN
@@ -360,7 +339,6 @@ disable_drop_rename_user	LENIENT 1370	3fc1e2aa76a6	SELECT f1()
 disable_drop_rename_user	LENIENT 1449	850248433df7	INSERT INTO t1 VALUES (10)
 disable_drop_rename_user	LENIENT 1142	850248433df7	INSERT INTO t1 VALUES (10)
 distinct	DIFF column type bigint->int	ca15e7488698	select id >= 0 and id <= 5 as grp,count(*) from t1 group by grp
-distinct	DIFF column type binary->string	d513b402ee3b	SELECT DISTINCT t1.*, t2.* FROM t1 LEFT JOIN t2 ON (t2.userid = t1.touserid)
 distinct	LENIENT 1	b5e2dc018a33	SELECT DISTINCT fruit_id, fruit_name INTO OUTFILE 
 distinct	LENIENT 13	8ee5fdf05664	LOAD DATA INFILE '../../tmp/data1.tmp' INTO TABLE t2
 distinct	LENIENT 1	aba6cc621999	SELECT DISTINCT @v19:= fruit_id, @v20:= fruit_name INTO OUTFILE 
@@ -381,8 +359,6 @@ events_bugs	SCHEMA problems: server sql_mode = ?: sql_mode: ? is not a mode of M
 events_restart	SCHEMA no database selected	89b067bb657c	SELECT @@event_scheduler
 events_time_zone	LENIENT 1210	e2bc9f8126c5	SELECT SLEEP(@step / 2)
 explain	CODE 1048->1292	5cecdb2dcf3e	INSERT INTO t2 VALUES (NULL), (0)
-filesort	DIFF column type string->binary	301d1c63464c	SELECT * FROM t1 ORDER BY f1
-filesort	DIFF column type string->binary	ed1d9bae5d34	SELECT *
 filesort	LENIENT 3037	dcbf912f5a26	SELECT
 filesort_debug	LENIENT 1038	9e94f8ab4797	DELETE IGNORE FROM t1 ORDER BY c26,c7,c23,c4,c25,c5,c20,
 filesort_debug	LENIENT 1038	b67bd5113372	DELETE FROM t1 ORDER BY c26,c7,c23,c4,c25,c5,c20,
@@ -483,7 +459,6 @@ func_date_add	DIFF column type datetime->date	d562e8f9f398	SELECT CAST('2006-09-
 func_date_add	DIFF column type datetime->date	79c599a0e951	SELECT ADDDATE(DATE'2021-01-01', INTERVAL 1 DAY)
 func_default	RUNTIME 1364	d7cd7203ca57	SELECT s, 32 AS mi FROM t1 GROUP BY s HAVING DEFAULT(mi) IS NULL
 func_digest	DIFF column type string->binary	afda871f6abb	SELECT sha2('1',224)
-func_digest	DIFF column type string->binary	3fc1e2aa76a6	SELECT f1()
 func_gconcat	DIFF column type string->binary	b27635114b08	select grp,group_concat(null) from t1 group by grp
 func_gconcat	DIFF column type string->binary	3c70473bfdc1	select group_concat(null) from t1
 func_gconcat	LENIENT 1111	8f3defb104f1	select group_concat(sum(c)) from t1 group by grp
@@ -611,7 +586,6 @@ func_str	LENIENT 1267	14d503543bee	select * from t7
 func_str	DIFF column type string->binary	dd3195599dc2	select trim('xyz' from null) as "must_be_null"
 func_str	DIFF column type string->binary	b17af7522f2b	select ifnull(load_file("lkjlkj"),"it is null")
 func_str	DIFF column type binary->string	76e0d5e73c93	SELECT CHAR(0xff,0x8f USING utf8mb3)
-func_str	DIFF column type binary->string	3012ed56fcae	select substring(f1,1,1) from t1 group by 1
 func_str	RUNTIME 1690	802f293cf1c6	SELECT
 func_str	DIFF column type bigint->int	17c5d77f32ab	SELECT (SELECT (SELECT 1 FROM t1 a WHERE t1.a <_ucs2'a')) AS d5 FROM t1 GROUP BY 1
 func_str	DIFF column type binary->string	4b4dbe789ad6	SELECT REPLACE( 'a', binary 'b', NULL ) as xxx
@@ -706,7 +680,6 @@ func_weight_string	LENIENT 1064	a004d59c56a7	select hex(weight_string('a' as cha
 functional_index	LENIENT 3752	951ca7511025	INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON))
 functional_index	LENIENT 3751	3f86c17a619b	INSERT INTO t1 (f2) VALUES ("lorem ipsum")
 functional_index	LENIENT 1050	ae2cd589953d	CALL p1()
-gcc296	DIFF column type binary->string	055b08222849	select * from t1
 get_diagnostics	STRICT 1146	ae2cd589953d	CALL p1()
 get_diagnostics	LENIENT 1000	ae2cd589953d	CALL p1()
 get_diagnostics	LENIENT 9999	ae2cd589953d	CALL p1()
@@ -835,12 +808,7 @@ grant	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	
 grant2	DIFF column type string->binary	a42d37b8c8e5	select current_user()
 grant2	DIFF column type string->binary	055b08222849	select * from t1
 grant2	DIFF column type string->binary	78869acd3759	SELECT user,host,length(authentication_string),insert_priv FROM user WHERE user=@u AND host=@h
-group_by	DIFF column type binary->string	f9cb08507243	select value,description,bug_id from t2 left join t1 on t2.program=t1.product and t2.value=t1.compon
-group_by	DIFF column type binary->string	02b18e26f2b0	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
-group_by	DIFF column type binary->string	d10edc997e82	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
-group_by	DIFF column type binary->string	dc74af1bb09b	select row_number() over (), value,description,COUNT(DISTINCT bug_id) from t2 left join t1 on t2.pro
 group_by	DIFF column type bigint->int	7c1da931e0bb	select count(*), interval(qty,2,3,4,5,6,7,8) as category from t1 group by category
-group_by	DIFF column type binary->string	607a5c91b576	SELECT hostname, COUNT(DISTINCT user_id) as no FROM t1
 group_by	CODE 1241->1140	dfd2cb8a6108	SELECT t1.a FROM t1 ORDER BY (SELECT SUM(t2.a), t2.a FROM t2)
 group_by	STRICT 3029	c8a2b6142e61	SELECT t1.a FROM t1 GROUP BY t1.a
 group_by	CODE 1055->1054	3e3d58cfd8ee	SELECT 1 FROM t1 GROUP BY t1.a
@@ -941,8 +909,6 @@ insert_update	RUNTIME 1366	ae86deb766f7	INSERT INTO t_utf8 values(x'f4b8ad', x'f
 insert_update	RUNTIME 1366	56a59f2b970f	UPDATE t_utf8 SET a=x'f69687' where a=x'e69687'
 insert_update	RUNTIME 1366	288a3d726d7b	INSERT INTO v_utf8 values(x'f4b8ad', x'f4b8ad', x'f4b8ad')
 insert_update	RUNTIME 1366	29b4e6529980	UPDATE v_utf8 SET a=x'f69687' where a=x'e69687'
-internal_tmp_disk_storage_engine	DIFF column type binary->string	f2b75bc06721	select distinct concat(c1, repeat('xx', 250)) as cc from t2 order by 1
-internal_tmp_disk_storage_engine	DIFF column type binary->string	5ec14fa15c95	select concat(c1, repeat('xx', 250)) as cc from t2 group by cc order by 1
 ipv6_debug	LENIENT 1193	4d2fbb345136	SELECT @@global.debug, @@global.bind_address
 join	LENIENT 1116	df4d8bbaf36b	select t1.a from t1 as t1 left join t1 as t2 using (a) left join t1 as t3 using (a) left join t1 as 
 join	LENIENT 1116	8e206ee9afb2	select a from t1 as t1 left join t1 as t2 using (a) left join t1 as t3 using (a) left join t1 as t4 
@@ -985,10 +951,9 @@ join	DIFF column name	0615bfa3094b	select 'The cost of accessing t1 (dont care i
 join	LENIENT 1054	8ced3ee45cfe	select t1.* from t t0 cross join (t t1 join t t2 on 100=t0.a)
 join	LENIENT 1054	c0171bff8184	select t1.* from t t0 cross join (t t1 join t t2
 join	RUNTIME 1690	663313088c03	SELECT t2.b FROM t AS t1
-join	DIFF column type binary->string	cf1f66dda339	SELECT *
+join	DIFF column type int->bigint	cf1f66dda339	SELECT *
 join	LENIENT 3141	76ea9acef8b5	SELECT ra1.k
 join_nested	LENIENT 1052	39c16e1fcecd	SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a)
-join_outer	DIFF column type binary->string	1d9adeaac332	SELECT * from t1 left join t2 on t1.id=t2.id where t2.id IS NULL
 join_outer	DIFF column name	041b148c3281	select * from t1
 join_outer	DIFF column type bigint unsigned->int unsigned	911afbb589b2	select s.*, '*', m.*, (s.match_1_h - m.home) UUX from 
 join_outer	DIFF column type bigint unsigned->int unsigned	1672ee401e63	select s.*, '*', m.*, (s.match_1_h - m.home) UUX from 
@@ -1004,9 +969,6 @@ join_outer	DIFF nullable true->false	5474b8a443d9	SELECT big.*, dt.*
 join_outer	DIFF nullable true->false	65a725c98737	SELECT je
 join_outer	DIFF column type bigint->int	d6469f033388	SELECT je
 key_cache	LENIENT 1193	894e3271e01f	SELECT @@skr.default_storage_engine="test"
-key_myisam	DIFF column type binary->string	a9c32697dfc4	SELECT * FROM t1 WHERE a='a' AND b=2
-key_myisam	DIFF column type binary->string	b3df378924b8	SELECT * FROM t1 WHERE a='a' AND b in (2)
-key_myisam	DIFF column type binary->string	087f68ad10c0	SELECT * FROM t1 WHERE a='a' AND b in (1,2)
 lead_lag	LENIENT 1235	2485612c6dda	SELECT id, sex, LEAD(id, 1, 10) IGNORE NULLS OVER () FROM t1
 lead_lag	LENIENT 1267	c4ec44cc179c	SELECT c1, c2, LEAD(c1, 0, c2) OVER () l0 FROM t
 lead_lag	DIFF column type string->binary	2907f8f9ebc2	SELECT LEAD(c1, 100, b1) OVER () lcb, IFNULL(c1, b1) ifn_cb FROM t
@@ -1049,7 +1011,6 @@ loaddata	CODE 13->1288	5e34c4e29a7a	LOAD DATA INFILE '../../std_data/bug35469.da
 loaddata	CODE 13->1288	07f14566a95f	LOAD DATA INFILE '../../std_data/bug35469.dat' INTO TABLE v2
 loaddata	CODE 1348->1288	136fb0821631	LOAD DATA INFILE '../../std_data/bug35469.dat' INTO TABLE v2
 loaddata	DIFF column name	8d2c6ca54fd4	select load_file(0x0A9FB76C661B409C4BEC88098C5DD71B1072F9691F2E827D7EC8F092B299868A3CE196C04F0FB18CA
-loaddata	DIFF column type string->binary	3abd07b0a7e7	SELECT * FROM t1
 loaddata	LENIENT 13	a91ab2451817	LOAD DATA INFILE 't1.dat' IGNORE INTO TABLE t1 CHARACTER SET utf8mb3
 loaddata	CODE 3948->1288	8be0ca843b20	LOAD DATA LOCAL INFILE '' REPLACE INTO TABLE v1
 loaddata	LENIENT 13	b67b01ba86b2	LOAD DATA INFILE '../../std_data/bug20683959loaddata.txt' INTO TABLE t1
@@ -1107,16 +1068,9 @@ log_components_syslog	LENIENT 1193	4e0ff6514315	SELECT @@syseventlog.include_pid
 log_components_syslog	LENIENT 1193	0adf1ce1e2be	SELECT @@syseventlog.facility
 log_options_cmdline	LENIENT 1193	cf2ff6fdd263	SELECT @@dragnet.log_error_filter_rules
 log_options_cmdline	LENIENT 1193	b922d4f54976	SELECT @@global.dragnet.log_error_filter_rules
-log_tables	DIFF column type binary->string	2e3d9f2760f7	select * from general_log
-log_tables	DIFF column type binary->string	232c39c16f33	select * from slow_log
-log_tables	DIFF column type binary->string	65afeaf1d629	select * from general_log where argument like '%general_log%'
 log_tables	LENIENT 1556	eb8275a73df3	lock tables general_log read local, help_category read local
-log_tables	DIFF column type binary->string	228ee5bce168	select * from renamed_general_log
-log_tables	DIFF column type binary->string	9b9e01697c93	select * from renamed_slow_log
 log_tables	STRICT 1146	914d90b24e93	call `db_17876.archiveSlowLog`()
 log_tables	STRICT 1146	d40228310b76	call `db_17876.archiveGeneralLog`()
-log_tables_myisam	DIFF column type binary->string	2e3d9f2760f7	select * from general_log
-log_tables_myisam	DIFF column type binary->string	232c39c16f33	select * from slow_log
 lowercase_table	LENIENT 1054	2afab712b8cc	select count(T1.a) from t1
 lowercase_table	LENIENT 1054	895ee2305e55	select count(bags.a) from t1 as Bags
 lowercase_table	LENIENT 1109	3e7ae8d41a9f	delete p1.*,P2.* from t1 as p1, t2 as p2 where p1.a=P2.a
@@ -1194,7 +1148,6 @@ multi_update_innodb	LENIENT 1706	b2143adb2aa1	UPDATE t2 AS A NATURAL JOIN t2 B S
 multi_update_innodb	RUNTIME 1264	401a13a3cdfa	UPDATE (SELECT 128 as col1) x, table_11757486 SET field1=x.col1
 multi_update_myisam	RUNTIME 1264	401a13a3cdfa	UPDATE (SELECT 128 as col1) x, table_11757486 SET field1=x.col1
 myisam	LENIENT 1099	5b86cc54b9aa	INSERT INTO t2 VALUES ('test000001'), ('test000005')
-myisam	DIFF column type string->binary	7a3494318325	select * from t1 where bob is null and cip=1
 myisam	LENIENT 1099	c6770912870a	insert into t1 values(6),(7)
 myisam	LENIENT 1099	e59075683b72	insert into t1 (a) values(6),(7)
 mysqlbinlog	LENIENT 13	22b4c8780b8e	load data infile '../../std_data/words.dat' into table t1
@@ -1471,7 +1424,6 @@ partition_locking	LENIENT 1748	613395965e1c	CALL sp_insert_partition("p8", 111, 
 partition_locking	LENIENT 1146	60f251c8bd12	INSERT INTO t1 VALUES (1)
 partition_order	DIFF column type double unsigned->double	64d695038816	select * from t1 force index (b) where b > 0 order by b
 partition_order	DIFF column type float unsigned->float	64d695038816	select * from t1 force index (b) where b > 0 order by b
-partition_order	DIFF column type binary->string	362a343b4098	select * from t1 force index (b) where b > '0' order by b
 partition_pruning	SCHEMA problems: PARTITION LIST: definition not understood	36c5f35d164e	INSERT INTO t1 VALUES (1, 1, 1, 1), (2, 3, 1, 1)
 partition_range	LENIENT 1526	1cc48b89efd3	INSERT into t1 values (15, 1, 1)
 partition_range	SCHEMA problems: PARTITION RANGE: definition not understood	d7728f67202e	SELECT * from t1
@@ -1538,7 +1490,6 @@ ps	RUNTIME 1265	9dd59e0f1c86	INSERT INTO dbls VALUES (@spaces)
 ps	RUNTIME 1265	4c3ea92d1e80	INSERT INTO flts VALUES (@spaces)
 ps_1general	DIFF column type string->bigint	eeca0b160f57	select '2' || '3'
 ps_1general	DIFF column name	9886c44114c9	select @string as ""
-ps_type_deduction	DIFF column type string->binary	61b553f38b37	select length(a), a from t3
 ps_type_deduction	STRICT 1146	c1212a6eb675	select length(a), a=@b from t4
 query_attributes	STRICT 1305	9f82c0fdcdd7	SELECT mysql_query_attribute_string('a')
 query_attributes	STRICT 1305	6ed2af8c6116	SELECT mysql_query_attribute_string('a'), mysql_query_attribute_string('c')
@@ -1803,7 +1754,6 @@ sensitive_variables_permission	LENIENT 1238	7d93dd6771f4	SELECT @@session.test_c
 sensitive_variables_permission	LENIENT 1193	26b926df1519	SELECT @@session.debug_sensitive_session_string INTO @save_debug_sensitive_session_string
 sensitive_variables_rewrite	LENIENT 1193	26b926df1519	SELECT @@session.debug_sensitive_session_string INTO @save_debug_sensitive_session_string
 session_tracker_trx_state	LENIENT 1792	b8787742eb7a	INSERT INTO t1 VALUES(1)
-show_check_cs_myisam	DIFF column type string->binary	055b08222849	select * from t1
 signal	LENIENT 65535	1938582414b8	call test_signal()
 signal	LENIENT 1231	1938582414b8	call test_signal()
 signal	LENIENT 9999	1938582414b8	call test_signal()
@@ -2060,7 +2010,6 @@ strict	RUNTIME 1406	a04f70539c24	insert into t1 (binarycol) values (repeat('x',2
 strict	RUNTIME 1406	a0d64b947738	insert into t1 (varbinarycol) values (repeat('x',256))
 strict	RUNTIME 1406	5162a4320d94	insert into t1 (tinytextcol) values (repeat('x',256))
 strict	RUNTIME 1406	74fe77b0fac3	insert into t1 (tinyblobcol) values (repeat('x',256))
-strict	DIFF column type binary->string	055b08222849	select * from t1
 strict	RUNTIME 1292	f1c4aafe1e5f	insert into t1 select * from t1
 strict	RUNTIME 1364	3eb4d0be2024	INSERT INTO t1 VALUES (DEFAULT)
 strict	RUNTIME 1364	935d23867fc8	INSERT INTO t1 VALUES (DEFAULT(i))
@@ -2097,7 +2046,6 @@ subquery_scalar_to_derived_correlated	STRICT 1056	45a3b9dad918	SELECT
 subquery_table_to_derived	LENIENT 1267	0786c04b7fea	SELECT col
 subselect	LENIENT 3037	854cce12c5a5	SELECT * FROM (SELECT ST_EXTERIORRING(1)) AS t1, (SELECT 1) AS t2
 subselect_debug	RUNTIME 1242	bcc587010314	SELECT ((SELECT 1 FROM t1) IN (SELECT 1 FROM t1)) - (11111111111111111111)
-subselect_innodb	DIFF column type string->binary	eadf17b672df	SELECT t2.*, t4.DOCTYPENAME, t1.CONTENTSIZE,t1.MIMETYPE FROM t2 INNER JOIN t4 ON t2.DOCTYPEID = t4.D
 tablelock	LENIENT 1422	3fc1e2aa76a6	SELECT f1()
 tablesample	LENIENT 3889	caff43402cf2	SELECT * FROM t3 TABLESAMPLE SYSTEM (100)
 tablesample	LENIENT 6107	09d4783143ee	SELECT * FROM t3 TABLESAMPLE SYSTEM (101)
@@ -2106,7 +2054,6 @@ temporal_literal	LENIENT 1525	cde151717647	SELECT TIME'0000-00-00 00:00:00'
 temporal_literal	LENIENT 1525	05cd7eb86c05	SELECT TIMESTAMP'2001-00-00 00:00:00.9999999'
 temporal_literal	LENIENT 1525	5f9046242542	SELECT TIMESTAMP'2001-00-01 00:00:00.9999999'
 temporal_literal	LENIENT 1525	6e47fc83538a	SELECT TIMESTAMP'2001-01-00 00:00:00.9999999'
-temptable_disk	DIFF column type string->binary	37a30f63aa4e	SELECT * FROM
 test_mysql_thd_store_service	STRICT 1305	7c67cc66902d	SELECT test_thd_store_service_function()
 time_zone	DIFF column type string->datetime	16188fdefd66	SELECT TIMESTAMP( '2003-12-31 23:59:59+02:00', '12:00:00' )
 time_zone	DIFF column type decimal->bigint	c8860906aabb	SELECT UNIX_TIMESTAMP( '2015-11-13 23:59:59+02:00' )
@@ -2206,8 +2153,6 @@ type_bit_myisam	RUNTIME 1406	6db666ee1216	insert into t1 values (b'00'), (b'01')
 type_bit_myisam	DIFF column type bigint unsigned->int unsigned	ab1f7aa24e51	select a1, a2, b1+0, b2+0 from t1 join t2 on a1 = a2 order by a1
 type_bit_myisam	DIFF column type bigint unsigned->int unsigned	77a6e893b24e	select sum(a1), b1+0, b2+0 from t1 join t2 on b1 = b2 group by b1 order by 1
 type_bit_myisam	DIFF column type bigint unsigned->int unsigned	81e67a81ef80	select b1+0,sum(b1), sum(b2) from t1 join t2 on b1 = b2 group by b1 order by 1
-type_blob	DIFF column type string->binary	0f3d15790640	select foobar, boggle from t1 where foobar = 'fish'
-type_blob	DIFF column type string->binary	f56d44867ecb	select foobar, boggle from t1 where foobar = 'fish' and boggle = 10
 type_blob	LENIENT 1210	d4acb9c118a0	SELECT c1,ST_Astext(c4) FROM tab WHERE c4<@g1
 type_blob	LENIENT 1210	12bb33f442a0	SELECT c1,ST_Astext(c4) FROM tab WHERE c4>@g1+3
 type_blob	LENIENT 1210	ba041455db75	select min(c2) from tab
@@ -2221,7 +2166,6 @@ type_date	RUNTIME 1441	ff192b999e89	INSERT INTO t1 VALUES
 type_date	RUNTIME 1292	a1845d652cd3	INSERT INTO t1 VALUE(15.00+adddate('2011-00-00', 1))
 type_datetime	RUNTIME 1292	49ecae2e588f	UPDATE test.t SET `col_datetime_key` = `col_datetime_key` WHERE
 type_decimal	DIFF column type decimal unsigned->decimal	055b08222849	select * from t1
-type_decimal	DIFF column type binary->string	055b08222849	select * from t1
 type_float	DIFF column type double unsigned->double	055b08222849	select * from t1
 type_float	LENIENT 1367	5d965805b0cf	INSERT INTO d1 VALUES (1.79769313486232e+308)
 type_float	RUNTIME 1264	ed5544271f4d	INSERT INTO t5u VALUES('1e+52')
@@ -2246,7 +2190,6 @@ type_newdecimal	RUNTIME 1690	ca47f1f29490	SELECT * FROM t ORDER BY (a-b)
 type_newdecimal	LENIENT 3146	da82ef831078	SELECT -1 DIV LEAST(1,JSON_INSERT(1, '$[1]','','',''))
 type_newdecimal	RUNTIME 3854	9e5721866407	WITH RECURSIVE cte1 AS (
 type_ranges	DIFF column type smallint->smallint unsigned	c98e583a7222	select auto,string,tiny,short,medium,long_int,longlong,real_float,real_double,utiny,ushort,umedium,u
-type_ranges	DIFF column type string->binary	4af7b8be5573	select * from t2
 type_set	STRICT 1265	62a8d6c492f6	INSERT INTO bar VALUES ("100")
 type_temporal_fractional	LENIENT 1426	3d1d317ee62a	SELECT CURTIME(7)
 type_temporal_fractional	LENIENT 1426	4645616c2c3e	SELECT CURTIME(31)
@@ -2305,7 +2248,6 @@ update	LENIENT 1175	79d05c7a3091	UPDATE IGNORE v1 SET a = 1
 update	LENIENT 1356	a52607f91157	UPDATE v1 SET pk = 7 WHERE pk > 0
 update	RUNTIME 1292	421451b30fad	UPDATE t1 SET a=1 ORDER BY CAST('invalid' AS DATETIME)
 update	RUNTIME 1406	b90bd1424cd5	UPDATE t1 SET c1 = c2 WHERE i = 0
-update	DIFF column type binary->string	3abd07b0a7e7	SELECT * FROM t1
 user_lock	LENIENT 3057	faf54644e6e7	SELECT GET_LOCK(NULL, 0)
 user_lock	LENIENT 3057	64320e0b2a96	SELECT GET_LOCK("", 0)
 user_lock	LENIENT 3057	31bbb25c9308	SELECT RELEASE_LOCK(NULL)
@@ -2538,7 +2480,6 @@ window_functions_bugs	DIFF column type int->bigint	f86d557dc932	SELECT a, PERCEN
 window_functions_bugs	DIFF column type int->bigint	dccfa60b121e	SELECT a, PERCENT_RANK() OVER w1 FROM v GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
 window_functions_bugs	RUNTIME 1690	15f8239dce83	SELECT ((EXP(0x6108))DIV(LAG(NULL,21,' 4F')OVER()))
 window_functions_bugs	RUNTIME 1690	f389d4981be5	SELECT ((FIRST_VALUE(EXP(0x41a129))OVER())DIV(-969))
-window_functions_bugs	DIFF column type binary->string	eb9b41ceace0	SELECT FIRST_VALUE(c) OVER w fv, LAST_VALUE(c) OVER w lv
 window_functions_bugs	DIFF nullable false->true	2b01efcf19c8	SELECT EXISTS
 window_functions_bugs	RUNTIME 1690	a34229f3c3c6	SELECT b, CUME_DIST() OVER (
 window_functions_bugs	DIFF column type bigint->int	2977eea0482c	SELECT a, COUNT(a) OVER w, LAG(1,13) RESPECT NULLS OVER w
@@ -2550,7 +2491,6 @@ window_functions_bugs	LENIENT 3141	61b2c4b35b4d	SELECT JSON_ARRAY(NTH_VALUE(CAST
 window_functions_bugs	LENIENT 3141	299429a58bcc	SELECT JSON_ARRAY(LEAD(CAST('true' AS JSON), 2, CAST('' AS JSON)) OVER (), '')
 window_functions_bugs	LENIENT 3141	f610bb99955d	SELECT JSON_ARRAY(JSON_ARRAYAGG(CAST('' AS JSON)) OVER (), '')
 window_functions_bugs	DIFF nullable true->false	b300708812c6	SELECT
-window_functions_bugs	DIFF column type binary->string	549132f990c2	SELECT
 window_functions_bugs	DIFF column type bigint->int	1118f232f41b	SELECT DISTINCT
 window_functions_bugs	DIFF column type int->bigint	8b5f344469a3	SELECT f1, f2, DENSE_RANK() OVER (ORDER BY f1), RANK() OVER (ORDER BY f1)
 window_jsonaggs	DIFF column type int->bigint	f9e059b675d8	SELECT i, f, JSON_ARRAYAGG(i) OVER w jarray_i, JSON_ARRAYAGG(f)

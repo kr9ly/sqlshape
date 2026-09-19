@@ -133,9 +133,23 @@ func TypeOf(v mysqlast.Value) (Type, error) {
 			t.Charset = ""
 		}
 	case "PT_blob_type":
-		t.Name = blobName(str(n.Arg("blob_type")), n.Arg("charset") != nil)
+		// the grammar tells the BLOB family from the TEXT one by the charset its action
+		// passes: my_charset_bin for TINYBLOB / MEDIUMBLOB / LONGBLOB / LONG VARBINARY,
+		// the written charset -- none for none -- for TINYTEXT / MEDIUMTEXT / LONGTEXT /
+		// LONG [VARCHAR]. A TEXT variant declared CHARACTER SET binary is the blob again,
+		// as the server stores it (measured: SHOW CREATE spells it tinyblob); plain
+		// BLOB [(n)] is the one alternative with no Blob_type at all. TINYTEXT BINARY
+		// stays text (the binary collation, not the binary charset).
+		cs := charsetName(n.Arg("charset"))
+		if bt := str(n.Arg("blob_type")); bt == "" {
+			t.Name = "blob"
+		} else {
+			t.Name = blobName(bt, cs != "binary")
+		}
+		if cs != "binary" {
+			t.Charset = cs
+		}
 		t.Length = intOr(n.Arg("length"), -1)
-		t.Charset = charsetName(n.Arg("charset"))
 		t.Binary = isTrue(n.Arg("force_binary"))
 	case "PT_time_type":
 		t.Name = enumName(str(n.Arg("time_type")))
