@@ -206,6 +206,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 		a.paramsFromOthers([]mysqlast.Value{n.Arg("left"), n.Arg("right")}, ts, "")
 		a.paramSources(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")})
+		if e := a.compareConstString(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")}, ts, "cmp"); e != nil {
+			return unknown, e
+		}
 		if op, _ := n.Arg("boolfunc2creator").(mysqlast.Op); op == "<=>" {
 			// Item_func_equal::resolve_type's set_nullable(false): NULL <=> NULL is 1
 			return boolean(false), nil
@@ -219,6 +222,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 		a.paramsFromOthers(list, ts, "")
 		a.paramSources(sc, list)
+		if e := a.compareConstString(sc, list, ts, "in"); e != nil {
+			return unknown, e
+		}
 		return boolean(anyNullable(ts)), nil
 	case "Item_func_between", "Item_func_like", "Item_func_strcmp":
 		args := exprArgs(n)
@@ -231,6 +237,11 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 		}
 		a.paramsFromOthers(args, ts, "")
 		a.paramSources(sc, args)
+		if n.Class == "Item_func_between" {
+			if e := a.compareConstString(sc, args, ts, "between"); e != nil {
+				return unknown, e
+			}
+		}
 		return boolean(anyNullable(ts)), nil
 	case "Item_cond_and", "Item_cond_or", "Item_func_xor":
 		ts, err := a.condArgs(sc, n, where)
@@ -385,6 +396,9 @@ func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error)
 			return unknown, a.geometryRejected(operatorName(n.Class), n.Start)
 		}
 		a.paramsFromOthers(exprArgs(n), ts, "LONGLONG")
+		if e := a.bitOpStringOperand(sc, n, where); e != nil {
+			return unknown, e
+		}
 		t := known("bigint", anyNullable(ts))
 		t.typ.Unsigned = true
 		return t, nil

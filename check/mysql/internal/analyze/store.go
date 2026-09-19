@@ -76,6 +76,9 @@ func (a *analyzer) literalStore(col *schema.Column, v mysqlast.Value, row int) *
 	fail := func(code int, msg string) *Error {
 		return &Error{Message: fmt.Sprintf("%s for column '%s' at row %d", msg, col.Name, row), Code: code, Position: at}
 	}
+	if n.Class == "PTI_temporal_literal" {
+		return a.temporalLiteralStore(col, n, row)
+	}
 	num, isNum := numericLiteral(n)
 	str, isStr := stringLiteral(n)
 	if !isNum && !isStr {
@@ -185,8 +188,14 @@ func (a *analyzer) literalStore(col *schema.Column, v mysqlast.Value, row int) *
 			if !strToDatetime(str, flags, &tm, &warn) || warn&(timeWarnTruncated|timeWarnOutOfRange|timeWarnZeroDate|timeWarnZeroInDate) != 0 {
 				return fail(1292, fmt.Sprintf("Incorrect %s value: '%s'", temporalWord(t.Name), str))
 			}
+			// a displacement over a zero month or day fails the time zone conversion even
+			// where the flags allowed the parse, with the conversion's own message
+			// (measured with NO_ZERO_IN_DATE off)
+			if tm.hasTZ && (tm.month == 0 || tm.day == 0) {
+				return &Error{Message: fmt.Sprintf("Truncated incorrect temporal value: '%s'", displacedSpelling(tm)), Code: code1292, Position: at}
+			}
 		}
-		if t.Name == "timestamp" && tm.year != 0 && !timestampInRange(tm) {
+		if t.Name == "timestamp" && !zeroDate(tm) && !timestampInRange(roundTimestampFrac(tm, t.Dec)) {
 			// the TIMESTAMP range, 1970-01-01 00:00:01 to 2038-01-19 03:14:07 UTC: exact when
 			// the literal carries a time zone displacement, otherwise judged only where the
 			// session's time zone (within +-14 hours) cannot move the verdict
@@ -249,6 +258,47 @@ func (a *analyzer) literalStore(col *schema.Column, v mysqlast.Value, row int) *
 	return nil
 }
 
+// temporalLiteralStore judges a DATE'...' / TIMESTAMP'...' literal stored into a
+// TIMESTAMP column: the value must fit 1970-01-01 00:00:01 .. 2038-01-19 03:14:07 UTC,
+// exactly when the literal carries a time zone displacement (the range is defined in UTC,
+// so no session time zone can move the verdict; measured: TestTemporalLiteralStoreServer),
+// otherwise only where the session's time zone (within +-14 hours) cannot move it. The
+// message spells the literal's own value where the server spells it converted to the
+// session's time zone, which the checker does not know.
+func (a *analyzer) temporalLiteralStore(col *schema.Column, n *mysqlast.Node, row int) *Error {
+	if col.Type.Name != "timestamp" {
+		return nil
+	}
+	ft := strings.TrimPrefix(str(n.Arg("field_type")), "MYSQL_TYPE_")
+	if ft != "DATETIME" && ft != "DATE" {
+		return nil
+	}
+	tok, ok := n.Arg("literal").(mysqlast.Token)
+	if !ok {
+		return nil
+	}
+	var tm mysqlTime
+	var warn int
+	if !strToDatetime(tok.Value, timeFuzzyDate, &tm, &warn) {
+		return nil // the literal's own 1525 check already judged it
+	}
+	tm = roundTimestampFrac(tm, col.Type.Dec)
+	if !zeroDate(tm) && !timestampInRange(tm) {
+		// an UPDATE's SET stores per matched row: no row, no failure (measured), so the
+		// checker lists the violation there instead of failing the statement
+		if a.foldPerRow {
+			table := ""
+			if a.write != nil && a.write.table != nil {
+				table = a.write.table.Name
+			}
+			a.storeRaised = append(a.storeRaised, Violation{Code: code1292, Constraint: itoa(code1292), Table: table, SQLState: constraintSQLState(code1292)})
+			return nil
+		}
+		return &Error{Message: fmt.Sprintf("Incorrect datetime value: '%s' for column '%s' at row %d", tok.Value, col.Name, row), Code: code1292, Position: a.ph.Back(n.Start)}
+	}
+	return nil
+}
+
 // temporalLiteral is item_create.cc's create_temporal_literal check on a DATE'...' /
 // TIME'...' / TIMESTAMP'...' literal: the value must parse as exactly the named type with
 // no warning, under TIME_FUZZY_DATE plus the sql_mode's NO_ZERO_IN_DATE / NO_ZERO_DATE /
@@ -270,6 +320,14 @@ func (a *analyzer) temporalLiteral(typ, value string, start int) *Error {
 		ok = strToDatetime(value, flags, &tm, &warn) && warn == 0 && tm.fields > 3
 	}
 	if ok {
+		// a displacement over a zero month or day fails the time zone conversion whatever
+		// the sql_mode allows the parse: 1292 "Truncated incorrect temporal value", the
+		// datetime respelt without its fraction and the displacement's hour unpadded
+		// (measured with NO_ZERO_IN_DATE off: TIMESTAMP '2020-00-01 08:00:00.123456+00:00'
+		// -> '2020-00-01 08:00:00+0:00'; under the default mode the parse above fails first)
+		if tm.hasTZ && (tm.month == 0 || tm.day == 0) {
+			return &Error{Message: fmt.Sprintf("Truncated incorrect temporal value: '%s'", displacedSpelling(tm)), Code: code1292, Position: a.ph.Back(start)}
+		}
 		return nil
 	}
 	return &Error{Message: fmt.Sprintf("Incorrect %s value: '%s'", word, value), Code: 1525, Position: a.ph.Back(start)}
@@ -277,12 +335,17 @@ func (a *analyzer) temporalLiteral(typ, value string, start int) *Error {
 
 // dateFlags is Field_*::date_flags for a column type under the schema's sql_mode: a DATE /
 // DATETIME is fuzzy (a 0 month or day is allowed unless NO_ZERO_IN_DATE), a TIMESTAMP never
-// is; NO_ZERO_DATE and ALLOW_INVALID_DATES follow the mode.
+// is and never honors ALLOW_INVALID_DATES (it stores a real moment; measured: under
+// STRICT_ALL_TABLES,ALLOW_INVALID_DATES a DATETIME takes '2004-02-30 15:30:04' and a
+// TIMESTAMP refuses it); NO_ZERO_DATE and ALLOW_INVALID_DATES otherwise follow the mode.
 func (a *analyzer) dateFlags(typ string) timeFlags {
 	mode := a.s.Settings.SQLMode.Expand()
 	var f timeFlags
 	if typ != "timestamp" {
 		f |= timeFuzzyDate
+		if mode.Has(sqlmode.AllowInvalidDates) {
+			f |= timeInvalidDates
+		}
 	} else {
 		f |= timeNoZeroInDate
 	}
@@ -292,10 +355,43 @@ func (a *analyzer) dateFlags(typ string) timeFlags {
 	if mode.Has(sqlmode.NoZeroInDate) {
 		f |= timeNoZeroInDate
 	}
-	if mode.Has(sqlmode.AllowInvalidDates) {
-		f |= timeInvalidDates
-	}
 	return f
+}
+
+// zeroDate says the date part is the fully zero one, which a TIMESTAMP stores as the zero
+// timestamp without a range check; a year 0 over a real month and day is range-checked
+// (measured: '0000-10-31 15:30:00' into a TIMESTAMP is 1292).
+func zeroDate(tm mysqlTime) bool {
+	return tm.year == 0 && tm.month == 0 && tm.day == 0
+}
+
+// roundTimestampFrac rounds a datetime's fractional seconds to the column's precision,
+// half up, before the TIMESTAMP range check: the carry can move the seconds (measured:
+// TIMESTAMP'1970-01-01 00:00:00.999999+00:00' into a TIMESTAMP is 1970-01-01 00:00:01 and
+// stored, while .000001 rounds down and stays out of range).
+func roundTimestampFrac(tm mysqlTime, dec int) mysqlTime {
+	if dec < 0 {
+		dec = 0
+	}
+	if dec >= 6 || tm.secondPart == 0 {
+		return tm
+	}
+	step := uint(1)
+	for i := dec; i < 6; i++ {
+		step *= 10
+	}
+	rem := tm.secondPart % step
+	tm.secondPart -= rem
+	if rem*2 >= step {
+		tm.secondPart += step
+		if tm.secondPart >= 1000000 {
+			tm.secondPart = 0
+			t := time.Date(int(tm.year), time.Month(tm.month), int(tm.day), int(tm.hour), int(tm.minute), int(tm.second), 0, time.UTC).Add(time.Second)
+			tm.year, tm.month, tm.day = uint(t.Year()), uint(t.Month()), uint(t.Day())
+			tm.hour, tm.minute, tm.second = uint(t.Hour()), uint(t.Minute()), uint(t.Second())
+		}
+	}
+	return tm
 }
 
 // timestampInRange says a non-zero datetime fits a TIMESTAMP column (see literalStore).

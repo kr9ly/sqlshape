@@ -113,13 +113,14 @@ func wrapErr(err error) error {
 		}
 	case 1644, 1643: // SIGNAL / RESIGNAL (ER_SIGNAL_EXCEPTION, ER_SIGNAL_NOT_FOUND)
 		c.Key = string(me.SQLState[:])
-	case 1442, 1172, 1416, 1690: // a trigger (or a called routine) writing a table already in
+	case 1442, 1172, 1416, 1690, 1292: // a trigger (or a called routine) writing a table already in
 		// use up the invoking statement's chain; SELECT ... INTO with more than one row; a
 		// geometry of another type than the spatial column's; a constant the server cannot
-		// compute, run per row -- the checker's own model (violations.go, call.go, geom.go,
+		// compute, run per row; a constant cast or conversion the value does not survive,
+		// in a strict write -- the checker's own model (violations.go, call.go, geom.go,
 		// fold.go) has no constraint name for any of them, so it keys them by their own
 		// error number (Constraint: strconv.Itoa(code)), and Violates(err, "1442" / "1172" /
-		// "1416" / "1690") matches that key back here.
+		// "1416" / "1690" / "1292") matches that key back here.
 		c.Key = strconv.Itoa(int(me.Number))
 	default:
 		if strings.HasPrefix(string(me.SQLState[:]), "45") {

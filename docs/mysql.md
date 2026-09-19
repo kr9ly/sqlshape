@@ -236,6 +236,55 @@ Not a failure mode here: a length, range or `ENUM` value truncation (1265 / 1406
 1264). It is a property of the type (a parameter's Go type, a literal's own value set), caught
 on that side.
 
+### Constant conversions
+
+A strict `INSERT` / `REPLACE` / `UPDATE` / `DELETE` (outside `IGNORE`) escalates a constant
+conversion's warning to the error 1292 `ER_TRUNCATED_WRONG_VALUE`; a `SELECT`, a `SET`, a `DO`
+or a non-strict write runs the same expression with a warning, rows present or not (all
+measured against mysqld):
+
+| expression | fails when |
+|---|---|
+| `CAST` / `CONVERT` of a constant to `DATE` / `DATETIME` | the value is no datetime under the session's zero-date flags (`CAST('2004-10-0' AS DATE)`, `CAST(65 AS DATETIME)`) |
+| ... to `TIME` | `str_to_time` rejects it or it passes 838 hours |
+| ... to `YEAR` | the leading integer of the string is followed by anything (`'2020extra'`, `'2020.5'`), or the value is outside 0-99 and 1901-2155; a string with no digits at all is 0 without a warning |
+| ... to `CHAR(n)` | the value's string form is longer than n (`CAST(1000 AS CHAR(3))`) |
+| ... to `SIGNED` / `UNSIGNED` | the string is not a whole integer (`'abc'`, `'1.5'`, `'1e2'`) or its magnitude passes `BIGINT UNSIGNED`; a decimal outside the range |
+| ... to `DOUBLE` / `FLOAT` / `DECIMAL` | the string holds no number, has a tail, or overflows the double parse (`'1e999'`) |
+| `TIMESTAMP(x)` of a constant | x is no datetime (a time-only string, `TIMESTAMP('0000-00-00 10:00:00')` where the mode forbids it) |
+| a string operand of `+` `-` `*` `/` | it holds no full number (`10E+0 + 'a'`; `''` is 0 silently) |
+| a string operand of a bit operator | it is not a whole integer (`1 >> ''`) |
+| a numeric column compared with a constant string | the string holds no number (`WHERE i = '1invalid'`; `''`, `' 1'`, `'1e1'`, `'1.5'` all pass); a `BETWEEN` runs per row instead |
+
+The failure lands where the 1690 above lands — an `INSERT ... VALUES` value or a bare
+condition term is the statement's error, an `UPDATE`'s `SET` or a select item over a `FROM`
+the failure mode `1292` (`mysql.Violates(err, "1292")`) — except that a comparison's constant
+operand always runs per row, so `WHERE d = CAST('2004-10-0' AS DATE)` is the violation, not
+the error.
+
+Two conversions fail whatever the statement and the mode:
+
+- a `DATE` / `DATETIME` / `TIMESTAMP` value compared with a constant string that is no
+  datetime is the statement's 1525 `Incorrect DATETIME value` wherever the comparison sits —
+  a select item, a `JOIN`'s `ON`, a `HAVING`, an `ORDER BY` / `GROUP BY` item, a dead branch —
+  and in a strict write the store-shaped 1292 instead (`BETWEEN` and `IN` do not convert
+  eagerly; a `TIME` or `YEAR` column is not this rule);
+- a datetime string or literal carrying a time zone displacement over a zero month or day
+  fails the displacement conversion: 1292 `Truncated incorrect temporal value`.
+
+A `DATE'...'` / `TIMESTAMP'...'` literal stored into a `TIMESTAMP` column must fit 1970-01-01
+00:00:01 to 2038-01-19 03:14:07.999999 UTC — exact when the literal writes a displacement (the
+range is defined in UTC), otherwise judged only where the session time zone cannot move the
+verdict; the fractional seconds round to the column's precision first, and the carry counts
+(`TIMESTAMP'1970-01-01 00:00:00.999999+00:00'` into a `TIMESTAMP(0)` is 00:00:01, stored). A
+`TIMESTAMP` column ignores `ALLOW_INVALID_DATES` and range-checks a year 0 over a real month
+and day, where a `DATETIME` accepts both.
+
+Not read: a function's result stored (`STR_TO_DATE(...)`), a temporal cast's value carried
+into the column store, an `UPDATE`'s `ORDER BY` constant, a scalar subquery's constant
+compared with a temporal column, a column `DEFAULT` the current mode cannot store, a `TIME`
+column's own per-row string conversion.
+
 ### Triggers and stored routines
 
 The loader reads `CREATE TRIGGER` / `CREATE PROCEDURE` / `CREATE FUNCTION` (`DEFINER`,

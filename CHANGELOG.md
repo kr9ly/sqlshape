@@ -57,48 +57,19 @@ release it is a candidate for.
   running mysqld and the analyzer side by side (`check/mysql/internal/analyze`'s corpus probe,
   the counterpart of PostgreSQL's regress probe): each file on a server of its own, the
   analyzer's schema rebuilt from `SHOW CREATE` after every DDL under the session's `sql_mode`,
-  a SELECT's columns compared by name, type family and nullability, an error by number. The
-  first run agrees on 44,342 statements and lists 4,605 disagreements as the baseline the next
-  rounds work down; two analyzer crashes it found (a routine variable shadowing the column an
-  INSERT or UPDATE in the body assigns) are fixed. The second round fixes what its largest
-  classes were: a window function's integer widens through the window's temporary table
-  (`INT` / `BIGINT` to `BIGINT`, narrower to `INT`, `YEAR` to `INT UNSIGNED`), `USER()` /
-  `CURRENT_USER()` / `DATABASE()` / `SCHEMA()` / `CURRENT_ROLE()` are character strings,
-  `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literals are typed and never NULL, `<=>` is never
-  NULL, a `ROLLUP` constant stays `NOT NULL`, `SELECT ... INTO @var` returns no columns in
-  either position (a body's trailing `INTO` now counts as an INTO too), and `INSERT INTO t
-  VALUES ()` inserts a row of defaults instead of 1136; the probe itself stops judging a file in
-  a legacy encoding, a statement after a DDL under `LOCK TABLES`, a `CALL` whose body reads a
-  system schema or a temporary table, a `db.routine()` call, and a column name the
-  connection's character set rewrote. The third round adds the literal store rules: a
-  literal a column can never keep -- an integer out of range, a string that is no number, a
-  date `str_to_datetime` rejects under the `sql_mode`, a `TIME` past 838 hours, a string
-  longer than the column, an `ENUM` / `SET` member that does not exist, a number or a string
-  into a spatial column -- is the statement's own error with the server's number and message
-  (1264 / 1265 / 1292 / 1366 / 1406 / 1416), in strict mode and outside `IGNORE`; 144 such
-  stores are pinned against mysqld. A prefix key (`UNIQUE (c(10))`) or an expression key
-  (`UNIQUE ((n * 2))`) is now a violable key (1062) for the writes that assign its columns,
-  and a `DATE'...'` / `TIME'...'` / `TIMESTAMP'...'` literal the server cannot read as that
-  type is the statement's 1525; the corpus baseline falls to 3,525. The spatial types get
-  their rules: a value's geometry type is known from a constructor, a typed reader or a
-  constant, and with it the checker refuses what the server's WKT / WKB readers refuse (3037,
-  3516 for the typed readers, 1690 for an SRID out of range), the constructors' argument types
-  and counts (1210 / 3037), a geometry given to an arithmetic or numeric function (1210), and a
-  value stored into a spatial column that is not the internal format of the column's type
-  (1416, whatever the `sql_mode`); a nullable geometry of another type stored into a typed
-  column is the failure mode `1416`, which `Violates` matches; the corpus baseline falls to 3,215.
-  The fifth round evaluates constant arithmetic as the server does: an integer operator whose
-  exact result does not fit its `BIGINT` / `BIGINT UNSIGNED`, an infinite `DOUBLE`, a
-  function's `DOUBLE` cast to an integer it does not fit, a `RANDOM_BYTES` length out of range
-  is the statement's 1690 where the optimizer folds it (a condition, a query without a `FROM`,
-  `INSERT ... VALUES`) and the failure mode `1690` where it runs per row (a select item over a
-  `FROM`, an `UPDATE`'s `SET`), with the server's own laziness (`1 = 0 AND x`, an `IF`'s dead
-  branch, `x IS NULL` over a never-NULL x) respected; the select list's aliases are visible in
-  `GROUP BY` / `ORDER BY` / `HAVING` expressions and to a nested query the server lets see them
-  (1247 for a forward reference or an aggregate's alias, 3594 for a window function's),
-  `HAVING` reads an enclosing block's columns and never the block's own tables, `_rowid` names a
-  table's first unique integer key, and `INSERT ... SELECT ... ON DUPLICATE KEY UPDATE` sees the
-  `SELECT`'s tables; the corpus baseline falls to 3,050 (hits 3,768 -> 3,589).
+  a SELECT's columns compared by name, type family and nullability, an error by number; the
+  remaining disagreements are pinned as a baseline.
+- The run-time failures MySQL decides by a value are judged (each measured against mysqld;
+  the rules are docs/mysql.md's): a literal a column can never store (1264 / 1265 / 1292 /
+  1366 / 1406 / 1416, in strict mode outside `IGNORE`), a temporal literal the server cannot
+  read as its type (1525) or a `TIMESTAMP` column cannot hold, a value that is not the
+  spatial column's internal format and the other geometry rules (1210 / 3037 / 3516 / 1416),
+  constant arithmetic the server cannot compute (1690), and the constant conversions a
+  strict write escalates (1292; a temporal column compared with a constant string is 1525
+  whatever the statement). Each is the statement's own error where the server evaluates it
+  before reading rows, and a failure mode `Violates` matches (`"1416"`, `"1690"`, `"1292"`)
+  where it runs per row. A prefix key (`UNIQUE (c(10))`) or an expression key
+  (`UNIQUE ((n * 2))`) is a violable key (1062) for the writes that assign its columns.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.
 - `postgres.WrapError(err)` and `mysql.WrapError(err)` give an error from a statement run

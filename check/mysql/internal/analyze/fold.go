@@ -56,10 +56,26 @@ import (
 //   - a trigger's or routine's body is not judged (a body's run-time failures are its
 //     raised violations, and the body walk has no row context).
 //
+// This file also evaluates the constant conversions whose warning a strict write escalates
+// to the error 1292 ER_TRUNCATED_WRONG_VALUE (measured in TestConvertServer): a CAST /
+// CONVERT to DATE / DATETIME / TIME / YEAR / CHAR(n) / SIGNED / UNSIGNED / DOUBLE / FLOAT /
+// DECIMAL the value does not survive, TIMESTAMP(x) of a constant that is no datetime, and
+// a string operand of + - * / holding no full number. These fail only in a strict
+// INSERT / REPLACE / UPDATE / DELETE outside IGNORE (strictWriteStmt); a SELECT, a SET, a
+// DO or a non-strict write runs them with a warning, rows present or not. Where the
+// failure lands follows the same rules as the 1690, except that a comparison's (or IN's /
+// LIKE's / BETWEEN's) constant operand always runs per row (measured: UPDATE ... WHERE d =
+// CAST('2004-10-0' AS DATE) runs over an empty table), so it is the violation 1292.
+// convert.go carries the sibling rules for a column compared with a constant string.
+//
 // Ceilings: a comparison whose other side is an aggregate over no rows (NULL) skips the
 // constant; `IN (SELECT c FROM t)` folds c into the rewritten condition and fails even over
 // an empty t; a hex or bit literal operand is not folded (0x1 is a string to +, b'1' an
-// integer); a user variable's value is not known.
+// integer); a user variable's value is not known; an UPDATE's ORDER BY constant is
+// evaluated by the server but dropped here with the other ORDER BY items; a temporal cast's
+// value is not carried into the store checks (CAST('0000-10-31 15:30' AS DATETIME) stored
+// into a TIMESTAMP column fails on the server, unjudged); STR_TO_DATE and the other
+// datetime functions are not evaluated.
 
 type ckind int
 
@@ -82,13 +98,15 @@ type cval struct {
 	fn   bool     // computed by a function or operator, not written as a literal
 }
 
-// foldFail is a 1690 the folding met: the type word of the message ("BIGINT", "BIGINT
-// UNSIGNED", "DOUBLE"), the expression printed, and where it starts.
+// foldFail is a 1690 or a 1292 the folding met: the type word of the message ("BIGINT",
+// "BIGINT UNSIGNED", "DOUBLE"), the expression printed, and where it starts. code is 0 for
+// the 1690 message form; a 1292 carries its whole message in raw and its code here.
 type foldFail struct {
 	kind  string
 	print string
 	at    int
-	raw   string // a whole message, when kind / print do not apply (RANDOM_BYTES)
+	raw   string // a whole message, when kind / print do not apply (RANDOM_BYTES, 1292)
+	code  int    // 0: 1690
 }
 
 func (f *foldFail) message() string {
@@ -96,6 +114,31 @@ func (f *foldFail) message() string {
 		return f.raw
 	}
 	return fmt.Sprintf("%s value is out of range in '%s'", f.kind, f.print)
+}
+
+func (f *foldFail) errCode() int {
+	if f.code != 0 {
+		return f.code
+	}
+	return code1690
+}
+
+// strictWriteStmt: the statement writes rows under strict mode, outside IGNORE and a body.
+// This is the context where the server escalates an evaluation warning -- a constant CAST
+// the value does not survive, a string operand holding no number -- to the error 1292
+// (Truncated incorrect value); a SELECT, a SET, a DO or a non-strict write only warns
+// (measured: the same CAST('2004-10-0' AS DATE) errors in INSERT ... VALUES and runs in
+// SELECT, with rows present too).
+func (a *analyzer) strictWriteStmt() bool {
+	if a.write == nil || a.write.ignore || a.routine != nil || a.trig != nil {
+		return false
+	}
+	mode := a.s.Settings.SQLMode
+	return mode.StrictAll() || mode.StrictTransOnly()
+}
+
+func fail1292(msg string, at int) *foldFail {
+	return &foldFail{raw: msg, at: at, code: 1292}
 }
 
 var (
@@ -204,6 +247,8 @@ func foldable(n *mysqlast.Node) bool {
 		case "ABS", "EXP", "POW", "POWER", "COT", "DEGREES", "ROUND", "RANDOM_BYTES":
 			return true
 		}
+	case "Item_typecast_datetime": // TIMESTAMP(x)
+		return true
 	}
 	return false
 }
@@ -268,6 +313,24 @@ func (a *analyzer) fold(v mysqlast.Value) (c cval, ok bool, fail *foldFail) {
 		return a.foldBinary(n)
 	case "create_func_cast":
 		return a.foldCast(n)
+	case "Item_typecast_datetime":
+		// TIMESTAMP(x) of a constant that is no datetime (a time-only string, a bad number,
+		// a zero date the mode forbids) is the warning 1292, an error in a strict write
+		// (measured: INSERT VALUES (TIMESTAMP('0000-00-00 10:00:00')) fails, the SELECT runs)
+		if !a.strictWriteStmt() {
+			return cval{}, false, nil
+		}
+		x, ok, fail := a.fold(n.Arg("a"))
+		if !ok || fail != nil {
+			return cval{}, false, fail
+		}
+		if x.isNull() {
+			return cval{kind: cNull}, true, nil
+		}
+		if fail := a.datetimeValueFail(x, n.Arg("a")); fail != nil {
+			return cval{}, false, fail
+		}
+		return cval{}, false, nil
 	case "PTI_function_call_generic_ident_sys":
 		return a.foldCall(n)
 	case "PTI_comp_op":
@@ -368,6 +431,22 @@ func (a *analyzer) foldBinary(n *mysqlast.Node) (cval, bool, *foldFail) {
 	real := x.kind == cReal || x.kind == cStr || y.kind == cReal || y.kind == cStr
 	dec := x.kind == cDec || y.kind == cDec
 	unsigned := x.kind == cUint || y.kind == cUint
+	// a string operand of + - * / holds no full number: my_strtod's warning 1292, an error
+	// in a strict write (measured: 10E+0 + 'a' fails INSERT ... VALUES, runs in SELECT and
+	// in a non-strict write; '' is 0 without the warning)
+	if real && a.strictWriteStmt() {
+		switch n.Class {
+		case "Item_func_plus", "Item_func_minus", "Item_func_mul", "Item_func_div":
+			for _, op := range []cval{x, y} {
+				if op.kind != cStr || op.s == "" {
+					continue
+				}
+				if _, tail, good := numericString(op.s); !good || tail {
+					return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect DOUBLE value: '%s'", op.s), n.Start)
+				}
+			}
+		}
+	}
 	failWith := func(kind string) (cval, bool, *foldFail) {
 		return cval{}, false, &foldFail{kind: kind, print: a.printItem(n), at: n.Start}
 	}
@@ -471,6 +550,8 @@ func (a *analyzer) foldCast(n *mysqlast.Node) (cval, bool, *foldFail) {
 	target := castTarget(a, n)
 	switch target {
 	case "SIGNED_INT", "UNSIGNED_INT", "FLOAT", "DOUBLE":
+	case "DATE", "DATETIME", "TIME", "YEAR", "CHAR", "DECIMAL":
+		return a.foldCastValue(n, target)
 	default:
 		return cval{}, false, nil
 	}
@@ -482,16 +563,43 @@ func (a *analyzer) foldCast(n *mysqlast.Node) (cval, bool, *foldFail) {
 		return x, true, nil
 	}
 	switch target {
-	case "FLOAT":
+	case "FLOAT", "DOUBLE":
+		// a string the double parse does not consume whole (junk, or an exponent past the
+		// double range: my_strtod stops) is the warning 1292, an error in a strict write
+		if x.kind == cStr && a.strictWriteStmt() {
+			_, tail, good := numericString(x.s)
+			if !good || tail || math.IsInf(x.asReal(), 0) {
+				return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect DOUBLE value: '%s'", x.s), nodeStart(n.Arg("arg")))
+			}
+		}
+		if target == "DOUBLE" {
+			return cval{kind: cReal, r: x.asReal(), fn: true}, true, nil
+		}
 		r := x.asReal()
 		if math.Abs(r) > math.MaxFloat32 {
 			return cval{}, false, &foldFail{kind: "DOUBLE", print: a.printItem(n), at: n.Start}
 		}
 		return cval{kind: cReal, r: float64(float32(r)), fn: true}, true, nil
-	case "DOUBLE":
-		return cval{kind: cReal, r: x.asReal(), fn: true}, true, nil
 	}
 	unsigned := target == "UNSIGNED_INT"
+	// Item_typecast_signed / _unsigned parse a whole string (my_strtoll10): junk, a
+	// fractional part or a magnitude past BIGINT UNSIGNED is the warning 1292, an error in
+	// a strict write (measured: CAST('abc' AS SIGNED), CAST('1.5' AS SIGNED),
+	// CAST('99999999999999999999' AS SIGNED) all fail INSERT ... VALUES and run in SELECT,
+	// while CAST('-1' AS UNSIGNED) wraps silently); a decimal outside the range is the same
+	// warning spelt DECIMAL. Elsewhere the value is clamped as below.
+	if a.strictWriteStmt() {
+		switch x.kind {
+		case cStr:
+			if i, good := integerString(x.s); !good || new(big.Int).Abs(i).Cmp(uint64Max) > 0 {
+				return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect INTEGER value: '%s'", x.s), nodeStart(n.Arg("arg")))
+			}
+		case cDec:
+			if !fitsInt(roundHalfAway(x.d).Num(), unsigned) {
+				return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect DECIMAL value: '%s'", a.printItem(n.Arg("arg"))), nodeStart(n.Arg("arg")))
+			}
+		}
+	}
 	var i *big.Int
 	switch x.kind {
 	case cInt, cUint:
@@ -526,6 +634,186 @@ func (a *analyzer) foldCast(n *mysqlast.Node) (cval, bool, *foldFail) {
 		i.Set(int64Min)
 	}
 	return intVal(i, unsigned), true, nil
+}
+
+// foldCastValue is CAST(x AS DATE / DATETIME / TIME / YEAR / CHAR(n) / DECIMAL) of a
+// constant, judged only for the failure 1292 in a strict write: the cast's warning is
+// escalated there, while a SELECT, a SET or a non-strict write stores NULL or a clamp with
+// a warning (measured: TestCastValueServer). The value itself is not modeled (ok stays
+// false); an argument this file cannot fold is left alone.
+func (a *analyzer) foldCastValue(n *mysqlast.Node, target string) (cval, bool, *foldFail) {
+	if !a.strictWriteStmt() {
+		return cval{}, false, nil
+	}
+	x, ok, fail := a.fold(n.Arg("arg"))
+	if !ok || fail != nil {
+		return cval{}, false, fail
+	}
+	if x.isNull() {
+		return cval{kind: cNull}, true, nil
+	}
+	at := nodeStart(n.Arg("arg"))
+	spell := a.printItem(n.Arg("arg"))
+	if x.kind == cStr {
+		spell = x.s
+	}
+	switch target {
+	case "DATE", "DATETIME":
+		if fail := a.datetimeValueFail(x, n.Arg("arg")); fail != nil {
+			return cval{}, false, fail
+		}
+	case "TIME":
+		var tm mysqlTime
+		var warn int
+		bad := false
+		if x.kind == cStr {
+			bad = !strToTime(x.s, &tm, &warn) || warn != 0
+		} else {
+			ip := new(big.Int).Quo(x.asDec().Num(), x.asDec().Denom())
+			bad = !ip.IsInt64() || !numberToTime(ip.Int64(), &tm, &warn)
+		}
+		if bad {
+			return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect time value: '%s'", spell), at)
+		}
+	case "YEAR":
+		// Item_typecast_year: a string's leading integer is the year and junk after it or
+		// a fractional part fails, but a string with no digits at all is 0 with no warning
+		// (measured: CAST('abc' AS YEAR) runs, CAST('2020extra' AS YEAR) fails); the value
+		// must be 0-99 (two-digit form) or 1901-2155
+		var v *big.Int
+		bad := false
+		if x.kind == cStr {
+			s := strings.TrimSpace(x.s)
+			i := 0
+			if i < len(s) && (s[i] == '+' || s[i] == '-') {
+				i++
+			}
+			j := i
+			for j < len(s) && isDigit(s[j]) {
+				j++
+			}
+			if j == i {
+				return cval{}, false, nil // no digits: 0, no warning
+			}
+			if j != len(s) {
+				bad = true
+			} else {
+				v, _ = new(big.Int).SetString(s[:j], 10)
+			}
+		} else {
+			v = roundHalfAway(x.asDec()).Num()
+			spell = v.String() // the message spells the value, not the expression
+		}
+		if !bad {
+			bad = v.Sign() < 0 || v.Cmp(big.NewInt(2155)) > 0 || (v.Cmp(big.NewInt(100)) >= 0 && v.Cmp(big.NewInt(1901)) < 0)
+		}
+		if bad {
+			return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect YEAR value: '%s'", spell), at)
+		}
+	case "CHAR":
+		// a value whose string form is longer than the CAST's length (measured: CAST(1000
+		// AS CHAR(3))); a CHAR with no length never cuts (the store's 1406 judges the column)
+		length, okLen := castCharLength(a, n)
+		if !okLen {
+			return cval{}, false, nil
+		}
+		form, okForm := castCharForm(a, n, x)
+		if !okForm {
+			return cval{}, false, nil
+		}
+		if len([]rune(form)) > length {
+			return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect CHAR(%d) value: '%s'", length, form), at)
+		}
+	case "DECIMAL":
+		if x.kind == cStr {
+			if _, tail, good := numericString(x.s); !good || tail {
+				return cval{}, false, fail1292(fmt.Sprintf("Truncated incorrect DECIMAL value: '%s'", x.s), at)
+			}
+		}
+	}
+	return cval{}, false, nil
+}
+
+// datetimeValueFail judges a constant given to CAST(... AS DATE / DATETIME) or
+// TIMESTAMP(...): str_to_datetime / number_to_datetime under the session's zero-date
+// flags; both targets spell the message "datetime" (measured: CAST('2004-10-0' AS DATE)).
+func (a *analyzer) datetimeValueFail(x cval, arg mysqlast.Value) *foldFail {
+	spell := a.printItem(arg)
+	if x.kind == cStr {
+		spell = x.s
+	}
+	var tm mysqlTime
+	var warn int
+	bad := false
+	if x.kind == cStr {
+		bad = !strToDatetime(x.s, a.dateFlags("date"), &tm, &warn) || warn&(timeWarnTruncated|timeWarnOutOfRange|timeWarnZeroDate|timeWarnZeroInDate) != 0
+	} else {
+		ip := new(big.Int).Quo(x.asDec().Num(), x.asDec().Denom())
+		bad = !ip.IsInt64() || ip.Sign() < 0 || !numberToDatetime(ip.Int64(), a.dateFlags("date"), &tm, &warn)
+	}
+	if bad {
+		return fail1292(fmt.Sprintf("Incorrect datetime value: '%s'", spell), nodeStart(arg))
+	}
+	return nil
+}
+
+// integerString parses a whole string as an integer the way my_strtoll10 reads it for an
+// integer cast: optional surrounding spaces and sign, digits, nothing else.
+func integerString(s string) (*big.Int, bool) {
+	s = strings.Trim(s, " \t")
+	if s == "" {
+		return nil, false
+	}
+	i := 0
+	if s[i] == '+' || s[i] == '-' {
+		i++
+	}
+	if i == len(s) {
+		return nil, false
+	}
+	for j := i; j < len(s); j++ {
+		if !isDigit(s[j]) {
+			return nil, false
+		}
+	}
+	v, ok := new(big.Int).SetString(s, 10)
+	return v, ok
+}
+
+// castCharLength is the CAST(x AS CHAR(n))'s length, absent for a plain CHAR and for
+// BINARY (whose message is not measured).
+func castCharLength(a *analyzer, n *mysqlast.Node) (int, bool) {
+	st, ok := n.Arg("type").(*mysqlast.Struct)
+	if !ok {
+		return 0, false
+	}
+	if strings.Contains(str(st.Fields["charset"]), "my_charset_bin") {
+		return 0, false
+	}
+	v, err := strconv.Atoi(strings.Trim(str(st.Fields["length"]), "\""))
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// castCharForm is the string the server would produce for the cast's value: the string
+// itself, an integer's digits, a decimal literal's own text, a double via the shortest
+// round-trip form.
+func castCharForm(a *analyzer, n *mysqlast.Node, x cval) (string, bool) {
+	switch x.kind {
+	case cStr:
+		return x.s, true
+	case cInt, cUint:
+		return x.i.String(), true
+	case cReal:
+		return strconv.FormatFloat(x.r, 'g', -1, 64), true
+	case cDec:
+		if arg, ok := n.Arg("arg").(*mysqlast.Node); ok && arg.Class == "Item_decimal" {
+			return str(arg.Arg("str")), true
+		}
+	}
+	return "", false
 }
 
 // castTarget is the cast's type word ("SIGNED_INT", "FLOAT", ...), as cast() reads it.
@@ -728,9 +1016,13 @@ func (a *analyzer) constCheck(sc scope, n *mysqlast.Node, where string) *Error {
 	if fail == nil {
 		return nil
 	}
+	code := fail.errCode()
 	perRow := a.foldPerRow
 	if condContext(where) {
-		perRow = !a.isConstant(n) || !a.optimizeTime(sc, where)
+		// a 1292 constant that is a comparison's (or IN's / LIKE's) operand is not folded
+		// with the range optimizer's eagerness: it runs per row (measured: UPDATE ... WHERE
+		// d = CAST('2004-10-0' AS DATE) runs over an empty table and fails over a row)
+		perRow = !a.isConstant(n) || !a.optimizeTime(sc, where, code == 1292)
 	}
 	if perRow {
 		table := ""
@@ -744,10 +1036,10 @@ func (a *analyzer) constCheck(sc scope, n *mysqlast.Node, where string) *Error {
 				}
 			}
 		}
-		a.storeRaised = append(a.storeRaised, Violation{Code: code1690, Constraint: itoa(code1690), Table: table, SQLState: constraintSQLState(code1690)})
+		a.storeRaised = append(a.storeRaised, Violation{Code: code, Constraint: itoa(code), Table: table, SQLState: constraintSQLState(code)})
 		return nil
 	}
-	return &Error{Message: fail.message(), Code: code1690, Position: a.ph.Back(fail.at)}
+	return &Error{Message: fail.message(), Code: code, Position: a.ph.Back(fail.at)}
 }
 
 // constBool is v as a constant condition: ok when v folds, decided when it is not NULL.
@@ -803,7 +1095,7 @@ func condContext(where string) bool {
 // function's argument beside a column) runs per row. In a HAVING, a predicate over an
 // aggregate runs per group and is not such a path (measured: `HAVING MAX(id) >
 // <constant>` over no rows never evaluates the constant).
-func (a *analyzer) optimizeTime(sc scope, where string) bool {
+func (a *analyzer) optimizeTime(sc scope, where string, noCompare bool) bool {
 	base := 0
 	if len(a.condBases) > 0 {
 		base = a.condBases[len(a.condBases)-1]
@@ -816,13 +1108,18 @@ func (a *analyzer) optimizeTime(sc scope, where string) bool {
 		switch p.Class {
 		case "Item_cond_and", "Item_cond_or", "Item_func_xor", "Item_func_not", "PTI_truth_transform", "PTI_udf_expr":
 			continue
-		case "Item_func_in", "Item_func_like", "Item_func_isnull", "Item_func_isnotnull":
+		case "Item_func_isnull", "Item_func_isnotnull":
 			if where == "having clause" && containsAggregate(p) {
 				return false
 			}
 			continue
+		case "Item_func_in", "Item_func_like":
+			if noCompare || (where == "having clause" && containsAggregate(p)) {
+				return false
+			}
+			continue
 		case "PTI_comp_op", "PTI_handle_sql2003_note184_exception", "Item_func_between":
-			if where == "having clause" && containsAggregate(p) {
+			if noCompare || (where == "having clause" && containsAggregate(p)) {
 				return false
 			}
 			if !a.keyedOperand(sc, p) {
@@ -854,7 +1151,7 @@ func (a *analyzer) isConstant(v mysqlast.Value) bool {
 			return true
 		case "PTI_udf_expr":
 			return a.isConstant(x.Arg("expr"))
-		case "Item_func_neg", "Item_func_not":
+		case "Item_func_neg", "Item_func_not", "Item_typecast_datetime":
 			return a.isConstant(x.Arg("a"))
 		case "Item_func_plus", "Item_func_minus", "Item_func_mul", "Item_func_div", "Item_func_div_int", "Item_func_mod":
 			return a.isConstant(x.Arg("a")) && a.isConstant(x.Arg("b"))
