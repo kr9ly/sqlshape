@@ -48,6 +48,8 @@ var fullGroupCases = []struct {
 	{"SELECT d.name FROM (SELECT id, name FROM users LIMIT 5) d GROUP BY d.id", 0},
 	{"SELECT email, COUNT(*) FROM users GROUP BY name", 1055},
 	{"SELECT name, COUNT(*) FROM users", 1140},
+	{"SELECT GROUP_CONCAT(name), JSON_ARRAYAGG(name), JSON_OBJECTAGG('k', name) FROM users", 0},
+	{"SELECT name, JSON_ARRAYAGG(name) FROM users", 1140},
 	{"SELECT name FROM users GROUP BY name HAVING email = 'x'", 1054},
 	{"SELECT name FROM users GROUP BY name ORDER BY email", 1055},
 	{"SELECT name AS n FROM users GROUP BY name HAVING n = 'x'", 0},

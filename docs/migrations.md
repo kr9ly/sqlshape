@@ -167,9 +167,9 @@ Compared, object by object:
 
 - tables: engine, charset, collation, row format, comment, and partitioning (`RANGE`, `LIST`,
   `RANGE COLUMNS`, `LIST COLUMNS`, `HASH`, `KEY`, `LINEAR`, `ALGORITHM`, subpartitioning by
-  `HASH` / `KEY`, each partition's bound and comment; a form the loader does not model, such as
-  a subpartition's own definition or a `TABLESPACE` option, is a problem rather than a
-  difference it cannot see);
+  `HASH` / `KEY`, each partition's bound, comment and explicit `SUBPARTITION` names; a form the
+  loader does not model, such as a `TABLESPACE` or `MAX_ROWS` option on a partition or
+  subpartition, is a problem rather than a difference it cannot see);
 - columns: type, the whole definition as the server spells it, and their position (MySQL can
   reorder columns, so an order difference is a change the plan settles with
   `MODIFY COLUMN ... AFTER`);

@@ -142,11 +142,12 @@ type Table struct {
 }
 
 // Partitioning is a table's PARTITION BY clause. Every shape this package's grammar admits
-// is broken down structurally -- RANGE/LIST COLUMNS, KEY, LINEAR HASH/KEY and subpartitions
-// included -- so there is no Text fallback: a clause this loader cannot break down (an
-// explicit per-partition SUBPARTITION list, or anything partitioning's own PartTypeDef
-// switch does not name) is a problem up front, not a whole-clause equality/rewrite escape
-// hatch a later stage discovers cannot be migrated incrementally.
+// is broken down structurally -- RANGE/LIST COLUMNS, KEY, LINEAR HASH/KEY, subpartitions
+// and a partition's own explicit SUBPARTITION name list included -- so there is no Text
+// fallback: a clause this loader cannot break down (anything partitioning's own PartTypeDef
+// switch does not name, or a per-partition option partitionDef does not read) is a problem
+// up front, not a whole-clause equality/rewrite escape hatch a later stage discovers cannot
+// be migrated incrementally.
 type Partitioning struct {
 	// Kind is "RANGE", "LIST", "HASH" or "KEY".
 	Kind string
@@ -183,11 +184,9 @@ type Partitioning struct {
 
 // SubPartitioning is a RANGE or LIST Partitioning's own SUBPARTITION BY clause: every
 // partition is split further by HASH or KEY, always to the same kind, expression/columns
-// and count -- the default this package's own ADD PARTITION / REORGANIZE PARTITION rewrite
-// for the parent still gets right without ever naming a single subpartition (an explicit,
-// per-partition SUBPARTITION list overriding this default is not modeled at all, see
-// partitionDef: information_schema.partitions' own per-subpartition names are the server's
-// bookkeeping, not something a plan needs to reproduce).
+// and count. A partition naming its own subpartitions explicitly (`PARTITION p ...
+// (SUBPARTITION s0, SUBPARTITION s1)`) carries those names as its own Subs (see Partition),
+// since SHOW CREATE TABLE spells them back and a whole-clause rewrite must reproduce them.
 type SubPartitioning struct {
 	Kind      string // "HASH" or "KEY"
 	Linear    bool
@@ -216,6 +215,11 @@ type Partition struct {
 	// rather than compared, see PartitioningProps) and the rest are rare enough that
 	// partitionDef raises a problem rather than reading them.
 	Comment string
+	// Subs is this partition's own explicit SUBPARTITION name list (`(SUBPARTITION s0,
+	// SUBPARTITION s1)`), nil when the parent's SUBPARTITION BY default names them: the
+	// names as written, in order. A subpartition's own option other than ENGINE (dropped
+	// the way a partition's own is) is not read -- partitionDef raises a problem instead.
+	Subs []string
 }
 
 // Column is a table column.
@@ -851,15 +855,25 @@ func keyAlgorithm(v mysqlast.Value) int {
 // per-column MAXVALUE folds into Bound's own text instead, see Partition's own doc comment);
 // a LIST partition names its own value list, joined into Bound the way SHOW CREATE spells it
 // (a flat OR-set for a plain LIST, one or more parenthesized value tuples for COLUMNS). ok is
-// false for anything this package does not break down (an explicit SUBPARTITION list,
-// MAXVALUE inside a LIST partition's own list -- not valid SQL but the grammar admits it, or
-// a per-partition option other than COMMENT / ENGINE), the caller's cue to raise a problem.
+// false for anything this package does not break down (MAXVALUE inside a LIST partition's
+// own list -- not valid SQL but the grammar admits it, or a per-partition or per-subpartition
+// option other than COMMENT / ENGINE), the caller's cue to raise a problem.
 func (s *Schema) partitionDef(n *mysqlast.Node, columns bool) (Partition, bool) {
 	x, _ := mysqlast.AsPTPartDefinition(n)
-	if x.OptSubPartitions() != nil {
-		return Partition{}, false
-	}
 	part := Partition{Name: str(x.Name())}
+	for _, el := range list(x.OptSubPartitions()) {
+		sn, ok := el.(*mysqlast.Node)
+		if !ok || sn.Class != "PT_subpartition" {
+			return Partition{}, false
+		}
+		for _, opt := range list(sn.Arg("options")) {
+			on, ok := opt.(*mysqlast.Node)
+			if !ok || on.Class != "PT_partition_engine" { // always InnoDB in practice; dropped
+				return Partition{}, false
+			}
+		}
+		part.Subs = append(part.Subs, str(sn.Arg("name")))
+	}
 	for _, opt := range list(x.OptPartOptions()) {
 		on, ok := opt.(*mysqlast.Node)
 		if !ok {

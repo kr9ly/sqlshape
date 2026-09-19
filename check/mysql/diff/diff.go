@@ -303,8 +303,9 @@ func TableProps(t *schema.Table) map[string]string {
 // PartitioningProps is a table's PARTITION BY clause, canonicalized to one comparable
 // string: "" for an unpartitioned table (nil), else every piece alterTable itself decides
 // DDL from -- LINEAR, kind, COLUMNS-ness, expression or column list, KEY's own ALGORITHM,
-// the partition count (HASH/KEY) or every partition's own name, boundary and comment (RANGE/
-// LIST, in order), and the SUBPARTITION BY clause the same way -- so two clauses this
+// the partition count (HASH/KEY) or every partition's own name, boundary, comment and
+// explicit SUBPARTITION names (RANGE/LIST, in order), and the SUBPARTITION BY clause the
+// same way -- so two clauses this
 // package tells apart the same way (an ADD PARTITION reordering nothing, say) never look
 // changed on account of some detail alterTable does not look at either. ENGINE is not a
 // piece: SHOW CREATE TABLE writes it on every partition regardless of what the statement
@@ -339,6 +340,9 @@ func PartitioningProps(p *schema.Partitioning) string {
 			}
 			if part.Comment != "" {
 				b.WriteString("/*" + part.Comment + "*/")
+			}
+			if len(part.Subs) > 0 {
+				b.WriteString("(" + strings.Join(part.Subs, ",") + ")")
 			}
 		}
 	}

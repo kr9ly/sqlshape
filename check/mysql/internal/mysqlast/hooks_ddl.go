@@ -79,6 +79,22 @@ func init() {
 		st.Fields["actions"] = append(acts, kids[1])
 		return st, nil
 	})
+	// name_list: name_list ',' ident -> the names with $3 appended (KEY (a, b) and
+	// RANGE/LIST COLUMNS (a, b) partitioning)
+	register("name_list", "name_list ',' ident", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		l, _ := kids[0].(List)
+		return append(l, field(kids[2], "str")), nil
+	})
+	// ternary_option: ulong_num -> OFF / ON; any other value is the server's own syntax error
+	register("ternary_option", "ulong_num", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		switch kids[0] {
+		case Number(0):
+			return Const("Ternary_option::OFF"), nil
+		case Number(1):
+			return Const("Ternary_option::ON"), nil
+		}
+		return nil, &Unsupported{Rule: n.Kind.String(), Alt: n.Alt, Start: n.Start, End: n.End, Text: n.Text(b.SQL)}
+	})
 	// fulltext_index_option: WITH PARSER_SYM IDENT_sys -> PT_fulltext_index_parser_name
 	register("fulltext_index_option", "WITH PARSER_SYM IDENT_sys", build("PT_fulltext_index_parser_name", 3))
 	// opt_key_usage_list: %empty -> a list holding the empty hint (USE INDEX ())

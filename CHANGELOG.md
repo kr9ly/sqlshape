@@ -95,7 +95,8 @@ release it is a candidate for.
   dropped (under a `-- @migrate drop` declaration, since it takes its rows), attached, detached,
   its bound moved with the rows that no longer fit moved along, and a populated table can be
   partitioned after the fact, unpartitioned, or repartitioned, the rows redistributed by the
-  server. MySQL covers `RANGE`, `LIST`, `COLUMNS`, `HASH`, `KEY`, `LINEAR` and subpartitioning,
+  server. MySQL covers `RANGE`, `LIST`, `COLUMNS`, `HASH`, `KEY`, `LINEAR` and subpartitioning
+  (a partition's explicit `SUBPARTITION` name list included),
   with `-- @migrate drop partition <table>.<partition>` for a partition that goes.
 - The migration planner is tested against a real server the way the checker is: generated
   schema pairs, every kind of change the diff can report, applied with rows in the tables on

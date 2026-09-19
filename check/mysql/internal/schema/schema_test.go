@@ -156,6 +156,40 @@ func TestProblems(t *testing.T) {
 	}
 }
 
+// A partition's own explicit SUBPARTITION name list (what SHOW CREATE TABLE spells back
+// for a table declared with one) loads as the partition's Subs; a subpartition option
+// other than ENGINE stays a problem.
+func TestExplicitSubpartitions(t *testing.T) {
+	s, err := Load("CREATE TABLE t (a INT, b VARCHAR(10)) PARTITION BY RANGE (a) SUBPARTITION BY HASH (a) SUBPARTITIONS 2 " +
+		"(PARTITION pNeg VALUES LESS THAN (0) (SUBPARTITION subp0 ENGINE = InnoDB, SUBPARTITION subp1 ENGINE = InnoDB), " +
+		"PARTITION pPos VALUES LESS THAN MAXVALUE (SUBPARTITION subp2, SUBPARTITION subp3));\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) > 0 {
+		t.Fatalf("problems: %+v", s.Problems)
+	}
+	p := s.Table("t").Partitioning
+	if p == nil || p.Kind != "RANGE" || p.Sub == nil || p.Sub.Kind != "HASH" || p.Sub.Num != 2 || len(p.Parts) != 2 {
+		t.Fatalf("partitioning: %+v", p)
+	}
+	if strings.Join(p.Parts[0].Subs, ",") != "subp0,subp1" || strings.Join(p.Parts[1].Subs, ",") != "subp2,subp3" {
+		t.Errorf("subs: %+v / %+v", p.Parts[0].Subs, p.Parts[1].Subs)
+	}
+	if !p.Parts[1].MaxValue {
+		t.Errorf("pPos: %+v", p.Parts[1])
+	}
+
+	s, err = Load("CREATE TABLE t (a INT) PARTITION BY RANGE (a) SUBPARTITION BY HASH (a) " +
+		"(PARTITION p0 VALUES LESS THAN (0) (SUBPARTITION s0 TABLESPACE ts));\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Problems) != 1 || !strings.Contains(s.Problems[0].Message, "PARTITION RANGE: definition not understood") {
+		t.Errorf("subpartition TABLESPACE: %+v", s.Problems)
+	}
+}
+
 func TestDeclaredVersion(t *testing.T) {
 	if v, _ := DeclaredVersion("CREATE TABLE t (a INT)"); v != "8.4" {
 		t.Errorf("default %s", v)

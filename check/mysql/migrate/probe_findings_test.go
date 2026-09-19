@@ -561,3 +561,44 @@ PARTITION BY RANGE (id)
 `)
 	plan(t, ctx, "subpartitioned range: SUBPARTITION BY removed", base, toNone)
 }
+
+// A partition naming its own subpartitions explicitly loads as Partition.Subs and renders
+// back in ADD PARTITION and the whole rewrite: this pins that an added partition carrying
+// its own SUBPARTITION list writes DDL the server accepts, and that renaming a
+// subpartition is a change (samePartition compares Subs) the plan carries out.
+func TestProbeExplicitSubpartitions(t *testing.T) {
+	ctx := start(t)
+	base := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+SUBPARTITION BY HASH (id)
+SUBPARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (2) (SUBPARTITION s00, SUBPARTITION s01),
+ PARTITION p1 VALUES LESS THAN (100) (SUBPARTITION s10, SUBPARTITION s11));
+`)
+	rows := "\nINSERT INTO t (id, a) VALUES (1,1),(2,2),(3,3);\n"
+	base = canonical{s: base.s, text: base.text + rows, intents: base.intents}
+
+	// add: the new partition names its own subpartitions too
+	toAdd := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+SUBPARTITION BY HASH (id)
+SUBPARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (2) (SUBPARTITION s00, SUBPARTITION s01),
+ PARTITION p1 VALUES LESS THAN (100) (SUBPARTITION s10, SUBPARTITION s11),
+ PARTITION p2 VALUES LESS THAN MAXVALUE (SUBPARTITION s20, SUBPARTITION s21));
+`)
+	plan(t, ctx, "explicit subpartitions: add partition", base, toAdd)
+
+	// a subpartition renamed: the partitions differ, so the plan reorganizes / rewrites
+	toRename := mustCanonical(t, ctx, `-- sqlshape: mysql 8.4
+CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, PRIMARY KEY (id))
+PARTITION BY RANGE (id)
+SUBPARTITION BY HASH (id)
+SUBPARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (2) (SUBPARTITION s00, SUBPARTITION s01),
+ PARTITION p1 VALUES LESS THAN (100) (SUBPARTITION s10, SUBPARTITION sXX));
+`)
+	plan(t, ctx, "explicit subpartitions: subpartition renamed", base, toRename)
+}

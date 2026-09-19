@@ -432,6 +432,49 @@ func init() {
 	})
 }
 
+func init() {
+	// INSERT / REPLACE ... SET a = 1, b = 2 -> PT_insert with the SET pairs as one row
+	// (the server wraps $N.value_list as the single row of a fresh PT_insert_values_list);
+	// the argument names mirror the generated VALUES alternatives so the analyzer reads
+	// both forms the same way.
+	insertNames := []string{"is_replace", "opt_hints", "lock_option", "ignore",
+		"table_ident", "opt_use_partition", "column_list", "row_value_list", "insert_query_expression",
+		"opt_values_table_alias", "opt_values_column_list", "opt_on_duplicate_column_list", "opt_on_duplicate_value_list"}
+	register("insert_stmt", "INSERT_SYM insert_lock_option opt_ignore opt_INTO table_ident opt_use_partition SET_SYM update_list opt_values_reference opt_insert_update_list", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "PT_insert", Names: insertNames, Args: []Value{
+			Const("false"), kids[0], kids[1], kids[2], kids[4], kids[5],
+			field(kids[7], "column_list"), List{field(kids[7], "value_list")}, nil,
+			field(kids[8], "table_alias"), field(kids[8], "column_list"),
+			field(kids[9], "column_list"), field(kids[9], "value_list"),
+		}, Start: n.Start, End: n.End}, nil
+	})
+	register("replace_stmt", "REPLACE_SYM replace_lock_option opt_INTO table_ident opt_use_partition SET_SYM update_list", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "PT_insert", Names: insertNames, Args: []Value{
+			Const("true"), kids[0], kids[1], Const("false"), kids[3], kids[4],
+			field(kids[6], "column_list"), List{field(kids[6], "value_list")}, nil,
+			nil, nil, nil, nil,
+		}, Start: n.Start, End: n.End}, nil
+	})
+	// table_wild: ident '.' ident '.' '*' -> Item_asterisk(schema, table)
+	register("table_wild", "ident '.' ident '.' '*'", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "Item_asterisk", Names: []string{"opt_schema_name", "opt_table_name"},
+			Args: []Value{field(kids[0], "str"), field(kids[2], "str")}, Start: n.Start, End: n.End}, nil
+	})
+	// sum_expr: JSON_ARRAYAGG(x) / JSON_OBJECTAGG(k, v) -> Item_sum_json_array / _object
+	register("sum_expr", "JSON_ARRAYAGG '(' in_sum_expr ')' opt_windowing_clause", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "Item_sum_json_array", Names: []string{"a", "w"}, Args: []Value{kids[2], kids[4]}, Start: n.Start, End: n.End}, nil
+	})
+	register("sum_expr", "JSON_OBJECTAGG '(' in_sum_expr ',' in_sum_expr ')' opt_windowing_clause", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "Item_sum_json_object", Names: []string{"key", "value", "w"}, Args: []Value{kids[2], kids[4], kids[6]}, Start: n.Start, End: n.End}, nil
+	})
+	// jt_column: name type [COLLATE] [EXISTS] PATH '...' [on empty/error] ->
+	// PT_json_table_column_with_path (the column with its declared type and path)
+	register("jt_column", "ident type opt_collate jt_column_type PATH_SYM text_literal opt_on_empty_or_error_json_table", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "PT_json_table_column_with_path", Names: []string{"name", "type", "collate", "column_type", "path", "on_empty_or_error"},
+			Args: []Value{field(kids[0], "str"), kids[1], kids[2], kids[3], kids[5], kids[6]}, Start: n.Start, End: n.End}, nil
+	})
+}
+
 // genericCall builds the node of a generic function call `name(args...)` as the grammar's
 // function_call_generic does.
 func genericCall(n *mysqlparse.Node, name string, args ...Value) *Node {

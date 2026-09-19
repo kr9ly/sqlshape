@@ -1042,7 +1042,7 @@ func (p *planner) alterListPartitioning(f, t *schema.Table, from, to *schema.Par
 		switch {
 		case !ok:
 			dropped = append(dropped, part)
-		case tp.Bound != part.Bound || tp.Comment != part.Comment:
+		case tp.Bound != part.Bound || tp.Comment != part.Comment || !equalCols(tp.Subs, part.Subs):
 			changed = append(changed, part)
 		}
 	}
@@ -1087,7 +1087,7 @@ func (p *planner) alterListPartitioning(f, t *schema.Table, from, to *schema.Par
 func renderListPartitionDefs(parts []schema.Partition) string {
 	defs := make([]string, len(parts))
 	for i, part := range parts {
-		defs[i] = fmt.Sprintf("PARTITION %s VALUES IN (%s)%s", q(part.Name), part.Bound, partitionOptions(part))
+		defs[i] = fmt.Sprintf("PARTITION %s VALUES IN (%s)%s%s", q(part.Name), part.Bound, partitionOptions(part), renderSubs(part))
 	}
 	return strings.Join(defs, ", ")
 }
@@ -1116,7 +1116,21 @@ func (p *planner) checkPartitionsDroppable(fromTable string, parts []schema.Part
 }
 
 func samePartition(a, b schema.Partition) bool {
-	return a.Name == b.Name && a.MaxValue == b.MaxValue && a.Bound == b.Bound && a.Comment == b.Comment
+	return a.Name == b.Name && a.MaxValue == b.MaxValue && a.Bound == b.Bound && a.Comment == b.Comment &&
+		equalCols(a.Subs, b.Subs)
+}
+
+// renderSubs spells a partition's own explicit SUBPARTITION name list, when it has one
+// (schema.Partition's own Subs; "" otherwise -- the parent's SUBPARTITION BY names them).
+func renderSubs(part schema.Partition) string {
+	if len(part.Subs) == 0 {
+		return ""
+	}
+	names := make([]string, len(part.Subs))
+	for i, s := range part.Subs {
+		names[i] = "SUBPARTITION " + q(s)
+	}
+	return " (" + strings.Join(names, ", ") + ")"
 }
 
 func partitionNameList(parts []schema.Partition) string {
@@ -1137,7 +1151,7 @@ func renderPartitionDefs(parts []schema.Partition) string {
 		if !part.MaxValue {
 			bound = "(" + part.Bound + ")"
 		}
-		defs[i] = fmt.Sprintf("PARTITION %s VALUES LESS THAN %s%s", q(part.Name), bound, partitionOptions(part))
+		defs[i] = fmt.Sprintf("PARTITION %s VALUES LESS THAN %s%s%s", q(part.Name), bound, partitionOptions(part), renderSubs(part))
 	}
 	return strings.Join(defs, ", ")
 }

@@ -2,15 +2,12 @@
 # file	class key	sha1(sql)	first line. Rewrite with: go test ./check/mysql/internal/analyze -run TestCorpusReplay -corpus-update
 alter_table	STRICT 1146	d66e6614cdd6	INSERT INTO `#sql2`      VALUES (1)
 alter_table	STRICT 1146	d3321e3a4a2f	INSERT INTO `@0023sql1`  VALUES (2)
-alter_table	SCHEMA problems: unsupported construct ternary_option: ?	50a89fe1a978	select (@unpaked_keys_size > @paked_keys_size)
-alter_table	SCHEMA problems: unsupported construct ternary_option: ?	8ebe9c0fde33	select (@orig_max_data_length > @changed_max_data_length)
 alter_table	LENIENT 1054	9fbfbadbdf9d	UPDATE t2 SET f = f + 10
 alter_table-big	CODE 1137->1146	b637156ed63b	SELECT * FROM t4 AS a, t4 AS b
 alter_table-big	STRICT 1146	9a4fdcaa85b1	INSERT INTO t4 VALUES (2)
 alter_table-big	CODE 1137->1146	e48892bbd50f	DELETE a FROM t4 AS a, t4 AS b
 alter_table-big	CODE 1137->1146	f4171e8fd27d	DELETE b FROM t4 AS a, t4 AS b
 alter_table_myisam	LENIENT 1054	9fbfbadbdf9d	UPDATE t2 SET f = f + 10
-analyze	SCHEMA problems: unsupported construct opt_histogram: ?	4318da0a467f	CALL p()
 archive	DIFF column type smallint->smallint unsigned	a6cdfbf8e239	select period FROM t1
 archive	DIFF column type smallint->smallint unsigned	b81b3e8c36c0	select * FROM t1
 archive	DIFF column type smallint->smallint unsigned	c6e5e9e77827	select t1.* FROM t1
@@ -64,18 +61,10 @@ bigint	DIFF column type decimal unsigned->decimal	055b08222849	select * from t1
 bigint	DIFF column type bigint->decimal	fefd134ec714	select -(-(9223372036854775808))
 bigint	DIFF column type bigint->decimal	16abe0dd104f	select --9223372036854775808, ---9223372036854775808, ----9223372036854775808
 bigint	DIFF column type bigint->decimal	6b713dd8c12b	select -(-9223372036854775808), -(-(-9223372036854775808))
-bigint	DIFF column name	2d7555e45ecb	SELECT (184467440737095 BETWEEN 0 AND 18446744073709551500)
-bigint	DIFF column name	c05b6606dd87	SELECT ( 9223372036854775808 BETWEEN 9223372036854775808 AND 9223372036854775808 )
-bigint	DIFF column name	f41a720f408a	SELECT ( 9223372036854775807 BETWEEN 9223372036854775808 AND 1 )
-bigint	DIFF column name	320aafb603ef	SELECT ( -1 BETWEEN 9223372036854775808 AND 1 )
-bigint	DIFF column name	c1f03259acd3	SELECT ( 0 BETWEEN 9223372036854775808 AND 1 )
-bigint	DIFF column name	f634b2fdfd22	SELECT ( 1 BETWEEN 9223372036854775808 AND 1 )
 binary	DIFF column type binary->string	5fdaf49951fe	select concat("-",a,"-",b,"-") from t1
 binary	DIFF column type binary->string	3507c6cecf58	select concat("-",a,"-",b,"-") from t1 where b="hello "
 binary	DIFF column type binary->string	bb59e7efa57a	select concat("-",a,"-",b,"-") from t1 ignore index (b) where b="hello "
 binary_to_hex	DIFF column type string->binary	3abd07b0a7e7	SELECT * FROM t1
-bug17666696	DIFF column name	9ba98c3d8dbd	SELECT (@id1=@id2)
-bug17666696	DIFF column name	0268bb99e090	SELECT (@id2=@id3)
 case	DIFF column type bigint->int	92afc20d74cb	select case a when 1 then 2 when 2 then 3 else 0 end as fcase, count(*) from t1 group by fcase
 case	LENIENT 1267	48ee974fddc8	SELECT CASE 
 case	LENIENT 1270	c95dbc13f467	SELECT CASE _latin1'a' COLLATE latin1_general_ci
@@ -101,14 +90,7 @@ check_constraints	RUNTIME 3819	0cfc54392caf	INSERT INTO t1 VALUES(10)
 check_constraints	RUNTIME 3819	3b1af52db195	INSERT INTO t1 VALUES()
 check_constraints	LENIENT 13	dd5c5b1614c5	LOAD DATA INFILE '../../std_data/loaddata3.dat' IGNORE INTO TABLE t1
 check_constraints	RUNTIME 3819	93e7a4d7f7af	UPDATE v1 SET f1 = 8 WHERE f1 = 6
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	387d6ac73624	CALL p0_proc_with_warning
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	6b391fb2d47e	CALL p1_declare_handler_preserves
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	d5d88e5ed231	CALL p2_declare_variable_clears
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	ae8613811e98	CALL p5_declare_variable_clears
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	caba558bf86f	CALL p6_bubble_warning
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	b1bca10f0a1b	CALL p3_non_diagnostics_stmt_clears
 clear_diag_area	LENIENT 1051	94b5cea3e05d	CALL p4_unhandled_exception_returned
-clear_diag_area	SCHEMA problems: unsupported construct get_diagnostics: ?	a19b498ba46f	CALL peter1()
 comments	DIFF column name	9848ceb3faf2	select 1 /*!32301 +1 */
 comments	DIFF column name	1b4cf10a7540	select 1 + /*!00000 2 */ + 3 /*!99999 noise*/ + 4
 commit	LENIENT 1792	c6852b774c9e	INSERT INTO t1 VALUES (1), (2)
@@ -155,10 +137,8 @@ ctype_gb18030	LENIENT 1300	748ca83028b9	SELECT HEX(CONVERT(_gb18030 0xA13941 USI
 ctype_gb18030	LENIENT 1300	f6da1c43e2d9	SELECT HEX(CONVERT(_gb18030 0xFFFE USING ucs2))
 ctype_gb18030	LENIENT 1300	fc7761787250	SELECT HEX(CONVERT(_gb18030 0x81308140 USING ucs2))
 ctype_gb18030	LENIENT 13	bc6c181a50a7	LOAD DATA INFILE '../../std_data/bug21542698.dat' INTO TABLE t1 CHARACTER SET gb18030
-ctype_gb18030_binlog	SCHEMA problems: unsupported construct execute_var_ident: ?	98d4e54bc6c4	CALL p1(@`tcontent`)
 ctype_gb18030_encoding_utf8	DIFF nullable true->false	af29a85f42e4	SELECT * FROM t1b RIGHT JOIN t1a USING (c)
 ctype_gb18030_encoding_utf8	DIFF nullable true->false	22b6b9415942	SELECT * FROM t2b RIGHT JOIN t2a USING (c)
-ctype_gbk_binlog	SCHEMA problems: unsupported construct execute_var_ident: ?	98d4e54bc6c4	CALL p1(@`tcontent`)
 ctype_latin1_de	RUNTIME 1366	543b6ae49818	insert into t1 (word) values ('ss'),(0xDF),(0xE4),('ae')
 ctype_latin2_ch_myisam	DIFF column type smallint->smallint unsigned	cb5110a4668f	SELECT ID, Post, HEX(WEIGHT_STRING(Post)) FROM t1
 ctype_ldml	LENIENT 1273	9ce313c8f9e1	SELECT hex(weight_string(_utf8mb4'a' collate utf8mb4_test_ci))
@@ -294,7 +274,6 @@ ctype_utf8mb4	LENIENT 1300	14e1d5239f9a	select (_utf8mb4 X'616263FF')
 ctype_utf8mb4	DIFF column type binary->string	9b502491a126	SELECT CONCAT(utf8mb4, _utf8mb3 x'ea9da8') FROM t1 LIMIT 0
 date_formats	DIFF column type datetime->date	d9c8c571d6c4	select str_to_date('15-01-2001 12:59:59', GET_FORMAT(DATE,'USA'))
 date_formats	DIFF column type datetime->date	5b15fe1bfbb4	select str_to_date( NULL, 1 )
-dd_is_compatibility_cs	SCHEMA problems: unsupported construct ternary_option: ?	c1c5af1b465c	INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10),
 ddl_i18n_koi8r	SCHEMA no database selected	102c4650f61e	CALL mysqltest2.p3(@a, @b)
 ddl_i18n_utf8	SCHEMA no database selected	102c4650f61e	CALL mysqltest2.p3(@a, @b)
 default	DIFF column type string->binary	d7728f67202e	SELECT * from t1
@@ -351,7 +330,6 @@ derived_ci	STRICT 1066	37b50d11be03	select 3 from (select 1) as qn, (select 2) a
 derived_ci	LENIENT 1146	e12d58713ce0	with qn as (select 1) select * from QN
 derived_ci	LENIENT 1146	2603e4dbaa82	with QN as (select 1) select * from qn
 derived_ci	LENIENT 1054	903e89f619d5	with qn as (select 1 as a) select QN.a from qn
-derived_condition_pushdown	SCHEMA problems: unsupported construct opt_explain_format: ?	4318da0a467f	CALL p()
 derived_condition_pushdown	DIFF column type int->bigint	4d852a9e4b66	SELECT f1, f2 FROM (SELECT f1, f2 FROM t1 GROUP BY f1, f2 WITH ROLLUP) as dt
 derived_correlated	CODE 1109->1054	581a749bcf45	with cte as (select t1.a) select (select * from cte) from t1
 derived_correlated	DIFF column type int->bigint	3a9631a8feeb	select * from t1,
@@ -379,10 +357,7 @@ distinct	LENIENT 1	aba6cc621999	SELECT DISTINCT @v19:= fruit_id, @v20:= fruit_na
 distinct	LENIENT 13	42808d5f11b7	LOAD DATA INFILE '../../tmp/data2.tmp' INTO TABLE t2
 distinct	DIFF column type int->bigint	7d16e03a32cb	SELECT DISTINCT f1 FROM t1 GROUP BY f1 WITH ROLLUP ORDER BY f1, ANY_VALUE(GROUPING(f1))
 distinct_innodb	LENIENT 3065	25bb497ad39a	select distinct t1_outer.a from t1 t1_outer
-drop	SCHEMA problems: unsupported construct table_wild: ?	c952b86a3953	INSERT INTO table1 VALUES (1)
-endspace	SCHEMA problems: unsupported construct ternary_option: ?	cb4fe3b17092	select concat('|', text1, '|') from t1 where text1='teststring'
-endspace	SCHEMA problems: unsupported construct ternary_option: ?	06a98cdd7f8d	insert into t1 values ('teststring'), ('nothing'), ('teststring\t')
-endspace	SCHEMA problems: unsupported construct ternary_option: ?	8db7cc4e82e5	select * from t1 where text1 like 'teststring_%'
+drop	LENIENT 1051	c952b86a3953	INSERT INTO table1 VALUES (1)
 errors	LENIENT 1054	8fa3f08ec3e0	select count(not_existing_database.t1.a) from t1
 errors	LENIENT 1054	a3131c01159a	SELECT '' AS b FROM t1 GROUP BY VALUES(b)
 errors	LENIENT 1054	82758128e360	REPLACE t2(b) SELECT '' AS b FROM t1 GROUP BY VALUES(b)
@@ -396,9 +371,6 @@ events_bugs	SCHEMA problems: server sql_mode = ?: sql_mode: ? is not a mode of M
 events_restart	SCHEMA no database selected	89b067bb657c	SELECT @@event_scheduler
 events_time_zone	LENIENT 1210	e2bc9f8126c5	SELECT SLEEP(@step / 2)
 explain	CODE 1048->1292	5cecdb2dcf3e	INSERT INTO t2 VALUES (NULL), (0)
-explain_dml	SCHEMA problems: PARTITION RANGE: definition not understood	6c52d044b54d	INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')
-explain_json_hypergraph	SCHEMA problems: unsupported construct ternary_option: ?	922f59c2175c	INSERT INTO t1 VALUES (-100,1),(1,6)
-explain_json_hypergraph	SCHEMA problems: unsupported construct ternary_option: ?	96a98e11f0bc	INSERT INTO t2 VALUES
 filesort	DIFF column type string->binary	301d1c63464c	SELECT * FROM t1 ORDER BY f1
 filesort	DIFF column type string->binary	ed1d9bae5d34	SELECT *
 filesort	LENIENT 3037	dcbf912f5a26	SELECT
@@ -411,7 +383,6 @@ flush_read_lock	LENIENT 1223	8c48daa916a4	lock tables t1_base write
 flush_read_lock	LENIENT 1399	03281429c6d2	insert into t3_trans values (1)
 flush_read_lock	LENIENT 1399	6e31fcc9ad79	delete from t3_trans
 flush_read_lock	SCHEMA dump: SHOW CREATE TABLE tm_base_temp: Error N (HYN): Unable to ope	33a2b1d97db6	select * from tm_base_temp
-flush_read_lock_kill	DIFF column name	a543ee05b7bc	SELECT ((@id := kill_id) - kill_id) FROM t1 LIMIT 1
 foreign_key	LENIENT 1100	604eba08cee3	SELECT * FROM child
 foreign_key	LENIENT 1100	110ac4f30b4a	INSERT INTO child VALUES (NULL)
 foreign_key	LENIENT 1100	6a9fb01e4dc6	DELETE FROM parent1
@@ -525,7 +496,6 @@ func_gconcat	DIFF column type string->binary	562cb32f9bc6	select group_concat(di
 func_gconcat	DIFF column type string->binary	1fd04755c96e	select group_concat(distinct a, c order by a desc, c desc) from t1
 func_gconcat	LENIENT 1367	c4a42332e61f	SELECT POLYGON((SELECT 1 FROM (SELECT 1 IN (GROUP_CONCAT(t1.f1)) FROM t1, t1 t GROUP BY t.f1 ) d))
 func_gconcat	LENIENT 1260	b14834c3460b	INSERT INTO t2 SELECT GROUP_CONCAT(a), b FROM t1 GROUP BY b
-func_group	DIFF column name	de9abace7666	SELECT COUNT(i), (i+0), COUNT(i)*(i+0) FROM t1 GROUP BY i
 func_group	DIFF column name	d0c9ea712c24	SELECT (
 func_group	RUNTIME 1690	9d2e4b8744ac	SELECT STDDEV(value) from t1
 func_group	RUNTIME 1690	525def8207c9	SELECT VARIANCE(value) FROM t2 GROUP BY grp
@@ -539,8 +509,6 @@ func_if	DIFF column type decimal->double	35524635e94f	SELECT AVG(NULLIF(y, 10)) 
 func_in_none	LENIENT 1271	abf88c6777db	SELECT i8 FROM t1 WHERE vc IN (@str_one, @str_two, @str_five)
 func_isnull	DIFF column type bigint->int	4fc79ba635e8	SELECT t1.x IS NULL = t2.x AS col FROM t AS t1, t AS t2 ORDER BY col
 func_like	LENIENT 1210	5ed7e5d39921	SELECT '' LIKE '1' ESCAPE COUNT(1)
-func_like	DIFF column name	7431ed7d4dd1	SELECT ('a%b' LIKE 'a\%b' ESCAPE (SELECT x FROM t1))
-func_like	DIFF column name	2b70d63e2936	SELECT ('a%b' LIKE 'ax%b' ESCAPE (SELECT x FROM t1))
 func_like	LENIENT 1210	9d3f271ef7d6	SELECT ('a%b' LIKE 'ax%b' ESCAPE (SELECT 'xy' FROM t1))
 func_like	RUNTIME 1242	2b70d63e2936	SELECT ('a%b' LIKE 'ax%b' ESCAPE (SELECT x FROM t1))
 func_like	LENIENT 1241	2b1788ce01fc	SELECT ('a%b' LIKE 'ax%b' ESCAPE ('x', 'y'))
@@ -549,16 +517,12 @@ func_like	RUNTIME 1690	51d55944de2b	SELECT 1 FROM t1 HAVING (SELECT 1 FROM t1) L
 func_like	LENIENT 3141	710a5fdc0ffd	SELECT 'a' LIKE '%' ESCAPE CAST('' AS JSON)
 func_like	CODE 1292->1096	b2e02fcc4680	DELETE FROM t1 WHERE
 func_math	DIFF column type bigint->int unsigned	1670936464d8	SELECT c DIV 900 y FROM t1 GROUP BY y
-func_math	DIFF column name	2e317365761c	SELECT DISTINCT (a DIV 254576881) FROM t1
-func_math	DIFF column name	ee9997bbd3e0	SELECT (a DIV 254576881) FROM t1 UNION ALL 
 func_math	RUNTIME 1690	ab0facba41d4	SELECT -a FROM t1
 func_math	RUNTIME 1690	103b176d8aea	SELECT -b FROM t1
 func_math	RUNTIME 1690	3d54a2c2c45e	SELECT @a + @a
 func_math	RUNTIME 1690	7819a97cc355	SELECT @a * @a
 func_math	RUNTIME 1690	06897a9e5963	SELECT -@a - @a
 func_math	RUNTIME 1690	317dfd94f2bd	SELECT @a / 0.5
-func_math	DIFF column name	ad491195013f	SELECT ((@a:=@b:=1.0) div (@b:=@a:=get_format(datetime, 'usa')))
-func_math	DIFF column name	b380f9c3a98e	select (1.175494351E-37 div 1.7976931348623157E+308)
 func_math	LENIENT 3020	7cdc1a7e0bda	INSERT INTO t1 VALUES (ln(0))
 func_math	LENIENT 3020	752c5a8a67fa	INSERT INTO t1 VALUES (ln(-1))
 func_math	LENIENT 3020	6c66672ee5a0	INSERT INTO t1 VALUES (log(0))
@@ -602,7 +566,6 @@ func_misc	LENIENT 1411	27bc94255d80	INSERT INTO t2 VALUES (inet_aton("122.256"))
 func_misc	LENIENT 1411	8272dd4e6130	INSERT INTO t2 VALUES (inet_aton("122.226."))
 func_misc	LENIENT 1411	809aa564aae3	INSERT INTO t2 VALUES (inet_aton(""))
 func_misc	LENIENT 1411	6a6fac576333	INSERT INTO t2 VALUES (UNHEX('Z0Q80F02'))
-func_prefix_key	DIFF column name	f68799a8d9b0	SELECT (f1 LIKE null) from t1
 func_prefix_key	LENIENT 3141	d170099c489e	SELECT 1 FROM t1 WHERE f1 LIKE json_contains('key2' ,'key4' )
 func_rollback	LENIENT 1146	fe5ced7823c7	SELECT f1_simple_insert(1)
 func_rollback	LENIENT 1146	e475bfa125f8	SELECT f1_simple_insert(1) FROM t1_select
@@ -657,12 +620,7 @@ func_str	DIFF column type string->binary	dd3195599dc2	select trim('xyz' from nul
 func_str	DIFF column type string->binary	b17af7522f2b	select ifnull(load_file("lkjlkj"),"it is null")
 func_str	DIFF column type binary->string	76e0d5e73c93	SELECT CHAR(0xff,0x8f USING utf8mb3)
 func_str	DIFF column type binary->string	3012ed56fcae	select substring(f1,1,1) from t1 group by 1
-func_str	DIFF column name	031b18df3393	SELECT ((+0) IN
-func_str	DIFF column name	ad081157803f	SELECT ((rpad(1.0,2048,1)) = ('4(') ^ (0.1))
 func_str	RUNTIME 1690	802f293cf1c6	SELECT
-func_str	DIFF column name	72871f7628ab	SELECT ((rpad(1.0,2048,1)) + (0) ^ ('../'))
-func_str	DIFF column name	9bbc60babf74	SELECT ((127.1) not in ((rpad(1.0,2048,1)),(''),(-1.1)))
-func_str	DIFF column name	e299f681e586	SELECT ((0xf3) * (rpad(1.0,2048,1)) << (0xcc))
 func_str	DIFF column type bigint->int	17c5d77f32ab	SELECT (SELECT (SELECT 1 FROM t1 a WHERE t1.a <_ucs2'a')) AS d5 FROM t1 GROUP BY 1
 func_str	DIFF column type binary->string	4b4dbe789ad6	SELECT REPLACE( 'a', binary 'b', NULL ) as xxx
 func_str	DIFF column type binary->string	92bbbdbf94ac	SELECT REPLACE( 'a', binary '', NULL ) as xxx
@@ -680,7 +638,7 @@ func_str	DIFF column type string->binary	c2c18d05f184	select substring_index(nul
 func_str	DIFF column type string->binary	b10daf93209c	select insert(null,2,1,'hi'),insert('txs',null,1,'hi')
 func_str	DIFF column type string->binary	a58bbe924e0f	select insert('txs',null,null,'hi'),insert(null,null,null,null)
 func_str	DIFF column type bigint unsigned->binary	3353c54202aa	SELECT REPEAT(0x1111, 40000000) >> 1
-func_str	DIFF column name	437ae66d6822	SELECT (~(REPEAT(0xb822, 0x5C9C380)))
+func_str	DIFF column type bigint unsigned->binary	437ae66d6822	SELECT (~(REPEAT(0xb822, 0x5C9C380)))
 func_str	DIFF nullable false->true	b9eea417c926	SELECT COUNT(*), CONCAT(x, 'x') FROM (SELECT * FROM t) AS tt
 func_str	DIFF nullable true->false	ebe7aae496e4	SELECT
 func_str	DIFF nullable true->false	83e62894d455	SELECT
@@ -715,7 +673,6 @@ func_str	RUNTIME 3854	09614e5e61fd	SELECT EXPORT_SET(7, a, x'ff', b, 4) FROM t1
 func_str	RUNTIME 3854	37e85f6219d5	SELECT MAKE_SET(7, a, b, x'ff') FROM t1
 func_str	RUNTIME 3854	9ef9cc6df32c	SELECT (SELECT 1
 func_str	DIFF column type datetime->date	35ddc7e2e9a9	SELECT * FROM v
-func_str	SCHEMA problems: unsupported construct execute_var_ident: ?	130bc739aa91	CALL load_locale_format_table()
 func_str	LENIENT 1267	f0446eadc74a	SELECT _latin1 'ß' COLLATE latin1_general_ci = _utf8mb4 'ss' COLLATE utf8mb4_0900_ai_ci AS c
 func_str	RUNTIME 3854	17c501dfb76e	SELECT
 func_str	RUNTIME 3854	83366d6cc5b3	SELECT QUOTE(x'80')
@@ -779,17 +736,12 @@ functional_index	LENIENT 3752	951ca7511025	INSERT INTO t1 (f1) VALUES (CAST(1000
 functional_index	LENIENT 3751	3f86c17a619b	INSERT INTO t1 (f2) VALUES ("lorem ipsum")
 functional_index	LENIENT 1050	ae2cd589953d	CALL p1()
 gcc296	DIFF column type binary->string	055b08222849	select * from t1
-get_diagnostics	SCHEMA problems: unsupported construct get_diagnostics: ?	ae2cd589953d	CALL p1()
+get_diagnostics	STRICT 1146	ae2cd589953d	CALL p1()
 get_diagnostics	LENIENT 1000	ae2cd589953d	CALL p1()
 get_diagnostics	LENIENT 9999	ae2cd589953d	CALL p1()
-get_diagnostics	SCHEMA problems: unsupported construct get_diagnostics: ?	a93399565a1b	INSERT INTO t1 VALUES (1.1, 1)
-get_diagnostics	SCHEMA problems: unsupported construct get_diagnostics: ?	c8d752b16473	CALL p1(@var1, @var2)
-get_diagnostics	SCHEMA problems: unsupported construct get_diagnostics: ?	aba64265c4d2	CALL p1(@var1)
-get_diagnostics	SCHEMA problems: unsupported construct get_diagnostics: ?	3fc1e2aa76a6	SELECT f1()
-get_diagnostics	SCHEMA problems: unsupported construct get_diagnostics: ?	c6852b774c9e	INSERT INTO t1 VALUES (1), (2)
+get_diagnostics	LENIENT 3004	ae2cd589953d	CALL p1()
+get_diagnostics	LENIENT 3004	3fc1e2aa76a6	SELECT f1()
 gis	DIFF column type bigint->int	ea7656a3ea67	SELECT g1.fid as first, g2.fid as second,
-gis	DIFF column name	6ab7505ad7e2	select (ST_asWKT(ST_geomfromwkb((0x000000000140240000000000004024000000000000))))
-gis	DIFF column name	2fcd703ad9f1	select (ST_asWKT(ST_geomfromwkb((0x010100000000000000000024400000000000002440))))
 gis	LENIENT 13	a9ccb34051ff	load data infile '../../std_data/bad_gis_data.dat' into table t1
 gis	LENIENT 1367	f3e52c825985	select
 gis	LENIENT 3037	238f434c3fdb	select 
@@ -908,11 +860,9 @@ grant	STRICT 1054	41d1600fbcb6	update mysqltest_2.t1, mysqltest_1.t2 set c=100,b
 grant	STRICT 1054	269f9b279be3	update mysqltest_1.t1, mysqltest_2.t2 set a=100,d=200
 grant	DIFF column name	024eee5d764a	select t1.*,t2.* from mysqltest_1.t1,mysqltest_1.t2
 grant	SCHEMA dump: SHOW CREATE TABLE ADMINISTRABLE_ROLE_AUTHORIZATIONS: sql: ex	6827cdef3cf4	SELECT TABLE_SCHEMA, TABLE_NAME, GROUP_CONCAT(PRIVILEGE_TYPE ORDER BY
-grant	SCHEMA problems: unsupported construct ternary_option: ?	ef76365ef095	insert into tables_priv values ('','test_db','mysqltest_1','test_table','test_grantor',CURRENT_TIMES
-grant	SCHEMA problems: unsupported construct ternary_option: ?	4efd4bad66a8	delete from tables_priv where host = '' and user = 'mysqltest_1'
 grant2	DIFF column type string->binary	a42d37b8c8e5	select current_user()
 grant2	DIFF column type string->binary	055b08222849	select * from t1
-grant2	SCHEMA problems: unsupported construct ternary_option: ?	e1ab8b79aea8	SELECT LEFT(CURRENT_USER(),INSTR(CURRENT_USER(),'@')-1) INTO @u
+grant2	DIFF column type string->binary	78869acd3759	SELECT user,host,length(authentication_string),insert_priv FROM user WHERE user=@u AND host=@h
 grant_explain_non_select	STRICT 1288	dfac0487fc78	DELETE FROM v1 USING v1, t2 WHERE v1.a = t2.a
 group_by	DIFF column type binary->string	f9cb08507243	select value,description,bug_id from t2 left join t1 on t2.program=t1.product and t2.value=t1.compon
 group_by	DIFF column type binary->string	02b18e26f2b0	select value,description,COUNT(bug_id) from t2 left join t1 on t2.program=t1.product and t2.value=t1
@@ -945,7 +895,6 @@ group_by	RUNTIME 1690	f6fe09799fd2	SELECT MAX(FROM_UNIXTIME(1536999161)),
 group_by	RUNTIME 1242	86fcfb75b8e7	SELECT AVG(a2.a)
 group_by	DIFF column type int->bigint	740f6acce28a	SELECT DISTINCT a, COUNT(*) FROM t1 GROUP BY a WITH ROLLUP
 group_by	DIFF column type int->bigint	90e44ff4c93c	SELECT t1.x
-group_min_max_innodb	SCHEMA problems: unsupported construct ternary_option: ?	4209504f9258	insert into t1 values ( 1,"e"),(2,"a"),( 3,"c"),(4,"d")
 group_min_max_ps_protocol	RUNTIME 1242	0abe929386c4	DELETE FROM t3 WHERE (SELECT (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) x 
 having	DIFF column type int->bigint	2c7e71422766	select a as foo,
 having	DIFF column type int->bigint	2a46ce0c8b22	select a as foo,
@@ -954,10 +903,6 @@ having	STRICT 1054	45a403334906	SELECT a FROM (SELECT 1 FROM t1 AS From1) AS Fro
 having	STRICT 1054	c1481c71e932	SELECT Outjoin3.a FROM (SELECT 1 FROM t1 AS From1) AS From2 
 having	LENIENT 1052	a701e0ec62ce	SELECT *
 having_myisam	RUNTIME 1242	9324da2a48fb	SELECT col_int_key
-histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	cb938e5a10f6	INSERT INTO t1 VALUES (1, 1, 1, 1)
-histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	c6852b774c9e	INSERT INTO t1 VALUES (1), (2)
-histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	306ce7a27f58	INSERT INTO t1 VALUES (1), (2), (3), (4), (5)
-histogram_auto_update	SCHEMA problems: unsupported construct ternary_option: ?	fc1787de5e7b	INSERT INTO t1 VALUES (1), (2), (3)
 histograms	STRICT 1406	3981813324b7	WITH cte AS (
 histograms_debug	LENIENT 1792	d93129d8e95a	INSERT INTO t1 (col1) VALUES (1)
 host_cache_size_functionality	LENIENT 1238	4350eedf9322	SELECT COUNT(@@local.Host_Cache_Size)
@@ -1013,9 +958,7 @@ information_schema_cs	LENIENT 3566	a1b9f13ec826	SELECT CAN_ACCESS_TRIGGER(NULL, 
 information_schema_cs	LENIENT 3566	b1d317e6f028	SELECT CAN_ACCESS_ROUTINE(NULL, NULL, NULL, NULL, NULL)
 information_schema_cs	LENIENT 3566	534049564884	SELECT CAN_ACCESS_EVENT(NULL)
 information_schema_cs	LENIENT 3566	da052b6d16fc	SELECT CAN_ACCESS_USER(NULL, NULL)
-init_connect	SCHEMA problems: unsupported construct execute_var_ident: ?	055b08222849	select * from t1
 init_file	DIFF column type bigint->bigint unsigned	d136e7b5a743	SELECT YEAR(@X)-YEAR(@Y)
-innodb_mysql_sync	DIFF column name	4be700e06a57	SELECT ((@id := id) - id) FROM t2
 insert	RUNTIME 1265	97cdab2cb371	insert into t1 values(null,@value,@value,@value,@value,@value,@value,@value,@value,@value)
 insert	RUNTIME 1264	97cdab2cb371	insert into t1 values(null,@value,@value,@value,@value,@value,@value,@value,@value,@value)
 insert	LENIENT 1110	e8eaf135de55	insert into t1 (a,b,b) values (1,1,1)
@@ -1096,9 +1039,6 @@ join	LENIENT 1054	c0171bff8184	select t1.* from t t0 cross join (t t1 join t t2
 join	RUNTIME 1690	663313088c03	SELECT t2.b FROM t AS t1
 join	DIFF column type binary->string	cf1f66dda339	SELECT *
 join	LENIENT 3141	76ea9acef8b5	SELECT ra1.k
-join_crash	SCHEMA problems: unsupported construct ternary_option: ?	8bd31bfa0507	INSERT INTO t1 VALUES (1,0,'Rejected Time',1,NULL,NULL,NULL,NULL)
-join_crash	SCHEMA problems: unsupported construct ternary_option: ?	bcc8071d6381	INSERT INTO t2 VALUES (1,'user_table',98,'2000-01-01 00:00:00',NULL,NULL)
-join_crash	SCHEMA problems: unsupported construct ternary_option: ?	18c510268a10	INSERT INTO t4 VALUES (1,0,'CPS',NULL,NULL)
 join_nested	LENIENT 1052	39c16e1fcecd	SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a)
 join_outer	DIFF column type binary->string	1d9adeaac332	SELECT * from t1 left join t2 on t1.id=t2.id where t2.id IS NULL
 join_outer	DIFF column name	041b148c3281	select * from t1
@@ -1119,8 +1059,6 @@ key_cache	LENIENT 1193	894e3271e01f	SELECT @@skr.default_storage_engine="test"
 key_myisam	DIFF column type binary->string	a9c32697dfc4	SELECT * FROM t1 WHERE a='a' AND b=2
 key_myisam	DIFF column type binary->string	b3df378924b8	SELECT * FROM t1 WHERE a='a' AND b in (2)
 key_myisam	DIFF column type binary->string	087f68ad10c0	SELECT * FROM t1 WHERE a='a' AND b in (1,2)
-kill	SCHEMA problems: unsupported construct kill: ?	42364a017b73	SELECT 1
-kill	SCHEMA problems: unsupported construct kill: ?	6f8beb5cd3cd	INSERT INTO t1 VALUES
 lead_lag	LENIENT 1235	2485612c6dda	SELECT id, sex, LEAD(id, 1, 10) IGNORE NULLS OVER () FROM t1
 lead_lag	LENIENT 1267	c4ec44cc179c	SELECT c1, c2, LEAD(c1, 0, c2) OVER () l0 FROM t
 lead_lag	DIFF column type string->binary	2907f8f9ebc2	SELECT LEAD(c1, 100, b1) OVER () lcb, IFNULL(c1, b1) ifn_cb FROM t
@@ -1137,10 +1075,9 @@ lead_lag	DIFF column type string->binary	6e3be798cf99	SELECT LEAD(e1, 100, b1) O
 lead_lag	DIFF column type string->binary	168a848ba712	SELECT LEAD(e2, 100, b1) OVER () le2d, IFNULL(e2, b1) ifn_e2d FROM t
 lead_lag	DIFF column type datetime->date	4333cc88c3c1	SELECT ADDDATE(LEAD(NULL, 1, date'1955-05-15') OVER (ORDER BY NULL), 1)
 lead_lag	DIFF column type datetime->date	abbd6e91001b	SELECT ADDDATE(LEAD(date'1955-05-15', 0) OVER (ORDER BY NULL), 1)
-lead_lag	DIFF column name	72378402fda6	SELECT ((LAG(JSON_MERGE_PATCH(1.755913e+308,'{ }'),246)OVER())<=(1))
 lead_lag	LENIENT 3146	8bb7d4663924	SELECT ((LAG(JSON_MERGE_PATCH(1.755913e+308,'{ }'),0)OVER())<=(1))
-lead_lag	DIFF column name	1d2e4b8f2390	SELECT ((QUOTE(JSON_KEYS(LEAD(JSON_KEYS(EXP(-15676),ABS('d0')),
 lead_lag	LENIENT 3146	e9cdd15bb536	SELECT ((QUOTE(JSON_KEYS(LEAD(JSON_KEYS(EXP(-15676),ABS('d0')),
+limit	LENIENT 3158	6f996f547742	SELECT JSON_OBJECTAGG(NULL, '') FROM t1, t1 AS t2 GROUP BY t1.pk LIMIT 2 OFFSET 5
 loaddata	LENIENT 13	e34d01f6a4f5	load data infile '../../std_data/loaddata1.dat' ignore into table t1 fields terminated by ','
 loaddata	LENIENT 13	e1c990a214ed	load data infile '../../std_data/loaddata1.dat' into table t1 fields terminated by ',' IGNORE 2 LINE
 loaddata	LENIENT 13	7364d44bb85c	load data from infile '../../std_data/loaddata1.dat'
@@ -1191,7 +1128,6 @@ loadxml	LENIENT 13	26c7392b18a0	LOAD XML INFILE '../../std_data/bug16171518_2.da
 loadxml	CODE 13->1288	ff26d0d69bf0	LOAD XML INFILE '../../std_data/bug16171518_2.dat' INTO TABLE v3
 loadxml	LENIENT 13	cb656f077b48	LOAD XML INFILE '../../std_data/bug16171518_2.dat' INTO TABLE t4 (col1, col2, col3) SET col4 = NULL
 loadxml	LENIENT 13	e8582bfb37e3	LOAD XML INFILE '../../std_data/bug30753708.dat' INTO TABLE t1 ROWS IDENTIFIED BY '<address>'
-lock_multi	SCHEMA problems: unsupported construct ternary_option: ?	5ef2c34b1dee	UNLOCK TABLES
 lock_myisam	LENIENT 1099	2c881bd2655d	update t1 set id=1 where id=1
 lock_myisam	LENIENT 1100	e1d9ebdfa20b	insert into t1 select index1,nr from t1
 locking_clause	LENIENT 3568	c77081f2bb5c	SELECT * FROM t1 FOR SHARE OF t2
@@ -1222,19 +1158,16 @@ log_components_syslog	LENIENT 1193	4e0ff6514315	SELECT @@syseventlog.include_pid
 log_components_syslog	LENIENT 1193	0adf1ce1e2be	SELECT @@syseventlog.facility
 log_options_cmdline	LENIENT 1193	cf2ff6fdd263	SELECT @@dragnet.log_error_filter_rules
 log_options_cmdline	LENIENT 1193	b922d4f54976	SELECT @@global.dragnet.log_error_filter_rules
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	326f3b3c25b9	SELECT @saved_long_query_time, @saved_log_output, @saved_general_log, @saved_slow_query_log
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	2e3d9f2760f7	select * from general_log
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	232c39c16f33	select * from slow_log
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	65afeaf1d629	select * from general_log where argument like '%general_log%'
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	5107beaa0718	insert into join_test values ("User performed a usual SQL query", "Query")
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	686248e72fdc	insert into bug16905 values ('новое')
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	235df5ce1458	select sleep(2)
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	4dcc3cde100f	unlock tables
-log_tables	SCHEMA problems: unsupported construct ternary_option: ?	eb8275a73df3	lock tables general_log read local, help_category read local
+log_tables	DIFF column type binary->string	2e3d9f2760f7	select * from general_log
+log_tables	DIFF column type binary->string	232c39c16f33	select * from slow_log
+log_tables	DIFF column type binary->string	65afeaf1d629	select * from general_log where argument like '%general_log%'
+log_tables	LENIENT 1556	eb8275a73df3	lock tables general_log read local, help_category read local
+log_tables	DIFF column type binary->string	228ee5bce168	select * from renamed_general_log
+log_tables	DIFF column type binary->string	9b9e01697c93	select * from renamed_slow_log
 log_tables	STRICT 1146	914d90b24e93	call `db_17876.archiveSlowLog`()
 log_tables	STRICT 1146	d40228310b76	call `db_17876.archiveGeneralLog`()
-log_tables_myisam	SCHEMA problems: unsupported construct ternary_option: ?	2e3d9f2760f7	select * from general_log
-log_tables_myisam	SCHEMA problems: unsupported construct ternary_option: ?	232c39c16f33	select * from slow_log
+log_tables_myisam	DIFF column type binary->string	2e3d9f2760f7	select * from general_log
+log_tables_myisam	DIFF column type binary->string	232c39c16f33	select * from slow_log
 lowercase_table	LENIENT 1054	2afab712b8cc	select count(T1.a) from t1
 lowercase_table	LENIENT 1054	895ee2305e55	select count(bags.a) from t1 as Bags
 lowercase_table	LENIENT 1109	3e7ae8d41a9f	delete p1.*,P2.* from t1 as p1, t2 as p2 where p1.a=P2.a
@@ -1243,7 +1176,6 @@ lowercase_table	LENIENT 1054	744b98130a5e	update t1 as p1, t2 as p2 SET p1.a=1,P
 lowercase_table	LENIENT 1054	08aaf54b11a9	update t1 as P1, t2 as P2 SET P1.a=1,p2.a=1 where P1.a=p2.a
 lowercase_table	STRICT 1066	d0191aaeeaeb	select * from t1 c, t2 C
 lowercase_table	STRICT 1066	8df8de6742d4	select C.a, c.a from t1 c, t2 C
-lowercase_table_grant	SCHEMA problems: unsupported construct ternary_option: ?	683466fed372	select * from db where user = 'mysqltest_1'
 lowercase_view	CODE 1109->1146	62b8fda8a797	delete v2Aa from v2aA,t2Aa where (select max(col1) from v1aA) > 0 and v2Aa.col1 = t2aA.col1
 lowercase_view	CODE 1109->1146	ef64808106bd	delete t1aA from t1Aa,t2Aa where (select max(col1) from v1Aa) > 0 and t1aA.col1 = t2aA.col1
 lowercase_view	CODE 1109->1146	e1d8a3b6a0b3	delete v1aA from v1Aa,t2Aa where (select max(col1) from v1aA) > 0 and v1Aa.col1 = t2aA.col1
@@ -1261,6 +1193,8 @@ lpad	DIFF column type string->binary	45e31d752915	SELECT LPAD(NULL, NULL, 'x') A
 lpad	DIFF column type string->binary	85e89b9057e6	SELECT LPAD(NULL, NULL, NULL) AS result
 lpad	DIFF column type string->binary	26dfaf692377	SELECT LPAD(NULL, 5, NULL) AS result
 max_statement_time	LENIENT 3024	0aff871040ee	SELECT *, SLEEP(0.5) from t1
+max_statement_time	LENIENT 3024	3abd07b0a7e7	SELECT * FROM t1
+max_statement_time	LENIENT 3024	4db2fbef5ea4	SELECT /*+ MAX_EXECUTION_TIME(1) */ * FROM t1
 max_statement_time	LENIENT 3024	3fc1e2aa76a6	SELECT f1()
 mem_cnt_sql_keys	LENIENT 1	f754a353fea6	SELECT 1 INTO OUTFILE '../../tmp/f1.txt'
 merge_innodb	SCHEMA dump: SHOW CREATE TABLE tN: Error N (HYN): Unable to open underlyi	c64899c9e086	SELECT * FROM t5
@@ -1297,7 +1231,6 @@ merge_myisam	SCHEMA dump: SHOW CREATE TABLE mN: Error N (HYN): Unable to open un
 merge_myisam	STRICT 1146	cf6e2144fd34	SELECT * FROM m2
 metadata	DIFF column type int->bigint	e1aebc79eda2	select a.* from (select 214748364 as v_small) a
 metadata	DIFF column type decimal unsigned->decimal	055b08222849	select * from t1
-multi_update	SCHEMA problems: unsupported construct ternary_option: ?	ab4ce125f883	delete t1  from t1,t2 where t1.id1 = t2.id2 and t1.id1 > 500
 multi_update	LENIENT 1099	15c8d56d7069	DELETE t1.*, t2.* FROM t1,t2 where t1.n=t2.n
 multi_update	LENIENT 1099	36c681ddaedb	UPDATE t1,t2 SET t1.d=t2.d,t2.d=30 WHERE t1.n=t2.n
 multi_update	LENIENT 1175	84eddf058ec2	UPDATE t1,t2 SET t1.d=t2.d WHERE t1.n=t2.n
@@ -1315,10 +1248,6 @@ myisam	LENIENT 1099	5b86cc54b9aa	INSERT INTO t2 VALUES ('test000001'), ('test000
 myisam	DIFF column type string->binary	7a3494318325	select * from t1 where bob is null and cip=1
 myisam	LENIENT 1099	c6770912870a	insert into t1 values(6),(7)
 myisam	LENIENT 1099	e59075683b72	insert into t1 (a) values(6),(7)
-mysql_tzinfo_to_sql_sys	DIFF column name	7cc01bc2f6b8	SELECT (count(*) > 0) FROM time_zone
-mysql_tzinfo_to_sql_sys	DIFF column name	89f208fca680	SELECT (count(*) > 0) FROM time_zone_name
-mysql_tzinfo_to_sql_sys	DIFF column name	80c813c49475	SELECT (count(*) > 0) FROM time_zone_transition
-mysql_tzinfo_to_sql_sys	DIFF column name	d20a8d0c7045	SELECT (count(*) > 0) FROM time_zone_transition_type
 mysqlbinlog	LENIENT 13	22b4c8780b8e	load data infile '../../std_data/words.dat' into table t1
 mysqlbinlog	DIFF column name	479fc60d958f	select "--- Local --" as ""
 mysqlbinlog	LENIENT 13	205d7bbcb79c	load data infile '../../std_data/loaddata6.dat' into table t1 CHARACTER SET latin1
@@ -1340,9 +1269,7 @@ nth	LENIENT 1210	76bb9235339c	SELECT id, sex, NTH_VALUE(id, 'a') OVER () FROM t1
 nth	LENIENT 1210	111f413d65c8	SELECT id, sex, NTH_VALUE(id, -3) OVER () le1 FROM t1
 nth	LENIENT 1210	e5360ce8fd89	SELECT id, sex, NTH_VALUE(id, NULL) OVER () FROM t1
 nth	DIFF column type null->binary	e66004afec75	SELECT id, sex, NTH_VALUE(NULL, 1) RESPECT NULLS OVER () FROM t1
-nth	DIFF column name	51dbfed7e46d	SELECT ((NTH_VALUE(JSON_MERGE_PATCH(1.755913e+308,'{ }'),246)OVER())<=(1))
 nth	LENIENT 3146	758b2b79f749	SELECT ((NTH_VALUE(JSON_MERGE_PATCH(1.755913e+308,'{ }'),1)OVER())<=(1))
-nth	DIFF column name	54a99ecf0f55	SELECT ((QUOTE(JSON_KEYS(NTH_VALUE(JSON_KEYS(EXP(-15676),ABS('d0')),
 nth	LENIENT 3146	54c529df196d	SELECT ((QUOTE(JSON_KEYS(NTH_VALUE(JSON_KEYS(EXP(-15676),ABS('d0')),
 null	DIFF column name	ab1058d85cc9	select null,isnull(null),isnull(1/0),isnull(1/0 = null),ifnull(null,1),ifnull(null,"TRUE"),ifnull("T
 null	DIFF column type string->binary	3214cf885a9f	select concat("a",NULL),replace(NULL,"a","b"),replace("string","i",NULL),replace("string",NULL,"i"),
@@ -1424,7 +1351,7 @@ olap	DIFF column type int->bigint	b4d876d4be9c	SELECT i,j, SUM(k), GROUPING(i), 
 olap	DIFF column type int->bigint	9508714437ba	SELECT DISTINCT j, GROUPING(j) FROM t1 GROUP BY i,j WITH ROLLUP
 olap	DIFF column type int->bigint	e6ace04bad5c	SELECT  alias1.f1 AS field1, alias1.f1 AS field2, (alias1.f1 +1) AS field3 FROM
 olap	DIFF column type int->bigint	20e6bdfa137a	SELECT f1 FROM t1 WHERE pk = 3 GROUP BY f1 WITH ROLLUP ORDER BY f1
-olap	DIFF column name	0ef2e1964a47	SELECT (((@e:=`b`)) NOT BETWEEN 0x0b5f09 AND (CHAR(md5(@pub1),
+olap	DIFF column type bigint->int	0ef2e1964a47	SELECT (((@e:=`b`)) NOT BETWEEN 0x0b5f09 AND (CHAR(md5(@pub1),
 olap	DIFF column type int->bigint	d63b36f5f0fd	SELECT a, b, a + SUM(a) OVER () FROM t GROUP BY a,b WITH ROLLUP
 olap	DIFF nullable false->true	da6f1c276203	SELECT a AS f1, 'w' AS f2 FROM t GROUP BY f1, f2 WITH ROLLUP HAVING ISNULL(f2)
 olap	DIFF nullable false->true	b8bc77c99e14	SELECT a AS f1, 'w' AS f2 FROM t GROUP BY f1, f2 WITH ROLLUP HAVING ISNULL(f1)
@@ -1454,6 +1381,7 @@ packet	LENIENT 1301	68a02475ffda	UPDATE t1, t2
 packet	LENIENT 1301	d381fc7ebda1	INSERT INTO t1
 packet	LENIENT 1301	ec2e15c272f7	INSERT INTO t1
 packet	LENIENT 1301	c103c0559542	REPLACE INTO t1
+packet	LENIENT 1301	1ec0b16a58b7	REPLACE INTO t1
 packet	LENIENT 1301	501ec72d15c7	REPLACE INTO t1
 packet	LENIENT 1301	e2269c463b7d	DELETE FROM t1
 packet	LENIENT 1301	e917c2331c36	DELETE FROM t1, t2
@@ -1563,13 +1491,11 @@ parser_stack	STRICT 1064	c8917a22dadf	SELECT
 parser_stack	SCHEMA problems: memory exhausted	a4941c44300d	call proc_overflow()
 parser_stack	SCHEMA problems: memory exhausted	bd2e9c4fb5b6	select func_overflow()
 parser_stack	SCHEMA problems: memory exhausted	75c71e66d1d9	insert into table_overflow set a=10
-partition	SCHEMA problems: unsupported construct name_list: ?	4fd53486bb20	insert into t1 values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6)
-partition	SCHEMA problems: unsupported construct name_list: ?	38c4545f472a	INSERT INTO t1 VALUES (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6)
+partition	LENIENT 1526	865578b63230	REPLACE t1 SET a = 4
 partition	LENIENT 1526	933dc9414f7f	insert into t1 values (4)
 partition	LENIENT 1526	10f9cbe4f579	insert into t1 values (1)
 partition	LENIENT 1526	a9fb66e9e931	update t1 set a = 5
 partition	LENIENT 1526	453ac14b447a	insert into t1 values (10,1)
-partition	SCHEMA problems: PARTITION LIST: definition not understood	1bfd3dc7e727	INSERT INTO t1 SET f_int1 = 2, f_int2 = 2, f_char1 = '2', f_char2 = '2', f_charbig = '===2==='
 partition	LENIENT 1526	65b3e39e1c10	insert into t1 values (NULL,1,1)
 partition	LENIENT 1526	3b9bdd157531	insert into t1 values (0)
 partition	LENIENT 1706	7dd35d7a082c	UPDATE t1_part AS A NATURAL JOIN t1_part B SET A.partkey = 2, B.nokey = 3
@@ -1577,22 +1503,12 @@ partition	LENIENT 1706	00c1f90c5025	UPDATE t1_part AS A NATURAL JOIN t1_part B S
 partition	LENIENT 1706	ddfe86b94923	UPDATE t1_part AS A NATURAL JOIN v1 as B SET A.nokey = 2 , B.partkey = 3
 partition	LENIENT 1706	e36aa6ff13f9	UPDATE v1 AS A NATURAL JOIN t1_part as B SET A.nokey = 2 , B.partkey = 3
 partition	RUNTIME 1690	14deccabadf8	INSERT v0 SET c1 = 0
-partition_column	SCHEMA problems: unsupported construct name_list: ?	f73a32b22472	INSERT INTO t1 VALUES(1, 'Ann', 'dep1', 'Russia')
-partition_column	SCHEMA problems: unsupported construct name_list: ?	6a9b8d47dd88	insert into t1 values ('A','A')
+partition_column	LENIENT 1526	912a76efb92c	INSERT INTO t1 VALUES(3, 'Dan', 'dep2', 'Croatia')
 partition_column	SCHEMA problems: PARTITION LIST: definition not understood	8620676461c1	insert into t1 values (NULL),(0),(1),(2),(2),(4),(4),(4),(8),(8)
-partition_column	SCHEMA problems: unsupported construct name_list: ?	de3937faf123	insert into t1 values (3, NULL)
 partition_column	LENIENT 1526	edb56143a04c	insert into t1 values (5)
 partition_column	SCHEMA problems: PARTITION LIST: definition not understood	10f9cbe4f579	insert into t1 values (1)
-partition_column	SCHEMA problems: unsupported construct name_list: ?	4ec3379709dd	insert into t1 values (1,'a','b',1),(2,'a','b',2),(3,'a','b',3)
-partition_column	SCHEMA problems: unsupported construct name_list: ?	70acf5b78445	insert into t1 values (1, 'A', 1)
 partition_column	SCHEMA problems: PARTITION LIST: definition not understood	609cc83d26c6	insert into t1 (a) values ('a')
-partition_column	SCHEMA problems: unsupported construct name_list: ?	1baac40967db	insert into t1 values (99,998)
-partition_column	SCHEMA problems: unsupported construct name_list: ?	ee02e2d9f482	insert into t1 values (11,0)
-partition_column	SCHEMA problems: unsupported construct name_list: ?	038ff94246e3	select * from t1 where b < 2
-partition_column	SCHEMA problems: unsupported construct name_list: ?	beb8d7febdb8	select * from t1 where b < 4
-partition_column	SCHEMA problems: unsupported construct name_list: ?	e90a4f3c2cfc	insert into t1 values (1000,1000)
-partition_column_prune	SCHEMA problems: unsupported construct name_list: ?	0ca2c851fb82	insert into t1 values ('a', NULL, 'd')
-partition_column_prune	SCHEMA problems: unsupported construct name_list: ?	4b079f22ebcd	insert into t1 values (2,5), (2,15), (2,25),
+partition_column	LENIENT 1526	ee02e2d9f482	insert into t1 values (11,0)
 partition_datatype	SCHEMA problems: PARTITION BY HASH: an explicit partition list is not support	416d710a6c00	insert into t1 values (1),(4),(7),(10),(13),(16),(19),(22),(25),(28),(31),(34)
 partition_debug	LENIENT 1814	7e7ce3adb2fd	SELECT COUNT(*)FROM t1
 partition_error	LENIENT 1526	983a85dcd1fd	insert into t1 values (10)
@@ -1606,84 +1522,30 @@ partition_error	LENIENT 1863	905d4c047937	UPDATE t1 PARTITION (p1,p6) SET a = 7 
 partition_error	LENIENT 1748	49f97a04752e	DELETE FROM t1 PARTITION (p1) WHERE (a % 7) > 2
 partition_error	LENIENT 1863	571ce7599f72	DELETE FROM t1 PARTITION (p1,p6) WHERE (a % 7) > 5
 partition_error	LENIENT 1526	0b1162498b9e	DELETE FROM t1 WHERE a > 0
-partition_exchange	SCHEMA problems: PARTITION RANGE: definition not understood	d886e2967925	INSERT INTO t VALUES (1, "First value"), (3, "Three"), (5, "Five"), (99, "End of values")
-partition_exchange	SCHEMA problems: PARTITION RANGE: definition not understood	82e41ecfc6d7	SELECT * FROM t
-partition_exchange	SCHEMA problems: PARTITION RANGE: definition not understood	5a9c2aee3007	INSERT INTO tmp SELECT * FROM t
-partition_exchange	SCHEMA problems: PARTITION RANGE: definition not understood	7cf7ac59bc13	INSERT INTO t SELECT * FROM tmp2
-partition_exchange	SCHEMA problems: unsupported construct name_list: ?	993e22b1f1c7	INSERT INTO tp VALUES ("First in tp", '2000-01-02 03:04:25'), ("Zebra in tp", '0000-00-00 00:00:00')
-partition_exchange	SCHEMA problems: unsupported construct name_list: ?	5ef2c34b1dee	UNLOCK TABLES
-partition_exchange	SCHEMA problems: unsupported construct name_list: ?	568083135932	INSERT INTO t VALUES (1, "First value"), (3, "Three"), (5, "Five"),
-partition_exchange	SCHEMA problems: unsupported construct name_list: ?	82e41ecfc6d7	SELECT * FROM t
-partition_exchange	SCHEMA problems: unsupported construct name_list: ?	e6f29ff2944f	SELECT * FROM tp PARTITION (p0)
-partition_exchange	SCHEMA problems: unsupported construct name_list: ?	e4361b76acb6	SELECT * FROM tsp PARTITION (sp2)
-partition_exchange	SCHEMA problems: PARTITION RANGE: definition not understood	a3a34859c9ff	INSERT INTO t1(b,a) VALUES('first',40),('second',91),('third',140),
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	e0ca564738ce	INSERT INTO t1 PARTITION () VALUES (1, "error")
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	3eaa66bfbc03	INSERT INTO t1 PARTITION (pNeg, pNeg) VALUES (-1, "pNeg(-subp1)")
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	a3d5b81c13c1	INSERT INTO t1 PARTITION(subp3) VALUES (3, "subp3")
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	5ef2c34b1dee	UNLOCK TABLES
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	dbca92e5dc81	SELECT * FROM t1 PARTITION (pNonexistent)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	b2f51d5a6ff2	SELECT * FROM t1 PARTITION (subp2)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	92408b280ecf	SELECT * FROM t1 PARTITION (subp2,pNeg) AS TableAlias
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	de350488c382	SELECT * FROM t1 PARTITION
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	8df57a859582	REPLACE INTO t1 PARTITION (subp0) VALUES (-21, 'Should fail!')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	6a10873d1ec4	REPLACE INTO t1 PARTITION (subp1) VALUES (-21, 'Insert by REPLACE')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	1090d64a4e99	REPLACE INTO t1 PARTITION (subp1) VALUES (-21, 'REPLACEd by REPLACE')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	aef1773a11f9	SELECT * FROM t1 PARTITION (pNeg, `p10-99`) INTO OUTFILE 'loadtest.txt'
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	b94b16cb0307	SELECT * FROM t1 PARTITION (pNeg, `p10-99`)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	0b0112bde7d9	LOAD DATA INFILE 'loadtest.txt' INTO TABLE t1 PARTITION (pNeg)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	48e2b7d4e57e	LOAD DATA INFILE 'loadtest.txt' INTO TABLE t1 PARTITION (pNeg, subp4, subp5)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	531d1241a93f	UPDATE t1 PARTITION(subp0) SET b = concat(b, ', Updated')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	46a85aa340cb	UPDATE t1 PARTITION(subp0) SET b = concat(b, ', Updated2') WHERE a = -2
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	71308972e56b	UPDATE t1 PARTITION(subp0) SET a = -4, b = concat(b, ', Updated from a = -2')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	817e43ed1832	UPDATE t1 PARTITION(subp0) SET b = concat(b, ', Updated2') WHERE a = 100
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	c3ff71045045	UPDATE t1 PARTITION(subp0) SET a = -2, b = concat(b, ', Updated from a = 100')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	59f47b5d11db	UPDATE t1 PARTITION(`p100-99999`) SET a = -2, b = concat(b, ', Updated from a = 100')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	10752ded60f0	UPDATE t1 PARTITION(`p100-99999`, pNeg) SET a = -4, b = concat(b, ', Updated from a = 100')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	bdfc6deaec86	UPDATE t1 PARTITION(`p100-99999`, pNeg) SET a = -222, b = concat(b, ', Updated from a = 100')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	bf7c40033778	UPDATE t1 SET b = concat(b, ', Updated2') WHERE a = 1000000
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	7a4491f32cb6	UPDATE t1 PARTITION (pNeg) SET b = concat(b, ', Updated2') WHERE a = 1000000
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	af2d3f2d5732	DELETE FROM t1 PARTITION (pNeg) WHERE a = -1
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	a57599dcebbe	DELETE FROM t1 PARTITION (subp1) WHERE b like '%subp1%'
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	cc28891a09bf	INSERT INTO t2 PARTITION (`p10-99`, subp3, `p100-99999`) SELECT * FROM t1 PARTITION (subp3, `p10-99`
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	10aa7fbe9169	INSERT INTO t2 PARTITION (subp3) SELECT * FROM t1 PARTITION (subp3, `p10-99`, `p100-99999`)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	02ab89b06ad5	INSERT IGNORE INTO t2 PARTITION (subp3) SELECT * FROM t1 PARTITION (subp3, `p10-99`, `p100-99999`)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	dac7904b65be	INSERT INTO t2 SELECT * FROM t1 PARTITION (subp3, `p10-99`, `p100-99999`)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	3abd07b0a7e7	SELECT * FROM t1
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	054189b97f4f	DELETE t1 PARTITION (pNeg), t3 FROM t1, t3
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	ef3107f77a38	DELETE t1, t2 FROM t1 PARTITION (pNeg), t3, t2 PARTITION (subp3)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	b771a39af79b	DELETE FROM t2, t3 USING t2 PARTITION (`p0-9`), t3, t1 PARTITION (subp3)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	64710022c04e	SELECT * FROM t3 PARTITION (pNeg)
+partition_exchange	LENIENT 1735	e4361b76acb6	SELECT * FROM tsp PARTITION (sp2)
+partition_exchange	LENIENT 1735	5a4b83eb7bf8	SELECT * FROM tsp PARTITION (sp3)
+partition_explicit_prune	LENIENT 1735	aef98e10ab62	INSERT INTO t1 PARTITION (pNonExisting) VALUES (1, "error")
+partition_explicit_prune	LENIENT 1735	c47dfc2f7a6c	INSERT INTO t1 PARTITION (pNeg, pNonExisting) VALUES (1, "error")
+partition_explicit_prune	LENIENT 1748	e6ce9f366d5c	INSERT INTO t1 PARTITION (pNeg, pNeg) VALUES (1, "error")
+partition_explicit_prune	LENIENT 1748	9b1021ec2643	INSERT INTO t1 PARTITION (pNeg, subp0) VALUES (1, "error")
+partition_explicit_prune	LENIENT 1748	17f76aae433d	INSERT INTO t1 PARTITION (`p100-99999`) VALUES (1, "error"), (10, "error")
+partition_explicit_prune	LENIENT 1526	66cf3f2727a3	INSERT INTO t1 VALUES (1000000, "error"), (9999999, "error")
+partition_explicit_prune	LENIENT 1526	201130422444	INSERT INTO t1 PARTITION (`p100-99999`) VALUES (1000000, "error"), (9999999, "error")
+partition_explicit_prune	LENIENT 1735	dbca92e5dc81	SELECT * FROM t1 PARTITION (pNonexistent)
+partition_explicit_prune	LENIENT 1748	8df57a859582	REPLACE INTO t1 PARTITION (subp0) VALUES (-21, 'Should fail!')
+partition_explicit_prune	LENIENT 1748	0b0112bde7d9	LOAD DATA INFILE 'loadtest.txt' INTO TABLE t1 PARTITION (pNeg)
+partition_explicit_prune	LENIENT 1748	59f47b5d11db	UPDATE t1 PARTITION(`p100-99999`) SET a = -2, b = concat(b, ', Updated from a = 100')
+partition_explicit_prune	LENIENT 1748	10aa7fbe9169	INSERT INTO t2 PARTITION (subp3) SELECT * FROM t1 PARTITION (subp3, `p10-99`, `p100-99999`)
+partition_explicit_prune	LENIENT 1747	64710022c04e	SELECT * FROM t3 PARTITION (pNeg)
 partition_explicit_prune	LENIENT 1735	be1cfda5e511	SELECT * FROM t1 PARTITION (foo)
 partition_explicit_prune	LENIENT 1735	5aea9c711310	SELECT * FROM t2 PARTITION (foo)
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	90fe7d722296	INSERT INTO `t5` VALUES (1, 'aaaaaaa', '2006-01-05 00:00:00')
-partition_explicit_prune	SCHEMA problems: PARTITION RANGE: definition not understood	c475ab45fd17	INSERT INTO t1 VALUES (-9, "negative nine"), (-8, "-8"), (-7, "-7"), (-6, "-6"), (-5, "-5"), (-4, "-
 partition_hash	SCHEMA problems: PARTITION BY HASH: an explicit partition list is not support	5d1e5c3be183	insert into t1 values (1,1,1)
 partition_hash	SCHEMA problems: PARTITION BY HASH: an explicit partition list is not support	055b08222849	select * from t1
 partition_innodb	LENIENT 1526	5ad1b7ac8cf5	INSERT INTO t1 VALUES (90)
 partition_innodb	LENIENT 1526	8fdbb70d5005	INSERT INTO t1 VALUES (100)
 partition_innodb	LENIENT 1526	b31fcc9ebd50	insert INTO t1 VALUES (110)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	3401740b8a4e	insert into t1 values ('a', 3, 'w', '2001-10-27 04:34:00')
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	e3f25bbe8c82	INSERT INTO t1 VALUES (9585,5)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	fd51678fe48b	INSERT INTO t2 VALUES (10,9585,5,20)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	a0751f9879d9	insert into t3 values (90,120)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	660570925558	INSERT INTO t4 VALUES (9585,5)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	1deeb4f8f40f	INSERT INTO t5 VALUES (1,20000)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	ac93bae8e3c3	INSERT INTO t6 VALUES (9585,5)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	3be9bae07bbc	INSERT INTO t7 VALUES (9585,10,20,10,5)
 partition_innodb	LENIENT 1814	2db13ad39624	SELECT COUNT(*)FROM t1,t1 AS b WHERE t1.c1=''AND t1.c2=b.c1
 partition_innodb	LENIENT 1814	a8cf8a4cf32d	SELECT COUNT(*)FROM t2,t2 AS b WHERE t2.c1=''AND t2.c2=b.c1
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	354b4f6d7918	INSERT INTO t1 VALUES ("0", "0"), ("1", "1"), ("2", "2"), ("3", "3"),
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	5c90d0857022	SELECT * FROM t1 FORCE INDEX (`PRIMARY`)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	81978eaeae9d	SELECT * FROM t1 FORCE INDEX (`ab_asc`)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	d3c03f5796fa	SELECT * FROM t1 FORCE INDEX (`a_asc_b_desc`)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	4266c3c94ebc	SELECT * FROM t1 FORCE INDEX (`a_desc_b_asc`)
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	f57482517c11	SELECT * FROM t1 ORDER BY a DESC, b DESC
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	cc401ae32d0a	SELECT * FROM t1 ORDER BY a, b
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	4af0404ecfd4	SELECT * FROM t1 ORDER BY a, b DESC
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	480293b2e4b3	SELECT * FROM t1 ORDER BY a DESC, b
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	aa23d5f4d665	SELECT * FROM t1 FORCE INDEX (`PRIMARY`) ORDER BY a, b
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	d721572df283	SELECT * FROM t1 FORCE INDEX (`PRIMARY`) ORDER BY a DESC, b
-partition_innodb	SCHEMA problems: unsupported construct name_list: ?	3bc9cfd6ee0c	SELECT * FROM t1 FORCE INDEX (`PRIMARY`) ORDER BY a, b DESC
 partition_innodb_plugin	SCHEMA dump: SHOW CREATE TABLE t`\?e: Error N (N): You have an error in y	fa98c66044e2	INSERT INTO `t``\""e` VALUES (0), (2), (6), (10), (14), (18), (22)
 partition_innodb_plugin	SCHEMA dump: SHOW CREATE TABLE t`\?e: Error N (N): You have an error in y	5d3ad3b1b483	UPDATE `t``\""e` SET a = 16 WHERE a = 0
 partition_innodb_plugin	SCHEMA dump: SHOW CREATE TABLE t`\?e: Error N (N): You have an error in y	c7287d6b991f	UPDATE `t``\""e` SET a = 4 WHERE a = 22
@@ -1693,32 +1555,9 @@ partition_list	LENIENT 1526	d5940a8b3a13	INSERT into t1 VALUES (9,1,1)
 partition_list	LENIENT 1526	2d6a2f21ddbe	INSERT into t1 VALUES (2,2,1)
 partition_list	SCHEMA problems: PARTITION LIST: definition not understood	66fb98de9ea8	INSERT into t1 VALUES (1,1,1)
 partition_list	SCHEMA problems: PARTITION LIST: definition not understood	7d1bbde90ed9	INSERT INTO t1 VALUES (0x98000)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	b4bbf404d6fa	INSERT INTO t3 () VALUES ()
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	7a1367d1a7e6	INSERT IGNORE INTO t3 VALUES (-1, "ZZZzzzz", "yyyYYY", -1, DEFAULT)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	05cac1f9a8f9	INSERT INTO t3 () VALUES (0, "", "", 0, NULL)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	c87fad556c69	INSERT INTO t3 (a) VALUES (1)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	8429d5ababae	INSERT INTO t3 (a, b) VALUES (1, "Part expr fulfilled"),
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	95da3038f505	INSERT INTO t3 (d) VALUES (1), (2)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	30f2befa1739	INSERT INTO t3 (c, d) VALUES ("Subpart expr fulfilled", 1)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	32a0b8dc33cd	INSERT INTO t3 (a, b, d) VALUES (10, "Full part, half subpart", 1),
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	cd8d53707981	INSERT INTO t3 (a, b, c) VALUES (1, "Full part", "Half subpart")
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	549aaab33b7b	INSERT INTO t3 (a, c, d) VALUES (12, "Half part, full subpart", 1),
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	e18f3f7ebec8	INSERT INTO t3 (b, c, d) VALUES ("Half part", "Full subpart", 1)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	ca16a394d77a	INSERT INTO t3 (a, b, c, d) VALUES (1, "Full part", "Full subpart", 1)
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	b02bbd0eef50	INSERT INTO t3 VALUES ()
-partition_locking	SCHEMA problems: unsupported construct name_list: ?	5ef2c34b1dee	UNLOCK TABLES
 partition_locking	DIFF column type decimal->bigint	d1e7f6658ca3	SELECT UNIX_TIMESTAMP('2011-01-01 00:00:00') as time_t,
 partition_locking	RUNTIME 1242	d13d4388d9d5	SELECT * FROM t4 WHERE a = (SELECT a FROM t3)
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	5b21eb808616	CALL sp_insert(313,"Test313")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	0631b6a72175	CALL sp_insert_partition("p7", 98, "Test98")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	613395965e1c	CALL sp_insert_partition("p8", 111, "Test111")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	53cb571c444a	CALL sp_insert_partition("p7,p8", 111, "Test111")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	5f08e6c2a071	CALL sp_select_all()
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	b639fc7dd72d	CALL sp_select_exact(98)
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	419dc5d7b09d	CALL sp_select_partition("p7")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	8176e001d874	CALL sp_select_partition("p8")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	97640f1f751d	CALL sp_select_partition("p7,p8")
-partition_locking	SCHEMA problems: unsupported construct execute_var_ident: ?	a1045b4cd3ca	CALL sp_select_range(1,5)
+partition_locking	LENIENT 1748	613395965e1c	CALL sp_insert_partition("p8", 111, "Test111")
 partition_locking	LENIENT 1146	60f251c8bd12	INSERT INTO t1 VALUES (1)
 partition_order	DIFF column type double unsigned->double	64d695038816	select * from t1 force index (b) where b > 0 order by b
 partition_order	DIFF column type float unsigned->float	64d695038816	select * from t1 force index (b) where b > 0 order by b
@@ -1727,6 +1566,7 @@ partition_pruning	SCHEMA problems: PARTITION LIST: definition not understood	36c
 partition_range	LENIENT 1526	1cc48b89efd3	INSERT into t1 values (15, 1, 1)
 partition_range	SCHEMA problems: PARTITION RANGE: definition not understood	d7728f67202e	SELECT * from t1
 partition_range	SCHEMA problems: PARTITION RANGE: definition not understood	66fb98de9ea8	INSERT into t1 VALUES (1,1,1)
+partition_range	LENIENT 1526	78c33eccab42	INSERT into t1 VALUES (5,1,1)
 partition_range	LENIENT 1526	6f3280098489	insert into t1 values (0xFFFFFFFFFFFFFFFF)
 partition_utf8	SCHEMA problems: PARTITION LIST: definition not understood	3de32f5db32e	insert into t1 values ('')
 persisted_variables	LENIENT 1193	218ba6d24410	SELECT @@global.test_component.str_sys_var
@@ -1769,15 +1609,13 @@ plugin_load_early	LENIENT 1193	54c9fbddc9c3	SELECT @@global.example_enum_var = '
 ps	STRICT 1066	b4687d93ee1f	select * from t1, mysqltest1.t1
 ps	LENIENT 1064	7ae509fc5e11	select ?
 ps	LENIENT 1336	ad71164e93ea	select func_1(), func_1(), func_1() from dual
-ps	SCHEMA problems: unsupported construct kill: ?	9970b4a11d25	call proc_1(0)
-ps	SCHEMA problems: unsupported construct kill: ?	e6f07092518c	select func_1() from dual
-ps	SCHEMA problems: unsupported construct install_stmt: ?	97ae6d0cd549	call proc_1()
+ps	LENIENT 1094	9970b4a11d25	call proc_1(0)
+ps	LENIENT 1094	e6f07092518c	select func_1() from dual
+ps	LENIENT 1126	97ae6d0cd549	call proc_1()
 ps	LENIENT 1305	97ae6d0cd549	call proc_1()
-ps	SCHEMA problems: unsupported construct create: ?	97ae6d0cd549	call proc_1()
-ps	SCHEMA problems: unsupported construct checksum: ?	97ae6d0cd549	call proc_1()
-ps	SCHEMA problems: unsupported construct create_user: ?	97ae6d0cd549	call proc_1()
+ps	LENIENT 1007	97ae6d0cd549	call proc_1()
+ps	LENIENT 1396	97ae6d0cd549	call proc_1()
 ps	LENIENT 1539	97ae6d0cd549	call proc_1()
-ps	SCHEMA problems: unsupported construct execute_var_ident: ?	3a3914d4bc6b	CALL p2(@a)
 ps	RUNTIME 1265	56ef3fdd2cc0	INSERT INTO dbls VALUES ('')
 ps	RUNTIME 1265	da22aaa67523	INSERT INTO flts VALUES ('')
 ps	RUNTIME 1265	053481428bbb	INSERT INTO dbls VALUES ('   ')
@@ -2056,7 +1894,7 @@ sensitive_variables_permission	LENIENT 1238	7d93dd6771f4	SELECT @@session.test_c
 sensitive_variables_permission	LENIENT 1193	26b926df1519	SELECT @@session.debug_sensitive_session_string INTO @save_debug_sensitive_session_string
 sensitive_variables_rewrite	LENIENT 1193	26b926df1519	SELECT @@session.debug_sensitive_session_string INTO @save_debug_sensitive_session_string
 session_tracker_trx_state	LENIENT 1792	b8787742eb7a	INSERT INTO t1 VALUES(1)
-show_check_cs_myisam	SCHEMA problems: unsupported construct ternary_option: ?	aa6af3a4bde5	insert into t1 (type_timestamp) values ("2003-02-07 10:00:01")
+show_check_cs_myisam	DIFF column type string->binary	055b08222849	select * from t1
 signal	LENIENT 65535	1938582414b8	call test_signal()
 signal	LENIENT 1231	1938582414b8	call test_signal()
 signal	LENIENT 9999	1938582414b8	call test_signal()
@@ -2108,7 +1946,6 @@ signal_sqlmode	RUNTIME 1406	4c4fb09e54f4	call p
 signal_sqlmode	LENIENT 1648	9537a00334f9	call p2
 signal_sqlmode	LENIENT 1648	55670a79d079	call p3
 skip_name_resolve	LENIENT 1238	d828a064ae1d	SELECT @@LOCAL.skip_name_resolve
-sp	SCHEMA problems: unsupported construct replace_stmt: ?bar\?	415911d410bb	call setcontext()
 sp	STRICT 1146	70edbe46b408	select * from t1, t3
 sp	STRICT 1136	98d9c1fc7eff	call hndlr1(42)
 sp	STRICT 1136	ffed74595d30	call hndlr2(42)
@@ -2129,10 +1966,7 @@ sp	LENIENT 1146	4d55d2abf169	select f10()
 sp	LENIENT 1137	cb6d1b12dc76	select f11()
 sp	LENIENT 1137	25cd9f3fa312	select f11() from t1
 sp	STRICT 1146	3f0ae4aca767	select * from t3
-sp	SCHEMA problems: unsupported construct analyze_table_stmt: ?	cefb85055252	call bug3843()
-sp	SCHEMA problems: unsupported construct show_columns_stmt: ?	1b49dbb56d22	call bug4902()
 sp	LENIENT 1146	143140f04a38	call bug4904()
-sp	SCHEMA problems: unsupported construct checksum: ?	8f52adf41336	call bug5251()
 sp	LENIENT 1424	ed453b746984	select bug6022(5)
 sp	STRICT 1136	e56b72323b10	call bug6029()
 sp	STRICT 1136	a23a5e6dd393	call bug6900()
@@ -2147,7 +1981,6 @@ sp	LENIENT 1456	e207c9f3bed6	call bug10100t(5)
 sp	STRICT 1054	c5fd0afb7a8a	call bug14643_1()
 sp	STRICT 1054	cbe2b4991728	call bug14643_2()
 sp	LENIENT 1054	df00d246b304	call bug14376()
-sp	SCHEMA problems: unsupported construct analyze_table_stmt: ?	702659258a73	call bug13012()
 sp	LENIENT 1054	c23ec8fa9a27	call bug15441('county')
 sp	STRICT 1054	407c877052d0	call bug14498_1()
 sp	STRICT 1054	7fe57e264882	call bug14498_2()
@@ -2171,7 +2004,7 @@ sp	SCHEMA problems: server sql_mode = ?: sql_mode: ? is not a mode of MySQL N.N	
 sp	SCHEMA problems: server sql_mode = ?: sql_mode: ? is not a mode of MySQL N.N	2dc4dbfaf39b	call p()
 sp	LENIENT 1146	2666bc39ac38	SELECT * FROM t1 WHERE a = f1()
 sp	LENIENT 1054	e9c063cb85bd	SELECT f1(1)
-sp	SCHEMA problems: unsupported construct kill: ?	78ddac08c232	call bug6807()
+sp	LENIENT 1317	78ddac08c232	call bug6807()
 sp	LENIENT 1436	0953eea26970	call bug10100p(255, @var)
 sp	LENIENT 1424	e9c063cb85bd	SELECT f1(1)
 sp-bugs	LENIENT 1360	ba78fe295e7d	CALL p1 ()
@@ -2186,7 +2019,6 @@ sp-bugs	RUNTIME 1292	b8787742eb7a	INSERT INTO t1 VALUES(1)
 sp-bugs	LENIENT 1318	142eec0f69c8	INSERT INTO t1 VALUES (1,10)
 sp-bugs	RUNTIME 1292	0641f1fe3744	SELECT myfunc('2019-01-01 00:00:71')
 sp-bugs	STRICT 1054	4318da0a467f	CALL p()
-sp-code	SCHEMA problems: unsupported construct get_diagnostics: ?	ae2cd589953d	CALL p1()
 sp-dynamic	LENIENT 1444	2b71e30aba06	call p1()
 sp-dynamic	LENIENT 1456	2b71e30aba06	call p1()
 sp-dynamic	LENIENT 1295	2b71e30aba06	call p1()
@@ -2195,13 +2027,11 @@ sp-dynamic	LENIENT 1336	73ecf7f52b51	select f1(f1(0))
 sp-dynamic	LENIENT 1336	166b75f5b70e	select f1(f1(f1(0)))
 sp-dynamic	LENIENT 1243	2b71e30aba06	call p1()
 sp-dynamic	LENIENT 1054	2b71e30aba06	call p1()
-sp-dynamic	SCHEMA problems: unsupported construct execute_var_ident: ?	2b71e30aba06	call p1()
 sp-error	LENIENT 1321	aba656fcde2d	select f(10)
 sp-error	LENIENT 1325	2dc4dbfaf39b	call p()
 sp-error	LENIENT 1326	2dc4dbfaf39b	call p()
 sp-error	LENIENT 1327	233b547812a1	select 1 into a
 sp-error	CODE 1326->1054	066f5812d228	call bug2259()
-sp-error	SCHEMA problems: unsupported construct replace_stmt: ?	92f14f593a52	call bug2329_1()
 sp-error	LENIENT 1339	1f12b75f2525	select bug3287()
 sp-error	LENIENT 1339	4ad453117340	call bug3287(2)
 sp-error	LENIENT 1051	f7efe5e3eea5	call bug3294()
@@ -2226,7 +2056,6 @@ sp-error	SCHEMA no database selected	b9c7150ce962	SELECT inexistent(), 1 + ,
 sp-error	LENIENT 1436	005a9d50d197	call p1(1)
 sp-error	CODE 1059->1305	4fba41624cba	SELECT very_long_fn_name_111111111111111111111111111111111111111111111111111111111111111111111111122
 sp-error	CODE 1059->1305	6808fa3523e0	CALL very_long_pr_name_11111111111111111111111111111111111111111111111111111111111111111111111112222
-sp-error	SCHEMA problems: unsupported construct get_diagnostics: ?	ae2cd589953d	CALL p1()
 sp-error	RUNTIME 1644	96b63b4c3197	CALL p6()
 sp-error	SCHEMA problems: memory exhausted	e37244dc78d0	CALL p10()
 sp-error	SCHEMA problems: memory exhausted	943d2514b51e	CALL p11()
@@ -2374,6 +2203,7 @@ subquery_bugs	DIFF column type bigint->int	3a00b9c99762	SELECT
 subquery_bugs	RUNTIME 1242	8b2fae53f66e	SELECT 1 = (SELECT 1
 subquery_bugs	STRICT 3029	b47001337db8	SELECT ( SELECT b FROM t2 ORDER BY a, MIN(a) LIMIT 1 ) FROM t1 GROUP BY a
 subquery_bugs	LENIENT 3037	1f492e8a06e0	SELECT 1 FROM t1 GROUP BY (
+subquery_bugs	LENIENT 1235	c0a3fedfb619	SELECT * FROM (
 subquery_hypergraph	RUNTIME 1242	a12add7a707b	SELECT * FROM t WHERE (SELECT x FROM t)
 subquery_scalar_to_derived	DIFF nullable false->true	948f4e47a94d	SELECT derived_1_0.countrycount AS countrycount,
 subquery_scalar_to_derived	RUNTIME 1406	ecc5831cd04d	INSERT INTO t1 VALUES
@@ -2393,15 +2223,12 @@ table_open_cache_functionality	LENIENT 1238	a58ba21e5bff	SELECT COUNT(@@SESSION.
 tablelock	LENIENT 1422	3fc1e2aa76a6	SELECT f1()
 tablesample	LENIENT 3889	caff43402cf2	SELECT * FROM t3 TABLESAMPLE SYSTEM (100)
 tablesample	LENIENT 6107	09d4783143ee	SELECT * FROM t3 TABLESAMPLE SYSTEM (101)
-tablespace	SCHEMA problems: unsupported construct create: ?	a8d3b76734e2	CALL cr(3)
 temp_table	STRICT 1146	4af7b8be5573	select * from t2
 temporal_literal	LENIENT 1525	cde151717647	SELECT TIME'0000-00-00 00:00:00'
 temporal_literal	LENIENT 1525	05cd7eb86c05	SELECT TIMESTAMP'2001-00-00 00:00:00.9999999'
 temporal_literal	LENIENT 1525	5f9046242542	SELECT TIMESTAMP'2001-00-01 00:00:00.9999999'
 temporal_literal	LENIENT 1525	6e47fc83538a	SELECT TIMESTAMP'2001-01-00 00:00:00.9999999'
 temptable_disk	DIFF column type string->binary	37a30f63aa4e	SELECT * FROM
-temptable_fallback	DIFF column name	9ba98c3d8dbd	SELECT (@id1=@id2)
-temptable_fallback	DIFF column name	e426e90ce134	SELECT (@id1<@id2)
 test_mysql_thd_store_service	STRICT 1305	7c67cc66902d	SELECT test_thd_store_service_function()
 time_zone	DIFF column type string->datetime	16188fdefd66	SELECT TIMESTAMP( '2003-12-31 23:59:59+02:00', '12:00:00' )
 time_zone	DIFF column type decimal->bigint	c8860906aabb	SELECT UNIX_TIMESTAMP( '2015-11-13 23:59:59+02:00' )
@@ -2534,7 +2361,6 @@ type_newdecimal	RUNTIME 1690	56979ce70317	insert into t1 values(
 type_newdecimal	LENIENT 1426	d898af9f0999	SELECT CAST(1 AS decimal(66,10))
 type_newdecimal	LENIENT 1425	33d42bcec451	SELECT CAST(1 AS decimal(65,31))
 type_newdecimal	LENIENT 1425	7c9512375129	SELECT a+CAST(1 AS decimal(65,31)) AS aa, SUM(b) FROM t1 GROUP BY aa
-type_newdecimal	DIFF column name	c5f4951382b4	select (1.20396873 * 0.89550000 * 0.68000000 * 1.08721696 * 0.99500000 *
 type_newdecimal	DIFF column type decimal unsigned->decimal	3abd07b0a7e7	SELECT * FROM t1
 type_newdecimal	RUNTIME 1690	a400e3397f17	SELECT a - b FROM t1
 type_newdecimal	RUNTIME 1690	9983964035f6	SELECT a - b FROM t2
@@ -2577,8 +2403,6 @@ type_time	DIFF column type time->datetime	0f119b782f42	SELECT TIMESTAMP(f1,'1') 
 type_time	DIFF nullable true->false	8297621cc801	SELECT CAST(IF(1, TIME'00:00:00',TIME'00:00:00') AS CHAR)
 type_time	DIFF nullable true->false	1ca1831bc63e	SELECT CAST(CASE WHEN 1 THEN TIME'00:00:00' ELSE TIME'00:00:00' END AS CHAR)
 type_timestamp	DIFF column type double->bigint	a4ce02315347	SELECT TIMESTAMP('2000-01-27','23:13:41') - TIMESTAMP('2003-05-16','23:53:29')
-type_varchar	DIFF column name	deee14cc3e35	SELECT a,(a + 0) FROM t1 ORDER BY a
-type_varchar	DIFF column name	91404eadca42	SELECT a,(a DIV 2) FROM t1 ORDER BY a
 type_year	RUNTIME 1690	219c347d8fb3	SELECT ((year(QC_DATE) - year(QC_TIMESTAMP))) FROM t
 type_year	RUNTIME 1690	467c549d1239	SELECT y1-y2 FROM y
 type_year	DIFF column type year->int unsigned	3f317b9e437c	SELECT c0 FROM v1
@@ -2596,7 +2420,6 @@ udf	RUNTIME 1366	4de193fd8941	SELECT metaphon('a')
 udf	LENIENT 1305	d8fb9b46bf81	select f3(NULL)
 udf	LENIENT 1305	f5dea7304076	select f2(NULL)
 udf	LENIENT 1305	78604177118b	select f1(NULL)
-udf_bug35242734	SCHEMA problems: unsupported construct ternary_option: ?	261029731293	SELECT udf_test('test')
 union	LENIENT 1234	8ce3da13c84c	select * from t1 union select SQL_BUFFER_RESULT * from t2
 union	DIFF nullable true->false	b78d0bd457b1	SELECT(SELECT 0 AS a UNION SELECT 1 AS a ORDER BY a ASC  LIMIT 1) AS dev
 union	DIFF nullable true->false	208847a65d4f	SELECT(SELECT 0 AS a UNION SELECT 1 AS a ORDER BY a DESC LIMIT 1) AS dev
@@ -2630,10 +2453,6 @@ user_lock	LENIENT 4163	5a8ca50d15a7	SELECT GET_LOCK('123456789012345678901234567
 user_lock	LENIENT 3057	5f41528aadef	SELECT GET_LOCK('',1)
 user_lock	LENIENT 3057	1a98b92f4a05	SELECT GET_LOCK(NULL,1)
 user_lock	LENIENT 3057	5bb2406aac80	SELECT GET_LOCK(@a,1)
-user_var	DIFF column name	7373a4e759ac	select @d,(@d:=id),@d from t1
-user_var	DIFF column name	fc5f0a1d53b6	select @e,(@e:=d),@e from t1
-user_var	DIFF column name	ce1e534bd04e	select @f,(@f:=c),@f from t1
-user_var	DIFF column name	a100848dd7f3	select @g,(@g:=c),@g from t1
 validate_password_plugin	LENIENT 1193	33ea5579728f	SELECT @@validate_password_length,
 validate_password_plugin_check_user	LENIENT 1193	8d25049d663f	SELECT @@global.validate_password_check_user_name
 varbinary	DIFF column type double->bigint unsigned	3aa901c382ce	select 0x41,0x41+0,0x41 | 0x7fffffffffffffff | 0,0xffffffffffffffff | 0
@@ -2654,7 +2473,7 @@ varbinary	DIFF column type bigint unsigned->binary	463f1eb420f1	SELECT CAST('12'
 varbinary	DIFF column type bigint unsigned->binary	125bb0bacd3b	SELECT _binary '12' << 1
 varbinary	DIFF column type bigint unsigned->binary	5e17354a00eb	SELECT binary '12' << 1
 varbinary	DIFF column type bigint unsigned->binary	0e04b90ce515	SELECT CAST('12' AS binary) << 1
-varbinary	DIFF column name	3b54375f7ed0	SELECT (_binary x'31' | x'31')
+varbinary	DIFF column type bigint unsigned->binary	3b54375f7ed0	SELECT (_binary x'31' | x'31')
 varbinary	DIFF column type bigint unsigned->double	5b9ef774daa5	SELECT (_binary x'31' | x'31') + 0
 varbinary	DIFF column type decimal->double	febb6e5d5ce4	SELECT 1.0 * (_binary x'312E35' | x'312E35')
 varbinary	DIFF column type bigint unsigned->double	c31ecf472db3	SELECT (_binary x'31' | NULL) + 0
@@ -2905,7 +2724,6 @@ window_functions	LENIENT 3586	033bdbaa241a	SELECT w, SUM(w) OVER (ROWS BETWEEN 3
 window_functions	LENIENT 3586	9e74ccc18369	SELECT w, SUM(w) OVER (ROWS BETWEEN CURRENT ROW AND 3.4 FOLLOWING) FROM t
 window_functions	DIFF column type bigint->int	b16e7874983a	SELECT LEAD(1,1,1) OVER(PARTITION BY a) FROM t
 window_functions	DIFF column type bigint->int	d6dced1ffa4a	SELECT MONTH(date), SUM(sale),
-window_functions	DIFF column name	e8c536f27f14	SELECT ((NTILE(70)OVER())<<(FROM_UNIXTIME(LEAD('',67) RESPECT NULLS
 window_functions	LENIENT 3037	dd6b69adcee8	SELECT ST_BUFFER(ST_ASBINARY(1), ST_ASBINARY(NTH_VALUE('4714-05-04',1)OVER(),'axis-order=long-lat'))
 window_functions	LENIENT 3146	ab7c935f63d2	SELECT ((FIRST_VALUE(JSON_MERGE_PATCH(1.755913e+308,'{ }'))OVER())<=(1))
 window_functions	LENIENT 3146	0124fada5988	SELECT ((QUOTE(JSON_KEYS(FIRST_VALUE(JSON_KEYS(EXP(-15676),ABS('d0'))
@@ -2914,8 +2732,6 @@ window_functions	LENIENT 3146	4e4301907e46	SELECT IFNULL(JSON_TYPE(CASE WHEN(1) 
 window_functions	LENIENT 1411	763fe1427740	SELECT IFNULL((UUID_TO_BIN(0xAB8631)),(FIRST_VALUE(2.469566E+307)OVER()))
 window_functions	DIFF column type bigint->int	796ba8e68343	SELECT PERCENT_RANK() OVER(),
 window_functions	DIFF column type bigint->int	b02bdb03bc76	SELECT PERCENT_RANK() OVER(),
-window_functions	DIFF column name	5713be0f7a18	SELECT (3.14 DIV (
-window_functions	DIFF column name	8ddd2fe44323	SELECT (3.14 DIV (
 window_functions_bugs	DIFF column type int->bigint	f86d557dc932	SELECT a, PERCENT_RANK() OVER w1 FROM t GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
 window_functions_bugs	DIFF column type int->bigint	dccfa60b121e	SELECT a, PERCENT_RANK() OVER w1 FROM v GROUP BY b,1 WITH ROLLUP WINDOW w1 AS()
 window_functions_bugs	LENIENT 1210	f9372aba0ec7	SELECT ((PERIOD_DIFF('7766-05-30','2955-06-11'))DIV(LAST_VALUE(';')OVER()))
@@ -2933,11 +2749,13 @@ window_functions_bugs	LENIENT 1054	dcd3adb9a985	SELECT i+1 AS b, ROW_NUMBER() OV
 window_functions_bugs	LENIENT 3141	e1fb5f6a08cf	SELECT JSON_ARRAY(FIRST_VALUE(CAST('' AS JSON)) OVER (), '')
 window_functions_bugs	LENIENT 3141	61b2c4b35b4d	SELECT JSON_ARRAY(NTH_VALUE(CAST('' AS JSON), 1) OVER (), '')
 window_functions_bugs	LENIENT 3141	299429a58bcc	SELECT JSON_ARRAY(LEAD(CAST('true' AS JSON), 2, CAST('' AS JSON)) OVER (), '')
+window_functions_bugs	LENIENT 3141	f610bb99955d	SELECT JSON_ARRAY(JSON_ARRAYAGG(CAST('' AS JSON)) OVER (), '')
 window_functions_bugs	DIFF nullable true->false	b300708812c6	SELECT
 window_functions_bugs	DIFF column type binary->string	549132f990c2	SELECT
 window_functions_bugs	DIFF column type bigint->int	1118f232f41b	SELECT DISTINCT
 window_functions_bugs	DIFF column type int->bigint	8b5f344469a3	SELECT f1, f2, DENSE_RANK() OVER (ORDER BY f1), RANK() OVER (ORDER BY f1)
-window_jsonaggs	SCHEMA problems: unsupported construct sum_expr: ?	35ddc7e2e9a9	SELECT * FROM v
+window_jsonaggs	DIFF column type int->bigint	f9e059b675d8	SELECT i, f, JSON_ARRAYAGG(i) OVER w jarray_i, JSON_ARRAYAGG(f)
+window_jsonaggs	LENIENT 3158	6be4e496b416	SELECT i, JSON_OBJECTAGG(i,f) OVER w jobject_f FROM t1 GROUP BY i,f
 window_min_max	DIFF column type bigint->int	44c20d073cb3	SELECT sex, NTILE(2) OVER w , MIN(ASCII(sex)) OVER w min,
 window_min_max	DIFF column type int->bigint	7b7cdf87ecd7	SELECT k, MIN(i), SUM(j), MIN(k) OVER (ROWS UNBOUNDED PRECEDING) min_wf FROM t
 window_min_max	DIFF column type int->bigint	ce7be1afc5c6	SELECT k, MIN(i), SUM(j), MAX(k) OVER (ROWS UNBOUNDED PRECEDING) max_wf FROM t
@@ -2946,7 +2764,7 @@ window_min_max	DIFF column type int->bigint	7ea8dc81948f	SELECT k, MIN(i), SUM(j
 window_min_max	LENIENT 3589	fc68f5dbe693	SELECT NTILE(5) OVER w, ROW_NUMBER() OVER w, id, MIN(id) OVER w FROM t1
 window_min_max	LENIENT 3587	c7c00642717a	SELECT j, JSON_TYPE(j), JSON_TYPE(MIN(j) OVER (ORDER BY j RANGE 3 PRECEDING)) FROM tj
 window_min_max	DIFF column type bigint->int	2794b67edc05	SELECT i, MIN(i) OVER (ORDER BY i) FROM tj UNION ALL SELECT i, MIN(i) OVER (ORDER BY i) FROM tj
-windows	SCHEMA problems: unsupported construct install_stmt: ?	97ae6d0cd549	call proc_1()
+windows	LENIENT 1126	97ae6d0cd549	call proc_1()
 with_non_recursive_bugs	STRICT 1146	cedd6f16c4fc	with cte as (select * from t1) (select * from cte)
 with_non_recursive_bugs	STRICT 1146	867728e9ad24	with cte as (select * from t1) (select * from cte) ORDER BY i
 with_non_recursive_bugs	STRICT 1146	1bd08c5dbb92	with cte as (select * from t1) (select * from cte) LIMIT 1

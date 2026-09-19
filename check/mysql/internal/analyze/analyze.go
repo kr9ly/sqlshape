@@ -1709,7 +1709,7 @@ func (a *analyzer) items(sc scope, v mysqlast.Value) ([]Column, error) {
 			}
 			name := str(n.Arg("alias"))
 			if name == "" {
-				name = a.itemName(expr)
+				name = a.itemName(expr, n)
 			}
 			c := Column{Name: name, Type: t.typ, Known: t.known, Nullable: t.nullable, aliased: str(n.Arg("alias")) != ""}
 			if ref, ok := a.plainColumn(sc, expr); ok {
@@ -1751,7 +1751,14 @@ func (a *analyzer) plainColumn(sc scope, expr mysqlast.Value) (colRef, bool) {
 
 // itemName is the name MySQL gives an unaliased select item: the column's name for a
 // column reference, else the expression's text.
-func (a *analyzer) itemName(v mysqlast.Value) string {
+// itemName names an unaliased select item the way the server does: a column by its field
+// name, a string, numeric or NULL literal by its own token (wrapping parentheses dropped),
+// anything else by its source text -- the whole item's (outer's) span, parentheses
+// included, since the fold of `(expr)` passes up the inner node and would otherwise lose
+// them. Measured: `SELECT (a > b)` is the column "(a > b)", `( a + 1 )` keeps its inner
+// spaces, `(-1)`, `(TRUE)`, `(0x1F)` and `(DATE'...')` keep their parentheses, while
+// `(a)`, `('x')`, `(3)`, `(1.5)`, `(1e0)` and `(NULL)` do not.
+func (a *analyzer) itemName(v mysqlast.Value, outer *mysqlast.Node) string {
 	if n, ok := v.(*mysqlast.Node); ok {
 		switch n.Class {
 		case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident":
@@ -1762,6 +1769,11 @@ func (a *analyzer) itemName(v mysqlast.Value) string {
 			if tok, ok := n.Arg("literal").(mysqlast.Token); ok {
 				return tok.Value // a string literal is named by its value, without the quotes
 			}
+		case "Item_int", "Item_uint", "Item_decimal", "Item_float", "Item_null":
+			outer = nil // named by the literal's own token, wrapping parentheses dropped
+		}
+		if outer != nil && outer.Start >= 0 && outer.End <= len(a.text) && outer.Start < outer.End {
+			return strings.TrimSpace(a.text[outer.Start:outer.End])
 		}
 		if n.Start >= 0 && n.End <= len(a.text) && n.Start < n.End {
 			return a.text[n.Start:n.End]

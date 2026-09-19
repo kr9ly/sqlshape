@@ -168,6 +168,11 @@ func (b *Build) Generate() (*Grammar, error) {
 					grammarClasses = append(grammarClasses, a.Class)
 				}
 			}
+			// the Item classes only mysqlast's hand-written hooks build (their actions are
+			// ActUnknown here, so the loop above never sees them); the catalog still needs
+			// their base chains and resolve facts
+			grammarClasses = append(grammarClasses,
+				"Item_func_in", "Item_sum_json_array", "Item_sum_json_object", "Item_lead_lag", "Item_nth_value")
 			if err := writeFile(filepath.Join(b.CatPkg, "functions.go"), []byte(CatalogGo("catalog", ver.String(), cat, grammarClasses))); err != nil {
 				return nil, err
 			}
