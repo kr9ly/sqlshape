@@ -83,7 +83,7 @@ release it is a candidate for.
   the counterpart of PostgreSQL's regress probe): each file on a server of its own, the
   analyzer's schema rebuilt from `SHOW CREATE` after every DDL under the session's `sql_mode`,
   a SELECT's columns compared by name, type family and nullability, an error by number; the
-  remaining disagreements (2,580 statements) are pinned one by one as a baseline, and a new
+  remaining disagreements (2,594 statements) are pinned one by one as a baseline, and a new
   one fails the build.
 - `mysqltest.StartOwn` boots a server of its own even under `mysqltest.Main`, for a test that
   changes accounts, global variables or other databases.

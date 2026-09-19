@@ -19,3 +19,10 @@ var insertAssigns = sqlshape.Query[struct{}, struct {
 	Total  int32
 }](`-- sqlshape: expect PRIMARY
 INSERT INTO v_orders (id, tenant_id, total) VALUES ({{.ID}}, {{.Tenant}}, {{.Total}})`)
+
+// A construct the AST layer does not fold (CAST ... AT TIME ZONE) is reported with the
+// statement's own text quoted, not silently accepted.
+var unsupported = sqlshape.Query[struct{ X string }, struct{}](`SELECT CAST(NOW() AT TIME ZONE '+00:00' AS DATETIME) AS x FROM v_orders WHERE tenant_id = 1`) // want `unsupported construct simple_expr/\d+ at byte 7: "CAST\(NOW\(\) AT TIME ZONE '\+00:00' AS DATETIME\)"`
+
+// A syntax error carries MySQL's own number, positioned at the offending token.
+var syntaxError = sqlshape.Query[uint64, struct{}](`SELECT id FROM v_orders WHERE ORDER BY id`) // want `syntax error \(MySQL error 1064\)`

@@ -71,6 +71,29 @@ func init() {
 		l, _ := kids[6].(List)
 		return &Node{Class: "Item_func_in", Names: []string{"list", "is_negation"}, Args: []Value{append(List{kids[0], kids[4]}, l...), Const("true")}, Start: n.Start, End: n.End}, nil
 	})
+	// predicate: the LIKE / REGEXP / SOUNDS LIKE alternatives whose actions the shape reader
+	// cannot follow, folded to what the server itself builds: NOT LIKE is the LIKE negated
+	// the way NOT IN is, REGEXP is REGEXP_LIKE(a, b) (the documented synonym, typed through
+	// the catalog like any call), and SOUNDS LIKE is SOUNDEX(a) = SOUNDEX(b).
+	negated := func(n *mysqlparse.Node, inner *Node) *Node {
+		return &Node{Class: "PTI_truth_transform", Names: []string{"expr", "truth_test"}, Args: []Value{inner, Const("Item::BOOL_NEGATED")}, Start: n.Start, End: n.End}
+	}
+	register("predicate", "bit_expr not LIKE simple_expr", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return negated(n, &Node{Class: "Item_func_like", Names: []string{"a", "b"}, Args: []Value{kids[0], kids[3]}, Start: n.Start, End: n.End}), nil
+	})
+	register("predicate", "bit_expr not LIKE simple_expr ESCAPE_SYM simple_expr", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return negated(n, &Node{Class: "Item_func_like", Names: []string{"a", "b", "escape"}, Args: []Value{kids[0], kids[3], kids[5]}, Start: n.Start, End: n.End}), nil
+	})
+	register("predicate", "bit_expr REGEXP bit_expr", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return genericCall(n, "REGEXP_LIKE", kids[0], kids[2]), nil
+	})
+	register("predicate", "bit_expr not REGEXP bit_expr", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return negated(n, genericCall(n, "REGEXP_LIKE", kids[0], kids[3])), nil
+	})
+	register("predicate", "bit_expr SOUNDS_SYM LIKE bit_expr", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Node{Class: "PTI_comp_op", Names: []string{"left", "boolfunc2creator", "right"},
+			Args: []Value{genericCall(n, "SOUNDEX", kids[0]), Const("&comp_eq_creator"), genericCall(n, "SOUNDEX", kids[3])}, Start: n.Start, End: n.End}, nil
+	})
 	// update_list: update_elem | update_list ',' update_elem -> {column_list, value_list}
 	register("update_list", "update_elem", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		e, _ := kids[0].(*Struct)

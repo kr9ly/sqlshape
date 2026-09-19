@@ -98,6 +98,10 @@ var analyzeCases = []analyzeCase{
 	{"SELECT u.id, o.total FROM users u RIGHT JOIN orders o ON o.user_id = u.id", []string{"id bigint unsigned null", "total decimal(10,2)"}, nil},
 	{"SELECT o.* FROM users u JOIN orders o ON o.user_id = u.id", []string{"id bigint unsigned", "user_id bigint unsigned", "total decimal(10,2)", "note text null"}, nil},
 	{"SELECT count(*), count(email) c, 1, 'x', 1.5, NULL FROM users", []string{"count(*) bigint", "c bigint", "1 bigint(1)", "x varchar(1)", "1.5 decimal(2,1)", "NULL null null"}, nil},
+	// the predicate alternatives folded by hand (hooks_dml.go): NOT LIKE is the negated
+	// LIKE, REGEXP is REGEXP_LIKE, SOUNDS LIKE is SOUNDEX(a) = SOUNDEX(b)
+	{"SELECT name NOT LIKE 'a%', name NOT LIKE 'a%' ESCAPE '!', email REGEXP '^a', name NOT REGEXP '^a', name SOUNDS LIKE 'abc' FROM users",
+		[]string{"name NOT LIKE 'a%' bigint(1)", "name NOT LIKE 'a%' ESCAPE '!' bigint(1)", "email REGEXP '^a' bigint(1) null", "name NOT REGEXP '^a' bigint(1)", "name SOUNDS LIKE 'abc' bigint(1) null"}, nil},
 	{"SELECT id = 1, id > 1 AND name = 'x', NOT id, id IS NULL, email IS NOT NULL, TRUE FROM users", []string{"id = 1 bigint(1)", "id > 1 AND name = 'x' bigint(1)", "NOT id bigint(1)", "id IS NULL bigint(1)", "email IS NOT NULL bigint(1)", "TRUE bigint(1)"}, nil},
 	{"SELECT id FROM users WHERE name = $1 AND email = $2 LIMIT $3 OFFSET $4", []string{"id bigint unsigned"}, []string{"varchar(100)", "varchar(255)", "bigint unsigned", "bigint unsigned"}},
 	{"SELECT id FROM users WHERE $1 = name", []string{"id bigint unsigned"}, []string{"varchar(100)"}},

@@ -229,6 +229,13 @@ ctype_utf32	RUNTIME 1366	a76f35b85c40	INSERT INTO t1 VALUES(x'DFFF')
 ctype_utf32	RUNTIME 1366	f63c1c7a4719	INSERT INTO t1 VALUES(x'110000')
 ctype_utf8	DIFF column type binary->string	f7018eb92fca	select left(_utf8mb3 0xD0B0D0B1D0B2,1)
 ctype_utf8	DIFF column type binary->string	f05fff01bad3	select right(_utf8mb3 0xD0B0D0B2D0B2,1)
+ctype_utf8	LENIENT 3685	4546edd6cecc	select  'вася'  rlike '[[:<:]]вася[[:>:]]'
+ctype_utf8	LENIENT 3685	019a1ad752f7	select  'вася ' rlike '[[:<:]]вася[[:>:]]'
+ctype_utf8	LENIENT 3685	2faa777f848a	select ' вася'  rlike '[[:<:]]вася[[:>:]]'
+ctype_utf8	LENIENT 3685	b9abb1dfeb7f	select ' вася ' rlike '[[:<:]]вася[[:>:]]'
+ctype_utf8	LENIENT 3685	2fe445f88563	select  'васяz' rlike '[[:<:]]вася[[:>:]]'
+ctype_utf8	LENIENT 3685	0589d31cfe46	select 'zвася'  rlike '[[:<:]]вася[[:>:]]'
+ctype_utf8	LENIENT 3685	1183dfa6f990	select 'zвасяz' rlike '[[:<:]]вася[[:>:]]'
 ctype_utf8	DIFF column type binary->string	6ce1f92e7508	select soundex(_utf8mb3 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB)
 ctype_utf8	DIFF column type binary->string	eee62906d3e8	select soundex(_utf8mb3 0xD091D092D093)
 ctype_utf8	DIFF column type binary->string	c8e55918ecb4	select char(0xd1,0x8f using utf8mb3)
@@ -545,7 +552,13 @@ func_misc	DIFF column type string->binary	2c3d91662011	SELECT DISTINCT LEAST(a, 
 func_misc	DIFF column type string->binary	1894448a655c	SELECT DISTINCT GREATEST(a, (SELECT b FROM t1 LIMIT 1)) FROM t1 UNION SELECT 1
 func_misc	DIFF nullable true->false	5157b74e5589	SELECT IS_IPV4(BINARY('1.2.3.4'))
 func_misc	DIFF nullable true->false	33b9cebc6808	SELECT IS_IPV6(BINARY('0000:0000:0000:0000:0000:0000:0000:0001'))
+func_prefix_key	LENIENT 3141	0045a109253c	SELECT 1 FROM t1 WHERE f1 NOT LIKE json_merge('' ,'+' )
 func_prefix_key	LENIENT 3141	d170099c489e	SELECT 1 FROM t1 WHERE f1 LIKE json_contains('key2' ,'key4' )
+func_regexp	LENIENT 3696	8f5f64449925	select * from t1 where xxx REGEXP '^this is some text: to test - out\\.reg exp [[(][0-9]+[/\\][0-9]+
+func_regexp	LENIENT 3995	43af6aae6c7f	SELECT '' REGEXP BINARY NULL
+func_regexp	LENIENT 3995	19d7b7725117	SELECT 'A' REGEXP BINARY NULL
+func_regexp	LENIENT 3995	6fc8067d0f67	SELECT "ABC" REGEXP BINARY NULL
+func_regexp	LENIENT 3687	b02cd6462e58	SELECT '1' RLIKE RPAD('1', 10000, '(')
 func_rollback	LENIENT 1146	fe5ced7823c7	SELECT f1_simple_insert(1)
 func_rollback	LENIENT 1146	e475bfa125f8	SELECT f1_simple_insert(1) FROM t1_select
 func_rollback	LENIENT 1146	4f4c3194b397	SELECT f1_simple_insert(NULL)
@@ -1087,7 +1100,7 @@ locking_clause	DIFF column count	dce937bbb9fc	SELECT 1 UNION SELECT 1 INTO @var 
 log_components_eventlog	LENIENT 1193	6cebb597af1e	SELECT @@syseventlog.tag
 log_components_filter	LENIENT 1238	6b899b0a6566	SELECT @@session.dragnet.log_error_filter_rules
 log_components_implicit	LENIENT 1193	b922d4f54976	SELECT @@global.dragnet.log_error_filter_rules
-log_components_split	DIFF column name	38d5df48fe32	SELECT "Too long: ⟼λ⮞γζ←⤆↕↑↓怪獣⟼λ⮞γζ←⤆↕↑↓A7Uη)R|5怪獣⟼λ�
+log_components_split	DIFF column name	38d5df48fe32	SELECT "Too long: ⟼λ⮞γζ←⤆↕↑↓怪獣⟼λ⮞γζ←⤆↕↑↓A7Uη)R|5怪獣⟼λ�
 log_components_split	DIFF column name	c6ab2591c7f8	SELECT "Too long as well: 
 log_components_syslog	LENIENT 1193	6cebb597af1e	SELECT @@syseventlog.tag
 log_components_syslog	LENIENT 1193	4e0ff6514315	SELECT @@syseventlog.include_pid
@@ -1687,6 +1700,7 @@ regular_expressions_utf-8	LENIENT 3995	8bc150152f7a	SELECT regexp_like(x'01', a)
 regular_expressions_utf-8	LENIENT 3995	08c6ae7e833c	SELECT regexp_like(x'01', a) FROM t3
 regular_expressions_utf-8	DIFF nullable true->false	62e32139aa96	SELECT regexp_replace(1, 1, 'a')
 regular_expressions_utf-8	DIFF column type string->binary	73fef62ef900	SELECT regexp_replace(NULL, NULL, 'a')
+regular_expressions_utf-8	RUNTIME 3854	6b138610c605	select ( _utf32', ,*') regexp 13946
 regular_expressions_utf-8	RUNTIME 3854	8fb26c8c7564	select regexp_instr( ( _utf32', ,*'), 13946)
 regular_expressions_utf-8	RUNTIME 3854	d79df3c7ed38	select regexp_replace( ( _utf32', ,*'), 13946, 42)
 regular_expressions_utf-8	RUNTIME 3854	ddaa93a266d9	select regexp_substr( ( _utf32', ,*'), 13946)
