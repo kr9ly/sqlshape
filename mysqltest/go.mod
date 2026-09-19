@@ -9,7 +9,7 @@ go 1.26.1
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1
-	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/v2 v2.0.0
 )
 
 require filippo.io/edwards25519 v1.2.0 // indirect

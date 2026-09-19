@@ -7,9 +7,9 @@ go 1.26.1
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1
-	github.com/kr9ly/sqlshape/mysqltest/v2 v2.0.0-rc.2
-	github.com/kr9ly/sqlshape/mysql/v2 v2.0.0-rc.2
-	github.com/kr9ly/sqlshape/v2 v2.0.0-rc.2
+	github.com/kr9ly/sqlshape/mysql/v2 v2.0.0
+	github.com/kr9ly/sqlshape/mysqltest/v2 v2.0.0
+	github.com/kr9ly/sqlshape/v2 v2.0.0
 	github.com/tetratelabs/wazero v1.12.0
 )
 
