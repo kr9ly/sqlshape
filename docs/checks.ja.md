@@ -818,7 +818,7 @@ var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 | `paired(outbox)` | 同じ文で名指しの表にも書くこと（書き込みCTE） | `insert` |
 | `single` | 高々1行しか触らないと証明できること（`One`の証明） | `delete` |
 
-`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切りか、まとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。文は表に対して実際にすることで判定される。MERGEの各枝はその枝の文種の書き込み（INSERT枝しかないMERGEは`on update`の義務を負わない）、`INSERT ... ON CONFLICT DO UPDATE`はinsertとupdateの両方、`TRUNCATE`は全行のdelete、自動更新可能ビューを通した書き込みは基底表への書き込み。宣言の中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 — を指し、その番号のパラメータという意味ではない。Goテンプレートの`{{.X}}`はそういう値の一つ。
+`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切りか、まとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。文は表に対して実際にすることで判定される。MERGEの各枝はその枝の文種の書き込み（INSERT枝しかないMERGEは`on update`の義務を負わない）、`INSERT ... ON CONFLICT DO UPDATE`はinsertとupdateの両方、`TRUNCATE`は全行のdelete、自動更新可能ビューを通した書き込みは基底表への書き込み。裏返すと、ビューに宣言した義務が縛るのはビューの読み手だけである — ビュー経由の書き込みは基底表の義務で判定され、ビュー自身の義務には決してかからないので、書き込みにも効かせたい規則は基底表に宣言する。宣言の中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 — を指し、その番号のパラメータという意味ではない。Goテンプレートの`{{.X}}`はそういう値の一つ。
 
 `require`行ではないが義務に展開される宣言が3つある。`visible where <expr>`（`require <expr> on read`のもとの綴り）、`aggregate`、`transitions`。`sensitive`は列にラベルを付ける。vetのフラグ`-require-columns=tenant_id`・`-no-table-reads`・`-no-tables`は、その列を持つ全表への`require pinned(tenant_id)`、全表への`require via view`、`require via view on all`の略記で、文脈の`waive`は宣言と同じように解除できる。
 

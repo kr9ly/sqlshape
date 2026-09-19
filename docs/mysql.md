@@ -65,7 +65,7 @@ values agree with 8.4.
 MySQL's own test corpus is replayed as well: the 1,281 files of `mysql-test/t` (some 137,000
 statements) run against a `mysqld` and the analyzer side by side, a SELECT's columns compared by
 name, type family and nullability, an error by its number. The statements on which the two
-knowingly disagree -- 2,534 -- are pinned one by one
+knowingly disagree -- 2,525 -- are pinned one by one
 (`check/mysql/internal/analyze/testdata/corpus_baseline.txt`, each with the class of the
 disagreement: an error the analyzer does not predict or predicts under another number, a column
 typed differently, a schema construct the loader does not model), and a new disagreement fails
@@ -529,7 +529,11 @@ level with a single table; a view or a derived table has none. `INSERT ... SELEC
 DUPLICATE KEY UPDATE` resolves its assignments against the target and the `SELECT`'s tables
 (an unqualified name both have is 1052) unless the `SELECT` is grouped or aggregated, when the
 target alone is in view; `VALUES(c)` is always the target's column; a select alias is never
-visible there. A derived table needs an alias (1248); `QUALIFY` is rejected as 8.4 rejects it
+visible there. The row alias (`INSERT ... VALUES (...) AS new [(names)]`, 8.0.19) exposes the
+inserted columns -- the insert's own fields, renamed positionally by the name list -- to
+`ON DUPLICATE KEY UPDATE` beside the target: an unqualified name both carry is 1052, a name
+list of the wrong count 1353, an alias colliding with the target 1066, and `VALUES(c)` stays
+usable beside it (all measured). A derived table needs an alias (1248); `QUALIFY` is rejected as 8.4 rejects it
 without the hypergraph optimizer (6037). A `USING` or `NATURAL` join
 coalesces its common columns (an unqualified name resolves to the left side, `SELECT *` lists it
 once). Table and view names compare as `lower_case_table_names` says; column and key names never

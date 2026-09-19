@@ -98,6 +98,12 @@ var analyzeCases = []analyzeCase{
 	{"SELECT u.id, o.total FROM users u RIGHT JOIN orders o ON o.user_id = u.id", []string{"id bigint unsigned null", "total decimal(10,2)"}, nil},
 	{"SELECT o.* FROM users u JOIN orders o ON o.user_id = u.id", []string{"id bigint unsigned", "user_id bigint unsigned", "total decimal(10,2)", "note text null"}, nil},
 	{"SELECT count(*), count(email) c, 1, 'x', 1.5, NULL FROM users", []string{"count(*) bigint", "c bigint", "1 bigint(1)", "x varchar(1)", "1.5 decimal(2,1)", "NULL null null"}, nil},
+	// the row alias (8.0.19): the inserted columns under the alias's names, visible to
+	// ON DUPLICATE KEY UPDATE beside the target and beside VALUES()
+	{"INSERT INTO metrics (id, small) VALUES ($1, $2) AS new(p, q) ON DUPLICATE KEY UPDATE small = q + new.p",
+		nil, []string{"int", "smallint"}},
+	{"INSERT INTO metrics SET id = $1, small = $2 AS new ON DUPLICATE KEY UPDATE small = new.small + VALUES(small)",
+		nil, []string{"int", "smallint"}},
 	// the predicate alternatives folded by hand (hooks_dml.go): NOT LIKE is the negated
 	// LIKE, REGEXP is REGEXP_LIKE, SOUNDS LIKE is SOUNDEX(a) = SOUNDEX(b)
 	{"SELECT name NOT LIKE 'a%', name NOT LIKE 'a%' ESCAPE '!', email REGEXP '^a', name NOT REGEXP '^a', name SOUNDS LIKE 'abc' FROM users",
@@ -207,6 +213,14 @@ type errorCase struct {
 // errorCases are the statements MySQL rejects, with its error number and message.
 var errorCases = []errorCase{
 	{"SELECT id FROM nobody", 1146, "Table 'nobody' doesn't exist", 15},
+	// the row alias's refusals, each as the server spells it: a column outside the insert's
+	// list, a name list of the wrong count, an alias colliding with the target, and an
+	// unqualified name the target and the alias share
+	{"INSERT INTO metrics (id, small) VALUES (1, 2) AS new ON DUPLICATE KEY UPDATE small = new.tiny", 1054, "Unknown column 'new.tiny' in 'field list'", 85},
+	{"INSERT INTO metrics (id, small) VALUES (1, 2) AS new(x, y, z) ON DUPLICATE KEY UPDATE small = y", 1353, "In definition of view, derived table or common table expression, SELECT list and column names list have different column counts", 49},
+	{"INSERT INTO metrics (id, small) VALUES (1, 2) AS metrics ON DUPLICATE KEY UPDATE small = metrics.small", 1066, "Not unique table/alias: 'metrics'", 49},
+	{"INSERT INTO metrics (id, small) VALUES (1, 2) AS new ON DUPLICATE KEY UPDATE small = small + new.small", 1052, "Column 'small' in field list is ambiguous", 85},
+	{"INSERT INTO metrics (id, small) VALUES (1, 2) AS new(x, x) ON DUPLICATE KEY UPDATE small = new.x", 1060, "Duplicate column name 'x'", 49},
 	// temporal literals the server refuses (create_temporal_literal)
 	{"SELECT TIMESTAMP'2015-01-01 10:10:10+5:30'", 1525, "Incorrect DATETIME value: '2015-01-01 10:10:10+5:30'", 7},
 	{"SELECT TIMESTAMP'2015-01-01 10:10:10+14:01'", 1525, "Incorrect DATETIME value: '2015-01-01 10:10:10+14:01'", 7},

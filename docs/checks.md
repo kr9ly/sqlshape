@@ -990,7 +990,9 @@ obligation with what it provably does. The general form is a directive above `CR
 statement is judged by what it does to the table: each branch of a MERGE is the write of its own kind
 (an INSERT-only MERGE owes nothing `on update`), an `INSERT ... ON CONFLICT DO UPDATE` is an insert and
 an update, `TRUNCATE` is a delete of every row, and a write through an automatically updatable view is
-a write to the base table. A
+a write to the base table -- which also means an obligation declared on a view binds the view's
+readers only: a write through the view is judged against the base table's obligations, never the
+view's own, so a rule that must hold for the writes too belongs on the base table. A
 `$n` in a declaration stands for any value known before the row is examined -- a parameter, a
 literal, an outer reference -- not for that parameter number; a Go template's `{{.X}}` is such a
 value.

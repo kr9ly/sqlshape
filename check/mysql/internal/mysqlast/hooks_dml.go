@@ -94,6 +94,12 @@ func init() {
 		return &Node{Class: "PTI_comp_op", Names: []string{"left", "boolfunc2creator", "right"},
 			Args: []Value{genericCall(n, "SOUNDEX", kids[0]), Const("&comp_eq_creator"), genericCall(n, "SOUNDEX", kids[3])}, Start: n.Start, End: n.End}, nil
 	})
+	// opt_values_reference: AS ident opt_derived_column_list -> the row alias of an INSERT's
+	// VALUES rows (8.0.19); the action fills two Lex fields the shape reader cannot follow,
+	// so the two are folded by hand into the Struct PT_insert's shape reads them from
+	register("opt_values_reference", "AS ident opt_derived_column_list", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
+		return &Struct{Fields: map[string]Value{"table_alias": kids[1], "column_list": kids[2]}, Order: []string{"table_alias", "column_list"}}, nil
+	})
 	// update_list: update_elem | update_list ',' update_elem -> {column_list, value_list}
 	register("update_list", "update_elem", func(b *Builder, n *mysqlparse.Node, kids []Value) (Value, error) {
 		e, _ := kids[0].(*Struct)

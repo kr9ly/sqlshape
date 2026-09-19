@@ -600,6 +600,13 @@ func (p *corpusProbe) runFile(srv *mysqltest.DB, file string, stmts []parsegen.S
 				continue
 			}
 		}
+		if scode == 3024 || scode == 1317 {
+			// ER_QUERY_TIMEOUT / ER_QUERY_INTERRUPTED: whether the server raises these is
+			// the machine's speed, not the statement's shape -- the same corpus flapped
+			// max_statement_time's rows in and out of the baseline run to run
+			p.count("not judged (timing)", 1)
+			continue
+		}
 		res, aerr := analyzeSafe(s, sql)
 		if aerr != nil && strings.HasPrefix(aerr.Error(), "panic:") {
 			hits = append(hits, corpusHit{file: name, line: st.Line, class: "PANIC", key: panicKey(aerr.Error()), sql: sql, detail: aerr.Error()})

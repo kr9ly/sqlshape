@@ -960,6 +960,37 @@ func (a *analyzer) insert(n *mysqlast.Node) error {
 		// writes() keys off facts.Write.Kind, not the statement's own top-level Kind).
 		a.facts.Writes = append(a.facts.Writes, facts.Write{Table: base.Name, Kind: facts.Delete, Position: int32(a.ph.Back(rel.pos))})
 	}
+	if al := arg(n, "opt_values_table_alias", 9); al != nil {
+		// the row alias (8.0.19): `VALUES (...) AS new [(names)]` exposes the inserted
+		// columns -- the insert's own fields, not the whole table -- to ON DUPLICATE KEY
+		// UPDATE under the alias. Measured on 8.4: new.c of a column outside the insert's
+		// list is 1054, a name list renames positionally and hides the old names, a name
+		// list of the wrong count is 1353, an alias colliding with the target is 1066, an
+		// unqualified name the target and the alias share is 1052, and VALUES(c) stays
+		// usable beside the alias.
+		cols := make([]Column, 0, len(targets))
+		for _, c := range targets {
+			cols = append(cols, Column{Name: c.Name, Type: c.Type, Known: true, Nullable: !c.NotNull})
+		}
+		if names, ok := arg(n, "opt_values_column_list", 10).(mysqlast.List); ok && len(names) > 0 {
+			if len(names) != len(cols) {
+				return &Error{Message: "In definition of view, derived table or common table expression, SELECT list and column names list have different column counts", Code: 1353, Position: a.ph.Back(nodeStart(al))}
+			}
+			seen := map[string]bool{}
+			for i, nm := range names {
+				if lower := strings.ToLower(str(nm)); seen[lower] {
+					return &Error{Message: fmt.Sprintf("Duplicate column name '%s'", str(nm)), Code: 1060, Position: a.ph.Back(nodeStart(al))}
+				} else {
+					seen[lower] = true
+				}
+				cols[i].Name = str(nm)
+			}
+		}
+		aliasRel := relation{alias: str(al), cols: cols}
+		if err := a.addRelation(&dupScope, &aliasRel, nodeStart(al)); err != nil {
+			return err
+		}
+	}
 	dupCols, _ := arg(n, "opt_on_duplicate_column_list", 10).(mysqlast.List)
 	dupVals, _ := arg(n, "opt_on_duplicate_value_list", 11).(mysqlast.List)
 	if len(dupCols) > 0 {
