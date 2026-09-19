@@ -11,9 +11,18 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      # the run boots real PostgreSQL and MySQL servers and initializes databases by the
+      # hundred; the stock runner's free disk fills up mid-run (TestMigrateProbe died on
+      # "No space left on device"), so the preinstalled toolchains this job never uses go
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -44,6 +53,29 @@ jobs:
       - name: Fetch regress corpus
         run: check/postgres/analyze/testdata/tools/fetch-regress.sh
 
+      # the MySQL tests boot the mysqld on PATH, and it must be 8.4 (the analyzer's measured
+      # version; the runner's own 8.0 is also AppArmor-confined and cannot write a data
+      # directory under $HOME). The official minimal tarball runs unconfined from $HOME.
+      - name: Cache MySQL 8.4
+        uses: actions/cache@v4
+        with:
+          path: ~/mysql-8.4.11
+          key: sqlshape-mysql-8.4.11-minimal
+
+      - name: Install MySQL 8.4
+        run: |
+          sudo apt-get install -y -q libaio1t64 libnuma1
+          # the tarball's mysqld links libaio.so.1; Ubuntu 24.04 ships it as libaio.so.1t64
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
+          if [ ! -x "$HOME/mysql-8.4.11/bin/mysqld" ]; then
+            curl -fsSL -o /tmp/mysql.tar.xz https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.11-linux-glibc2.28-x86_64-minimal.tar.xz
+            tar -xJf /tmp/mysql.tar.xz -C "$HOME"
+            mv "$HOME/mysql-8.4.11-linux-glibc2.28-x86_64-minimal" "$HOME/mysql-8.4.11"
+            rm /tmp/mysql.tar.xz
+          fi
+          echo "$HOME/mysql-8.4.11/bin" >> "$GITHUB_PATH"
+          "$HOME/mysql-8.4.11/bin/mysqld" --version
+
       # the binary as users run it: as a vettool over the examples
       - name: Smoke test
         run: go build -o sqlshape ./cmd/sqlshape && .github/scripts/smoke.sh ./sqlshape
@@ -58,7 +90,7 @@ jobs:
         run: |
           # ./... is the root module; the other modules of the workspace are named one by one
           pkgs=$(go list ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /check/postgres/catalog/gen -e /parsegen/cmd | paste -sd,)
-          go test ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
+          go test ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 40m
           grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the
