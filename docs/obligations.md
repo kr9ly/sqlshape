@@ -8,9 +8,9 @@
 
 | 規則 | 宣言の場所 | 実装 |
 |---|---|---|
-| `-- sqlshape: visible where <expr>` | schema.sqlの表 | `internal/analyze` `checkVisibility`（proverの事実を使う） |
-| `-require-columns=tenant_id` | vetのフラグ（全表一律） | `internal/vet` `vet.go` + `rls.go`（`pinsColumn`、独自のAND走査） |
-| `-no-table-reads` / `-no-tables` / `-schemas` | vetのフラグ | `internal/vet` `vet.go`（参照の種別を見る） |
+| `-- sqlshape: visible where <expr>` | schema.sqlの表 | `check/postgres/analyze` `checkVisibility`（proverの事実を使う） |
+| `-require-columns=tenant_id` | vetのフラグ（全表一律） | `cmd/sqlshape/internal/vet` `vet.go` + `rls.go`（`pinsColumn`、独自のAND走査） |
+| `-no-table-reads` / `-no-tables` / `-schemas` | vetのフラグ | `cmd/sqlshape/internal/vet` `vet.go`（参照の種別を見る） |
 
 「ポリシーが列を固定していれば`-require-columns`を満たす」「ビューが述語を運べば`visible where`を満たす」のような特例が規則ごとに個別に書かれている。次に来る要求 — 表をまたぐ制約（`order_items`は`orders`とtenantを揃えて結合する）、列の不変性（`tenant_id`をUPDATEしない）、表単位の「ビュー経由でしか読まない」— を同じ調子で足すと、規則の数だけ特例が増える。
 
@@ -20,7 +20,7 @@
 
 ### facts — 文から導く事実
 
-文（展開ごと）について、以下を導く。`One`の証明器（`internal/analyze/card.go`の`prover`: `fix` / `equate` / `fixpoint`）がすでに等値の部分を持っていて、これが核になる。
+文（展開ごと）について、以下を導く。`One`の証明器（`check/postgres/analyze/card.go`の`prover`: `fix` / `equate` / `fixpoint`）がすでに等値の部分を持っていて、これが核になる。
 
 - 等値: `col = $n`、`col = const`、`a.col = b.col`（WHERE・JOIN ON・USING由来）。ユニオン・ファインドで閉包を取る
 - NULL性: `col IS NULL` / `IS NOT NULL`が含意されるか
@@ -68,7 +68,7 @@ opt-outは今と同じで文側に置く。`-- sqlshape: unfiltered memos`は`--
 1. 文自身がWHERE・ON・SETで満たす
 2. ビュー経由: ビュー定義の事実を継承して満たす（`visible where`をビューが運ぶ、の一般化）
 3. ポリシー経由: RLSのUSINGが満たす。所有者への注記は今と同じ
-4. FK伝播: 結合先で満たされた義務が、複合FKの等値を通してこの表にも届く（`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている）
+4. FK伝播: 結合先で満たされた義務が、複合FKの等値を通してこの表にも届く（`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている）。届く先の列は`NOT NULL`（宣言か、文の述語による証明）に限る。外部キーのどれか1列がNULLの行は制約の検査対象外（MATCH SIMPLE。両サーバとも）で、親と結合できても揃っていない（裁定2026-09-16）
 5. opt-out
 
 証明できなければエラー。証明できないのは、義務が強すぎるか、スキーマに一意性・FKが足りていないかの発見になる（`One`と同じ）。
@@ -145,7 +145,7 @@ DDDが集約に言わせている規則は、既存の義務に展開される�
 
 1.1.0 の敵対的テスト（7レーン、rc後）で裁定したもの。
 
-- 書き込みは「表に対して実際にすること」で数える。MERGEは枝ごとに枝の文種の`Write`（文全体の`Write`は出さない）、`INSERT ... ON CONFLICT DO UPDATE`はINSERTの`Write`とUPDATEの`Write`の2つ、`TRUNCATE`は全行のDELETE、自動更新可能ビューへの書き込みは基底表の`Write`（列名も基底表のもの）。`Write.InWith`がWITH項目の書き込みを区別し、`single`の証明対象から外す
+- 書き込みは「表に対して実際にすること」で数える。MERGEは枝ごとに枝の文種の`Write`（文全体の`Write`は出さない）、`INSERT ... ON CONFLICT DO UPDATE`はINSERTの`Write`とUPDATEの`Write`の2つ、`TRUNCATE`は全行のDELETE、自動更新可能ビューへの書き込みは基底表の`Write`（列名も基底表のもの）。`Write.InWith`がWITH項目の書き込みを区別し、`single`の証明対象から外す。MySQLの`INSERT ... ON DUPLICATE KEY UPDATE`も同じ形で、INSERTの`Write`とON DUPLICATE枝のUPDATEの`Write`の2つ。MySQLの`REPLACE INTO`はキーが衝突すると既存行を削除してから挿入するので、INSERTの`Write`に加えてDELETEの`Write`も出す（衝突しない実行がありうる文でも、義務は文の形で判定するので両方出す）。`facts.Write.Table`が基底表であるのと同じく、`facts.Leaf.Table`（`obligation.Check`が義務の宛先を探す方）も自動更新可能ビューへの書き込みでは基底表を名乗る（2巡目でMySQL側の食い違いを修正: 以前はビュー自身の名前のままで、ビュー経由の書き込みに基底表の義務が一切効いていなかった）
 - `pinned`をUPDATEで満たすのはWHEREの固定だけ。SETで列に代入しても満たさない（代入で満たすのはINSERTと、INSERT枝しかないMERGE）。ON CONFLICT DO UPDATE / MERGEの枝が`pinned`列に代入するなら、文が同じ列を固定していることも求める
 - 文脈の`waive <body> on <kinds>`は名指しの文種だけを解除する（`Kinds`の差分）。`-require-columns`等フラグ由来の義務は宣言と同格で、文脈の`waive`で解除できる（`FromFlags`を`InContext`の前に足す）
 - スキーマに無い文脈名、ディレクティブとして読めない`sqlshape: context`行、ディレクティブを読まない文（ALTER TABLE / COMMENT ON）の直上のディレクティブは、黙って無視せず報告する
@@ -228,6 +228,7 @@ ORMが一枚のクラス定義に混ぜて置いている制約は、この枠�
 - **opt-outの名前と粒度** → `waive <table> [<body>]`。義務単位（bodyを宣言どおりに綴る）と表単位（省略）。`unfiltered`は述語型だけを外す別名として残す
 - **関数本体の中の文** → ビューと同じ扱い。本体はschema読み込み時に自身が判定され（PL/pgSQLは行番号つき）、呼び出し側はその関数の中の表について判定されない。`via view`は関数呼び出しを直接参照と数えない（`-no-tables`が関数を許してきたのと同じ線。「DBがAPIを出す」路線ではビューと関数が出口）
 - **ビューに付けた義務** → ビューの**読み手**への義務。ビューの定義文は、中の表の義務を自分で履行する側。`require pinned(tenant_id)`をビューに付ければ読み手が固定し、`require via view`を表に付ければビューの定義文が履行経路になる。両方が同時に成り立つ
+- **`WITH CHECK OPTION`を宣言したビューへの書き込み** → 上の対称形（読み手ではなく**書き手**側）。ビューのWHEREが保証する等値を、その書き込みの`pinned`履行として使う（`Discharge.Path`は`ByView`）。CASCADED（PostgreSQLの、およびMySQLの既定）は結合の向こうも含めて下位の全ビューのWHEREまで届き、LOCALはそのビュー自身のWHEREで止まる — ただし自前のCHECK OPTIONを宣言した下位ビューはどちらのサーバも検査し続けるので数える（裁定2026-09-16、3巡目）。履行できるのはサーバ自身がCHECK OPTION違反を拒む（PostgreSQL SQLSTATE 44000、MySQL 1369 `ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを宣言していないビューへの書き込みはこの経路を持たない（行がビューから見えなくなるだけで、サーバは拒まない）。`x/facts`の`LiftThroughView`がビュー本体のWHERE（`Origin`が`FromStatement`のもの）を書き込み文のleafへ列名を介して写像し、`x/obligation`の`pinned`が`FromView`起源の等値を`FromPolicy`と同じ形で見る
 - **文をまたぐ規則** → 持たない。分析の単位は文で、これは核の裁定（「核はSQLしか見ない」）と同じ根。トランザクション内の対（accountsのUPDATEとledgerのINSERT）は、書き込みCTEで1文にまとめる形に変換できるものだけ扱う（ロードマップの`paired`）。Go側で`pgx.Tx`上の呼び出し集合を集める層は作らない
 - **FK伝播をNULL性と`One`の証明に使うか** → 義務の外。`prover`の話で、design.mdのRLSの項「未対応」に残す。義務側は複合FKで`pinned`を運ぶところまで
 - **「掘り先」の優先順位** → 1.1.0には入れない。次は状態機械とoutbox（`paired`）。下記ロードマップ
@@ -255,10 +256,10 @@ flowchart LR
 
 | package | 依存 | 役割 |
 |---|---|---|
-| `internal/facts` | なし | データ契約。文種・スコープの木・葉（表・別名・役割・位置）・正規化述語・等値類・固定列・NULL拒否列・代入集合。パーサのノードを含まない |
+| `x/facts` | なし | データ契約。文種・スコープの木・葉（表・別名・役割・位置）・正規化述語・等値類・固定列・NULL拒否列・代入集合。パーサのノードを含まない |
 | `internal/obligation` | `facts` `schema` | 宣言の文法、フラグからの展開、含意判定、FK閉包、履行経路の記録。`analyze`にも`vet`にも依存しない |
-| `internal/analyze` | `facts` | 判定の代わりにFactsを出す。`recordFixed`（各クエリレベルの等値閉包）とMERGEのONが生産点。ビュー本体とポリシーのUSINGも同じ形で葉に付ける（`Origin`で区別）。`Lower`が宣言の述語を事実の言語に落とす |
-| `internal/vet` / `internal/cli` | `obligation` | 入口。`-require-columns=tenant_id`を`Pinned("tenant_id")`の宣言列に、`-no-table-reads`を`ViaView`に展開して渡す。文の`waive`行を読んで葉に付ける。`Discharge`を診断に写す |
+| `check/postgres/analyze` | `facts` | 判定の代わりにFactsを出す。`recordFixed`（各クエリレベルの等値閉包）とMERGEのONが生産点。ビュー本体とポリシーのUSINGも同じ形で葉に付ける（`Origin`で区別）。`Lower`が宣言の述語を事実の言語に落とす |
+| `cmd/sqlshape/internal/vet` / `cmd/sqlshape/internal/cli` | `obligation` | 入口。`-require-columns=tenant_id`を`Pinned("tenant_id")`の宣言列に、`-no-table-reads`を`ViaView`に展開して渡す。文の`waive`行を読んで葉に付ける。`Discharge`を診断に写す |
 
 **正規化述語（`facts.Pred`）が共通言語。** `Eq(col, Param | Const | Column | Known)` / `IsNull` / `IsNotNull` / `Opaque(正準テキスト)`。文のconjunctも、ビューの述語も、RLSのUSINGも、宣言のSQL式も、全部これに落ちる。落とすのは方言側の仕事（`obligation.Lowerer`インターフェースをanalyzeが実装する）で、obligationは含意しか判定しない。`Opaque`同士のテキスト一致が、今の`sameExpr`にあたる構文フォールバック。
 
@@ -272,8 +273,8 @@ flowchart LR
 
 ## 移行
 
-0. 契約の型だけ切る: `internal/facts`、`internal/obligation`（`Check`は未実装）。済
-1. analyzeがFactsを出す。判定は従来のまま。Factsのスナップショットテストを足す。既存テストは無変更で緑。済（`internal/analyze/facts.go`、`TestFacts`）。MERGEのONも一つのスコープとして出る（今の`checkVisibility`はMERGEを見ていないので、段3で載せ替えるとMERGEにも`visible where`が効くようになる。意図した拡張として受け入れる）
+0. 契約の型だけ切る: `x/facts`、`internal/obligation`（`Check`は未実装）。済
+1. analyzeがFactsを出す。判定は従来のまま。Factsのスナップショットテストを足す。既存テストは無変更で緑。済（`check/postgres/analyze/facts.go`、`TestFacts`）。MERGEのONも一つのスコープとして出る（今の`checkVisibility`はMERGEを見ていないので、段3で載せ替えるとMERGEにも`visible where`が効くようになる。意図した拡張として受け入れる）
 2. obligationの中身: `require`文法、`Pinned` / `Immutable` / `ViaView`、含意エンジン、FK閉包、ビュー・ポリシー継承。schemaと手書きFactsだけで回る単体テスト
 3. 3規則を載せ替える。`visible where`は`Predicate on read`の別名、`-require-columns`は`Pinned`、`-no-table-reads` / `-no-tables`は`ViaView`。`checkVisibility`と`vet/rls.go`を削除し、schemaは`Directives`を溜めるだけにする。診断文は据え置き、`internal/vet/testdata`と`policy_test.go`が回帰を押さえる。**ここが「アドオンをコアから切り離す」の完了点**。済。`internal/vet/testdata`は無変更で緑。`policy_test.go`は`obligation/visible_test.go`に移した。載せ替えで変わった振る舞い（意図した拡張）: (a) MERGEのONにも`visible where`と`pinned`が効く、(b) 判定が表単位から葉単位になった（自己結合・サブクエリの各出現がそれぞれ義務を負う。`-require-columns`は以前、文中のどこかで固定されていれば同じ表の他の出現も通していた）、(c) `visible where`をRLSポリシーのUSINGが履行できる（経路3。所有者への注記は`-strict`で出る）、(d) 複合FKで結合先の固定が伝播する（経路4）。schemaのseed文（`schema.CheckStatement`）からは`visible where`の判定が外れた — seedはINSERT VALUESに限られ読みを持たない
 4. 新機能: `on <kinds>`、`Immutable`、表をまたぐ`EXISTS`、`waive`の一般形。済（`EXISTS`の含意は「サブクエリの裁定」で後追い）。`on` / `immutable` / `via view`の表単位は段2の実装で動いており、docs（checks / templates / flags）に書いた。`waive <table> [<body>]`を文側とビュー定義側に足した（bodyは宣言どおりの綴り、省略で全部、`unfiltered`は述語型だけの別名）。opt-outは`Discharge`に`Waived`として残り、vetは`-strict`で報告する。表をまたぐ`EXISTS`は構文一致（Opaque）で判定できる段階で、含意（サブクエリの事実）は未対応

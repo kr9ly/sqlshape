@@ -18,7 +18,7 @@
 //     constraints it may violate; the checker keeps the list exact, and at run time a
 //     violation arrives as a ConstraintError keyed by the same names.
 //   - Transactions are pgx's: PlaceOrder runs its statements on a pgx.Tx, which satisfies
-//     sqlshape.DB the same way a connection or a pool does.
+//     postgres.DB the same way a connection or a pool does.
 //   - Tests on a real PostgreSQL: pgtest.Start applies schema.sql to an embedded server,
 //     and db.Verify checks every statement against it, so the test suite carries the
 //     evidence that the static checks hold for the PostgreSQL the code runs on.

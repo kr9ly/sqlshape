@@ -2,7 +2,13 @@
 
 [English](flags.md)
 
-`cmd/sqlshape`は`go vet -vettool`互換の検査器である。`sqlshape ./...`、`sqlshape vet ./...`、`go vet -vettool=$(which sqlshape) ./...`のどれでも実行でき、以下のフラグはどの形でも同じように渡せる。マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。`sqlshape check`のフラグは[下記](#sqlshape-checkのフラグ)。
+`cmd/sqlshape`は`go vet -vettool`互換の検査器である。次のどの形でも実行でき、以下のフラグはどの形でも同じように渡せる。
+
+- `sqlshape ./...`
+- `sqlshape vet ./...`
+- `go vet -vettool=$(which sqlshape) ./...`
+
+マイグレーションのサブコマンド（`diff`、`apply`、`verify-schema`）のフラグは別で、[migrations.ja.md](migrations.ja.md)にある。`sqlshape check`のフラグは[下記](#sqlshape-checkのフラグ)。
 
 ## 検査器のフラグ
 
@@ -16,12 +22,14 @@
 | `-context=ops` | なし | パッケージを判定する義務の文脈。パッケージコメントに`// sqlshape: context <name>`があればそちらが優先 |
 | `-require-columns=tenant_id` | なし | すべての文が、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTは値を入れなければならない。その列を固定する行レベルセキュリティのポリシーがあれば満たしたことになる |
 
-`-no-table-reads`・`-no-tables`・`-require-columns`は、`schema.sql`で表ごとに宣言する義務（`require via view`、`require via view on all`、`require pinned(列)`）の略記。宣言形なら`on`による文種の指定、`immutable(列)`、任意の述語も書ける。文脈の`waive`はフラグ由来の義務も宣言と同じように解除する（[checks.ja.md](checks.ja.md#宣言の仕組み)）。
+| `-query=pkg.Func,pkg.Other:one` | なし | 自前のマーカー関数を`sqlshape.Query`と同じように読む（`:one`は`One`と同じ扱い）。テンプレートを引数に取る generic な`F[R, P any](string) T`であればよい。検査器が読むのは宣言であって、実行するランタイムではない |
 | `-raw-sql=constant` | `constant` | sqlshapeを通さないドライバ呼び出し（pgx / `database/sql`の`Query`、`Exec`など）の扱い。`constant`はSQL引数が定数であることを要求し、`forbid`は拒否し、`allow`は無視する |
 | `-raw-sql-allow=pkg/...` | なし | `-raw-sql=forbid`を適用しないパッケージ（`/...`で終わる接頭辞も可） |
 | `-coverage` | off | パッケージごとに、検査した`Query` / `One`の数と、検査できなかった数（テンプレートが定数でないもの）を報告する |
 | `-sync-comments` | off | スキーマの`COMMENT ON`から、結果の構造体のフィールドと型にdocコメントを提案する（`-fix`で適用） |
 | `-fix` | off | 提案された修正（構造体の書き換え、docコメント）をソースに適用する |
+
+`-no-table-reads`・`-no-tables`・`-require-columns`は、`schema.sql`で表ごとに宣言する義務（`require via view`、`require via view on all`、`require pinned(列)`）の略記。宣言形なら`on`による文種の指定、`immutable(列)`、任意の述語も書ける。文脈の`waive`はフラグ由来の義務も宣言と同じように解除する（[checks.ja.md](checks.ja.md#宣言の仕組み)）。
 
 
 ## `sqlshape check`のフラグ
@@ -67,7 +75,7 @@
 検査器は`go vet`のツールなので、`go vet`が走る場所ならどこでも走る。一度ビルドして`-vettool`に指定する:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
 $ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 

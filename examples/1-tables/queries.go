@@ -3,7 +3,7 @@ package tables
 import (
 	"time"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // OrderStatus is the Go side of the order_statuses lookup table. The checker binds the

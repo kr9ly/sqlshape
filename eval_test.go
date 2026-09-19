@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // EvalP exercises every kind the runtime evaluator (render.go) has to handle:

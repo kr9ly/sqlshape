@@ -3,7 +3,8 @@ package dbapi
 import (
 	"time"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/postgres/v2"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // Yen meets the yen domain and is bound to it: a Yen passed where a plain bigint or
@@ -119,7 +120,7 @@ type DailySales struct {
 var SalesSince = sqlshape.Query[DailySales, struct{ Since time.Time }](`
 SELECT day, orders, revenue FROM sales_by_day WHERE day >= {{.Since}} ORDER BY day`)
 
-var Sales = sqlshape.MatView("sales_by_day")
+var Sales = postgres.MatView("sales_by_day")
 
 // --- writes: functions -------------------------------------------------------------
 
@@ -146,9 +147,13 @@ type NewOrder struct {
 	Shipping   Yen
 }
 
-// OS001 is the trigger's SQLSTATE: the order limit for free-tier customers.
+// TooManyOpenOrders is the trigger's own OS001: the order limit for free-tier customers,
+// named by the `-- sqlshape: error` line above it in schema.sql. The expect line below
+// could say OS001 just as well; Key and Name are interchangeable.
+var TooManyOpenOrders = sqlshape.Error("OS001")
+
 var PlaceOrder = sqlshape.One[*int64, NewOrder](`
--- sqlshape: expect orders_customer_id_fkey, yen_check, OS001
+-- sqlshape: expect orders_customer_id_fkey, yen_check, TooManyOpenOrders
 SELECT place_order({{.CustomerID}}, {{.Note}}, {{.Shipping}})`)
 
 type NewLine struct {

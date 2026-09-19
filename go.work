@@ -1,0 +1,13 @@
+go 1.26.1
+
+use (
+	.
+	./check/mysql
+	./check/postgres
+	./cmd/sqlshape
+	./examples
+	./mysql
+	./mysqltest
+	./pgtest
+	./postgres
+)

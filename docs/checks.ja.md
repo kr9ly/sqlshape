@@ -2,7 +2,7 @@
 
 [English](checks.md)
 
-検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`sqlshape.Copy[R](...)`、`sqlshape.MatView(...)`をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。
+検査器はパッケージ内の`sqlshape.Query[R, P](template)`、`sqlshape.One[R, P](template)`、`postgres.Copy[R](...)`、`postgres.MatView(...)`（PostgreSQL）をすべて見つけ、テンプレートを分岐の全組み合わせに展開し（[templates.ja.md](templates.ja.md)）、展開した各SQLを`schema.sql`に対して解析して、その結果をGoの型と突き合わせる。このページは、書く場面ごとに、何がNGで何がOKかを、実際に出る診断と一緒に並べたもの。診断は英語で出るので、そのまま載せている。規則はPostgreSQLとMySQLで同じである。例はPostgreSQLのもので、規則がデータベースの名前・番号・型を使う箇所（制約名、Go型の表、診断のエラーコード）は[postgres.ja.md](postgres.ja.md)と[mysql.ja.md](mysql.ja.md)にそれぞれのものがある。
 
 検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージを対象に実行され、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を実行する（[第2部](#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
 
@@ -15,7 +15,7 @@
   - [型に意味を持たせる](#型に意味を持たせる)
   - [書き込みの失敗に備える](#書き込みの失敗に備える)
   - [1行だけ返す（`One`）](#1行だけ返すone)
-  - [COPYで一括ロードする](#copyで一括ロードする)
+  - [COPYで一括ロードする（PostgreSQL）](#copyで一括ロードするpostgresql)
 - [第2部 — スキーマが宣言する規約](#第2部--スキーマが宣言する規約)
   - [宣言の仕組み](#宣言の仕組み)
   - [必ず付ける読み取り条件（`visible where`）](#必ず付ける読み取り条件visible-where)
@@ -29,9 +29,11 @@
   - [呼び出し元ごとに規約を変える（`context`）](#呼び出し元ごとに規約を変えるcontext)
   - [Goの外のSQLにも同じ規約を適用する（`sqlshape check`）](#goの外のsqlにも同じ規約を適用するsqlshape-check)
 - [第3部 — 文の外側](#第3部--文の外側)
-  - [スキーマはPostgreSQLの版を名乗る（`postgres`）](#スキーマはpostgresqlの版を名乗るpostgres)
+  - [スキーマはPostgreSQLのバージョンを名乗る（`postgres`）](#スキーマはpostgresqlのバージョンを名乗るpostgres)
+  - [スキーマはMySQLのバージョンを名乗る（`mysql`）](#スキーマはmysqlのバージョンを名乗るmysql)
+  - [スキーマはサーバの設定を名乗る（`server`）](#スキーマはサーバの設定を名乗るserver)
   - [sqlshapeを通さないSQLを書かない（`-raw-sql`）](#sqlshapeを通さないsqlを書かない-raw-sql)
-  - [パッケージは自分のスキーマだけを参照する（`-schemas`）](#パッケージは自分のスキーマだけを参照する-schemas)
+  - [パッケージは自分のスキーマだけを参照する（`-schemas`、PostgreSQL）](#パッケージは自分のスキーマだけを参照する-schemaspostgresql)
   - [スキーマ自体の問題](#スキーマ自体の問題)
 
 ## 第1部 — すべての文にかかる検査
@@ -76,7 +78,7 @@ type Order struct {
 NG
 
 ```sql
-SELECT id, count(*) FROM orders GROUP BY id
+SELECT id, id + 1 FROM orders
 --         ^ result column 2 has no name: give it an alias (... AS name) so it can bind to a field of Order
 
 SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
@@ -86,13 +88,13 @@ SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id
 OK
 
 ```sql
-SELECT id, count(*) AS n FROM orders GROUP BY id
+SELECT id, id + 1 AS n FROM orders
 SELECT o.id, c.id AS customer_id FROM orders o JOIN customers c ON c.id = o.customer_id
 ```
 
 #### NULLになりうる列はNULLを受けられる型で受ける
 
-NULLを受けられる型は、ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`、`sql.Scanner`を実装した型。
+NULLを受けられる型は、ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`のようなドライバのNULL可の値型、`sql.Scanner`を実装した型。
 
 NG
 
@@ -116,7 +118,7 @@ type User struct {
 }
 ```
 
-補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。 `RETURNING`の`old.col`はINSERTの後、`new.col`はDELETEの後（PostgreSQL 18）、列の宣言に関わらずNULLになりうる。書き込みのその側には行が無い。
+補足。列がNULLになりうるかは、NOT NULL制約と主キー、WHERE句（`deleted_at IS NOT NULL`や`deleted_at = ...`があればNULLではない）、外部結合（内側の列はNULLになりうる）、関数（引数がNULLでない`strict`関数の結果はNULLでない、`coalesce(x, 0)`はNULLでない。ただし一部のstrictな組み込み関数・演算子は報告するものが無いとNULLを返す。`meta ->> 'key'`もその一つ）、ビュー自身のWHERE句から判定する。ビューは下敷きの列のNOT NULLをPostgreSQL自身と同じように動的に追いかける。後から`ALTER TABLE ... DROP NOT NULL`がベーステーブルに入れば、ビューの連鎖を通じても、ビュー自身のWHERE句をくぐり抜けても反映される。判定より自分の方が正しいと分かっているなら、Go側は`col:",notnull"`タグ（配列のフィールドに付けると要素についても主張する）、SQL側はテンプレートの`-- sqlshape: not null deleted_at`行で上書きできる。関数の戻り値は`schema.sql`の`CREATE FUNCTION`の直上に`-- sqlshape: not null`と書く。 `RETURNING`の`old.col`はINSERTの後、`new.col`はDELETEの後（PostgreSQL 18）、列の宣言に関わらずNULLになりうる。書き込みのその側には行が無い。
 
 #### 一部の分岐だけが選ぶ列はNULLを受けられる型で受ける
 
@@ -146,12 +148,14 @@ type Order struct {
 
 #### 列の型とフィールドの型は下の表に従う
 
-NG
+情報を失いうる対応づけ（`numeric`を`float64`で受ける、`bigint`を`int32`で受ける、など）は拒否ではなく注記付きで通る。本当に不適合な組（`text`列を`int64`フィールドで受ける、など）だけが拒否される。
+
+OK（注記あり）
 
 ```go
 type Order struct {
 	ID    int64
-	Total float64 // field Total is float64 but column "total" is numeric(12,2)
+	Total float64 // field Total: numeric into float64 loses precision
 }
 ```
 
@@ -159,7 +163,7 @@ type Order struct {
 SELECT id, total FROM orders
 ```
 
-OK
+OK（注記無し）
 
 ```go
 type Order struct {
@@ -196,6 +200,8 @@ SELECT o.id, array_agg((i.sku, i.qty)::order_item) AS items
  GROUP BY o.id
 ```
 
+（隣接する2つのフィールドを入れ替えると、片方だけでなく両方の位置がずれる。`Sku`も`order_item`型の列2「qty」に来てしまうので、その位置のずれについても2つ目の指摘が出る。）
+
 OK
 
 ```go
@@ -204,6 +210,8 @@ type Item struct {
 	Qty int32
 }
 ```
+
+（PostgreSQLは、配列を保持する列自体がNOT NULLでも、配列の要素自体が非NULLであることは保証せず、検査器も一般には常設の注記を出す（[PostgreSQLの型](postgres.ja.md)の`T[]`の行を参照）。ここでは検査器がそれを証明できる: `order_item`の行コンストラクタは、自分自身のフィールドの非NULL性とは関係なく決してNULLにならないので、`array_agg((i.sku, i.qty)::order_item)`は注記を持たず、このOK例は注記なしで通る。）
 
 #### 1列だけ返すSQLはスカラーで受けられる
 
@@ -253,47 +261,11 @@ type Order struct {
 
 #### Go型の表
 
-pgxが実際にscan / encodeできる組み合わせを、稼働中のPostgreSQLで確認したもの。列を受けるときも、パラメータを渡すときも同じ表に従う。
-
-| PostgreSQL | Go |
-|---|---|
-| `bool` | `bool` |
-| `smallint` / `integer` / `bigint` | `int16` / `int32` / `int64` / `int`（狭いGo型で受けると`bigint into int32`のような注記が付く） |
-| `real` / `double precision` | `float32` / `float64`（`double precision into float32`は注記付き） |
-| `numeric` | `string`（全桁が保たれる）、`pgtype.Numeric`、`big.Rat`、`shopspring/decimal.Decimal`、`apd.Decimal`。floatや整数でも受けられるが精度の注記が付く |
-| `text` / `varchar` / `char` / `name` / `citext`などテキスト系の拡張型 | `string`（`string`はパラメータとしてはどの型にも渡せる） |
-| `bytea` | `[]byte` |
-| `uuid` | `uuid.UUID`（パッケージは問わない）、`[16]byte`、`string` |
-| `timestamptz` / `timestamp` / `date` | `time.Time`（`timestamp`と`date`はタイムゾーンや時刻が失われるので`-strict`で注記） |
-| `time` | `time.Time`、`string` |
-| `interval` | `time.Duration`、`pgtype.Interval` |
-| `json` / `jsonb` | `[]byte`、`json.RawMessage`、`string`、またはpgxがunmarshalできる構造体・スライス・マップ |
-| `inet` | `netip.Addr` / `netip.Prefix` |
-| `cidr` | `netip.Prefix` |
-| `macaddr` | `net.HardwareAddr` / `string` |
-| `hstore` | `map[string]*string` |
-| `T[]` | `[]Go(T)`（各要素は単体の`T`のパラメータ/列と同じ判定を受ける。注記も含めて） |
-| 範囲型 | `pgtype.Range[T]`。`T`はサブタイプと照合される（ユーザー定義の範囲型も同様） |
-| 多重範囲型 | `pgtype.Multirange[pgtype.Range[T]]` |
-| `bit` / `point` / `tsvector` | `pgtype`の対応する型 |
-| `xml` / `money` / `tsquery` / `jsonpath` / `timetz` | `string` |
-| `oid` | `uint32` |
-| enum、seed済みlookupテーブルのキー、CHECKによる値集合 | Goのnamed string type（[下記](#型に意味を持たせる)） |
-| ドメイン | 基底型に対応するGo型、またはドメインに結びつけたnamed type |
-| 複合型、レコード | 構造体 |
-
-表に無い型、あるいは自前の型で受けたい型は、Go側の型にdocコメントで対応するPostgreSQL型を宣言する:
-
-```go
-// sqlshape: type money_amount
-type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
-```
-
-検査器は、SQL側が`money_amount`（その配列と、それを基底型とするドメインを含む）である位置でだけ`Money`を受け入れ、それ以外の位置では報告する。値の変換は型自身の`sql.Scanner` / `driver.Valuer`に任せる（Scannerにはテキスト形式が渡る）。
+列をどのGo型で受けられるか、パラメータをどのGo型で渡せるかは、データベースとそのドライバが決める。[PostgreSQLの表](postgres.ja.md#go型の表)、[MySQLの表](mysql.ja.md#go型の表)。どちらも列を受けるときとパラメータを渡すときに同じに従う。PostgreSQLでは、表に無い型や自前の型で受けたい型を、Goの型に`// sqlshape: type <PGの型>`と書いて結びつける。変換はその型自身の`sql.Scanner` / `driver.Valuer`が行う（MySQLには結びつける先の名前付きの型が無い）。
 
 ### パラメータを渡す
 
-`{{.X}}`はSQLの中では`$n`パラメータになる。検査器は`$n`が使われている場所からPostgreSQL側で必要な型を推論し（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）、`P`の対応するフィールドの型がそれに合うことを確かめる。型の対応は上のGo型の表に従う。
+`{{.X}}`はSQLの中ではパラメータになる（PostgreSQLでは`$n`、MySQLでは`?`。検査器はどちらでも`$n`と番号を振る）。検査器はパラメータが使われている場所からSQL側で必要な型を推論し（`WHERE id = $1`なら`bigint`、`= ANY($1)`なら配列）、`P`の対応するフィールドの型がそれに合うことを確かめる。型の対応はデータベースのGo型の表に従う。
 
 #### パラメータの型は使われる場所の型に合わせる
 
@@ -339,6 +311,8 @@ type Params struct {
 }
 ```
 
+（`-strict`では、`orders.status`に触れるパッケージにはその列自体のenum助言、`orders.status is enum order_status: a seeded lookup table ...`も別途出る。上のパラメータについての指摘とは別の、列についての指摘。）
+
 #### ネストしたパスと`range`
 
 `{{.Filter.Name}}`は`P`のフィールド`Filter`のフィールド`Name`を指す。`{{range .Items}} … {{.Sku}} … {{end}}`の中の`{{.Sku}}`はスライス`Items`の要素型のフィールドを指す。
@@ -355,8 +329,10 @@ type Params struct {
 ```sql
 SELECT id FROM products
  WHERE true {{if .Filter.Name}} AND name = {{.Filter.Name}} {{end}}
-   AND sku IN ({{range $i, $it := .Items}}{{if $i}}, {{end}}{{$it.Sku}}{{end}})
+   AND (false {{range $i, $it := .Items}} OR sku = {{$it.Sku}} {{end}})
 ```
+
+素朴な`sku IN ({{range}}...{{end}})`は空長で安全ではない。`.Items`が空だと`sku IN ()`となり構文エラーになる。検査器は`.Items`が取りうる長さ（0、1、2、……）を全て試し、それが構文エラーを引き起こすことをそのまま報告する。`range`をこの用途で使うときは、どの長さでも文法的に妥当な形にする必要がある。上の`false {{range}} OR ... {{end}}`の形（あるいは`testdata/src/a/a.go`の`indexParam`がそうしているような`WHERE true {{range}} OR (...) {{end}}`の形）がそれにあたる。
 
 #### 複合型のパラメータは構造体で渡す
 
@@ -411,12 +387,16 @@ type NewOrder struct {
 INSERT INTO orders (customer_id, status) VALUES ({{.CustomerID}}, {{.Status}})
 ```
 
+（ここの`Status`も非ポインタの`OrderStatus`なので、前節の「NULLを渡しうるパラメータはポインタにする」の指摘も出るし、`orders.status`自体のenum助言も出る。このNG例だけで1つでなく3つの指摘になる。）
+
 OK。データベースの既定値を使うなら列ごと分岐にする。アプリケーションが常に決めるなら、列の`DEFAULT`を外す。
 
 ```sql
 INSERT INTO orders (customer_id {{if .Status}}, status{{end}})
 VALUES ({{.CustomerID}} {{if .Status}}, {{.Status}}{{end}})
 ```
+
+（このOK例でも`orders.status`のenum助言だけは出る。前節のOK例と同じ。）
 
 ### 型に意味を持たせる
 
@@ -469,9 +449,9 @@ type OrderStatus string
 const (
 	Pending  OrderStatus = "pending"
 	Paid     OrderStatus = "paid"
-	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses (lookup table)
+	Canceled OrderStatus = "canceled" // sqlshape: OrderStatus has constant "canceled" which is not a label of value set of order_statuses.code (lookup table)
 )
-// sqlshape: value set of order_statuses (lookup table) has label "shipped" but OrderStatus has no constant for it
+// sqlshape: value set of order_statuses.code (lookup table) has label "shipped" but OrderStatus has no constant for it
 ```
 
 OK
@@ -484,7 +464,7 @@ const (
 )
 ```
 
-補足。`OrderStatus("typo")`のような変換は`sqlshape: OrderStatus("typo") is not a label of ...`、すべてのラベルを扱っていない`switch`は`sqlshape: switch on OrderStatus does not handle ... labels: shipped`として報告される。型に`Known() bool`を実装しておくと、実行時にこのビルドが知らないラベルを受け取ったとき、行マッパーが`*UnknownLabelError`を返す。値集合の置き場としてはenumよりseed済みlookupテーブルを推奨する（[migrations.ja.md](migrations.ja.md#seed済みテーブル)）。
+補足。`OrderStatus("typo")`のような変換は`sqlshape: OrderStatus("typo") is not a label of ...`、すべてのラベルを扱っていない`switch`は`sqlshape: switch on OrderStatus does not handle ... labels: shipped`として報告される。型に`Known() bool`を実装しておくと、実行時にこのビルドが知らないラベルを受け取ったとき、行マッパーが`*UnknownLabelError`を返す。値集合の置き場としてはenumよりseed済みlookupテーブルを推奨する（[migrations.ja.md](migrations.ja.md#seed済みテーブルpostgresql)）。
 
 #### 別のテーブルのIDを渡さない
 
@@ -518,7 +498,7 @@ type Params struct {
 }
 ```
 
-#### 単位の違うドメインを混ぜない
+#### 単位の違うドメインを混ぜない（PostgreSQL）
 
 ドメインの列に使われたnamed typeはそのドメインに結びつけられる。SQLの中でも、ドメインは基底型とは別の単位として扱う。PostgreSQL自身は基底型に戻して演算を許すが、検査器は報告する。
 
@@ -533,7 +513,7 @@ NG
 
 ```sql
 SELECT id FROM products WHERE price + weight > 1000
---                            ^ domain mismatch: yen + gram: mixes yen with gram (cast to the base type to drop the domain)
+--                            ^ domain mismatch: yen + gram: operands must share the domain (cast to the base type to drop it)
 ```
 
 ```go
@@ -590,8 +570,8 @@ INSERT INTO customers (email, name) VALUES ({{.Email}}, {{.Name}}) RETURNING id
 ```
 
 ```go
-_, err := CreateCustomer.First(ctx, db, p)
-if sqlshape.Violates(err, "customers_email_key") { ... }
+_, err := postgres.First(ctx, db, CreateCustomer, p)
+if postgres.Violates(err, "customers_email_key") { ... }
 ```
 
 補足。列挙されるのは、一意制約と主キー、外部キーの両方向（挿入する行が存在しない親を参照する、削除する行がまだ子から参照されている）、EXCLUDE制約、CHECK、ドメインのCHECK、書き込む値がNULLになりうる場合のNOT NULL。パラメータ由来のNULLは、そのフィールドがnilを表せない型（`string`など）なら候補から外れる。 `NOT ENFORCED`と宣言したCHECKと外部キー（PostgreSQL 18）は決して失敗しないので、列挙されない。
@@ -614,25 +594,11 @@ expect行は「この文が失敗しうる理由の正確な一覧」として�
 
 #### 制約の名前
 
-名前を付けた制約はその名前で呼ぶ。名前を付けなかった制約にはPostgreSQLが付ける名前がそのまま使われるので、診断・expect行・実行時エラーで同じ文字列になる。
-
-| 制約 | キー | 例 |
-|---|---|---|
-| `PRIMARY KEY` | `<table>_pkey` | `orders_pkey` |
-| `UNIQUE (a, b)` | `<table>_<a>_<b>_key` | `customers_email_key` |
-| 列`(a)`の`REFERENCES` | `<table>_<a>_fkey` | `orders_customer_id_fkey` |
-| 列をちょうど1つだけ参照するテーブルの`CHECK` `(a)` | `<table>_<a>_check`（複数列を参照するか、列を参照しないCHECKは`<table>_check`） | `orders_total_check` |
-| ドメインの`CHECK` | `<domain>_check` | `yen_check` |
-| `EXCLUDE (a, b)` | `<table>_<a>_<b>_excl` | `reservations_room_during_excl` |
-| `NOT NULL` | `<table>.<column>` | `orders.total` |
-| トリガーが送出するエラー | SQLSTATE、または`-- sqlshape: error`で付けた名前 | `P0401`、`OrderTooLarge` |
-| ビューの`WITH CHECK OPTION` | SQLSTATE（PostgreSQL自身の44000エラーは制約名を持たない） | `44000` |
-
-同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。生成した名前がPostgreSQLの63バイトという識別子の上限を超える場合は、マルチバイト文字を途中で切らないよう、PostgreSQLと同じやり方で切り詰める。
+失敗モードのキーは、データベースが制約に付ける名前か、NOT NULLなら`table.column`である。診断・expect行・実行時エラーで同じ文字列になる。名前を付けなかった制約に付く名前と、制約名を持たない失敗（トリガのエラー、ビューの`WITH CHECK OPTION`）のキーはデータベースごとに違う。[PostgreSQL](postgres.ja.md#制約の名前)、[MySQL](mysql.ja.md#制約名と失敗モード)。
 
 #### トリガーが送出するエラーには名前を付ける
 
-検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。注釈はそのコードに名前を付けるためのもので、expect行と`Violates`でその名前を使えるようになる:
+検査器はPL/pgSQLのトリガー本体を読むので、中の`RAISE EXCEPTION ... USING ERRCODE = 'P0401'`だけで`P0401`は失敗モードに加わる（`ERRCODE`の無い`RAISE`は`P0001`）。トリガーの関数の上に書く`-- sqlshape: error <code> = <Name>`行は、そのコードに名前を付ける:
 
 ```sql
 -- schema.sql
@@ -645,6 +611,16 @@ END $$;
 CREATE TRIGGER order_size BEFORE INSERT OR UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION check_order_size();
 ```
 
+`Name`はGoの識別子でなければならない。プログラム側は`sqlshape.Error`でそれを写し取り、生のコードの代わりにそれで失敗を読み戻す:
+
+```go
+var OrderTooLarge = sqlshape.Error("P0401")
+
+if postgres.Violates(err, OrderTooLarge) { ... }
+```
+
+expect行はその失敗をコードでもNameでも綴れる——読みやすい方を書けばよく、両方どちらも取り残されない:
+
 ```sql
 -- sqlshape: expect OrderTooLarge, orders_customer_id_fkey
 INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
@@ -652,7 +628,55 @@ INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 
 トリガーが付いているテーブルへの、トリガーが発火するイベント（この例ではINSERTとUPDATE）の失敗モードに、そのSQLSTATEが加わる。
 
-#### RAISE無しで失敗するPL/pgSQL文
+`go vet`は`sqlshape.Error`宣言を両方向で検査する。コードがスキーマの宣言どおりの、まさにそのNameのものであること、そしてパッケージの文が起こしうる名前付き失敗モードすべてに、プログラムのどこかに（自分自身か、参照が届く他パッケージの宣言か）そういう宣言があること——宣言済みの型の束縛が届く範囲と同じ範囲で判定する。
+
+NG
+
+```go
+var Wrong = sqlshape.Error("P0401")
+// sqlshape: schema names function check_order_size's error P0401 "OrderTooLarge", not "Wrong"
+```
+
+```go
+var A = sqlshape.Error("P0401")
+var B = sqlshape.Error("P0401")
+// sqlshape: A and B both declare sqlshape.Error("P0401")
+```
+
+```go
+var Ghost = sqlshape.Error("P9999")
+// sqlshape: the schema declares no error "P9999"
+```
+
+```go
+// このパッケージから検査器が届く範囲にP0401を宣言するvarが無い。文のexpect行はそれを名指している
+// sqlshape: P0401 (raised by trigger order_size on orders as OrderTooLarge, SQLSTATE P0401)
+//           has no `var OrderTooLarge = sqlshape.Error("P0401")` declared in this program
+```
+
+名前を付けるかどうかは任意である。`-- sqlshape: error`注釈の無いスキーマは、expect行も`Violates`もすべてコードだけで書けて読める。
+
+MySQLもトリガー本体を同じように読み、注釈の代わりになるのは自前の`SIGNAL`である:
+
+```sql
+-- schema.sql
+-- sqlshape: error 30001 = OrderTooLarge
+CREATE TRIGGER order_size BEFORE INSERT ON orders FOR EACH ROW
+BEGIN
+  IF NEW.total > 1000000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'order too large', MYSQL_ERRNO = 30001;
+  END IF;
+END;
+```
+
+```sql
+-- sqlshape: expect OrderTooLarge, fk_orders_customer
+INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
+```
+
+expect行と`mysql.Violates`が判定に使うキーは、SIGNALにMySQL自身が付けるもの——`MYSQL_ERRNO`を設定していればその10進表記（`30001`）、無ければSQLSTATE（`45000`）——であることに変わりはない。項目をそのコードで綴っても注釈のNameで綴っても同じで、`Violates`もランタイムもスキーマを読まないので、`sqlshape.Error("30001")`から作った`sqlshape.Failure`もコードそのものを運んでおり、そのコードで判定される。`MYSQL_ERRNO`を設定しないときのキー、`SELECT ... INTO`とトリガーが自分の表に書く場合の番号は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
+
+#### RAISE無しで失敗するPL/pgSQL文（PostgreSQL）
 
 PL/pgSQLの一部の文は`RAISE`が無くても失敗しうる。検査器はそのSQLSTATEも、明示的な`RAISE`と同様に本体の失敗モードへ加える。
 
@@ -675,6 +699,30 @@ SELECT place_order({{.CustomerID}}, {{.Note}})
 
 補足。本体でパラメータに由来するとわかったNOT NULLは、呼び出し側の引数まで辿られる。`STRICT`な関数はNULLでは呼ばれないので、その引数からの違反は候補から外れる。
 
+MySQLもストアドFUNCTIONの呼び出しと`CALL`されるPROCEDUREを同じに扱う。本体のSIGNAL、本体自身の書き込みが違反しうる制約、その書き込みが発火させるトリガーが、呼び出した文まで届く。
+
+```sql
+-- schema.sql
+-- sqlshape: error 30001 = OrderTooLarge
+-- sqlshape: not null
+CREATE FUNCTION place_order(cust_id BIGINT UNSIGNED, amount DECIMAL(10,2)) RETURNS BIGINT
+BEGIN
+  IF amount > 1000000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'order too large', MYSQL_ERRNO = 30001;
+  END IF;
+  INSERT INTO orders (customer_id, total) VALUES (cust_id, amount);
+  RETURN LAST_INSERT_ID();
+END;
+```
+
+```sql
+SELECT place_order({{.CustomerID}}, {{.Total}})
+--     ^ may violate 30001 (raised by function place_order() as OrderTooLarge, MySQL error 30001);
+--       add `-- sqlshape: expect OrderTooLarge` to the template or make it impossible
+```
+
+MySQL固有のもの——引数の数が違う場合(1318)、呼び出し側自身が読むか書く表に関数自身が書く場合(1442、実行のたびに)、`CALL`のOUT引数と結果列の規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
+
 ### 1行だけ返す（`One`）
 
 `sqlshape.One[R, P]`は1行以下しか返さないと宣言するもので、検査器はそれを展開ごとにスキーマから証明する。証明できなければエラー。実行時には`Get`は無ければ`ErrNoRows`、`Find`は有無を返し、データベースが証明に反して2行返したらどちらも`ErrManyRows`を返す。
@@ -696,7 +744,19 @@ var ByEmail = sqlshape.One[User, struct{ Email string }](`
 SELECT id, email FROM users WHERE email = {{.Email}}`)
 ```
 
-補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する。`GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`も1行以下と見なす。`FULL JOIN`は決して1行以下にならない。`DEFERRABLE`と宣言したキーも同様——一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。時制キー（`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`、PostgreSQL 18）は、スカラー列が等値で固定され、範囲列が既知の値と等しいか、要素型の既知の点を含む（`valid_at @> {{.Day}}::date`）ときに固定される。同じ`id`の行どうしは範囲が重ならないので、1つの点を含む行は多くても1つである。既知側が範囲だと足りない（空の範囲はどの範囲にも含まれる）。重なり（`&&`）でも足りない。
+補足。1行以下と言えるのは、FROMに現れるすべてのテーブルについて、その一意キー（主キー、`UNIQUE`、一意インデックス、またはWHERE句が同じ条件を含む部分一意インデックス）がリテラル・パラメータ・外側の参照・相関の無いスカラーサブクエリのいずれかと等値で固定されているとき。何が固定になるかは次のとおり。
+
+- `col = NULL`は何も固定しない（決して真にならない）
+- `col IS NOT DISTINCT FROM v`は、列が`NOT NULL`で`v`が既知かつ`NULL`でなければ固定する
+- 要素1個の`col = ANY(ARRAY[v])`は`col = v`と同じ
+- 列へのキャスト（`GROUP BY status::text`）は透かして見る
+- 等値はJOIN（外部結合のON句はNULLになりうる側だけを固定する）、ビュー、サブクエリ、CTEを通して追跡する
+
+キーに関わらずそれ自体で1行以下と見なすもの: `GROUP BY`の無い集約、定数の`LIMIT 0` / `LIMIT 1`、FROMの無いSELECT、1行の`VALUES`、1行の`INSERT ... RETURNING`。
+
+決して1行以下にならないもの: `FULL JOIN`と、`DEFERRABLE`と宣言したキー。一意性がコミットまで検査されないため、そのトランザクションが生きている間は同じ値を持つ2行が存在しうる。
+
+時制キー（`PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)`、PostgreSQL 18）は、スカラー列が等値で固定され、範囲列が既知の値と等しいか、要素型の既知の点を含む（`valid_at @> {{.Day}}::date`）ときに固定される。同じ`id`の行どうしは範囲が重ならないので、1つの点を含む行は多くても1つである。既知側が範囲だと足りない（空の範囲はどの範囲にも含まれる）。重なり（`&&`）でも足りない。
 
 #### すべての分岐で証明できなければならない
 
@@ -705,14 +765,14 @@ NG
 ```go
 var Find = sqlshape.One[User, struct{ ID *int64 }](`
 SELECT id, email FROM users WHERE true {{if .ID}} AND id = {{.ID}} {{end}}`)
-// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@39:else]
+// One: cannot prove at most one row: users: no unique key is fixed by equality (keys: (id), (email)) [if@45:else]
 ```
 
 `.ID`がnilの分岐では条件が無くなり、全行が返る。それを見つけるのがこの検査の意図なので、この文は`Query`にするか、`.ID`を非ポインタにして分岐を外す。
 
-### COPYで一括ロードする
+### COPYで一括ロードする（PostgreSQL）
 
-`sqlshape.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がその列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であること。
+`postgres.Copy[R]("order_items", "order_id", "line_no", ...)`はINSERTと同じように検査される。テーブルと列が存在すること、各列の型がその列に値を入れるフィールドと合うこと、指定しなかった列にはすべて既定値があるか生成列であること。
 
 NG
 
@@ -721,7 +781,7 @@ type Item struct {
 	OrderID int64
 	Sku     string
 }
-var Load = sqlshape.Copy[Item]("order_items", "order_id", "sku")
+var Load = postgres.Copy[Item]("order_items", "order_id", "sku")
 // Copy into order_items: column "line_no" is NOT NULL without a default and is not copied
 ```
 
@@ -733,7 +793,7 @@ type Item struct {
 	LineNo  int16
 	Sku     string
 }
-var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
+var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 ```
 
 ## 第2部 — スキーマが宣言する規約
@@ -758,19 +818,20 @@ var Load = sqlshape.Copy[Item]("order_items", "order_id", "line_no", "sku")
 | `paired(outbox)` | 同じ文で名指しの表にも書くこと（書き込みCTE） | `insert` |
 | `single` | 高々1行しか触らないと証明できること（`One`の証明） | `delete` |
 
-`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切りか、まとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。文は表に対して実際にすることで判定される。MERGEの各枝はその枝の文種の書き込み（INSERT枝しかないMERGEは`on update`の義務を負わない）、`INSERT ... ON CONFLICT DO UPDATE`はinsertとupdateの両方、`TRUNCATE`は全行のdelete、自動更新可能ビューを通した書き込みは基底表への書き込み。宣言の中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 — を指し、その番号のパラメータという意味ではない。Goテンプレートの`{{.X}}`はそういう値の一つ。
+`<kinds>`は`select` / `insert` / `update` / `delete`のカンマ区切りか、まとめ書きの`read`（SELECTと、WHEREで行を読むUPDATE / DELETE / MERGEの対象）、`write`、`all`。文は表に対して実際にすることで判定される。MERGEの各枝はその枝の文種の書き込み（INSERT枝しかないMERGEは`on update`の義務を負わない）、`INSERT ... ON CONFLICT DO UPDATE`はinsertとupdateの両方、`TRUNCATE`は全行のdelete、自動更新可能ビューを通した書き込みは基底表への書き込み。裏返すと、ビューに宣言した義務が縛るのはビューの読み手だけである — ビュー経由の書き込みは基底表の義務で判定され、ビュー自身の義務には決してかからないので、書き込みにも効かせたい規則は基底表に宣言する。宣言の中の`$n`は「行を見る前に決まっている何かの値」— パラメータ、リテラル、外側の参照 — を指し、その番号のパラメータという意味ではない。Goテンプレートの`{{.X}}`はそういう値の一つ。
 
 `require`行ではないが義務に展開される宣言が3つある。`visible where <expr>`（`require <expr> on read`のもとの綴り）、`aggregate`、`transitions`。`sensitive`は列にラベルを付ける。vetのフラグ`-require-columns=tenant_id`・`-no-table-reads`・`-no-tables`は、その列を持つ全表への`require pinned(tenant_id)`、全表への`require via view`、`require via view on all`の略記で、文脈の`waive`は宣言と同じように解除できる。
 
 ディレクティブは直下の`CREATE TABLE`・`CREATE VIEW`・`CREATE FUNCTION`・seedの`INSERT`に属する。それ以外の文（`ALTER TABLE`、`COMMENT ON`）の直上に書いたものは宣言にならず、スキーマの問題として報告される。
 
-義務の履行経路は5つで、見ておくべきものは`-strict`が報告する。
+義務の履行経路は6つで、見ておくべきものは`-strict`が報告する。
 
 1. 文自身のWHERE / ON / SET
 2. ビュー経由。ビューの定義はスキーマ読み込み時にそれ自身が判定され、ビューの読み手はその中の表について再度判定されない（関数の本体も同じ扱いで、トリガー関数も含む。vetはスキーマの問題として、`sqlshape check`は発見として報告する）
 3. 行レベルセキュリティのポリシー。USINGがそれを成り立たせていれば、行セキュリティの対象ロールについて履行される（表が`FORCE ROW LEVEL SECURITY`でなければ`-strict`が所有者への注記を出す）
-4. 複合外部キーをまたいで。`FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`があれば、`order_id = orders.id`で結合し`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている
-5. 文側のopt-out。`-- sqlshape: unfiltered orders`（述語型の義務）か`-- sqlshape: waive orders pinned(tenant_id)`（宣言どおりの綴りで1つ。`waive orders`だけならその表の義務を全部）。opt-outは`-strict`で報告される
+4. 複合外部キーをまたいで。`FOREIGN KEY (order_id, tenant_id) REFERENCES orders (id, tenant_id)`があれば、`order_id = orders.id`で結合し`orders.tenant_id`が固定されていれば`order_items.tenant_id`も固定されている。ただし`order_items.tenant_id`が`NOT NULL`（か、文がそう証明している）ときに限る。外部キーのどれか1列がNULLの行はどちらのデータベースでも制約の検査対象外で、親と結合できても値を揃えていない
+5. 2の書き込み側の対称形。自動更新可能なビューに`WITH CHECK OPTION`が付いていれば、そのビュー経由の書き込みはビュー自身のWHERE（CASCADEDなら結合の有無を問わず下位の全ビューのWHEREも、LOCALなら自前のCHECK OPTIONを宣言した下位ビューのWHEREだけ）が固定する値で`pinned`を履行する。サーバ自身がそれを満たさない行を拒む（PostgreSQLのSQLSTATE 44000、MySQLの1369`ER_VIEW_CHECK_FAILED`）からで、CHECK OPTIONを何も宣言していないビューはこの経路を持たない
+6. 文側のopt-out。`-- sqlshape: unfiltered orders`（述語型の義務）か`-- sqlshape: waive orders pinned(tenant_id)`（宣言どおりの綴りで1つ。`waive orders`だけならその表の義務を全部）。opt-outは`-strict`で報告される
 
 表の出現ごとに判定する。自己結合やサブクエリでもう一度その表を読めば、そこでも義務を負う。`RETURNING`は判定しない。ビューに付けた義務はビューの読み手への義務で、ビューの定義文は中の表の義務を自分で履行する側。
 
@@ -839,7 +900,7 @@ UPDATE orders SET status = {{.Status}} WHERE id = {{.ID}} AND version = {{.Versi
 -- orders.version is not pinned: every statement on orders must fix version by equality (or assign it)
 ```
 
-補足。版を上げるのはトリガ、見た版を名指しするのは文、何も当たらなかった`One`のUPDATEは`ErrNoRows`を返す（先を越された）。
+補足。バージョンを上げるのはトリガ、見たバージョンを名指しするのは文、何も当たらなかった`One`のUPDATEは`ErrNoRows`を返す（先を越された）。
 
 ### テーブルを直接読まない（`via view`、`-no-table-reads` / `-no-tables`）
 
@@ -911,13 +972,13 @@ SELECT o.status, v.id FROM orders o JOIN invoices v ON v.order_id = o.id WHERE o
 -- sqlshape: aggregate orders (order_items, order_item_tags) lock version
 ```
 
-ルートは`pinned(version) on update, delete`（見た版を名指しする）を負い、各子表はUPDATE / DELETEで、外部キーをたどった先（孫なら親を経由して）のルート行がその版であることの`EXISTS`を負う。
+ルートは`pinned(version) on update, delete`（見たバージョンを名指しする）を負い、各子表はUPDATE / DELETEで、外部キーをたどった先（孫なら親を経由して）のルート行がそのバージョンであることの`EXISTS`を負う。
 
 ```sql
 UPDATE order_items i SET qty = {{.Q}} FROM orders o WHERE o.id = i.order_id AND o.version = {{.V}} AND i.id = {{.ID}}
 ```
 
-補足。版を上げるのはDBの仕事のまま（ルートのトリガ。子から上げるなら子のトリガがルートを更新する）。何も当たらなかった`One`の書き込みは`ErrNoRows`を返す。
+補足。バージョンを上げるのはDBの仕事のまま（ルートのトリガ。子から上げるなら子のトリガがルートを更新する）。何も当たらなかった`One`の書き込みは`ErrNoRows`を返す。
 
 ### ステータス列は宣言した遷移でしか動かさない（`transitions`）
 
@@ -966,6 +1027,8 @@ INSERT INTO outbox (id, payload) SELECT id, 'created' FROM o
 -- a write to orders must also write outbox in the same statement (a data-modifying WITH): require paired(outbox) on insert
 ```
 
+規則は「同じ文で両方の表に書く」であって、`outbox`に書く値と`orders`の行の対応は見ない（無関係な値を書いたoutbox行も通る）。対になっていることが約束で、中身は文の責任である。
+
 `single`は、DELETEが高々1行しか触らないことを`One`と同じ証明で求める。
 
 ```sql
@@ -983,7 +1046,7 @@ CREATE TABLE orders (...);
 CREATE VIEW order_contacts AS SELECT id, email, left(phone, 3) || '***' AS phone_masked FROM orders;
 ```
 
-ラベルの付いた列は、そのラベルを`may read`する文脈（[文脈](#呼び出し元ごとに規約を変えるcontext)）でしか参照できない。SELECT句でもWHEREでも同じ。値を書き込むのは読むことではない。ラベルは列をそのまま通すビューと、その表の行を返す関数（`RETURNS SETOF orders`）を通って伝わり、式（マスクした列）で止まる。
+ラベルの付いた列は、そのラベルを`may read`する文脈（[文脈](#呼び出し元ごとに規約を変えるcontext)）でしか参照できない。SELECT句でもWHEREでも同じ。値を書き込むのは読むことではないが、`RETURNING`で返すのは読むこと（誰が渡した値でも、データベースの外に出る）。ラベルは列をそのまま通すビューと、その表の行を返す関数（`RETURNS SETOF orders`）を通って伝わり、式（マスクした列）で止まる。
 
 ```sql
 SELECT email FROM orders WHERE id = {{.ID}}            -- billing以外ではNG
@@ -1029,9 +1092,9 @@ sqlshape: 2 finding(s)
 
 ## 第3部 — 文の外側
 
-### スキーマはPostgreSQLの版を名乗る（`postgres`）
+### スキーマはPostgreSQLのバージョンを名乗る（`postgres`）
 
-`schema.sql`は、どの版のPostgreSQL向けに書かれているかを1回宣言する。この宣言が判定の土台になる。スキーマと全部の文を読む文法、型・関数・演算子を解決するカタログ、`pgtest`とマイグレーション系コマンドが起動するPostgreSQLの版が、ここで決まる。宣言の無いスキーマは読まない。
+`schema.sql`は、どのバージョンのPostgreSQL向けに書かれているかを1回宣言する。この宣言が判定の土台になる。スキーマと全部の文を読む文法、型・関数・演算子を解決するカタログ、マイグレーション系コマンドが起動するPostgreSQLのバージョンが、ここで決まる。宣言の無いスキーマは読まない。規則の中でPostgreSQLに属するもの（Go型の表、制約名、`One`の証明の材料、ランタイム、マイグレーションコマンド）は[postgres.ja.md](postgres.ja.md)にまとめてある。
 
 ```sql
 -- sqlshape: postgres 18
@@ -1041,14 +1104,63 @@ CREATE TABLE ...
 NG
 
 - `schema.sql`（ディレクトリなら`*.sql`のどれか）に宣言が無い
-- sqlshapeが持っていない版（メッセージが対応版を列挙する。17と18）
+- sqlshapeが持っていないバージョン（メッセージが対応バージョンを列挙する。17と18）
 - 値の違う宣言が2つある
 
 OK
 
 - ファイルのどこに書いてもよい。同じ値なら繰り返しもよい
 
-新しい版だけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古い版を宣言していれば構文エラーになる。その版のサーバに流したときと同じ結果である。PostgreSQLの版を上げる作業は、この数字を変えて検査器の報告を読むことになる。
+新しいバージョンだけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古いバージョンを宣言していれば構文エラーになる。そのバージョンのサーバに流したときと同じ結果である。PostgreSQLのバージョンを上げる作業は、この数字を変えて検査器の報告を読むことになる。
+
+### スキーマはMySQLのバージョンを名乗る（`mysql`）
+
+同じ宣言でMySQLを名乗れる。そのときはMySQL自身の文法がスキーマと全部の文を読み、MySQLの規則が式に型を付け、文は`github.com/kr9ly/sqlshape/mysql/v2`が`database/sql`の上で実行する。
+
+```sql
+-- sqlshape: mysql 8.4
+CREATE TABLE ...
+```
+
+NG
+
+- sqlshapeが持っていないバージョン（持っているのは8.4）
+- 値の違う宣言が2つある、または`postgres`も同時に名乗る
+
+第1部と第2部の規則はMySQLのスキーマにも同じにかかる。判定するのがPostgreSQLではなくMySQLのアナライザーになるだけである。規則が名前・番号・型を使う箇所（制約名とエラー番号、Go型の表、`One`の証明の材料、`ONLY_FULL_GROUP_BY`の検査）でMySQLのものが何かは、MySQLに無くて検査しないものと合わせて[mysql.ja.md](mysql.ja.md)にある。
+
+### スキーマはサーバの設定を名乗る（`server`）
+
+文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である。宣言が無ければ検査器はサーバの既定値を仮定する。MySQL 8.4なら既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`、つまりLinuxで初期化したままのサーバである。
+
+```sql
+-- sqlshape: mysql 8.4
+-- sqlshape: server sql_mode = 'ANSI,STRICT_ALL_TABLES'
+-- sqlshape: server lower_case_table_names = 1
+CREATE TABLE ...
+```
+
+NG
+
+- その方言が読まない変数。MySQLでは`sql_mode`・`lower_case_table_names`・`max_sp_recursion_depth`以外、PostgreSQLでは今のところ全部（判定はサーバの既定値に従い、`search_path`はスキーマ自身の`SET`で扱う）
+- 8.4に無い`sql_mode`の名前、0・1・2以外の`lower_case_table_names`
+- 空白を含む値を文字列リテラルにしていない、同じ変数を2回宣言している
+
+OK
+
+- `sql_mode`はカンマ区切りの名前（大文字小文字は問わない）、空文字列、組み合わせモードの`ANSI`と`TRADITIONAL`。組み合わせはサーバと同じに展開する
+- `lower_case_table_names`は0、1、2
+
+検査器はこれらに次のように従う。
+
+- パーサは字句解析のビットをそのまま読む。`ANSI_QUOTES`なら二重引用符は識別子、`PIPES_AS_CONCAT`なら`||`は`CONCAT`（無ければ`OR`）。`IGNORE_SPACE`、`NO_BACKSLASH_ESCAPES`、`HIGH_NOT_PRECEDENCE`もサーバどおりに効く。`REAL_AS_FLOAT`なら`REAL`列は`DOUBLE`ではなく`FLOAT`（`float32`）になる
+- `ONLY_FULL_GROUP_BY`は上のグループ検査（1055、1140、`DISTINCT`の3065）の有無を決める。`HAVING`の名前解決（1054）と`ORDER BY`の集約の規則（3029、3028）はサーバと同じくどのモードでもかかる
+- 厳密モード（`STRICT_TRANS_TABLES`か`STRICT_ALL_TABLES`）は2つを決める。文字列関数（`CONCAT`、`SUBSTRING`、`LOWER`など）がNULL可になるのは厳密モードのときだけで、無ければ`NOT NULL`列の`CONCAT(name, 'x')`は`*string`ではなく`string`で受ける。`NOT NULL`列への`NULL`が失敗モード（1048）になるのも厳密モードのときで、無ければ1行の`INSERT`と`REPLACE`（その`ON DUPLICATE KEY UPDATE`を含む）だけが`NULL`を拒み、複数行、`INSERT ... SELECT`、`UPDATE`は型の暗黙の既定値を警告付きで格納するので、検査器はそれらに1048を挙げない
+- `NO_UNSIGNED_SUBTRACTION`なら符号なし同士の減算は符号付き（`uint64`ではなく`int64`）になる
+- 残りの名前（`NO_ZERO_DATE`、`ERROR_FOR_DIVISION_BY_ZERO`、`NO_ENGINE_SUBSTITUTION`、`PAD_CHAR_TO_FULL_LENGTH`など）は実行時にしか効かない。検査器はそのまま受け付ける
+- `lower_case_table_names = 1`は表名とビュー名を小文字にして持つ。サーバの報告と同じである（`SELECT * FROM Users`は表`users`を読み、factsも境界の検査もその名前で見る）。2は宣言どおりの綴りで持ち、大文字小文字を無視して照合する。0は`Users`と`users`を区別する（1146）。ディレクティブ（`unfiltered`、`waive`、義務）が名乗る表名も同じ規則で解決する。1と2ならどの綴りでも届き、0なら`CREATE`の綴りで書く
+
+宣言は「文が走るサーバはこう設定されている」という約束であり、`mysql.Verify(ctx, db, schemaSQL)`がそれを確かめる。接続のセッションの`@@sql_mode`（DSNやプールの初期化が上書きしうる）とサーバの`lower_case_table_names`を読み、宣言との差を返す（[mysql.ja.md](mysql.ja.md#ランタイム-databasesql)）。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 
@@ -1067,9 +1179,9 @@ OK
 rows, err := pool.Query(ctx, "SELECT id FROM orders WHERE status = $1", status)
 ```
 
-補足。`-raw-sql=forbid`は定数であってもsqlshapeを通らない文をすべて拒否する（`pgxpool.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / Copy (or list the package in -raw-sql-allow)`）。移行中のパッケージは`-raw-sql-allow=pkg/...`で除外する。
+補足。`-raw-sql=forbid`は定数であってもsqlshapeを通らない文をすべて拒否する（`pgx.Query executes SQL outside sqlshape; with -raw-sql=forbid every statement goes through sqlshape.Query / One / postgres.Copy (or list the package in -raw-sql-allow)`）。移行中のパッケージは`-raw-sql-allow=pkg/...`で除外する。
 
-### パッケージは自分のスキーマだけを参照する（`-schemas`）
+### パッケージは自分のスキーマだけを参照する（`-schemas`、PostgreSQL）
 
 `-schemas=a_api,b_private`は、そのパッケージが参照してよいPostgreSQLのスキーマを限定する。1つのデータベースを複数サービスで使うときの境界。
 
@@ -1096,8 +1208,10 @@ END $$;
 -- schema.sql
 CREATE VIEW order_summary AS
 SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.customer_id;
--- sqlshape: schema schema.sql: view order_summary: column "nmae" does not exist (SQLSTATE 42703)
+-- sqlshape: schema schema.sql: view order_summary: 42703: column c.nmae does not exist (at <schema.sqlでのバイトオフセット>)
 ```
+
+MySQLのトリガやストアドPROCEDURE / FUNCTIONの本体も、スキーマごとに1回、同じように検査される。`NEW` / `OLD`、`DECLARE`した変数や引数、制御構造、`SELECT ... INTO`、カーソル、`CALL`、`SIGNAL` / `RESIGNAL`がスコープに入る。本体の作成時にサーバ自身が拒むものもスキーマの問題として報告される。本体についてMySQL固有のもの——制約名とエラー番号、SIGNALのキーの規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
 
 補足。行レベルセキュリティのポリシーもここで検査される。`CREATE POLICY`の条件式はboolean型で、集約やウィンドウ関数を含まず、ドメインの単位を守っていなければならない。行セキュリティを有効にしていないテーブルにポリシーがあれば報告する。ポリシーの条件を文の側で繰り返すことは要求しない。絞り込むのはデータベースの仕事である。
 

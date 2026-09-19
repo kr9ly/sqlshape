@@ -14,7 +14,7 @@ trap 'rm -f "$probe"' EXIT
 cat > "$probe" <<'GO'
 package tables
 
-import "github.com/kr9ly/sqlshape"
+import "github.com/kr9ly/sqlshape/v2"
 
 var smoke = sqlshape.Query[int64, struct{}](`SELECT no_such_column FROM customers`)
 GO

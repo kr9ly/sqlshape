@@ -1,0 +1,171 @@
+package vet
+
+import (
+	"go/token"
+	"go/types"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
+)
+
+// The failure contract of a statement is written in its template:
+//
+//	-- sqlshape: expect users_email_key, orders.total
+//
+// listing the constraints it is prepared to violate (a NOT NULL as table.column). The
+// checker diffs that against what the analyzer says each expansion may violate: an
+// undeclared possible violation means the caller has not thought about that failure,
+// a declared impossible one means the schema no longer backs the handling. The runtime
+// turns the PG error into a ConstraintError keyed by the same names.
+
+var expectLine = directive("expect")
+
+// directive matches `-- sqlshape: <verb> a, b, c` lines; group 1 is the list.
+func directive(verb string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^[ \t]*--[ \t]*sqlshape:[ \t]*` + verb + `[ \t]+(.+?)[ \t]*$`)
+}
+
+// expectations parses the expect lines of a template: key → offset of its mention,
+// and the offset of the first expect line (0 when there is none).
+func expectations(text string) (map[string]int, int) {
+	return directiveItems(text, expectLine)
+}
+
+// directiveItems parses the comma-separated items of a directive's lines.
+func directiveItems(text string, re *regexp.Regexp) (map[string]int, int) {
+	out := map[string]int{}
+	first := 0
+	for i, m := range re.FindAllStringSubmatchIndex(text, -1) {
+		if i == 0 {
+			first = m[0]
+		}
+		list := text[m[2]:m[3]]
+		off := m[2]
+		for _, item := range strings.Split(list, ",") {
+			trimmed := strings.TrimSpace(item)
+			if trimmed != "" {
+				if _, dup := out[trimmed]; !dup {
+					out[trimmed] = off + strings.Index(item, trimmed)
+				}
+			}
+			off += len(item) + 1
+		}
+	}
+	return out, first
+}
+
+// possibleViolations filters an expansion's violations by what P can actually send:
+// a NOT NULL violation carried by a parameter is dropped when its Go type cannot be NULL,
+// or when the parameter's path was proven non-nil in this expansion by a plain
+// {{if .X}} / {{with .X}} whose then branch was taken to produce it (see
+// expand.Expansion.Guarded): a pointer read that way is guaranteed non-nil along this
+// expansion's lineage, whatever the pointer's zero-value nullability would otherwise say.
+// Only a bare pointer field gets this treatment -- a `{{if .X}}` is true exactly when X is
+// not the zero value, which for a pointer means non-nil, but for a nullable wrapper
+// (sql.Null*, pgtype.*) a struct is truthy the moment it's non-zero, which does not agree
+// with its own Valid flag, so those are left to their ordinary nullability.
+func (c *checker) possibleViolations(e *expand.Expansion, r *dialect.Result, pType types.Type) []dialect.Violation {
+	var out []dialect.Violation
+	for _, v := range r.Violations {
+		if v.Param > 0 {
+			nullable := true
+			for _, p := range e.Params {
+				if p.N == v.Param {
+					if gt, err := c.resolvePath(pType, p.Path); err == nil {
+						_, nullable = unwrapNullable(gt)
+						switch gt.Underlying().(type) {
+						case *types.Slice, *types.Map:
+							nullable = true // a nil slice / map is sent as NULL
+						}
+						if nullable {
+							if _, isPtr := gt.(*types.Pointer); isPtr && e.Guarded(p.Path) {
+								nullable = false
+							}
+						}
+					}
+				}
+			}
+			if !nullable {
+				continue
+			}
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// checkExpectations reports the diff between the template's expect line and the
+// violations possible in any expansion (possible: key → violation, with the branch it
+// was first seen in).
+//
+// An expect line item satisfies a violation by matching either its Key (the SQLSTATE /
+// constraint the runtime's Violates judges by) or its Name (the `-- sqlshape: error
+// key = Name` annotation, when the violation carries one): the two are interchangeable
+// on the expect line, so a template may write whichever reads better, and a template
+// that writes both for the same violation (`expect P0401, OrderTooLarge`) has both
+// items satisfied by that one violation, neither left over as unmatched.
+func (c *checker) checkExpectations(lit literal, possible map[string]dialect.Violation, branch map[string]string, report func(token.Pos, string, ...any)) {
+	expected, at := expectations(lit.text)
+	if c.expectPos == nil {
+		c.expectPos = map[string]token.Pos{}
+	}
+	for k, off := range expected {
+		if _, ok := c.expectPos[k]; !ok {
+			c.expectPos[k] = lit.pos(off)
+		}
+	}
+	if c.possibleErrors == nil {
+		c.possibleErrors = map[string]dialect.Violation{}
+	}
+	for k, v := range possible {
+		if v.Name != "" {
+			c.possibleErrors[k] = v
+		}
+	}
+	satisfied := map[string]bool{}
+	var keys []string
+	for k, v := range possible {
+		_, byKey := expected[k]
+		_, byName := expected[v.Name]
+		byName = byName && v.Name != ""
+		if byKey {
+			satisfied[k] = true
+		}
+		if byName {
+			satisfied[v.Name] = true
+		}
+		if !byKey && !byName {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := possible[k]
+		suggest := k
+		if v.Name != "" {
+			suggest = v.Name
+		}
+		report(lit.pos(at), "may violate %s (%s); add `-- sqlshape: expect %s` to the template or make it impossible%s", k, v.Detail, suggest, branch[k])
+	}
+	keys = keys[:0]
+	for k := range expected {
+		if !satisfied[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		report(lit.pos(expected[k]), "expects %s but no expansion can violate it", k)
+	}
+}
+
+var notNullLine = directive("not null")
+
+// notNullOverrides parses `-- sqlshape: not null col, col` lines: result columns the
+// template author asserts are never NULL (the SQL-side twin of the `col:",notnull"` tag).
+func notNullOverrides(text string) (map[string]int, int) {
+	return directiveItems(text, notNullLine)
+}

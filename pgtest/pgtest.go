@@ -1,7 +1,10 @@
-// Package pgtest starts a real PostgreSQL with a schema.sql applied, for testing the
-// database side of an application (views, functions, triggers, constraints) from Go the
-// same way the checker's oracle does. Nothing persists: the server lives in a temporary
-// directory and dies with Close.
+// Package pgtest starts a real PostgreSQL with a schema.sql applied and verifies the
+// checker's conclusions against it. It is sqlshape's own test tooling (the examples and the
+// conformance tests run on it), not part of the API an application is meant to use: an
+// application tests its database with whatever server it runs on, and the agreement between
+// the checker and PostgreSQL is sqlshape's promise to keep, not the application's to check.
+// Like check/*, it carries no compatibility promise. Nothing persists: the server lives in a
+// temporary directory and dies with Close.
 package pgtest
 
 import (
@@ -12,10 +15,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kr9ly/sqlshape/internal/analyze"
-	"github.com/kr9ly/sqlshape/internal/oracle"
-	"github.com/kr9ly/sqlshape/internal/schema"
-	"github.com/kr9ly/sqlshape/internal/verify"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/analyze"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/oracle"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/schema"
+	"github.com/kr9ly/sqlshape/check/postgres/v2/verify"
 )
 
 // DB is a running PostgreSQL with the schema applied.
@@ -82,7 +85,7 @@ func firstLine(s string) string {
 	return strings.SplitN(strings.TrimSpace(s), "\n", 2)[0]
 }
 
-// Conn is a connection to the database; it satisfies sqlshape.DB.
+// Conn is a connection to the database; it satisfies postgres.DB.
 func (d *DB) Conn() *pgx.Conn { return d.o.Conn() }
 
 // ConnString connects other clients (a pgxpool.Pool, psql) to the same server.

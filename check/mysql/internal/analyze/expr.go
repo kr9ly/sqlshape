@@ -1,0 +1,1394 @@
+package analyze
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/catalog"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/mysqlast"
+	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
+	"github.com/kr9ly/sqlshape/v2/x/sqlmode"
+)
+
+func isParam(v mysqlast.Value) bool {
+	n, ok := v.(*mysqlast.Node)
+	return ok && n.Class == "Item_param"
+}
+
+// setParam records the type context gives a placeholder.
+func (a *analyzer) setParam(v mysqlast.Value, t schema.Type) {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "Item_param" {
+		return
+	}
+	i := a.ph.Number(n.Start) - 1
+	if i < 0 || i >= len(a.params) {
+		return
+	}
+	// the first context wins: the same $n in two places keeps its first type
+	if !a.params[i].Known {
+		a.params[i] = Param{Type: t, Known: true}
+	}
+}
+
+// noteParamSource records the table column a placeholder met (the first one wins).
+func (a *analyzer) noteParamSource(v mysqlast.Value, table *schema.Table, col *schema.Column, assigned bool) {
+	n, ok := v.(*mysqlast.Node)
+	if !ok || n.Class != "Item_param" || table == nil || col == nil {
+		return
+	}
+	num := a.ph.Number(n.Start)
+	if a.paramSrc == nil {
+		a.paramSrc = map[int]*ParamSource{}
+	}
+	if _, done := a.paramSrc[num]; !done {
+		a.paramSrc[num] = &ParamSource{Table: table.Name, Column: col.Name, NotNull: col.NotNull, Assigned: assigned}
+	}
+}
+
+// paramSources records, for the placeholders among the operands of a comparison (=, IN,
+// BETWEEN, LIKE ...), the one table column among the other operands: a parameter compared
+// with a column stands for that column.
+func (a *analyzer) paramSources(sc scope, args []mysqlast.Value) {
+	var table *schema.Table
+	var col *schema.Column
+	for _, v := range args {
+		if isParam(v) {
+			continue
+		}
+		if ref, ok := a.plainColumn(sc, v); ok && ref.c.base != nil && ref.c.baseTable != nil {
+			if col != nil && (col != ref.c.base || table != ref.c.baseTable) {
+				return // two columns: the parameter stands for neither
+			}
+			table, col = ref.c.baseTable, ref.c.base
+		}
+	}
+	if col == nil {
+		return
+	}
+	for _, v := range args {
+		a.noteParamSource(v, table, col, false)
+	}
+}
+
+// setParamField types a placeholder by an enum_field_types name.
+func (a *analyzer) setParamField(v mysqlast.Value, ft string) {
+	if t, ok := fromFieldType(ft, false); ok {
+		a.setParam(v, t)
+	}
+}
+
+// expr types an expression: column references, literals and placeholders directly; the
+// operators by the server's rules (types.go); function calls by their Item class in the
+// catalog. Every construct is walked for its errors and its placeholders; what has no
+// rule yet comes back untyped.
+func (a *analyzer) expr(sc scope, v mysqlast.Value, where string) (typed, error) {
+	switch x := v.(type) {
+	case nil:
+		return unknown, nil
+	case mysqlast.List:
+		for _, e := range x {
+			if _, err := a.expr(sc, e, where); err != nil {
+				return unknown, err
+			}
+		}
+		return unknown, nil
+	case *mysqlast.Struct:
+		for _, k := range x.Order {
+			if _, err := a.expr(sc, x.Fields[k], where); err != nil {
+				return unknown, err
+			}
+		}
+		return unknown, nil
+	case *mysqlast.Node:
+		a.parents = append(a.parents, x)
+		t, err := a.node(sc, x, where)
+		if err == nil {
+			if e := a.constCheck(sc, x, where); e != nil {
+				err = e
+				t = unknown
+			}
+		}
+		a.parents = a.parents[:len(a.parents)-1]
+		return t, err
+	}
+	return unknown, nil
+}
+
+// exprs types a list of expressions.
+func (a *analyzer) exprs(sc scope, vs []mysqlast.Value, where string) ([]typed, error) {
+	out := make([]typed, len(vs))
+	for i, v := range vs {
+		t, err := a.expr(sc, v, where)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = t
+	}
+	return out, nil
+}
+
+func (a *analyzer) node(sc scope, n *mysqlast.Node, where string) (typed, error) {
+	if e := a.wrongArguments(sc, n, where); e != nil {
+		return unknown, e
+	}
+	switch n.Class {
+	case "PTI_simple_ident_ident", "PTI_simple_ident_nospvar_ident", "PTI_simple_ident_q_2d", "PTI_simple_ident_q_3d":
+		ref, err := a.column(sc, n, where)
+		if err != nil {
+			return unknown, err
+		}
+		return typeOfColumn(ref.c), nil
+	case "Item_param", "PTI_user_variable":
+		return unknown, nil
+	case "PTI_get_system_variable":
+		// @@scope.name: an explicitly scoped read must match the variable's own scope
+		// (1238, measured: a statement error wherever the read sits, dead branches and
+		// subqueries included). The generated catalog.SysVars carries every stock
+		// server variable's scope; a name outside it (a plugin's or component's
+		// variable, and any `@@prefix.name` component read) is not judged, and an
+		// unqualified @@name never scope-fails.
+		if qual, name := bipartite(n.Arg("name")); qual == "" && name != "" {
+			scope, _ := n.Arg("scope").(mysqlast.Const)
+			switch catalog.SysVars[strings.ToLower(name)] {
+			case 'g':
+				if scope == "OPT_SESSION" {
+					return unknown, &Error{Message: fmt.Sprintf("Variable '%s' is a GLOBAL variable", strings.ToLower(name)), Code: 1238, Position: a.ph.Back(n.Start)}
+				}
+			case 's':
+				if scope == "OPT_GLOBAL" {
+					return unknown, &Error{Message: fmt.Sprintf("Variable '%s' is a SESSION variable", strings.ToLower(name)), Code: 1238, Position: a.ph.Back(n.Start)}
+				}
+			}
+		}
+		return unknown, nil
+
+	// literals
+	case "Item_int":
+		t := known("bigint", false)
+		t.typ.Length = len(strings.TrimLeft(str(n.Arg("i")), "-"))
+		return t, nil
+	case "Item_uint":
+		t := known("bigint", false)
+		t.typ.Unsigned = true
+		return t, nil
+	case "Item_decimal":
+		t := known("decimal", false)
+		s := str(n.Arg("str"))
+		if i := strings.IndexByte(s, '.'); i >= 0 {
+			t.typ.Dec = len(s) - i - 1
+			t.typ.Length = len(strings.TrimLeft(s, "-")) - 1
+		} else {
+			t.typ.Dec = 0
+			t.typ.Length = len(strings.TrimLeft(s, "-"))
+		}
+		return t, nil
+	case "Item_float":
+		return known("double", false), nil
+	case "PTI_text_literal_text_string", "PTI_text_literal_nchar_string", "PTI_text_literal_underscore_charset", "PTI_text_literal_concat":
+		t := known("varchar", false)
+		if tok, ok := n.Arg("literal").(mysqlast.Token); ok {
+			t.typ.Length = len([]rune(tok.Value))
+		}
+		return t, nil
+	case "Item_hex_string", "Item_bin_string", "PTI_literal_underscore_charset_hex_num", "PTI_literal_underscore_charset_bin_num":
+		return known("varbinary", false), nil
+	case "PTI_temporal_literal":
+		// DATE'...' / TIME'...' / TIMESTAMP'...' (Item_date_literal / Item_time_literal /
+		// Item_datetime_literal): the named type, never NULL; the fractional seconds are
+		// the literal's own digits. The value must parse as exactly that type with no
+		// warning (create_temporal_literal: str_to_datetime under the sql_mode's zero-date
+		// flags, a DATE with no time part, a DATETIME with one, str_to_time for a TIME),
+		// else the statement is 1525 "Incorrect DATE / TIME / DATETIME value" (measured)
+		ft := strings.TrimPrefix(str(n.Arg("field_type")), "MYSQL_TYPE_")
+		typ, ok := fromFieldType(ft, false)
+		if !ok {
+			return unknown, nil
+		}
+		if tok, ok := n.Arg("literal").(mysqlast.Token); ok {
+			if err := a.temporalLiteral(typ.Name, tok.Value, n.Start); err != nil {
+				return unknown, err
+			}
+			if typ.Name == "time" || typ.Name == "datetime" {
+				typ.Dec = 0
+				if i := strings.LastIndexByte(tok.Value, '.'); i >= 0 {
+					typ.Dec = min(len(tok.Value)-i-1, 6)
+				}
+			}
+		}
+		return typed{typ: typ, known: true}, nil
+	case "Item_null":
+		return known("null", true), nil
+	case "Item_func_true", "Item_func_false":
+		return boolean(false), nil
+
+	// comparisons and logic: a bigint(1), NULL when an operand is
+	case "PTI_comp_op":
+		ts, err := a.exprs(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")}, where)
+		if err != nil {
+			return unknown, err
+		}
+		a.paramsFromOthers([]mysqlast.Value{n.Arg("left"), n.Arg("right")}, ts, "")
+		a.paramSources(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")})
+		if e := a.compareConstString(sc, []mysqlast.Value{n.Arg("left"), n.Arg("right")}, ts, "cmp"); e != nil {
+			return unknown, e
+		}
+		if op, _ := n.Arg("boolfunc2creator").(mysqlast.Op); op == "<=>" {
+			// Item_func_equal::resolve_type's set_nullable(false): NULL <=> NULL is 1
+			return boolean(false), nil
+		}
+		return boolean(ts[0].nullable || ts[1].nullable), nil
+	case "Item_func_in":
+		list, _ := n.Arg("list").(mysqlast.List)
+		ts, err := a.exprsDead(sc, list, where, a.inMatch(list))
+		if err != nil {
+			return unknown, err
+		}
+		a.paramsFromOthers(list, ts, "")
+		a.paramSources(sc, list)
+		if e := a.compareConstString(sc, list, ts, "in"); e != nil {
+			return unknown, e
+		}
+		return boolean(anyNullable(ts)), nil
+	case "Item_func_between", "Item_func_like", "Item_func_strcmp":
+		args := exprArgs(n)
+		ts, err := a.exprs(sc, args, where)
+		if err != nil {
+			return unknown, err
+		}
+		if n.Class == "Item_func_between" && geometryOperand(ts) {
+			return unknown, a.geometryRejected("between", n.Start)
+		}
+		a.paramsFromOthers(args, ts, "")
+		a.paramSources(sc, args)
+		if n.Class == "Item_func_between" {
+			if e := a.compareConstString(sc, args, ts, "between"); e != nil {
+				return unknown, e
+			}
+		}
+		return boolean(anyNullable(ts)), nil
+	case "Item_cond_and", "Item_cond_or", "Item_func_xor":
+		ts, err := a.condArgs(sc, n, where)
+		if err != nil {
+			return unknown, err
+		}
+		return boolean(anyNullable(ts)), nil
+	case "Item_func_isnull", "Item_func_isnotnull":
+		if n.Class == "Item_func_isnull" {
+			// Item_func_isnull::fix_fields: over a never-NULL argument the predicate is
+			// the constant false, and the argument is never evaluated
+			if err := a.isNullArg(sc, n.Arg("a"), where); err != nil {
+				return unknown, err
+			}
+			return boolean(false), nil
+		}
+		if _, err := a.expr(sc, n.Arg("a"), where); err != nil {
+			return unknown, err
+		}
+		return boolean(false), nil
+	case "PTI_truth_transform":
+		t, err := a.expr(sc, n.Arg("expr"), where)
+		if err != nil {
+			return unknown, err
+		}
+		if str(n.Arg("truth_test")) == "Item::BOOL_NEGATED" { // NOT x is NULL for NULL x; IS [NOT] TRUE / FALSE never is
+			return boolean(t.nullable), nil
+		}
+		return boolean(false), nil
+	// subqueries: entered with this scope as the enclosing one, for correlated references
+	case "Item_insert_value":
+		// VALUES(c) of ON DUPLICATE KEY UPDATE: c is a column of the INSERT's target,
+		// whatever the SELECT's tables have (measured: `... SELECT x, z FROM t2 ON DUPLICATE
+		// KEY UPDATE x = VALUES(z)` is 1054 when the target has no z)
+		if a.insertTarget == nil {
+			// outside ON DUPLICATE KEY UPDATE the function is NULL (measured, the corpus's
+			// `SELECT VALUES(x) FROM t`), its argument still resolved
+			if _, err := a.expr(sc, n.Arg("a"), where); err != nil {
+				return unknown, err
+			}
+			return known("null", true), nil
+		}
+		sc = scope{rels: []relation{*a.insertTarget}}
+		return a.expr(sc, n.Arg("a"), where)
+	case "PTI_exists_subselect":
+		a.existsList = true // the subquery's select list is never evaluated (fold.go)
+		_, err := a.subquery(n.Arg("subselect"), &sc)
+		a.existsList = false
+		if err != nil {
+			return unknown, err
+		}
+		return boolean(false), nil
+	case "Item_in_subselect", "PTI_comp_op_all":
+		// x IN (SELECT c ...), x = ANY (SELECT c ...): a placeholder x takes c's type
+		left := n.Arg("left_expr")
+		if n.Class == "PTI_comp_op_all" {
+			left = n.Arg("left")
+		}
+		sub := n.Arg("pt_subquery")
+		if n.Class == "PTI_comp_op_all" {
+			sub = n.Arg("subselect")
+		}
+		lt, err := a.expr(sc, left, where)
+		if err != nil {
+			return unknown, err
+		}
+		cols, err := a.subquery(sub, &sc)
+		if err != nil {
+			return unknown, err
+		}
+		row, isRow := left.(*mysqlast.Node)
+		if isRow && row.Class == "Item_row" {
+			if len(cols) != 1+len(exprArgsTail(row)) {
+				return unknown, &Error{Message: fmt.Sprintf("Operand should contain %d column(s)", 1+len(exprArgsTail(row))), Code: 1241, Position: a.ph.Back(n.Start)}
+			}
+		} else if len(cols) != 1 {
+			return unknown, &Error{Message: "Operand should contain 1 column(s)", Code: 1241, Position: a.ph.Back(n.Start)}
+		}
+		_ = lt
+		if isParam(left) && len(cols) == 1 && cols[0].Known {
+			a.setParam(left, cols[0].Type)
+			if cols[0].base != nil && cols[0].baseTable != nil {
+				a.noteParamSource(left, cols[0].baseTable, cols[0].base, false)
+			}
+		}
+		return boolean(true), nil // the server marks every IN / ANY / ALL over a subquery nullable
+	case "PTI_singlerow_subselect":
+		return a.scalarSubquery(n.Arg("subselect"), sc, n.Start)
+
+	// arithmetic
+	case "Item_func_plus", "Item_func_minus", "Item_func_mul", "Item_func_mod":
+		ts, err := a.exprs(sc, []mysqlast.Value{n.Arg("a"), n.Arg("b")}, where)
+		if err != nil {
+			return unknown, err
+		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected(operatorName(n.Class), n.Start)
+		}
+		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "")
+		t := numOp(ts[0], ts[1], n.Class == "Item_func_mod")
+		if n.Class == "Item_func_minus" && a.s.Settings.SQLMode.Has(sqlmode.NoUnsignedSubtraction) {
+			t.typ.Unsigned = false // Item_func_minus::result_precision under NO_UNSIGNED_SUBTRACTION
+		}
+		if n.Class == "Item_func_mod" {
+			t.nullable = true // x % 0 is NULL
+		}
+		return t, nil
+	case "Item_func_div":
+		ts, err := a.exprs(sc, []mysqlast.Value{n.Arg("a"), n.Arg("b")}, where)
+		if err != nil {
+			return unknown, err
+		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected("/", n.Start)
+		}
+		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "")
+		t := numOp(ts[0], ts[1], false)
+		if t.typ.Name == "bigint" { // an integer division is exact: decimal
+			t.typ = schema.Type{Name: "decimal", Length: -1, Dec: -1}
+		}
+		t.nullable = true // division by zero
+		return t, nil
+	case "Item_func_div_int":
+		ts, err := a.exprs(sc, []mysqlast.Value{n.Arg("a"), n.Arg("b")}, where)
+		if err != nil {
+			return unknown, err
+		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected("DIV", n.Start)
+		}
+		a.paramsFromOthers([]mysqlast.Value{n.Arg("a"), n.Arg("b")}, ts, "LONGLONG")
+		t := known("bigint", true)
+		t.typ.Unsigned = ts[0].typ.Unsigned || ts[1].typ.Unsigned
+		return t, nil
+	case "Item_func_neg":
+		t, err := a.expr(sc, n.Arg("a"), where)
+		if err != nil {
+			return unknown, err
+		}
+		if geometryOperand([]typed{t}) {
+			return unknown, a.geometryRejected("-", n.Start)
+		}
+		out := num1(t, false)
+		out.typ.Unsigned = false
+		return out, nil
+	case "Item_func_bit_and", "Item_func_bit_or", "Item_func_bit_xor", "Item_func_shift_left", "Item_func_shift_right", "Item_func_bit_neg":
+		ts, err := a.exprs(sc, exprArgs(n), where)
+		if err != nil {
+			return unknown, err
+		}
+		if geometryOperand(ts) {
+			return unknown, a.geometryRejected(operatorName(n.Class), n.Start)
+		}
+		a.paramsFromOthers(exprArgs(n), ts, "LONGLONG")
+		if e := a.bitOpStringOperand(sc, n, where); e != nil {
+			return unknown, e
+		}
+		t := known("bigint", anyNullable(ts))
+		t.typ.Unsigned = true
+		return t, nil
+
+	// branches: aggregate_type over the values a branch can produce
+	case "Item_func_if":
+		args := []mysqlast.Value{n.Arg("a"), n.Arg("b"), n.Arg("c")}
+		dead := -1 // the branch a constant condition never takes
+		if b, null, ok := a.constBool(args[0]); ok {
+			dead = 1
+			if b && !null {
+				dead = 2
+			}
+		}
+		ts, err := a.exprsOff(sc, args, where, func(i int) bool { return i == dead })
+		if err != nil {
+			return unknown, err
+		}
+		a.setParamField(args[0], "LONGLONG")
+		a.paramsFromOthers(args[1:], ts[1:], "")
+		t := aggregate(ts[1:])
+		t.nullable = ts[1].nullable || ts[2].nullable
+		return t, nil
+	case "Item_func_case":
+		list, _ := n.Arg("list").(mysqlast.List)
+		var whens, thens []mysqlast.Value
+		for i, v := range list {
+			if i%2 == 0 {
+				whens = append(whens, v)
+			} else {
+				thens = append(thens, v)
+			}
+		}
+		if first := n.Arg("first_expr"); first != nil {
+			whens = append(whens, first)
+		}
+		var results []mysqlast.Value
+		results = append(results, thens...)
+		if e := n.Arg("else_expr"); e != nil {
+			results = append(results, e)
+		}
+		wt, rt, err := a.caseArgs(sc, n.Arg("first_expr"), whens, thens, results, where)
+		if err != nil {
+			return unknown, err
+		}
+		a.paramsFromOthers(whens, wt, "")
+		a.paramsFromOthers(results, rt, "")
+		t := aggregate(rt)
+		t.nullable = n.Arg("else_expr") == nil || anyNullable(rt)
+		return t, nil
+	case "Item_func_coalesce", "Item_func_ifnull", "Item_func_any_value":
+		args := exprArgs(n)
+		ts, err := a.exprsDead(sc, args, where, a.firstNonNull(args))
+		if err != nil {
+			return unknown, err
+		}
+		a.paramsFromOthers(args, ts, "")
+		t := aggregate(ts)
+		t.nullable = true
+		for _, x := range ts {
+			if !x.nullable {
+				t.nullable = false // a non-nullable argument guarantees a value
+			}
+		}
+		return t, nil
+	case "Item_func_nullif":
+		ts, err := a.exprs(sc, exprArgs(n), where)
+		if err != nil {
+			return unknown, err
+		}
+		a.paramsFromOthers(exprArgs(n), ts, "")
+		t := ts[0]
+		t.nullable = true
+		return t, nil
+
+	// the spatial constructors: POINT(x, y) is a point; LINESTRING / POLYGON / MULTI* /
+	// GEOMETRYCOLLECTION judge their arguments (geom.go)
+	case "Item_func_point":
+		ts, err := a.exprs(sc, exprArgs(n), where)
+		if err != nil {
+			return unknown, err
+		}
+		for _, arg := range exprArgs(n) {
+			a.setParamField(arg, "DOUBLE")
+		}
+		return geometryType(wkbPoint, anyNullable(ts)), nil
+	case "Item_func_spatial_collection":
+		return a.spatialCollection(sc, n, where)
+
+	// casts
+	case "create_func_cast":
+		return a.cast(sc, n, where)
+	case "Item_func_set_collation", "Item_func_conv_charset":
+		t, err := a.expr(sc, n.Arg("a"), where)
+		if err != nil {
+			return unknown, err
+		}
+		if t.known && kindOf(t.typ) != "STRING_RESULT" {
+			t = known("varchar", true)
+		}
+		t.nullable = true // an Item_str_func: nullable in strict mode (Item_str_func::fix_fields)
+		return t, nil
+
+	// the registry: a function named in the statement
+	case "PTI_function_call_generic_ident_sys", "PTI_function_call_generic_2d":
+		return a.call(sc, n, where)
+	}
+
+	// any other Item class the grammar builds directly: judged by its class in the catalog
+	if strings.HasPrefix(n.Class, "Item_") || strings.HasPrefix(n.Class, "PTI_function_call_nonkeyword_") || n.Class == "PTI_count_sym" {
+		class := n.Class
+		switch {
+		case strings.HasPrefix(class, "PTI_function_call_nonkeyword_now"):
+			class = "Item_func_now"
+		case strings.HasPrefix(class, "PTI_function_call_nonkeyword_sysdate"):
+			class = "Item_func_now"
+		case class == "PTI_count_sym": // COUNT(*)
+			class = "Item_sum_count"
+		}
+		args := exprArgs(n)
+		ts, err := a.exprs(sc, args, where)
+		if err != nil {
+			return unknown, err
+		}
+		if _, ok := catalog.Items[class]; ok {
+			if e := a.rejectsGeometry(class, operatorName(class), ts, n.Start); e != nil {
+				return unknown, e
+			}
+			return a.classType(class, args, ts, isWindowFunction(n)), nil
+		}
+		return unknown, nil
+	}
+	// anything else: walk it for its errors and parameters, and leave it untyped
+	if _, err := a.expr(sc, mysqlast.List(n.Args), where); err != nil {
+		return unknown, err
+	}
+	return unknown, nil
+}
+
+// funcCallParts reads a generic function call's own name and argument list, from either
+// shape the grammar builds: PTI_function_call_generic_ident_sys ("f(args)", each argument
+// wrapped in a PTI_udf_expr for a possible alias) or PTI_function_call_generic_2d
+// ("db.f(args)", a plain expr_list). db is ignored the way a table's own db qualifier
+// already is in target(): sqlshape loads a single schema, and a stored routine resolves by
+// name alone regardless of how the call qualifies it (measured on mysqld 8.4: `SELECT
+// db.f2(1)` and `SELECT f2(1)` both reach the same stored function).
+func funcCallParts(n *mysqlast.Node) (string, []mysqlast.Value) {
+	name, args, _ := funcCallPartsAlias(n)
+	return name, args
+}
+
+// funcCallPartsAlias also reports whether any argument carries an alias (`f(x AS a)`,
+// the loadable function syntax): a native function refuses one with 1583, anything
+// else -- a stored function, even one that does not exist -- with 1584, both measured.
+func funcCallPartsAlias(n *mysqlast.Node) (string, []mysqlast.Value, bool) {
+	if n.Class == "PTI_function_call_generic_2d" {
+		list, _ := n.Arg("opt_expr_list").(mysqlast.List)
+		return str(n.Arg("func")), []mysqlast.Value(list), false
+	}
+	name := str(n.Arg("ident"))
+	var args []mysqlast.Value
+	aliased := false
+	list, _ := n.Arg("opt_udf_expr_list").(mysqlast.List)
+	for _, e := range list {
+		if u, ok := e.(*mysqlast.Node); ok && u.Class == "PTI_udf_expr" {
+			if u.Arg("select_alias") != nil {
+				aliased = true
+			}
+			args = append(args, u.Arg("expr"))
+		} else {
+			args = append(args, e)
+		}
+	}
+	return name, args, aliased
+}
+
+// call types a function of the native registry, or -- when no native function has that
+// name -- a schema-declared FUNCTION (storedFuncCall): measured on mysqld 8.4, an
+// unqualified call always reaches a native function of the same name first (a schema is
+// free to declare a FUNCTION named like a builtin, `abs` say; `SELECT abs(-1)` is still
+// 1), and a qualified call, `db.name(...)`, only ever names a stored function (measured:
+// `SELECT db.abs(-1)` runs the schema's own, and `db.nope(1)` is 1305 "FUNCTION db.nope
+// does not exist", never a native function). The db itself is not compared, the way a
+// table's qualifier is not (sqlshape loads a single schema).
+func (a *analyzer) call(sc scope, n *mysqlast.Node, where string) (typed, error) {
+	name, args, aliased := funcCallPartsAlias(n)
+	if n.Class == "PTI_function_call_generic_2d" && str(n.Arg("db")) != "" {
+		if r := a.s.RoutineOf(schema.Function, name); r != nil {
+			return a.storedFuncCall(sc, r, args, n.Start, where)
+		}
+		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
+	}
+	f := catalog.Lookup(name)
+	if f == nil {
+		if aliased {
+			// `f(x AS a)` outside the native registry is refused before the function
+			// is even looked up (measured: a nonexistent name gets 1584, not 1305)
+			return unknown, &Error{Message: fmt.Sprintf("Incorrect parameters in the call to stored function `%s`", name), Code: 1584, Position: a.ph.Back(n.Start)}
+		}
+		if r := a.s.RoutineOf(schema.Function, name); r != nil {
+			return a.storedFuncCall(sc, r, args, n.Start, where)
+		}
+		return unknown, &Error{Message: fmt.Sprintf("FUNCTION %s does not exist", name), Code: 1305, Position: a.ph.Back(n.Start)}
+	}
+	if f.Internal {
+		// the data dictionary's own functions (INTERNAL_TABLE_ROWS and friends) are
+		// refused whenever a statement names them, before the argument count and the
+		// alias check alike (measured), the name spelt as written
+		return unknown, &Error{Message: fmt.Sprintf("Access to native function '%s' is rejected.", name), Code: 3566, Position: a.ph.Back(n.Start)}
+	}
+	if f.Min >= 0 && !f.Accepts(len(args)) {
+		// the count check comes first (measured: `abs(1 AS x, 2)` is 1582, not 1583),
+		// and its message spells the name as written where 1583's lowercases it
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameter count in the call to native function '%s'", name), Code: 1582, Position: a.ph.Back(n.Start)}
+	}
+	if aliased {
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect parameters in the call to native function '%s'", strings.ToLower(name)), Code: 1583, Position: a.ph.Back(n.Start)}
+	}
+	if strings.EqualFold(name, "NAME_CONST") {
+		if e := a.nameConstArgs(args, n.Start); e != nil {
+			return unknown, e
+		}
+	}
+	ts, err := a.callArgs(sc, f.Class, args, where)
+	if err != nil {
+		return unknown, err
+	}
+	if f.Class == "Item_func_geometry_from_text" || f.Class == "Item_func_geometry_from_wkb" {
+		return a.geometryReader(name, args, ts, n.Start)
+	}
+	if e := a.rejectsGeometry(f.Class, strings.ToLower(name), ts, n.Start); e != nil {
+		return unknown, e
+	}
+	switch f.Factory {
+	case "Datediff_instantiator": // TO_DAYS(a) - TO_DAYS(b): a bigint, NULL for an invalid date
+		a.setParamField(args[0], "DATETIME")
+		a.setParamField(args[1], "DATETIME")
+		return known("bigint", true), nil
+	case "X_instantiator", "Y_instantiator", "Latitude_instantiator", "Longitude_instantiator":
+		if len(args) == 1 { // the observer reads a coordinate; with two arguments the mutator returns the geometry
+			a.setParamField(args[0], "GEOMETRY")
+			return known("double", anyNullable(ts)), nil
+		}
+	case "Srid_instantiator":
+		if len(args) == 1 {
+			a.setParamField(args[0], "GEOMETRY")
+			return known("bigint", anyNullable(ts)), nil
+		}
+	case "From_unixtime_instantiator":
+		if len(args) == 1 { // Item_func_from_unixtime; with a format it is DATE_FORMAT
+			a.setParamField(args[0], "NEWDECIMAL")
+			return known("datetime", true), nil
+		}
+	}
+	return a.classType(f.Class, args, ts, isWindowFunction(n)), nil
+}
+
+// storedFuncCall types a call to a schema-declared FUNCTION: its argument count must match
+// (1318, message measured: "Incorrect number of arguments for FUNCTION db.f; expected N,
+// got M" -- this checker's own message drops the db qualifier, the way its 1305 already
+// does), each argument is typed and, when it is a bare placeholder, takes the parameter's
+// own declared type (a stored function's parameters are always IN: schema.Param's own
+// doc). The result is Returns, nullable unless the function's own `-- sqlshape: not null`
+// directive says otherwise (r.NotNull, schema.go's spDirectives): a stored function's
+// RETURN can otherwise produce NULL regardless of the declared type, and there is no
+// static proof otherwise -- the same reasoning a routine variable's own bodyVar.nullable
+// always being true follows, and the same override postgres/analyze's function call typing
+// reads from schema.Function.NotNull. The call site is noted (noteCalledRoutine, call.go)
+// for its own failure modes (violations(), through calledRoutineViolations) and the
+// table-overlap check (1442, checkCalledRoutineOverlap).
+func (a *analyzer) storedFuncCall(sc scope, r *schema.Routine, args []mysqlast.Value, at int, where string) (typed, error) {
+	if len(args) != len(r.Params) {
+		return unknown, &Error{Message: fmt.Sprintf("Incorrect number of arguments for FUNCTION %s; expected %d, got %d", r.Name, len(r.Params), len(args)), Code: 1318, Position: a.ph.Back(at)}
+	}
+	for i, arg := range args {
+		if _, err := a.expr(sc, arg, where); err != nil {
+			return unknown, err
+		}
+		if isParam(arg) {
+			a.setParam(arg, r.Params[i].Type)
+		}
+	}
+	a.noteCalledRoutine(r, at)
+	if a.routine != nil && r == a.routine {
+		// unlike a PROCEDURE's own direct recursion (walkCall's own self-CALL check,
+		// body.go -- 1456, and only certain once max_sp_recursion_depth is exceeded), a
+		// FUNCTION can never recurse at all: CREATE FUNCTION accepts a body that RETURNs
+		// the result of calling itself (measured), but every single execution fails with
+		// 1424 ("Recursive stored functions and triggers are not allowed"), regardless of
+		// max_sp_recursion_depth.
+		a.raised = append(a.raised, Violation{Code: 1424, Constraint: itoa(1424), SQLState: "HY000"})
+	}
+	return typed{typ: r.Returns, known: r.Returns.Name != "", nullable: !r.NotNull}, nil
+}
+
+// classType is what an Item class returns over typed arguments, from the catalog: the
+// family fixes the result kind, the facts refine the type, the nullability and the
+// placeholders' types; the hybrid families compute from the arguments. windowed says the
+// call carries an OVER clause: its value then reaches the client through the window's
+// temporary table, which widens the narrow integers (tmpTableInt).
+func (a *analyzer) classType(class string, args []mysqlast.Value, ts []typed, windowed bool) typed {
+	fs := classFacts(class)
+	// placeholders: param_type_is_default gives a type by position, param_type_uses_non_param the others' type
+	for _, f := range fs {
+		if from, to, ft, ok := paramDefault(f); ok {
+			if to < 0 || to > len(args) {
+				to = len(args)
+			}
+			for i := from; i < to && i < len(args); i++ {
+				a.setParamField(args[i], ft)
+			}
+		}
+	}
+	if ft, ok := paramNonParam(fs); ok {
+		a.paramsFromOthers(args, ts, ft)
+	}
+
+	nullable := anyNullable(ts)
+	if nb, ok := factNullable(fs); ok {
+		nullable = nb
+	}
+	fam := catalog.FamilyOf(class)
+	switch {
+	case fixNullable(class):
+		nullable = anyNullable(ts) // its fix_fields decides, last
+	case strictNullable(class) && a.s.Settings.Strict():
+		nullable = true // Item_str_func::fix_fields: nullable in strict mode (the default)
+	case fam == "Item_json_func":
+		nullable = true // Item_json_func's constructor
+	case strings.HasPrefix(class, "Item_typecast_"):
+		nullable = true // a value the cast cannot convert becomes NULL
+	}
+	var t typed
+	switch {
+	// the hybrids: the arguments decide
+	case isA(class, "Item_func_int_val"):
+		if len(ts) > 0 {
+			t = num1(ts[0], true)
+		}
+	case isA(class, "Item_func_num1"):
+		if len(ts) > 0 {
+			t = num1(ts[0], false)
+			if class == "Item_func_round" && len(ts) == 1 && t.known && t.typ.Name == "decimal" {
+				t.typ.Dec = 0 // ROUND(x) rounds to an integer
+				t.typ.Length = ts[0].typ.Length
+			}
+		}
+	case isA(class, "Item_num_op"):
+		if len(ts) == 2 {
+			t = numOp(ts[0], ts[1], false)
+		}
+	case isA(class, "Item_func_min_max"):
+		t = aggregate(ts)
+		if t.known && t.typ.Name == "json" {
+			t = known("varchar", t.nullable) // GREATEST / LEAST compare JSON as strings
+		}
+	case fam == "Item_temporal_hybrid_func":
+		// ADDTIME / SUBTIME / TIMESTAMP(): a TIME stays TIME, any other temporal first argument
+		// makes a DATETIME, a string stays a string. STR_TO_DATE: a DATETIME unless the
+		// format is a constant (not read). DATE_ADD is built by the grammar, not here.
+		name := "VARCHAR"
+		switch {
+		case class == "Item_func_str_to_date":
+			name = strToDateType(args)
+		case len(ts) > 0 && ts[0].known && ts[0].typ.Name == "time":
+			name = "TIME"
+		case len(ts) > 0 && ts[0].known && isTemporal(ts[0].typ):
+			name = "DATETIME"
+		}
+		if typ, ok := fromFieldType(name, false); ok {
+			t = typed{typ: typ, known: true}
+		}
+	case isA(class, "Item_func_coalesce"):
+		t = aggregate(ts)
+		nullable = true
+		for _, x := range ts {
+			if !x.nullable {
+				nullable = false // a non-nullable argument guarantees a value
+			}
+		}
+	case isA(class, "Item_func_nullif"):
+		if len(ts) > 0 {
+			t = ts[0]
+			if t.known && kindOf(t.typ) == "STRING_RESULT" && t.typ.Name != "json" { // set_data_type_string: temporal values included
+				typ, _ := fromFieldType("VARCHAR", isBinary(t.typ))
+				typ.Length = t.typ.Length
+				t.typ = typ
+			}
+			nullable = true
+		}
+	case isA(class, "Item_sum_hybrid"): // MIN / MAX
+		if len(ts) > 0 {
+			t = ts[0]
+		}
+	case class == "Item_first_last_value", class == "Item_nth_value": // FIRST_VALUE/LAST_VALUE/NTH_VALUE OVER (...): set_data_type_from_item(args[0])
+		if len(ts) > 0 {
+			t = typed{typ: ts[0].typ, known: ts[0].known}
+		}
+	case class == "Item_lead_lag": // LAG/LEAD OVER (...): resolve_type aggregates the value
+		// expr (ts[0]) with the default value (ts[2]) when both a default and an offset are
+		// given (exprArgs then carries three arguments: value, offset, default); nullable
+		// follows either of those two when a default is present, and is unconditionally
+		// true otherwise (there is no value for the missing previous/next/offset row,
+		// measured on mysqld 8.4).
+		if len(ts) > 0 {
+			agg := ts[:1]
+			if len(ts) >= 3 {
+				agg = []typed{ts[0], ts[2]}
+			}
+			t = aggregate(agg)
+			if len(ts) >= 3 {
+				nullable = ts[0].nullable || ts[2].nullable
+			} else {
+				nullable = true
+			}
+		}
+	case isA(class, "Item_sum_sum"): // SUM, AVG
+		if len(ts) > 0 && ts[0].known {
+			switch numericContext(ts[0]) {
+			case "REAL_RESULT":
+				t = known("double", true)
+			default:
+				t = known("decimal", true)
+			}
+		}
+	case class == "Item_func_unix_timestamp":
+		// a bigint, or a decimal with the fractional seconds of the argument (a string or a
+		// number converts to DATETIME(6) first)
+		t = known("bigint", false)
+		if len(ts) > 0 && ts[0].known {
+			switch {
+			case isTemporal(ts[0].typ) && ts[0].typ.Dec <= 0, kindOf(ts[0].typ) == "INT_RESULT":
+			default:
+				t = known("decimal", false)
+			}
+		} else if len(ts) > 0 {
+			t = known("decimal", false)
+		}
+	case isA(class, "Item_sum_count"):
+		t = known("bigint", false)
+	case isA(class, "Item_sum_bit"):
+		t = known("bigint", false)
+		t.typ.Unsigned = true
+	case isA(class, "Item_func_group_concat"):
+		t = known("text", true)
+	case isA(class, "Item_sum_json_array") || isA(class, "Item_sum_json_object"):
+		t = known("json", true)
+	case class == "Item_row_number" || class == "Item_rank" || class == "Item_dense_rank" || class == "Item_ntile":
+		t = known("bigint", false)
+	case class == "Item_cume_dist" || class == "Item_percent_rank":
+		t = known("double", false)
+	case fam == "Item_bool_func", class == "Item_func_regexp_like":
+		t = boolean(nullable) // set_data_type_bool: a bigint(1)
+	default:
+		name := factType(fs)
+		if name == "" {
+			switch fam {
+			case "Item_int_func", "Item_sum_int":
+				name = "LONGLONG"
+			case "Item_str_func", "Item_str_ascii_func", "Item_static_string_func":
+				name = "VARCHAR"
+			case "Item_real_func", "Item_dec_func", "Item_sum_num":
+				name = "DOUBLE"
+			case "Item_json_func":
+				name = "JSON"
+			case "Item_geometry_func":
+				name = "GEOMETRY"
+			case "Item_datetime_func":
+				name = "DATETIME"
+			case "Item_date_func":
+				name = "DATE"
+			case "Item_time_func":
+				name = "TIME"
+			}
+		}
+		if name != "" {
+			// the result collation: binary when the facts say so, or when an Item_str_func
+			// sets none (Item's default collation is binary); the arguments' when the facts
+			// aggregate them, which a binary argument makes binary
+			binary := factBinary(fs)
+			switch {
+			case binary:
+			case isA(class, "Item_func_sysconst"), fam == "Item_static_string_func":
+				// USER() / CURRENT_USER() / DATABASE() / SCHEMA() / VERSION() / CURRENT_ROLE()
+				// ...: the constructor's collation.set(system_charset_info) makes them
+				// utf8mb3 strings, which classFacts (the class's own resolve_type facts)
+				// does not see
+				binary = false
+			case class == "Item_func_quote":
+				binary = false // a binary argument's quotes take the connection's collation
+			case strings.Contains(strings.Join(fs, ";"), "args[0]->collation"):
+				binary = len(ts) > 0 && ts[0].known && isBinary(ts[0].typ)
+			case aggregatesCharset(fs):
+				for _, x := range ts {
+					if x.known && isBinary(x.typ) {
+						binary = true
+					}
+				}
+			case fam == "Item_str_func" && !explicitCharset(fs):
+				binary = true
+			}
+			if typ, ok := fromFieldType(name, binary); ok {
+				t = typed{typ: typ, known: true}
+			}
+		}
+	}
+	if !t.known {
+		return unknown
+	}
+	if factUnsigned(fs) {
+		t.typ.Unsigned = true
+	}
+	switch {
+	case class == "Item_lead_lag":
+		// unlike every other Item_non_framing_wf, LAG/LEAD really can be NULL (the
+		// preceding/following row does not exist, or an explicit NULL default): computed
+		// above, not forced false the way ROW_NUMBER/RANK/NTILE/... are.
+		t.nullable = nullable
+	case isA(class, "Item_sum_count"), isA(class, "Item_sum_bit"), isA(class, "Item_non_framing_wf"):
+		// Item_sum::resolve_type says nullable for every aggregate; these never are
+		t.nullable = false
+	case isA(class, "Item_sum"):
+		t.nullable = true // an aggregate over no rows is NULL
+	case class == "Item_func_regexp_replace":
+		// set_data_type_string(MAX_BLOB_WIDTH) in the arguments' character set: over a
+		// character string the 16M characters exceed max_allowed_packet (64M bytes at
+		// utf8mb4), which Item_str_func::fix_fields turns into nullable; binary and
+		// numeric arguments stay within it
+		t.nullable = nullable
+		for _, x := range ts {
+			if x.known && kindOf(x.typ) == "STRING_RESULT" && !isBinary(x.typ) && !isTemporal(x.typ) && x.typ.Name != "json" {
+				t.nullable = true
+			}
+		}
+	default:
+		t.nullable = nullable
+	}
+	if windowed {
+		t.typ = tmpTableInt(t.typ)
+	}
+	return t
+}
+
+// cast types CAST / CONVERT: the target type as written. Casts to temporal types are
+// nullable (an unparsable value becomes NULL); the others follow their argument.
+func (a *analyzer) cast(sc scope, n *mysqlast.Node, where string) (typed, error) {
+	arg, err := a.expr(sc, n.Arg("arg"), where)
+	if err != nil {
+		return unknown, err
+	}
+	target, length, dec := "", -1, -1
+	binary := false
+	switch x := n.Arg("type").(type) {
+	case *mysqlast.Struct:
+		target = str(x.Fields["target"])
+		length = intOr(x.Fields["length"], -1)
+		dec = intOr(x.Fields["dec"], -1)
+		binary = strings.TrimPrefix(str(x.Fields["charset"]), "&") == "my_charset_bin" || isTrue(x.Fields["binary"])
+		if strings.Contains(target, "?ITEM_CAST_DOUBLE:ITEM_CAST_FLOAT") { // the action's ($1 == DOUBLE) ? ... : ...
+			target = "ITEM_CAST_FLOAT"
+			if up := strings.ToUpper(a.text[n.Start:n.End]); strings.Contains(up, "DOUBLE") || strings.Contains(up, "REAL") {
+				target = "ITEM_CAST_DOUBLE"
+			}
+		}
+	default:
+		target = str(x) // BINARY x: the cast to CHAR with the binary charset in as_array's slot
+		binary = str(n.Arg("as_array")) == "my_charset_bin"
+	}
+	t := typed{typ: schema.Type{Length: length, Dec: dec}, known: true, nullable: arg.nullable}
+	switch strings.TrimPrefix(target, "ITEM_CAST_") {
+	case "SIGNED_INT":
+		t.typ.Name = "bigint"
+	case "UNSIGNED_INT":
+		t.typ.Name, t.typ.Unsigned = "bigint", true
+	case "CHAR":
+		t.typ.Name, t.nullable = "varchar", true // an Item_str_func: nullable in strict mode
+		if binary {
+			t.typ.Name = "varbinary"
+		}
+		if length < 0 && arg.known && arg.typ.Length >= 0 {
+			t.typ.Length = arg.typ.Length
+		}
+	case "NCHAR":
+		t.typ.Name, t.typ.Charset, t.nullable = "varchar", "utf8mb3", true
+	case "DECIMAL":
+		t.typ.Name = "decimal"
+		if length < 0 {
+			t.typ.Length, t.typ.Dec = 10, 0
+		} else if dec < 0 {
+			t.typ.Dec = 0
+		}
+	case "FLOAT":
+		t.typ.Name = "float"
+	case "DOUBLE":
+		t.typ.Name = "double"
+	case "DATE":
+		t.typ.Name, t.typ.Length, t.nullable = "date", -1, true
+	case "TIME":
+		t.typ.Name, t.typ.Length, t.nullable = "time", -1, true
+	case "DATETIME":
+		t.typ.Name, t.typ.Length, t.nullable = "datetime", -1, true
+	case "YEAR":
+		t.typ.Name, t.nullable = "year", true
+	case "JSON":
+		t.typ.Name, t.nullable = "json", true // Item_json_func: nullable by construction
+	case "POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION":
+		t.typ.Name = strings.ToLower(strings.TrimPrefix(target, "ITEM_CAST_"))
+	default:
+		return unknown, nil
+	}
+	return t, nil
+}
+
+// paramsFromOthers types the placeholders among args by the other arguments: the type
+// ft when given (param_type_uses_non_param(thd, TYPE)), else the aggregate of the typed
+// arguments (a placeholder compared with a column takes the column's type).
+func (a *analyzer) paramsFromOthers(args []mysqlast.Value, ts []typed, ft string) {
+	var t schema.Type
+	ok := false
+	if ft != "" {
+		t, ok = fromFieldType(ft, false)
+	} else {
+		var others []typed
+		for i, v := range args {
+			if !isParam(v) && i < len(ts) && ts[i].known && ts[i].typ.Name != "null" {
+				others = append(others, ts[i])
+			}
+		}
+		if len(others) == 1 {
+			t, ok = others[0].typ, true
+		} else if len(others) > 1 {
+			agg := aggregate(others)
+			t, ok = agg.typ, agg.known
+		}
+	}
+	if !ok {
+		return
+	}
+	if t.IsInteger() {
+		t.Length = -1 // a display width says nothing about a value
+	}
+	for _, v := range args {
+		if isParam(v) {
+			a.setParam(v, t)
+		}
+	}
+}
+
+// exprArgs are the expression arguments of a grammar-built Item node: its Node / List
+// arguments, through the PTI_in_sum_expr / PTI_udf_expr wrappers, skipping the
+// constants (operator kinds, interval units, flags).
+// exprArgsTail is an Item_row's tail (its elements after the head).
+func exprArgsTail(row *mysqlast.Node) mysqlast.List {
+	l, _ := row.Arg("tail").(mysqlast.List)
+	return l
+}
+
+func exprArgs(n *mysqlast.Node) []mysqlast.Value {
+	var out []mysqlast.Value
+	var add func(v mysqlast.Value)
+	add = func(v mysqlast.Value) {
+		switch x := v.(type) {
+		case *mysqlast.Node:
+			switch x.Class {
+			case "PTI_in_sum_expr", "PTI_udf_expr":
+				add(x.Arg("expr"))
+			case "PT_window", "String":
+				// a window specification, a separator: not an argument
+			default:
+				out = append(out, x)
+			}
+		case mysqlast.List:
+			for _, e := range x {
+				add(e)
+			}
+		}
+	}
+	for _, v := range n.Args {
+		add(v)
+	}
+	return out
+}
+
+func anyNullable(ts []typed) bool {
+	for _, t := range ts {
+		if t.nullable {
+			return true
+		}
+	}
+	return false
+}
+
+// intOr reads a number or a numeric token; def when v is neither.
+func intOr(v mysqlast.Value, def int) int {
+	switch x := v.(type) {
+	case mysqlast.Number:
+		return int(x)
+	case mysqlast.Token, string, mysqlast.Const:
+		if n, ok := atoi(strings.Trim(str(x), "\"")); ok {
+			return n
+		}
+	}
+	return def
+}
+
+func isTrue(v mysqlast.Value) bool {
+	return str(v) == "true"
+}
+
+// strToDateType is the type STR_TO_DATE gives from a literal format
+// (Item_func_str_to_date::fix_from_format): a TIME when the format has only time parts, a
+// DATE when only date parts, a DATETIME when both (or when the format is not a literal).
+func strToDateType(args []mysqlast.Value) string {
+	if len(args) < 2 {
+		return "DATETIME"
+	}
+	n, ok := args[1].(*mysqlast.Node)
+	if !ok || n.Class != "PTI_text_literal_text_string" {
+		return "DATETIME"
+	}
+	tok, ok := n.Arg("literal").(mysqlast.Token)
+	if !ok {
+		return "DATETIME"
+	}
+	format := tok.Value
+	date, time := false, false
+	for i := 0; i+1 < len(format); i++ {
+		if format[i] != '%' {
+			continue
+		}
+		i++
+		switch {
+		case format[i] == 'f', strings.IndexByte("HISThiklrs", format[i]) >= 0:
+			time = true
+		case strings.IndexByte("MVUXYWabcjmvuxyw", format[i]) >= 0:
+			date = true
+		}
+	}
+	switch {
+	case time && date:
+		return "DATETIME"
+	case time:
+		return "TIME"
+	}
+	return "DATE"
+}
+
+// condArgs types an AND / OR / XOR's operands. AND and OR stop at the first constant that
+// decides them (measured: `1 = 0 AND x` never evaluates x, `x AND 1 = 0` does): the
+// operands after it are typed with folding off. A NULL decides an AND only where the
+// optimizer folds the condition (WHERE / HAVING / ON: remove_eq_conds), not in a value
+// (Item_cond_and::val_int evaluates on through a NULL); and in a condition a nested
+// AND / OR is still simplified on its own, decided or not.
+func (a *analyzer) condArgs(sc scope, n *mysqlast.Node, where string) ([]typed, error) {
+	args := exprArgs(n)
+	if n.Class == "Item_func_xor" {
+		return a.exprs(sc, args, where)
+	}
+	and := n.Class == "Item_cond_and"
+	cond := condContext(where)
+	ts := make([]typed, len(args))
+	decided := false
+	for i, arg := range args {
+		skip := decided && !(cond && (isCondNode(arg) || hasSubquery(arg)))
+		if skip {
+			a.noFold++
+		}
+		t, err := a.expr(sc, arg, where)
+		if skip {
+			a.noFold--
+		}
+		if err != nil {
+			return nil, err
+		}
+		ts[i] = t
+		if !decided {
+			if b, null, ok := a.constBool(arg); ok {
+				switch {
+				case and && !null && !b, and && null && cond, !and && !null && b:
+					decided = true
+				}
+			}
+		}
+	}
+	return ts, nil
+}
+
+// exprsDead types args, those from index dead on (dead >= 0) with folding off: the
+// entries a constant settles the server never reaches (COALESCE, IN).
+func (a *analyzer) exprsDead(sc scope, args []mysqlast.Value, where string, dead int) ([]typed, error) {
+	return a.exprsOff(sc, args, where, func(i int) bool { return dead >= 0 && i >= dead })
+}
+
+// exprsOff types args, the ones off says with folding off.
+func (a *analyzer) exprsOff(sc scope, args []mysqlast.Value, where string, off func(int) bool) ([]typed, error) {
+	out := make([]typed, len(args))
+	for i, v := range args {
+		if off(i) {
+			a.noFold++
+		}
+		t, err := a.expr(sc, v, where)
+		if off(i) {
+			a.noFold--
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[i] = t
+	}
+	return out, nil
+}
+
+// caseArgs types a CASE's WHEN and THEN / ELSE expressions in evaluation order: a
+// constant WHEN (or a constant operand equal to a constant WHEN) picks its THEN and turns
+// folding off for what the server never evaluates (the later WHENs and THENs, the ELSE),
+// a constant false WHEN turns it off for its own THEN.
+func (a *analyzer) caseArgs(sc scope, first mysqlast.Value, whens, thens, results []mysqlast.Value, where string) ([]typed, []typed, error) {
+	wt := make([]typed, len(whens))
+	rt := make([]typed, len(results))
+	typeAt := func(v mysqlast.Value, off bool) (typed, error) {
+		if off {
+			a.noFold++
+			defer func() { a.noFold-- }()
+		}
+		return a.expr(sc, v, where)
+	}
+	decided := false
+	deadThen := map[int]bool{}
+	nWhens := len(thens) // whens may carry the operand as its last entry
+	for i := 0; i < nWhens; i++ {
+		t, err := typeAt(whens[i], decided)
+		if err != nil {
+			return nil, nil, err
+		}
+		wt[i] = t
+		if decided {
+			deadThen[i] = true
+			continue
+		}
+		if first == nil {
+			if b, null, ok := a.constBool(whens[i]); ok {
+				if b && !null {
+					decided = true
+				} else {
+					deadThen[i] = true
+				}
+			}
+		} else if eq, ok := a.constEqual(first, whens[i]); ok {
+			if eq {
+				decided = true
+			} else {
+				deadThen[i] = true
+			}
+		}
+	}
+	if first != nil && len(whens) > nWhens {
+		t, err := typeAt(whens[nWhens], false)
+		if err != nil {
+			return nil, nil, err
+		}
+		wt[nWhens] = t
+	}
+	for i, v := range results {
+		off := deadThen[i] || (i >= len(thens) && decided)
+		t, err := typeAt(v, off)
+		if err != nil {
+			return nil, nil, err
+		}
+		rt[i] = t
+	}
+	return wt, rt, nil
+}
+
+// firstNonNull is the index after the first constant non-NULL argument of a COALESCE /
+// IFNULL (the arguments the server never reaches), -1 when no constant settles it.
+func (a *analyzer) firstNonNull(args []mysqlast.Value) int {
+	for i, arg := range args {
+		c, ok, fail := a.fold(arg)
+		if !ok || fail != nil {
+			return -1
+		}
+		if !c.isNull() {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// inMatch is the index after the constant list entry a constant `x IN (...)` operand first
+// equals (the entries never compared), -1 when the operand is not a constant or nothing
+// constant matches.
+func (a *analyzer) inMatch(list mysqlast.List) int {
+	if len(list) < 2 {
+		return -1
+	}
+	if _, ok, fail := a.fold(list[0]); !ok || fail != nil {
+		return -1
+	}
+	for i := 1; i < len(list); i++ {
+		eq, ok := a.constEqual(list[0], list[i])
+		if !ok {
+			return -1
+		}
+		if eq {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// isNullArg types the argument of IS NULL / ISNULL: folding off, then judged only when the
+// argument can be NULL (a never-NULL argument makes the predicate a constant false the
+// server never evaluates the argument for).
+func (a *analyzer) isNullArg(sc scope, v mysqlast.Value, where string) error {
+	a.noFold++
+	t, err := a.expr(sc, v, where)
+	a.noFold--
+	if err != nil {
+		return err
+	}
+	if n, ok := v.(*mysqlast.Node); ok && (t.nullable || !t.known) {
+		a.parents = append(a.parents, n)
+		e := a.constCheck(sc, n, where)
+		a.parents = a.parents[:len(a.parents)-1]
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// callArgs types a native function's arguments, with the laziness of IFNULL (its second
+// argument is never evaluated when the first is a constant non-NULL) and ISNULL (isNullArg).
+func (a *analyzer) callArgs(sc scope, class string, args []mysqlast.Value, where string) ([]typed, error) {
+	switch class {
+	case "Item_func_ifnull":
+		return a.exprsDead(sc, args, where, a.firstNonNull(args))
+	case "Item_func_isnull":
+		if len(args) == 1 {
+			if err := a.isNullArg(sc, args[0], where); err != nil {
+				return nil, err
+			}
+			return []typed{boolean(false)}, nil
+		}
+	}
+	return a.exprs(sc, args, where)
+}
+
+// hasSubquery reports a PT_subquery anywhere under v.
+func hasSubquery(v mysqlast.Value) bool {
+	switch x := v.(type) {
+	case mysqlast.List:
+		for _, e := range x {
+			if hasSubquery(e) {
+				return true
+			}
+		}
+	case *mysqlast.Node:
+		if x.Class == "PT_subquery" {
+			return true
+		}
+		for _, arg := range x.Args {
+			if hasSubquery(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}

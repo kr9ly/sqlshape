@@ -2,9 +2,13 @@
 
 [日本語](flags.ja.md)
 
-`cmd/sqlshape` is a `go vet -vettool`-compatible checker. Run it as `sqlshape ./...`,
-`sqlshape vet ./...` or `go vet -vettool=$(which sqlshape) ./...`; the flags below are passed the
-same way in each case.
+`cmd/sqlshape` is a `go vet -vettool`-compatible checker. Any of these runs it, and the flags
+below are passed the same way in each case:
+
+- `sqlshape ./...`
+- `sqlshape vet ./...`
+- `go vet -vettool=$(which sqlshape) ./...`
+
 The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flags, listed in
 [migrations.md](migrations.md); `sqlshape check`'s are [below](#sqlshape-check-flags).
 
@@ -19,17 +23,18 @@ The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flag
 | `-schemas=a_api,b_private` | all | the PostgreSQL schemas this code may reference (a service boundary over one database) |
 | `-context=ops` | none | the obligation context packages are judged under, unless a package names its own with `// sqlshape: context <name>` in its package comment |
 | `-require-columns=tenant_id` | none | every statement must pin these columns by equality on each table that has them; INSERTs must assign them (a row-level security policy fixing the column also satisfies it) |
+| `-query=pkg.Func,pkg.Other:one` | none | marker functions of your own, read like `sqlshape.Query` (`:one` like `One`): a generic `F[R, P any](string) T` whose argument is the template. The checker reads declarations, not the runtime that executes them |
+| `-raw-sql=constant` | `constant` | driver calls outside sqlshape (pgx / `database/sql` `Query`, `Exec`, ...): `constant` requires their SQL to be a constant string, `forbid` rejects them, `allow` ignores them |
+| `-raw-sql-allow=pkg/...` | none | packages (or prefixes ending in `/...`) where `-raw-sql=forbid` does not apply |
+| `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |
+| `-sync-comments` | off | propose doc comments for result struct fields and types from the schema's `COMMENT ON` (applied with `-fix`) |
+| `-fix` | off | apply the suggested fixes (struct rewrites, doc comments) to the source |
 
 `-no-table-reads`, `-no-tables` and `-require-columns` are shorthands for obligations declared per
 table in `schema.sql` (`require via view`, `require via view on all`, `require pinned(col)`); the
 declaration form also gives `on` kinds, `immutable(col)` and arbitrary predicates; a context's
 `waive` lifts the flag's obligation as it lifts a declared one
 ([checks.md](checks.md#how-a-declaration-works)).
-| `-raw-sql=constant` | `constant` | driver calls outside sqlshape (pgx / `database/sql` `Query`, `Exec`, ...): `constant` requires their SQL to be a constant string, `forbid` rejects them, `allow` ignores them |
-| `-raw-sql-allow=pkg/...` | none | packages (or prefixes ending in `/...`) where `-raw-sql=forbid` does not apply |
-| `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |
-| `-sync-comments` | off | propose doc comments for result struct fields and types from the schema's `COMMENT ON` (applied with `-fix`) |
-| `-fix` | off | apply the suggested fixes (struct rewrites, doc comments) to the source |
 
 
 ## `sqlshape check` flags
@@ -83,7 +88,7 @@ The checker is a `go vet` tool, so it runs wherever `go vet` runs. Build it once
 the `-vettool`:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
 $ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 

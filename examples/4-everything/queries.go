@@ -9,7 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/kr9ly/sqlshape"
+	"github.com/kr9ly/sqlshape/postgres/v2"
+	"github.com/kr9ly/sqlshape/v2"
 )
 
 // --- Go types for the schema's types -------------------------------------------------------
@@ -142,7 +143,7 @@ type Booking struct {
 	BookedBy  string
 	Slot      pgtype.Range[time.Time]
 	Minutes   Minutes
-	Attendees []string
+	Attendees []string `col:",notnull"` // text[] NOT NULL says nothing about the elements; the tag asserts none is NULL
 	Tags      map[string]*string
 	Note      *string
 	CreatedAt time.Time
@@ -223,7 +224,7 @@ var UtilizationOf = sqlshape.Query[Utilization, struct {
 -- sqlshape: not null booked_minutes
 SELECT room_id, day, booked_minutes, bookings FROM app.utilization WHERE tenant_id = {{.TenantID}} AND day >= {{.Since}} ORDER BY day, room_id`)
 
-var UtilizationView = sqlshape.MatView("app.utilization")
+var UtilizationView = postgres.MatView("app.utilization")
 
 var BookedMinutes = sqlshape.One[int64, struct {
 	Tenanted
@@ -280,10 +281,15 @@ type NewBooking struct {
 	Note      *string
 }
 
+// SlotTaken and OverCapacity name the booking function's own BK001 / BK002, from the `--
+// sqlshape: error` lines above them in schema.sql.
+var SlotTaken = sqlshape.Error("BK001")
+var OverCapacity = sqlshape.Error("BK002")
+
 // Slot is a pgtype.Range (Valid: false is NULL) and Attendees a slice (nil is NULL), so
 // both NOT NULL columns stay possible failure modes; the Go side keeps them impossible.
 var Book = sqlshape.One[*BookingID, NewBooking](`
--- sqlshape: expect bookings_tenant_id_fkey, bookings_room_id_fkey, bookings_member_id_fkey, bookings.slot, bookings.attendees, BK001, BK002
+-- sqlshape: expect bookings_tenant_id_fkey, bookings_room_id_fkey, bookings_member_id_fkey, bookings.slot, bookings.attendees, SlotTaken, OverCapacity
 SELECT app.book({{.TenantID}}, {{.RoomID}}, {{.MemberID}}, {{.Slot}}, {{.Attendees}}, {{.Note}})`)
 
 var TagBooking = sqlshape.One[struct{}, struct {
@@ -305,10 +311,10 @@ type Event struct {
 	Kind      EventKind
 	BookingID *BookingID
 	ClientIP  *netip.Addr
-	Took      *time.Duration
+	Took      *pgtype.Interval // interval keeps months, days and microseconds apart; time.Duration would flatten them (the checker says so)
 }
 
-var AppendEvents = sqlshape.Copy[Event]("app.events", "tenant_id", "at", "kind", "booking_id", "client_ip", "took")
+var AppendEvents = postgres.Copy[Event]("app.events", "tenant_id", "at", "kind", "booking_id", "client_ip", "took")
 
 type EventCount struct {
 	Kind EventKind

@@ -3,26 +3,23 @@
 [日本語](templates.ja.md)
 
 SQL is written as a subset of Go's `text/template`. The input is a value of the parameter type `P`;
-each `{{.X}}` becomes a `$n` placeholder, and `{{if}}` and `{{range}}` switch the shape of the
+each `{{.X}}` becomes a placeholder (`$n` on PostgreSQL, `?` on MySQL), and `{{if}}` and `{{range}}` switch the shape of the
 statement. The checker expands every combination of branches and checks each one; the runtime
 executes only SQL the checker has seen. Expansion happens at lint time, so the template must be a
 string constant.
 
 ## What can be written
 
-Values. `{{.Field}}`, `{{.Outer.Inner}}`, `{{.}}`, and `{{$x}}` inside a `range`. Each becomes a
-`$n` parameter in the SQL; a value is never spliced in as text. Function calls, method calls and
-pipelines are not allowed in value position.
-
-Branches. `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`, `{{with}}`, `{{range}}`. There is no
-`{{switch}}`; write `{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`.
-
-Conditions. The builtins `not`, `and`, `or`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `len`, `index`,
-string and number constants, and field references. A nil pointer, an empty slice or map, zero and
-the empty string are false, as in `text/template`.
-
-Not available. `{{define}}` / `{{template}}` (concatenate Go constants instead, see below), custom
-functions, variables other than the range element.
+- Values: `{{.Field}}`, `{{.Outer.Inner}}`, `{{.}}`, and `{{$x}}` inside a `range`. Each becomes
+  a parameter in the SQL; a value is never spliced in as text. Function calls, method calls and
+  pipelines are not allowed in value position.
+- Branches: `{{if}}` / `{{else if}}` / `{{else}}` / `{{end}}`, `{{with}}`, `{{range}}`. There is
+  no `{{switch}}`; write `{{if eq .Sort "a"}} … {{else if eq .Sort "b"}} … {{end}}`.
+- Conditions: the builtins `not`, `and`, `or`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `len`,
+  `index`, string and number constants, and field references. A nil pointer, an empty slice or
+  map, zero and the empty string are false, as in `text/template`.
+- Not available: `{{define}}` / `{{template}}` (concatenate Go constants instead, see below),
+  custom functions, variables other than the range element.
 
 ```sql
 SELECT o.id, o.total, o.created_at
@@ -79,11 +76,11 @@ In `schema.sql`:
 | `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW` | the view's own definition opts out, as a statement would |
 | `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
 | `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |
-| `-- sqlshape: seed` | `INSERT ... VALUES` | the seed is additive: rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables)) |
+| `-- sqlshape: seed` | `INSERT ... VALUES` | the seed is additive: rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables-postgresql)) |
 | `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 
 In Go, `// sqlshape: type money_amount` in a type's doc comment binds the type to that PostgreSQL
-type ([checks.md](checks.md#the-go-type-table)), and `// sqlshape: context ops` in a package comment
+type ([checks.md](postgres.md#the-go-type-table); PostgreSQL only, MySQL has no named types to bind to), and `// sqlshape: context ops` in a package comment
 selects the obligation context the package is judged under.
 
 ## Sharing SQL

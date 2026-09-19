@@ -11,9 +11,18 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      # the run boots real PostgreSQL and MySQL servers and initializes databases by the
+      # hundred; the stock runner's free disk fills up mid-run (TestMigrateProbe died on
+      # "No space left on device"), so the preinstalled toolchains this job never uses go
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -32,33 +41,69 @@ jobs:
           /usr/lib/postgresql/17/bin/pg_dump --version
 
       # the embedded PostgreSQL archive, its extracted binaries + initialized template data
-      # directory (internal/oracle), and PostgreSQL's regression corpus (TestRegress)
+      # directory (check/postgres/oracle), and PostgreSQL's regression corpus (TestRegress)
       - name: Cache PostgreSQL binaries and regress corpus
         uses: actions/cache@v4
         with:
           path: |
             ~/.embedded-postgres-go
             ~/.cache/sqlshape
-          key: sqlshape-pg-${{ hashFiles('internal/oracle/oracle.go', 'internal/analyze/testdata/tools/fetch-regress.sh') }}
+          key: sqlshape-pg-${{ hashFiles('check/postgres/oracle/oracle.go', 'check/postgres/analyze/testdata/tools/fetch-regress.sh') }}
 
       - name: Fetch regress corpus
-        run: internal/analyze/testdata/tools/fetch-regress.sh
+        run: check/postgres/analyze/testdata/tools/fetch-regress.sh
+
+      # the MySQL tests boot the mysqld on PATH, and it must be 8.4 (the analyzer's measured
+      # version; the runner's own 8.0 is also AppArmor-confined and cannot write a data
+      # directory under $HOME). The official minimal tarball runs unconfined from $HOME.
+      - name: Cache MySQL 8.4
+        uses: actions/cache@v4
+        with:
+          path: ~/mysql-8.4.11
+          key: sqlshape-mysql-8.4.11-minimal
+
+      - name: Install MySQL 8.4
+        run: |
+          sudo apt-get install -y -q libaio1t64 libnuma1
+          # the tarball's mysqld links libaio.so.1; Ubuntu 24.04 ships it as libaio.so.1t64
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
+          if [ ! -x "$HOME/mysql-8.4.11/bin/mysqld" ]; then
+            curl -fsSL -o /tmp/mysql.tar.xz https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.11-linux-glibc2.28-x86_64-minimal.tar.xz
+            tar -xJf /tmp/mysql.tar.xz -C "$HOME"
+            mv "$HOME/mysql-8.4.11-linux-glibc2.28-x86_64-minimal" "$HOME/mysql-8.4.11"
+            rm /tmp/mysql.tar.xz
+          fi
+          echo "$HOME/mysql-8.4.11/bin" >> "$GITHUB_PATH"
+          "$HOME/mysql-8.4.11/bin/mysqld" --version
 
       # the binary as users run it: as a vettool over the examples
       - name: Smoke test
         run: go build -o sqlshape ./cmd/sqlshape && .github/scripts/smoke.sh ./sqlshape
 
-      # coverage counts every package except the catalog generator (a manual tool run
-      # against a PostgreSQL) and the 5-statement main; the generated protobuf node types
-      # (internal/pgparse/pg_query.pb.go, 40k lines of accessors) are dropped from the profile.
+      # coverage counts every package except the generators, which are manual tools run
+      # against a server or its source (check/postgres/catalog/gen, check/mysql's parsegen)
+      # and the 5-statement main; generated data tables are dropped from the profile the way
+      # the protobuf node types (check/postgres/pgparse/pg_query.pb.go, 40k lines of
+      # accessors) are: mysqlast/views.go, mysqlparse's shapes.go / kinds.go and the
+      # catalog's functions.go / sysvars.go, all written by parsegen from the server source.
       # -count=1: a cached test result replays the profile it recorded, with block positions
       # from the sources of that run; after an edit to a package the cached package does not
       # depend on, the stale blocks no longer line up and the merged total drops by ten points
       - name: Test
+        # the test servers put their data directories on /dev/shm by default; the runner's
+        # tmpfs (RAM/2) is too small for the parallel suite ("No space left on device"), so
+        # both escape hatches point at the disk, which the free-space step cleared
+        env:
+          SQLSHAPE_ORACLE_DIR: ${{ runner.temp }}
+          SQLSHAPE_MYSQLTEST_DIR: ${{ runner.temp }}
         run: |
-          pkgs=$(go list ./... | grep -v -e /internal/catalog/gen -e /cmd/sqlshape | paste -sd,)
-          go test ./... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 20m
-          grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
+          # ./... is the root module; the other modules of the workspace are named one by one
+          # the exclusions name path segments, not full paths, so the /v2/ in the module
+          # paths cannot silently defeat them (it did: /check/postgres/catalog/gen matched
+          # nothing once the paths carried /v2/)
+          pkgs=$(go list ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /catalog/gen -e /internal/parsegen | paste -sd,)
+          go test ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 40m
+          grep -v -e '/pg_query\.pb\.go:' -e '/mysqlast/views\.go:' -e '/mysqlparse/shapes\.go:' -e '/mysqlparse/kinds\.go:' -e '/internal/catalog/functions\.go:' -e '/internal/catalog/sysvars\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the
       # README can show it without a third-party service; --min makes it a regression gate
@@ -91,14 +136,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/sqlshape
-          key: sqlshape-pg18-${{ hashFiles('internal/oracle/oracle.go', 'internal/analyze/testdata/tools/fetch-regress.sh') }}
+          key: sqlshape-pg18-${{ hashFiles('check/postgres/oracle/oracle.go', 'check/postgres/analyze/testdata/tools/fetch-regress.sh') }}
 
       - name: Fetch regress corpus
-        run: internal/analyze/testdata/tools/fetch-regress.sh REL_18_3
+        run: check/postgres/analyze/testdata/tools/fetch-regress.sh REL_18_3
 
       - name: Test
         env:
           SQLSHAPE_PG: "18"
         run: |
-          go test ./internal/catalog ./internal/oracle -count=1
-          go test ./internal/analyze -run 'TestRegress$' -count=1 -v -timeout 25m 2>&1 | grep -E 'statements:|hits|PASS|FAIL|ok '
+          go test ./check/postgres/catalog ./check/postgres/oracle -count=1
+          go test ./check/postgres/analyze -run 'TestRegress$' -count=1 -v -timeout 25m 2>&1 | grep -E 'statements:|hits|PASS|FAIL|ok '

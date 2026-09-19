@@ -1,0 +1,1296 @@
+// Package vet is the go/analysis analyzer: it finds sqlshape.Query[R, P](literal)
+// calls, expands each template, checks every expansion against schema.sql and
+// matches result columns / parameters against R / P.
+package vet
+
+import (
+	"fmt"
+	"go/ast"
+	"go/constant"
+	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"unicode/utf8"
+
+	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/analysis/passes/inspect"
+	"golang.org/x/tools/go/ast/inspector"
+
+	"github.com/kr9ly/sqlshape/cmd/sqlshape/v2/internal/consumers"
+	"github.com/kr9ly/sqlshape/v2/x/cardinality"
+	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/expand"
+	"github.com/kr9ly/sqlshape/v2/x/facts"
+	"github.com/kr9ly/sqlshape/v2/x/obligation"
+)
+
+const sqlshapePkg = "github.com/kr9ly/sqlshape/v2"
+
+// postgresPkg is the PostgreSQL runtime: MatView and Copy are declared there.
+const postgresPkg = "github.com/kr9ly/sqlshape/postgres/v2"
+
+// Analyzer is the sqlshape checker.
+var Analyzer = &analysis.Analyzer{
+	Name:       "sqlshape",
+	Doc:        "checks every expansion of sqlshape.Query templates against schema.sql and the Go result / parameter types",
+	Run:        run,
+	Requires:   []*analysis.Analyzer{inspect.Analyzer},
+	ResultType: reflect.TypeOf((*consumers.Index)(nil)),
+}
+
+var (
+	schemaPath   string
+	strictFlag   bool
+	noTables     bool
+	noTableReads bool
+	rawSQLFlag   string
+	rawSQLAllow  string
+	schemasFlag  string
+	requireCols  string
+	coverageFlag bool
+	syncComments bool
+	contextFlag  string
+)
+
+func init() {
+	Analyzer.Flags.StringVar(&schemaPath, "schema", "", "path to schema.sql, or to a directory whose *.sql files apply in name order (default: the nearest schema.sql or schema/ above the package directory)")
+	Analyzer.Flags.StringVar(&contextFlag, "context", "", "the obligation context packages are judged under, unless a package names its own with `// sqlshape: context <name>` in its package comment")
+	Analyzer.Flags.BoolVar(&noTables, "no-tables", false, "forbid direct table references: application code may only read views and call functions (tables are the database's private side)")
+	Analyzer.Flags.BoolVar(&noTableReads, "no-table-reads", false, "forbid reading tables: SELECTs (and the reading parts of writes) go through views; a table may still be the target of INSERT / UPDATE / DELETE / MERGE")
+	Analyzer.Flags.StringVar(&rawSQLFlag, "raw-sql", "constant", "driver calls (pgx / database/sql Query, Exec, ...) outside sqlshape: constant requires their SQL to be a constant string, forbid rejects them, allow ignores them")
+	Analyzer.Flags.StringVar(&rawSQLAllow, "raw-sql-allow", "", "comma-separated package paths (or prefixes ending in /...) where -raw-sql=forbid does not apply")
+	Analyzer.Flags.StringVar(&schemasFlag, "schemas", "", "comma-separated schemas this code may reference (service boundary), e.g. a_api,b_private; empty allows all")
+	Analyzer.Flags.StringVar(&requireCols, "require-columns", "", "comma-separated columns (e.g. tenant_id) every statement must pin by equality on each table that has them (row ownership); INSERTs must assign them")
+	Analyzer.Flags.BoolVar(&coverageFlag, "coverage", false, "report per package how many Query / One declarations were checked and how many could not be (non-constant templates)")
+	Analyzer.Flags.BoolVar(&syncComments, "sync-comments", false, "suggest doc comments for result struct fields and types from the schema's COMMENT ON (apply with sqlshape -fix)")
+	Analyzer.Flags.StringVar(&queryFlag, "query", "", "comma-separated marker functions of your own the checker treats like sqlshape.Query, as import/path.Func (append :one for a single-row marker like One): a generic F[R, P any](string) T whose argument is the template")
+	Analyzer.Flags.BoolVar(&strictFlag, "strict", false, "also report advisory findings: enum / domain / key columns carried by unnamed Go types, timestamp / date received as time.Time, non-pointer enum parameters (zero value is no label), parameters that always override a column DEFAULT, LIMIT without ORDER BY, enum ordering")
+}
+
+var (
+	schemaMu    sync.Mutex
+	schemaCache = map[string]*loadedSchema{}
+)
+
+// loadedSchema is a schema plus the findings about the schema itself, reported once per package.
+type loadedSchema struct {
+	problems []string
+	// dialect judges the statements; dialectName is what the schema declared (postgres
+	// when it declared nothing)
+	dialect     dialect.Analyzer
+	dialectName string
+	// decls are the obligations schema.sql declares (`visible where`, `require ...`);
+	// the flags' obligations are added per run, since flags change between runs
+	decls []obligation.Obligation
+	// caveats are the advisory discharges of view and function bodies (a row-security
+	// policy discharging without FORCE), reported with -strict
+	caveats []string
+}
+
+// contract is the dialect's schema contract for the obligations, nil when it has none.
+func (ls *loadedSchema) contract() dialect.Contracted {
+	ct, _ := ls.dialect.(dialect.Contracted)
+	return ct
+}
+
+// schema is the dialect's schema for the checker, nil when it has none.
+func (ls *loadedSchema) schema() dialect.Schema {
+	if sd, ok := ls.dialect.(dialect.Schemaed); ok {
+		return sd.Schema()
+	}
+	return nil
+}
+
+// judge runs the schema's own obligations over one statement of the schema (a view or
+// function body) and files the failures as problems, the caveats for -strict.
+func (ls *loadedSchema) judge(what string, f *facts.Facts) {
+	ct := ls.contract()
+	if ct == nil || f == nil {
+		return
+	}
+	for _, d := range obligation.Check(ct.Contract(), ls.decls, f, ct) {
+		switch {
+		case d.Obligation.Body.ViaView:
+			// a view's body is the sanctioned reader of a `require via view` table
+		case d.Failed():
+			ls.problems = append(ls.problems, what+": "+d.Message)
+		case d.Message != "":
+			ls.caveats = append(ls.caveats, what+": "+d.Message)
+		}
+	}
+}
+
+func loadSchema(path string) (*loadedSchema, error) {
+	schemaMu.Lock()
+	defer schemaMu.Unlock()
+	if s, ok := schemaCache[path]; ok {
+		return s, nil
+	}
+	src, err := dialect.ReadSchema(path)
+	if err != nil {
+		return nil, err
+	}
+	decl, err := dialect.Declared(src)
+	if err != nil {
+		return nil, err
+	}
+	name := decl.Name
+	if name == "" {
+		name = dialect.Postgres
+	}
+	load, ok := dialect.Lookup(name)
+	if !ok {
+		return nil, fmt.Errorf("%s: dialect %q is not available in this build", path, name)
+	}
+	an, err := load(src)
+	if err != nil {
+		return nil, err
+	}
+	ls := &loadedSchema{dialect: an, dialectName: name, problems: an.Problems()}
+	if ct := ls.contract(); ct != nil {
+		var oblProblems []obligation.Problem
+		ls.decls, oblProblems = obligation.Declarations(ct.Contract())
+		for _, p := range oblProblems {
+			ls.problems = append(ls.problems, fmt.Sprintf("%s: directive %q: %s", p.Subject, p.Source, p.Message))
+		}
+	}
+	// the schema's own statements (function bodies, policies, view bodies) are checked like
+	// the database does at CREATE time, and judged by the schema's own obligations
+	if sd := ls.schema(); sd != nil {
+		// the same code named twice under different Names is the schema's own
+		// inconsistency, whether or not any program ever declares a Go binding for it
+		seen := map[string]dialect.ErrorName{}
+		for _, e := range sd.Errors() {
+			if prev, dup := seen[e.Code]; dup && prev.Name != e.Name {
+				ls.problems = append(ls.problems, fmt.Sprintf("%s: `-- sqlshape: error %s = %s` disagrees with %s's `= %s` for the same code", e.Subject, e.Code, e.Name, prev.Subject, prev.Name))
+			} else if !dup {
+				seen[e.Code] = e
+			}
+		}
+		for _, d := range sd.Definitions() {
+			prefix := ""
+			if d.What != "" {
+				prefix = d.What + ": "
+			}
+			if d.Err != "" {
+				ls.problems = append(ls.problems, prefix+d.Err)
+				continue
+			}
+			for _, n := range d.Notes {
+				ls.problems = append(ls.problems, prefix+n.Message)
+			}
+			ls.judge(d.What, d.Facts)
+		}
+	}
+	schemaCache[path] = ls
+	return ls, nil
+}
+
+func findSchema(pass *analysis.Pass) (string, error) {
+	if schemaPath != "" {
+		return schemaPath, nil
+	}
+	if len(pass.Files) == 0 {
+		return "", fmt.Errorf("no files")
+	}
+	dir := filepath.Dir(pass.Fset.File(pass.Files[0].Pos()).Name())
+	for {
+		// a schema.sql file, or a schema/ directory of *.sql files applied in name order
+		for _, name := range []string{"schema.sql", "schema"} {
+			p := filepath.Join(dir, name)
+			if fi, err := os.Stat(p); err == nil && (fi.IsDir() == (name == "schema")) {
+				return p, nil
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("schema.sql (or a schema/ directory) not found above %s (use -schema)", filepath.Dir(pass.Fset.File(pass.Files[0].Pos()).Name()))
+		}
+		dir = parent
+	}
+}
+
+type checker struct {
+	pass     *analysis.Pass
+	ls       *loadedSchema
+	sch      dialect.Schema     // the dialect's schema, nil when it gives none
+	ct       dialect.Contracted // the dialect's contract for the obligations, nil when it gives none
+	strict   bool
+	bindings map[*types.TypeName]*binding
+	// constDecls: this package's constant declarations, for mapping concatenated templates back to source
+	constDecls map[*types.Const]ast.Expr
+	// declared: Go types that name the PG type they carry (`// sqlshape: type X`), local and imported
+	declared map[*types.TypeName]declaredType
+	// unchecked counts Query / One calls whose template is not a constant (-coverage)
+	unchecked int
+	// index collects the relation columns this package's statements depend on (the
+	// analyzer's result); owners names the declaration each call sits in
+	index  *consumers.Index
+	owners map[*ast.CallExpr]string
+	// decls are the obligations in force: the schema's declarations plus the flags'
+	decls []obligation.Obligation
+	// errorDecls: this package's own `var X = sqlshape.Error(code)` declarations, by the
+	// var object (errornames.go).
+	errorDecls map[*types.Var]errorDecl
+	// expectPos is the first position an expect line in this package names a code or a
+	// Name at, for errornames.go's "no Go declaration" diagnostic to land on.
+	expectPos map[string]token.Pos
+	// possibleErrors are the named violations (Name != "") possible in some expansion of
+	// some call in this package, by code: what errornames.go requires a Go declaration for
+	// (a code the schema declares that no statement in this package can ever raise is not
+	// this package's business, the way an unused enum label is nobody's).
+	possibleErrors map[string]dialect.Violation
+}
+
+func run(pass *analysis.Pass) (any, error) {
+	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	index := consumers.New()
+	owners := map[*ast.CallExpr]string{}
+	var calls, matviews, copies, all []*ast.CallExpr
+	insp.WithStack([]ast.Node{(*ast.CallExpr)(nil)}, func(n ast.Node, push bool, stack []ast.Node) bool {
+		if !push {
+			return false
+		}
+		call := n.(*ast.CallExpr)
+		all = append(all, call)
+		switch {
+		case isQueryCall(pass, call):
+			calls = append(calls, call)
+		case isMatViewConversion(pass, call):
+			matviews = append(matviews, call)
+		case isCopyCall(pass, call):
+			copies = append(copies, call)
+		default:
+			return true
+		}
+		owners[call] = owner(pass, stack)
+		return true
+	})
+	matviews = append(matviews, copies...) // checked after the statements, like matviews
+	calls = append(calls, matviews...)
+	checkRawSQL(pass, all)
+	if len(calls) == 0 {
+		// still export constant sets and declared type bindings so packages that use these types in queries can check them
+		c := &checker{pass: pass, bindings: map[*types.TypeName]*binding{}}
+		c.exportConstSets()
+		c.collectDeclaredTypes()
+		c.collectErrorDecls()
+		return index, nil
+	}
+	path, err := findSchema(pass)
+	if err != nil {
+		pass.Reportf(calls[0].Pos(), "sqlshape: %v", err)
+		return index, nil
+	}
+	ls, err := loadSchema(path)
+	if err != nil {
+		pass.Reportf(calls[0].Pos(), "sqlshape: load %s: %v", path, err)
+		return index, nil
+	}
+	c := &checker{pass: pass, ls: ls, sch: ls.schema(), ct: ls.contract(), strict: strictFlag, bindings: map[*types.TypeName]*binding{}, index: index, owners: owners}
+	for _, p := range ls.problems {
+		pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
+	}
+	c.collectErrorDecls()
+	if c.sch == nil {
+		c.runDialect(calls, matviews)
+		return index, nil
+	}
+	c.collectDeclaredTypes()
+	if strictFlag {
+		for _, p := range ls.caveats {
+			pass.Reportf(calls[0].Pos(), "sqlshape: schema %s: %s", path, p)
+		}
+	}
+	// the flags are shorthand for declarations: a context's waive lifts them the same way
+	ctxName, ctxProblem := packageContext(pass)
+	if ctxProblem != "" {
+		pass.Reportf(calls[0].Pos(), "sqlshape: %s", ctxProblem)
+	} else if ctxName != "" && !slices.Contains(obligation.Contexts(ls.decls), ctxName) {
+		pass.Reportf(calls[0].Pos(), "sqlshape: context %q is not declared in %s (declared: %s)", ctxName, path, strings.Join(obligation.Contexts(ls.decls), ", "))
+	}
+	if c.ct != nil {
+		c.decls = obligation.InContext(append(ls.decls, obligation.FromFlags(c.ct.Contract(), requireCols, noTables, noTableReads)...), ctxName)
+	}
+	for _, call := range calls[:len(calls)-len(matviews)] {
+		c.checkCall(call)
+	}
+	if coverageFlag {
+		n := len(calls) - len(matviews)
+		pass.Reportf(calls[0].Pos(), "sqlshape: coverage: %d of %d statements checked, %d unchecked (non-constant templates)", n-c.unchecked, n, c.unchecked)
+	}
+	for _, call := range matviews {
+		if isCopyCall(pass, call) {
+			c.checkCopy(call)
+		} else {
+			c.checkMatView(call)
+		}
+	}
+	if strictFlag {
+		// the index is only complete once every call (and copy / matview) has been
+		// checked, so an Advice about a relation the package never actually touches is
+		// reported here, not up where Advice() was first available
+		c.reportAdvice(calls[0].Pos())
+	}
+	c.finishBindings()
+	c.checkErrorDeclsCovered(calls[0].Pos())
+	return index, nil
+}
+
+// reportAdvice reports the schema's -strict advisories, narrowed to this package: an
+// advisory about a relation (or one of its columns) is reported only when this package's
+// statements actually reference that relation (that column, when the advisory names one);
+// a schema-wide advisory (Table == "") is always reported, as every advisory always was
+// before Advice carried a subject.
+func (c *checker) reportAdvice(at token.Pos) {
+	for _, a := range c.sch.Advice() {
+		if a.Table != "" {
+			if a.Column != "" {
+				if len(c.index.Column(a.Table, a.Column)) == 0 {
+					continue
+				}
+			} else if len(c.index.Relation(a.Table)) == 0 {
+				continue
+			}
+		}
+		c.pass.Reportf(at, "sqlshape: schema: %s", a.Message)
+	}
+}
+
+// owner names the declaration a call sits in: "pkg.Func", "pkg.(*T).Method", "pkg.var";
+// the package path alone at the top level of an expression outside any declaration.
+func owner(pass *analysis.Pass, stack []ast.Node) string {
+	pkg := pass.Pkg.Path()
+	for i := len(stack) - 1; i >= 0; i-- {
+		switch d := stack[i].(type) {
+		case *ast.FuncDecl:
+			if d.Recv != nil && len(d.Recv.List) == 1 {
+				return pkg + "." + types.ExprString(d.Recv.List[0].Type) + "." + d.Name.Name
+			}
+			return pkg + "." + d.Name.Name
+		case *ast.ValueSpec:
+			if len(d.Names) > 0 {
+				return pkg + "." + d.Names[0].Name
+			}
+		}
+	}
+	return pkg
+}
+
+// site is the consumer index entry for a position in the SQL of call.
+func (c *checker) site(call *ast.CallExpr, at token.Pos) consumers.Site {
+	return consumers.Site{Pos: c.pass.Fset.Position(at), Owner: c.owners[call]}
+}
+
+// record adds one expansion's relation and column uses to the index.
+func (c *checker) record(call *ast.CallExpr, e *expand.Expansion, r *dialect.Result, lit literal) {
+	for _, ref := range r.Relations {
+		c.index.AddRelation(ref.Name, c.site(call, lit.pos(e.TemplatePos(max(ref.Position, 0)))))
+	}
+	for _, u := range r.Uses {
+		c.index.AddColumn(u.Table, u.Column, c.site(call, lit.pos(e.TemplatePos(max(int(u.Position), 0)))))
+	}
+}
+
+// queryFlag is -query: marker functions of the program's own, checked like Query / One.
+var queryFlag string
+
+// marker is a function whose call declares a statement: sqlshape.Query, sqlshape.One, or one
+// the program registered with -query. single is a One-like marker (at most one row).
+type marker struct {
+	pkg, name string
+	single    bool
+}
+
+var (
+	markersOnce   sync.Once
+	markersParsed []marker
+	markersErr    error
+)
+
+// markers is the set in force: the built-in two and the -query ones.
+func markers() ([]marker, error) {
+	markersOnce.Do(func() {
+		markersParsed = []marker{{sqlshapePkg, "Query", false}, {sqlshapePkg, "One", true}}
+		for _, item := range strings.Split(queryFlag, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			single := false
+			if rest, ok := strings.CutSuffix(item, ":one"); ok {
+				item, single = rest, true
+			}
+			dot := strings.LastIndexByte(item, '.')
+			if dot <= 0 || dot == len(item)-1 {
+				markersErr = fmt.Errorf("sqlshape: -query %q: want import/path.Func (optionally :one)", item)
+				return
+			}
+			markersParsed = append(markersParsed, marker{item[:dot], item[dot+1:], single})
+		}
+	})
+	return markersParsed, markersErr
+}
+
+// markerOf is the marker a called function is, if any.
+func markerOf(obj *types.Func) (marker, bool) {
+	if obj == nil || obj.Pkg() == nil {
+		return marker{}, false
+	}
+	ms, err := markers()
+	if err != nil {
+		return marker{}, false
+	}
+	for _, m := range ms {
+		if obj.Pkg().Path() == m.pkg && obj.Name() == m.name {
+			return m, true
+		}
+	}
+	return marker{}, false
+}
+
+// calledFunc is the function a (possibly instantiated) selector call names. The call may
+// go through a package-level var holding the instantiated generic function directly
+// (`var q = sqlshape.Query[R, P]; q(...)`); calledFunc follows the var to its initializer
+// so the returned *ast.Ident is still the one carrying the generic instantiation (the
+// use-site ident, e.g. `q`, has none).
+func calledFunc(pass *analysis.Pass, call *ast.CallExpr) (*types.Func, *ast.Ident) {
+	return resolveCallee(pass, call.Fun, map[*types.Var]bool{})
+}
+
+// resolveCallee unwraps a (possibly instantiated) selector expression, following at most
+// one level of package-level var indirection per recursion, until it reaches the selector
+// naming the function.
+func resolveCallee(pass *analysis.Pass, fun ast.Expr, seen map[*types.Var]bool) (*types.Func, *ast.Ident) {
+	switch f := fun.(type) {
+	case *ast.IndexExpr:
+		fun = f.X
+	case *ast.IndexListExpr:
+		fun = f.X
+	}
+	switch f := fun.(type) {
+	case *ast.SelectorExpr:
+		obj, _ := pass.TypesInfo.Uses[f.Sel].(*types.Func)
+		return obj, f.Sel
+	case *ast.Ident:
+		v, ok := pass.TypesInfo.Uses[f].(*types.Var)
+		if !ok || v == nil || seen[v] {
+			return nil, nil
+		}
+		seen[v] = true
+		if init := varInit(pass, v); init != nil {
+			return resolveCallee(pass, init, seen)
+		}
+	}
+	return nil, nil
+}
+
+// varInit is the initializer expression at a package-level var's declaration (e.g. the
+// `sqlshape.Query[int64, P]` in `var f = sqlshape.Query[int64, P]`), or nil if v is not
+// such a var or has no single initializer.
+func varInit(pass *analysis.Pass, v *types.Var) ast.Expr {
+	for _, f := range pass.Files {
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				vs := sp.(*ast.ValueSpec)
+				if len(vs.Values) != len(vs.Names) {
+					continue
+				}
+				for i, name := range vs.Names {
+					if obj, ok := pass.TypesInfo.Defs[name].(*types.Var); ok && obj == v {
+						return vs.Values[i]
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// isQueryCall recognizes sqlshape.Query[R, P](...), sqlshape.One[R, P](...) and the markers
+// registered with -query.
+func isQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
+	obj, _ := calledFunc(pass, call)
+	_, ok := markerOf(obj)
+	return ok
+}
+
+// literal is where diagnostics about the template text land. A template may be one
+// string literal or a constant expression concatenating literals and named constants
+// (shared SQL fragments); each piece is a segment mapping a range of template offsets
+// back to its literal, so a diagnostic lands in the fragment it is about.
+type literal struct {
+	text     string
+	segs     []segment
+	fallback token.Pos
+}
+
+// segment is one piece of the template text: [start, end) offsets and their source.
+type segment struct {
+	start, end int
+	lit        *ast.BasicLit // nil: a constant without a literal in this package
+	raw        bool          // raw string: template offsets map 1:1 onto file positions
+	fallback   token.Pos
+}
+
+func (l literal) pos(tmplOff int) token.Pos {
+	if tmplOff < 0 || tmplOff > len(l.text) {
+		return l.fallback
+	}
+	for i, sg := range l.segs {
+		if tmplOff < sg.end || (i == len(l.segs)-1 && tmplOff == sg.end) {
+			if sg.lit == nil {
+				return sg.fallback
+			}
+			return litPos(sg.lit, sg.raw, tmplOff-sg.start)
+		}
+	}
+	return l.fallback
+}
+
+// litPos maps an offset into a literal's decoded text onto the literal's source.
+func litPos(lit *ast.BasicLit, raw bool, off int) token.Pos {
+	if raw {
+		return lit.Pos() + token.Pos(1+off)
+	}
+	// interpreted string: walk the source, decoding escapes, until the template offset
+	src := lit.Value
+	decoded := 0
+	for i := 1; i < len(src)-1; {
+		if decoded >= off {
+			return lit.Pos() + token.Pos(i)
+		}
+		if src[i] != '\\' {
+			_, size := utf8.DecodeRuneInString(src[i:])
+			decoded += size
+			i += size
+			continue
+		}
+		// an escape sequence: find its source length and decoded length
+		var n, d int
+		switch src[i+1] {
+		case 'x':
+			n, d = 4, 1
+		case 'u':
+			n, d = 6, utf8.RuneLen(runeOfHex(src[i+2:i+6]))
+		case 'U':
+			n, d = 10, utf8.RuneLen(runeOfHex(src[i+2:i+10]))
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			n, d = 4, 1
+		default:
+			n, d = 2, 1
+		}
+		decoded += d
+		i += n
+	}
+	return lit.Pos() + token.Pos(len(src)-1)
+}
+
+// segments maps a constant string expression onto its literals: literals directly,
+// concatenations piecewise, named constants through their declaration in this package
+// (constants from other packages become one segment landing on the reference).
+func (c *checker) segments(e ast.Expr, start int) []segment {
+	tv, ok := c.pass.TypesInfo.Types[e]
+	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		return nil
+	}
+	n := len(constant.StringVal(tv.Value))
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return c.segments(x.X, start)
+	case *ast.BasicLit:
+		if x.Kind == token.STRING {
+			return []segment{{start: start, end: start + n, lit: x, raw: strings.HasPrefix(x.Value, "`")}}
+		}
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			left := c.segments(x.X, start)
+			if len(left) == 0 {
+				break
+			}
+			right := c.segments(x.Y, left[len(left)-1].end)
+			if len(right) == 0 {
+				break
+			}
+			return append(left, right...)
+		}
+	case *ast.Ident, *ast.SelectorExpr:
+		var id *ast.Ident
+		if sel, ok := x.(*ast.SelectorExpr); ok {
+			id = sel.Sel
+		} else {
+			id = x.(*ast.Ident)
+		}
+		if k, ok := c.pass.TypesInfo.Uses[id].(*types.Const); ok {
+			if decl := c.constDecl(k); decl != nil {
+				if segs := c.segments(decl, start); len(segs) > 0 {
+					return segs
+				}
+			}
+		}
+	}
+	return []segment{{start: start, end: start + n, fallback: e.Pos()}}
+}
+
+// constDecl is the value expression declaring k in this package, or nil.
+func (c *checker) constDecl(k *types.Const) ast.Expr {
+	if c.constDecls == nil {
+		c.constDecls = map[*types.Const]ast.Expr{}
+		for _, f := range c.pass.Files {
+			for _, d := range f.Decls {
+				gd, ok := d.(*ast.GenDecl)
+				if !ok || gd.Tok != token.CONST {
+					continue
+				}
+				for _, sp := range gd.Specs {
+					vs := sp.(*ast.ValueSpec)
+					if len(vs.Values) != len(vs.Names) {
+						continue
+					}
+					for i, name := range vs.Names {
+						if obj, ok := c.pass.TypesInfo.Defs[name].(*types.Const); ok {
+							c.constDecls[obj] = vs.Values[i]
+						}
+					}
+				}
+			}
+		}
+	}
+	return c.constDecls[k]
+}
+
+func runeOfHex(s string) rune {
+	r, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return utf8.RuneError
+	}
+	return rune(r)
+}
+
+// site is a Query / One call taken apart: its type arguments, its template and the
+// template's expansions.
+type callSite struct {
+	rType, pType types.Type
+	single       bool // One
+	lit          literal
+	res          *expand.Result
+}
+
+// template reads a Query / One call: R and P, the constant template and its expansions.
+// It reports what stops the call from being checked and returns false.
+func (c *checker) template(call *ast.CallExpr) (callSite, bool) {
+	pass := c.pass
+	var cs callSite
+	// type arguments R, P
+	obj, ident := calledFunc(pass, call)
+	m, _ := markerOf(obj)
+	cs.single = m.single
+	inst, ok := pass.TypesInfo.Instances[ident]
+	if !ok || inst.TypeArgs.Len() != 2 {
+		pass.Reportf(call.Pos(), "sqlshape: %s must be instantiated as %s[R, P]", ident.Name, ident.Name)
+		return cs, false
+	}
+	cs.rType, cs.pType = inst.TypeArgs.At(0), inst.TypeArgs.At(1)
+
+	if len(call.Args) != 1 {
+		return cs, false
+	}
+	tv, ok := pass.TypesInfo.Types[call.Args[0]]
+	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		c.unchecked++
+		pass.Reportf(call.Args[0].Pos(), "sqlshape: query template must be a string constant")
+		return cs, false
+	}
+	cs.lit = literal{text: constant.StringVal(tv.Value), fallback: call.Args[0].Pos(), segs: c.segments(call.Args[0], 0)}
+
+	res, err := expand.Expand(cs.lit.text)
+	if err != nil {
+		if te, ok := err.(*expand.Error); ok {
+			pass.Reportf(cs.lit.pos(te.Pos), "sqlshape: template: %s", te.Msg)
+		} else {
+			pass.Reportf(cs.lit.pos(0), "sqlshape: template: %v", err)
+		}
+		return cs, false
+	}
+	cs.res = res
+	return cs, true
+}
+
+func (c *checker) checkCall(call *ast.CallExpr) {
+	pass := c.pass
+	cs, ok := c.template(call)
+	if !ok {
+		return
+	}
+	rType, pType, single, lit, res := cs.rType, cs.pType, cs.single, cs.lit, cs.res
+	if c.strict {
+		c.reportUnusedParams(pType, res, call.Pos())
+	}
+
+	// One diagnostic per distinct message; the branch suffix (after " [") does not count
+	// towards distinctness, so a problem shared by many expansions is reported once -- and
+	// when every expansion shares it, without the suffix (it is not one branch's problem).
+	// Reports are held until the end of the call for that.
+	dd := &deduper{seen: map[string]int{}, expansions: len(res.Expansions)}
+	dedupe := dd.add
+	var held []heldDiag
+	report := func(pos token.Pos, format string, args ...any) {
+		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
+			held = append(held, heldDiag{pos, msg})
+		}
+	}
+	defer func() {
+		for _, h := range held {
+			pass.Reportf(h.pos, "sqlshape: %s", dd.finish(h.msg))
+		}
+	}()
+	multi := len(res.Expansions) > 1
+	if res.Sparse && c.strict {
+		pass.Reportf(lit.pos(0), "sqlshape: %d branch combinations exceed %d: checked sparsely (all branches off, all on, each on alone); the runtime cannot compare renderings with the checked set", res.Combinations, expand.MaxExpansions)
+	}
+	possible := map[string]dialect.Violation{}
+	branch := map[string]string{}
+	analyzedAll := true
+	analyzed := 0
+	missing := map[string]int{}
+	missingType := map[string]types.Type{}
+	missingBranch := map[string]string{}
+	d := newDTO()
+	// diagnostics about R's fit and P's fit are held back and emitted at the end with the
+	// rewrite of the struct (dto.go) attached as their quick fix
+	reportR := func(pos token.Pos, format string, args ...any) {
+		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
+			d.rDiags = append(d.rDiags, heldDiag{pos, msg})
+		}
+	}
+	reportP := func(pos token.Pos, format string, args ...any) {
+		if msg, ok := dedupe(fmt.Sprintf(format, args...)); ok {
+			d.pDiags = append(d.pDiags, heldDiag{pos, msg})
+		}
+	}
+	// control paths must exist on P
+	for _, ctl := range res.Controls {
+		if _, err := c.resolvePath(pType, ctl); err != nil {
+			reportP(lit.pos(0), "%v", err)
+		}
+	}
+
+	for i := range res.Expansions {
+		e := &res.Expansions[i]
+		where := ""
+		if multi {
+			where = " [" + e.Branch + "]"
+		}
+		// a text scan of the rendered SQL: it does not need the statement to analyze
+		checkActionPlacement(e, lit, report, where)
+		r, err := c.ls.dialect.Analyze(e.SQL)
+		if err != nil {
+			analyzedAll = false
+			if de, ok := err.(*dialect.Error); ok {
+				tp := 0
+				if de.Position >= 0 {
+					tp = e.TemplatePos(de.Position)
+				}
+				report(lit.pos(tp), "%v%s", de, where)
+			} else {
+				report(lit.pos(0), "%v%s", err, where)
+			}
+			continue
+		}
+		c.checkReferences(e, r, lit, report, where)
+		c.record(call, e, r, lit)
+		for _, v := range c.possibleViolations(e, r, pType) {
+			if _, seen := possible[v.Key]; !seen {
+				possible[v.Key] = v
+				branch[v.Key] = where
+			}
+		}
+		for _, n := range r.Notes {
+			if n.Advisory && !c.strict {
+				continue
+			}
+			tp := 0
+			if n.Position >= 0 {
+				tp = e.TemplatePos(n.Position)
+			}
+			msg := n.Message
+			if n.Param > 0 {
+				for _, p := range e.Params {
+					if p.N == n.Param {
+						msg = strings.ReplaceAll(msg, fmt.Sprintf("$%d", n.Param), p.Path.String())
+					}
+				}
+			}
+			report(lit.pos(tp), "%s%s", msg, where)
+		}
+		if single {
+			// the One proof: on the facts, whatever the dialect
+			ok, why := cardinality.AtMostOne(r.Facts)
+			if !ok {
+				report(lit.pos(0), "One: cannot prove at most one row: %s%s", why, where)
+			}
+		}
+		c.checkParams(e, r, pType, lit, reportP, where)
+		d.addParams(e, r)
+		d.addResult(r)
+		for name, t := range c.checkResult(call.Pos(), r, rType, lit, reportR, where) {
+			missing[name]++
+			missingType[name] = t
+			if _, ok := missingBranch[name]; !ok {
+				missingBranch[name] = where
+			}
+		}
+		analyzed++
+	}
+	// optional projection: a field some branches do not select must be nullable; a field no
+	// branch selects is a mistake
+	names := make([]string, 0, len(missing))
+	for name := range missing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if missing[name] == analyzed {
+			reportR(call.Pos(), "field %s.%s has no result column", typeName(rType), name)
+			continue
+		}
+		if _, nullable := unwrapNullable(missingType[name]); !nullable {
+			if _, isSlice := missingType[name].Underlying().(*types.Slice); !isSlice {
+				reportR(call.Pos(), "field %s.%s is not selected in every branch%s: make it a pointer so those branches leave it nil", typeName(rType), name, missingBranch[name])
+			}
+		}
+	}
+	if analyzedAll {
+		c.checkExpectations(lit, possible, branch, report)
+	}
+	for i := range d.rDiags {
+		d.rDiags[i].msg = dd.finish(d.rDiags[i].msg)
+	}
+	for i := range d.pDiags {
+		d.pDiags[i].msg = dd.finish(d.pDiags[i].msg)
+	}
+	c.emitHeld(call, d, res, rType, pType)
+}
+
+// deduper keeps one diagnostic per message, the branch suffix aside, and counts the
+// branches each message came from.
+type deduper struct {
+	seen       map[string]int // key -> how many branch-tagged reports carried it
+	expansions int
+}
+
+func splitBranch(msg string) (key string, tagged bool) {
+	if i := strings.LastIndex(msg, " ["); i >= 0 && strings.HasSuffix(msg, "]") {
+		return msg[:i], true
+	}
+	return msg, false
+}
+
+// add returns whether msg is the first of its key (and so is to be reported).
+func (d *deduper) add(msg string) (string, bool) {
+	key, tagged := splitBranch(msg)
+	n, dup := d.seen[key]
+	if tagged {
+		n++
+	}
+	d.seen[key] = n
+	if dup {
+		return "", false
+	}
+	return msg, true
+}
+
+// finish strips the branch suffix from a message every expansion reported.
+func (d *deduper) finish(msg string) string {
+	key, tagged := splitBranch(msg)
+	if tagged && d.expansions > 1 && d.seen[key] >= d.expansions {
+		return key
+	}
+	return msg
+}
+
+// checkParams matches each $n's Go origin against the inferred PG parameter type.
+func (c *checker) checkParams(e *expand.Expansion, r *dialect.Result, pType types.Type, lit literal, report func(token.Pos, string, ...any), where string) {
+	for _, p := range e.Params {
+		gt, err := c.resolvePath(pType, p.Path)
+		if err != nil {
+			report(lit.pos(p.Pos), "%v", err)
+			continue
+		}
+		if p.N-1 >= len(r.Params) {
+			continue
+		}
+		prm := r.Params[p.N-1]
+		c.meet(gt, prm.Type, prm.Source, lit.pos(p.Pos), "parameter "+p.Path.String())
+		f := c.fitPG(prm.Type, gt, true)
+		switch {
+		case !f.ok:
+			report(lit.pos(p.Pos), "parameter %s is %s but SQL expects %s%s", p.Path, gt, prm.Type.Name, where)
+		case f.lossy != "":
+			report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, f.lossy, where)
+		case f.unknown:
+			report(lit.pos(p.Pos), "parameter %s: no known Go mapping for %s, not checked%s", p.Path, prm.Type.Name, where)
+		}
+		if f.ok {
+			// a composite (or composite[]) parameter: the struct's fields must line up with the type's columns
+			c.checkNested(dialect.Column{Type: prm.Type}, gt, lit.pos(p.Pos), "parameter "+p.Path.String(), report, where, true)
+		}
+		if c.strict && f.ok {
+			c.adviseParam(p, gt, prm.Type, prm.Source, f, lit, report, where)
+		}
+	}
+}
+
+// adviseParam reports advisory findings about a parameter (-strict).
+func (c *checker) adviseParam(p expand.Param, gt types.Type, dt dialect.Type, src *dialect.Source, f fit, lit literal, report func(token.Pos, string, ...any), where string) {
+	inner, nullable := unwrapNullable(gt)
+	if f.advice != "" {
+		report(lit.pos(p.Pos), "parameter %s: %s%s", p.Path, f.advice, where)
+	}
+	base := dt
+	for base.Kind == dialect.Domain && base.Base != nil {
+		base = *base.Base
+	}
+	if base.Kind == dialect.Enum && !nullable && inner != nil {
+		report(lit.pos(p.Pos), "parameter %s is a non-pointer %s: its zero value \"\" is not a label of enum %s and fails at runtime (SQLSTATE 22P02) when unset%s", p.Path, gt, base.Named, where)
+	}
+	if src != nil && src.Assigned && !nullable {
+		switch {
+		case src.HasDefault:
+			report(lit.pos(p.Pos), "parameter %s always sends a value into %s.%s, so its DEFAULT never applies: decide which side owns the default (make the column conditional with {{if}} to use the database's)%s", p.Path, bareTable(src.Table), src.Column, where)
+		case src.Generated:
+			report(lit.pos(p.Pos), "parameter %s sends a value into %s.%s, which the database generates%s", p.Path, bareTable(src.Table), src.Column, where)
+		}
+	}
+}
+
+// checkResult matches result columns against R. It returns the struct fields that had
+// no result column in this expansion (name → type); checkCall decides whether that is
+// an error (missing everywhere) or an optional projection (missing in some branches,
+// allowed for nullable fields).
+func (c *checker) checkResult(callPos token.Pos, r *dialect.Result, rType types.Type, lit literal, report func(token.Pos, string, ...any), where string) map[string]types.Type {
+	at := callPos
+	// `-- sqlshape: not null a, b` in the template overrides the analyzer's nullability
+	// a void column (SELECT some_procedure_like_function(...)) carries nothing: it binds to no field
+	var cols []dialect.Column
+	for _, col := range r.Columns {
+		if col.Type.Kind != dialect.Void {
+			cols = append(cols, col)
+		}
+	}
+	overrides, _ := notNullOverrides(lit.text)
+	for name, off := range overrides {
+		found := false
+		for i := range cols {
+			if cols[i].Name == name {
+				cols[i].Nullable = false
+				found = true
+			}
+		}
+		if !found {
+			report(lit.pos(off), "not null: the query has no result column %q%s", name, where)
+		}
+	}
+	st, isStruct := rType.Underlying().(*types.Struct)
+	if !isStruct || isNamed(rType, "time", "Time") {
+		// scalar R: exactly one column
+		if len(cols) != 1 {
+			report(at, "R is %s but the query returns %d columns%s", rType, len(cols), where)
+			return nil
+		}
+		col := cols[0]
+		c.meet(rType, col.Type, col.Source, at, "R")
+		f := c.fitPG(col.Type, rType, false)
+		c.reportFit(report, at, "column "+col.Name, col, rType, f, where)
+		if f.ok {
+			c.checkNested(col, rType, at, "R", report, where, false)
+		}
+		return nil
+	}
+	if syncComments {
+		c.suggestTypeComment(rType, r)
+	}
+	// struct R: every column needs a distinct name to bind to a field
+	byName := map[string]int{}
+	for i, col := range cols {
+		if col.Name == "" {
+			report(at, "result column %d has no name: give it an alias (... AS name) so it can bind to a field of %s%s", i+1, rType, where)
+			continue
+		}
+		if j, dup := byName[col.Name]; dup {
+			report(at, "result columns %d and %d are both named %q: alias one of them (... AS other_name)%s", j+1, i+1, col.Name, where)
+			continue
+		}
+		byName[col.Name] = i
+	}
+	// fields ↔ columns both ways (embedded structs flattened)
+	flat, dups := structFields(st)
+	for _, d := range dups {
+		report(at, "%s: fields %s%s", rType, d, where)
+	}
+	fields := map[string]*types.Var{}
+	fieldName := map[string]string{}
+	notnull := map[string]bool{}
+	order := []string{}
+	for _, f := range flat {
+		fields[f.col] = f.v
+		fieldName[f.col] = f.name
+		order = append(order, f.col)
+		for _, o := range f.opts {
+			if o == "notnull" {
+				notnull[f.col] = true
+			}
+		}
+	}
+	matched := map[string]bool{}
+	for _, col := range cols {
+		fv, ok := fields[col.Name]
+		if !ok {
+			// case-insensitive fallback
+			for name, f := range fields {
+				if strings.EqualFold(name, col.Name) {
+					fv, ok = f, true
+					col.Name = name
+					break
+				}
+			}
+		}
+		if !ok {
+			if col.Name != "" {
+				report(at, "result column %q has no field in %s%s", col.Name, rType, where)
+			}
+			continue
+		}
+		matched[col.Name] = true
+		if syncComments {
+			c.suggestFieldComment(fv, col)
+		}
+		fname := fieldName[col.Name]
+		c.meet(fv.Type(), col.Type, col.Source, at, "field "+fname)
+		if notnull[col.Name] {
+			// `col:",notnull"`: the author knows better than the analyzer -- about the
+			// value, and about an array's elements, which PostgreSQL never declares
+			col.Nullable = false
+			col.Type.ElemNotNull = true
+		}
+		f := c.fitPG(col.Type, fv.Type(), false)
+		c.reportFit(report, at, "field "+fname, col, fv.Type(), f, where)
+		if f.ok {
+			c.checkNested(col, fv.Type(), at, "field "+fname, report, where, false)
+			if f.advice != "" && c.strict {
+				report(at, "field %s: %s%s", fname, f.advice, where)
+			}
+		}
+	}
+	missing := map[string]types.Type{}
+	for _, name := range order {
+		if !matched[name] {
+			missing[fieldName[name]] = fields[name].Type()
+		}
+	}
+	return missing
+}
+
+func (c *checker) reportFit(report func(token.Pos, string, ...any), at token.Pos, what string, col dialect.Column, gt types.Type, f fit, where string) {
+	pgName := col.Type.Name
+	switch {
+	case !f.ok:
+		report(at, "%s is %s but column %q is %s%s", what, gt, col.Name, pgName, where)
+	case f.lossy != "":
+		report(at, "%s: %s%s", what, f.lossy, where)
+	case f.unknown:
+		report(at, "%s: no known Go mapping for %s, not checked%s", what, pgName, where)
+	}
+	if f.ok && col.Nullable && !f.nullable {
+		report(at, "%s is %s but column %q may be NULL (use a pointer, or tag it `col:\",notnull\"` if you know better)%s", what, gt, col.Name, where)
+	}
+}
+
+func typeName(t types.Type) string {
+	if n, ok := t.(*types.Named); ok {
+		return n.Obj().Name()
+	}
+	return t.String()
+}
+
+// resolvePath walks a field path on P.
+func (c *checker) resolvePath(t types.Type, p expand.Path) (types.Type, error) {
+	cur := t
+	for i, el := range p {
+		if el == "#index" {
+			return types.Typ[types.Int], nil
+		}
+		if ptr, ok := cur.(*types.Pointer); ok {
+			cur = ptr.Elem()
+		}
+		if el == "[]" {
+			switch u := cur.Underlying().(type) {
+			case *types.Slice:
+				cur = u.Elem()
+			case *types.Array:
+				cur = u.Elem()
+			case *types.Map:
+				cur = u.Elem()
+			default:
+				return nil, fmt.Errorf("%s is %s, cannot range over it", p[:i].String(), cur)
+			}
+			continue
+		}
+		if _, ok := cur.Underlying().(*types.Struct); !ok {
+			return nil, fmt.Errorf("%s is %s, not a struct; cannot select .%s", p[:i].String(), cur, el)
+		}
+		// promoted fields of embedded structs resolve too, as text/template (and the runtime) do
+		obj, _, _ := types.LookupFieldOrMethod(cur, true, nil, el)
+		found, _ := obj.(*types.Var)
+		if found == nil || !found.IsField() {
+			return nil, fmt.Errorf("%s has no field %s", cur, el)
+		}
+		cur = found.Type()
+	}
+	return cur, nil
+}
+
+// checkReferences enforces the boundary rules on the relations an expansion touches:
+// -schemas (a package-level scope, judged here), and the obligations the schema declares
+// or the flags imply (judged by internal/obligation over the statement's facts).
+func (c *checker) checkReferences(e *expand.Expansion, r *dialect.Result, lit literal, report func(token.Pos, string, ...any), where string) {
+	var allowed map[string]bool
+	if schemasFlag != "" {
+		allowed = map[string]bool{}
+		for _, s := range strings.Split(schemasFlag, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				allowed[s] = true
+			}
+		}
+	}
+	for _, ref := range r.Relations {
+		at := lit.pos(e.TemplatePos(max(ref.Position, 0)))
+		if allowed != nil && !allowed[ref.Schema] {
+			report(at, "%s is outside the schemas this code may reference (%s)%s", ref.Name, schemasFlag, where)
+		}
+	}
+	if c.ct == nil {
+		return // the obligations need the schema's contract, which this dialect does not give yet
+	}
+	seen := map[string]bool{}
+	for _, d := range obligation.Check(c.ct.Contract(), c.decls, r.Facts, c.ct) {
+		if d.Message == "" || (!d.Failed() && !c.strict) || seen[d.Message] {
+			continue
+		}
+		seen[d.Message] = true
+		tp := 0
+		if d.Position >= 0 {
+			tp = e.TemplatePos(int(d.Position))
+		}
+		report(lit.pos(tp), "%s%s", d.Message, where)
+	}
+}
+
+// isMatViewConversion recognizes sqlshape.MatView("name").
+func isMatViewConversion(pass *analysis.Pass, call *ast.CallExpr) bool {
+	tv, ok := pass.TypesInfo.Types[call.Fun]
+	if !ok || !tv.IsType() {
+		return false
+	}
+	return isNamed(tv.Type, postgresPkg, "MatView") && len(call.Args) == 1
+}
+
+// checkMatView verifies the named materialized view exists.
+func (c *checker) checkMatView(call *ast.CallExpr) {
+	tv, ok := c.pass.TypesInfo.Types[call.Args[0]]
+	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: MatView name must be a string constant")
+		return
+	}
+	name := constant.StringVal(tv.Value)
+	rel := c.sch.Relation(name)
+	switch {
+	case rel == nil:
+		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: materialized view %q does not exist", name)
+	case rel.Kind != facts.MatView:
+		c.pass.Reportf(call.Args[0].Pos(), "sqlshape: %q is not a materialized view", name)
+	default:
+		c.index.AddRelation(rel.Name, c.site(call, call.Args[0].Pos()))
+	}
+}
+
+// reportUnusedParams (advisory) names the fields of P no expansion reads, as a value
+// action or in a condition: a parameter the SQL never sees is a dead field or a typo.
+func (c *checker) reportUnusedParams(pType types.Type, res *expand.Result, at token.Pos) {
+	inner, _ := unwrapNullable(pType)
+	if inner == nil {
+		return
+	}
+	st, ok := inner.Underlying().(*types.Struct)
+	if !ok {
+		return
+	}
+	used := map[string]bool{}
+	mark := func(p expand.Path) {
+		for _, el := range p {
+			if el != "" && el != "[]" && el != "#index" && el[0] != '$' {
+				used[el] = true
+				return
+			}
+		}
+	}
+	for _, e := range res.Expansions {
+		for _, p := range e.Params {
+			mark(p.Path)
+		}
+	}
+	for _, p := range res.Controls {
+		mark(p)
+	}
+	var walk func(st *types.Struct)
+	walk = func(st *types.Struct) {
+		for i := 0; i < st.NumFields(); i++ {
+			f := st.Field(i)
+			if f.Embedded() {
+				if inner := embeddedStruct(f, st.Tag(i)); inner != nil {
+					walk(inner) // promoted fields are referenced by their own name
+					continue
+				}
+			}
+			if f.Exported() && !used[f.Name()] {
+				c.pass.Reportf(at, "sqlshape: parameter field %s is never used by the template", f.Name())
+			}
+		}
+	}
+	walk(st)
+}
+
+var (
+	contextDirective = regexp.MustCompile(`(?m)^\s*sqlshape:\s*context\s+([a-z][a-z0-9_-]*)\s*$`)
+	contextLike      = regexp.MustCompile(`(?m)^\s*sqlshape:\s*context\b.*$`)
+)
+
+// packageContext is the obligation context this package is judged under: the
+// `// sqlshape: context <name>` line of its package comment, else -context. A line that
+// starts like the directive but does not read as one is a problem, not a fallback.
+func packageContext(pass *analysis.Pass) (name, problem string) {
+	for _, f := range pass.Files {
+		if f.Doc == nil {
+			continue
+		}
+		if m := contextDirective.FindStringSubmatch(f.Doc.Text()); m != nil {
+			return m[1], ""
+		}
+		if m := contextLike.FindString(f.Doc.Text()); m != "" {
+			return contextFlag, fmt.Sprintf("package comment line %q is not a context directive: write `sqlshape: context <name>` on a line of its own (lowercase name, nothing after it)", strings.TrimSpace(m))
+		}
+	}
+	return contextFlag, ""
+}

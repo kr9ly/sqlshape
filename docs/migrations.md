@@ -4,7 +4,9 @@
 
 `schema.sql` is the only definition of the database. There are no migration files to write:
 the `sqlshape` binary compares the live database with `schema.sql` and derives the DDL, checks
-that the DDL really leads to `schema.sql`, and runs it.
+that the DDL really leads to `schema.sql`, and runs it. The commands work on PostgreSQL and MySQL;
+the schema's declaration selects the database, and the [MySQL](#mysql) section below has what is
+MySQL's about them.
 
 ```
 $ sqlshape diff -db "$DSN" > up.sql         # DDL from the database's state to schema.sql
@@ -15,7 +17,7 @@ $ sqlshape verify-schema -db "$DSN"         # drift: where a database differs fr
 
 ## What is compared
 
-Both sides are read through `pg_dump`, so what is compared is what PostgreSQL itself stores,
+On PostgreSQL both sides are read through `pg_dump`, so what is compared is what PostgreSQL itself stores,
 not the spelling in `schema.sql`: `'x'` and `'x'::text`, or `IN (...)` and `= ANY (ARRAY[...])`,
 are not differences. `-- sqlshape:` directives are not database state and are not compared.
 
@@ -63,8 +65,23 @@ views over those tables, drop the old type; an array column of the enum is repor
 problem. A `backfill` is type-checked against the target schema and emitted as an `UPDATE` after
 the column exists.
 
-Changes to a domain's base type, a range's subtype, `INHERITS`, partitioning and `OF type` are
-printed as `-- ` notes for the operator rather than as DDL.
+Partitions are schema like everything else. A new partitioned table is created with its
+`PARTITION BY` and its partitions attached once they exist; a partition added to a table is a
+`CREATE TABLE ... PARTITION OF ... FOR VALUES ...`; a partition that goes is a `DROP TABLE` and,
+since it takes its rows, needs a `-- @migrate drop` of that table; a table becoming or ceasing
+to be a partition is `ATTACH PARTITION` / `DETACH PARTITION`, a changed bound a detach and an
+attach (every detach in the plan runs before any attach, so a moving bound never overlaps a
+neighbour's), and the plan never alters a partition's own columns, which follow the parent's.
+A table that holds rows can be partitioned after the fact, unpartitioned, or moved to another
+key or strategy: the plan renames the table, creates the declared shape fresh with its
+partitions, inserts every row through the parent so PostgreSQL's router places it, carries the
+comments, triggers, policies, rules, inbound foreign keys and sequences over (a bigserial keeps
+its sequence, an identity column continues from the highest value), and drops the old table.
+Rows no partition takes are the server's error, so a `schema.sql` that does not cover the data
+stops `apply` rather than losing anything.
+
+Changes to a domain's base type, a range's subtype, `INHERITS` and `OF type` are printed as
+`-- ` notes for the operator rather than as DDL.
 
 A column's `ALTER COLUMN ... TYPE` gets one of these notes too when the new type narrows a
 `numeric`'s precision or scale, a `varchar(n)` / `char(n)` length, a `time` / `timestamp` family's
@@ -93,7 +110,7 @@ else refuses. Then the DDL runs in one transaction.
 migration applied by hand, an environment that fell behind. Exit code 1 when there is a
 difference, 0 when the database matches.
 
-## Seeded tables
+## Seeded tables (PostgreSQL)
 
 A table whose rows are written in `schema.sql` with an ordinary `INSERT ... VALUES` is a seeded
 table; its rows are part of the schema.
@@ -135,7 +152,122 @@ column referencing it, is diffed against them like enum labels
 recommended home for a value set: adding, relabelling, reordering and retiring a value are each
 a one-row change and a `MERGE`, where an enum needs the type recreated under every column.
 
+## MySQL
+
+On MySQL both sides are read as the server's own rendering: `SHOW CREATE TABLE` and `SHOW CREATE
+VIEW` for every table and view, parsed by the loader that reads `schema.sql`. What is compared is
+therefore what MySQL stores, not the spelling of `schema.sql`: `INT` and `int(11)`, a default written
+`0` and stored `'0'`, a key named by the server (`orders_ibfk_1`, `orders_chk_1`) are not
+differences. The target's canonical form comes from applying `schema.sql` to a scratch database
+(`sqlshape_scratch_<random>`) on the `-db` server, dropped when done, so it is normalized by the
+very server the migration targets, version and settings (`-- sqlshape: server`) included; with
+`-from` (two texts, no server) it comes from a `mysqld` on `PATH`.
+
+Compared, object by object:
+
+- tables: engine, charset, collation, row format, comment, and partitioning (`RANGE`, `LIST`,
+  `RANGE COLUMNS`, `LIST COLUMNS`, `HASH`, `KEY`, `LINEAR`, `ALGORITHM`, subpartitioning by
+  `HASH` / `KEY`, each partition's bound, comment and explicit `SUBPARTITION` names; a form the
+  loader does not model, such as a `TABLESPACE` or `MAX_ROWS` option on a partition or
+  subpartition, is a problem rather than a difference it cannot see);
+- columns: type, the whole definition as the server spells it, and their position (MySQL can
+  reorder columns, so an order difference is a change the plan settles with
+  `MODIFY COLUMN ... AFTER`);
+- keys, foreign keys, check constraints;
+- views;
+- triggers, stored procedures and functions: by their definition text, read back from
+  `SHOW CREATE TRIGGER` / `SHOW CREATE PROCEDURE` / `SHOW CREATE FUNCTION` with the `DEFINER`
+  dropped;
+- events: schedule, `STARTS` / `ENDS`, `ON COMPLETION`, status, comment and body, read back
+  from `SHOW CREATE EVENT`. A time `schema.sql` leaves to the server -- a `STARTS` it omits or
+  writes as an expression (`CURRENT_TIMESTAMP + INTERVAL 1 DAY`), an `AT` expression -- is
+  filled in when the event is created (`SHOW CREATE EVENT` reads it back as the literal time
+  of creation, measured), so it is not compared; a literal time is compared as written.
+
+Not compared: seeded rows, which the MySQL loader does not know yet. A one-time event
+(`AT ...`) without `ON COMPLETION PRESERVE` is dropped by the server once it has run, so
+`verify-schema` reports it missing from then on: that is the event's own definition, not
+drift. An existing table's `AUTO_INCREMENT=<n>` counter is data, not schema, and is never
+compared either; a brand new table's own declared `AUTO_INCREMENT=<n>` is a schema decision
+and does reach the table when it is created.
+
+The plan uses MySQL's own definitions:
+
+| change | DDL |
+|---|---|
+| a new table | the canonical `CREATE TABLE` |
+| a changed column | `ALTER TABLE ... MODIFY COLUMN` with the target's definition |
+| a changed key, foreign key or check | a `DROP` and an `ADD` |
+| a changed view | `CREATE OR REPLACE VIEW` |
+| a table gaining partitioning, or a different kind or key | `ALTER TABLE ... PARTITION BY ...` (the server redistributes the rows; a row no partition takes is its error 1526) |
+| a table losing partitioning | `ALTER TABLE ... REMOVE PARTITIONING` |
+| a `RANGE` partition added at the end | `ADD PARTITION` |
+| a `RANGE` partition gone | `DROP PARTITION`, which takes its rows and so needs `-- @migrate drop partition orders.p0` |
+| a `RANGE` bound moved, or a partition inserted before `MAXVALUE` | `REORGANIZE PARTITION ... INTO (...)` (the server moves the rows) |
+| a `LIST` partition added, gone, or its value list changed | `ADD PARTITION`, `DROP PARTITION` under the same declaration, and every changed value list in one `REORGANIZE PARTITION ... INTO` (a value moving between two kept partitions never floats between statements) |
+| a `HASH` or `KEY` table's partition count | `ADD PARTITION PARTITIONS n` / `COALESCE PARTITION n` |
+| `LINEAR`, `KEY`'s columns or `ALGORITHM`, or the subpartitioning changed | `ALTER TABLE ... PARTITION BY ...`, the whole clause (the server redistributes the rows; none are lost) |
+| a partition's `COMMENT` | `REORGANIZE PARTITION ... INTO` with the new comment (no rows move, measured) |
+| a changed or removed trigger, procedure or function | a `DROP` and a `CREATE` (MySQL has no `CREATE OR REPLACE TRIGGER`) |
+| a changed or removed event | a `DROP EVENT` and a `CREATE EVENT`, the target's own text (a `STARTS` it omits starts the new event when the migration runs) |
+
+The order keeps the migration's own steps from tripping over each other:
+
+1. a trigger's `DROP` comes before the table drops (a trigger going with a table that is itself
+   dropped is not listed: `DROP TABLE` takes it silently);
+2. a table that goes has the foreign keys referencing it dropped first;
+3. a routine's `CREATE` comes before the views (a view may call a function) and before the tables;
+4. a trigger's `CREATE` comes after the backfills, so a newly added trigger does not fire on the
+   migration's own writes.
+
+The `-- @migrate` declarations are the same, with two differences: an ENUM is a column type on
+MySQL, so `enum` names the column (`-- @migrate enum orders.status: drop 'canceled' using
+'cancelled'`), and the plan updates the rows before it narrows the type; and a partition is not
+a table, so dropping one is declared as `-- @migrate drop partition orders.p0`.
+
+A table's `DEFAULT CHARSET` / `COLLATE` change also re-issues `MODIFY COLUMN` for every string
+column without a collation of its own: the table option alone leaves such columns in the old
+encoding (measured), and the plan after `apply` would never be empty.
+
+`apply` runs the DDL statement by statement: MySQL's DDL commits implicitly, so a script is not a
+transaction and `-no-transaction` has no effect. When a statement fails, `apply` says which one
+and how many before it are applied; `sqlshape diff` from that state gives what remains.
+
+## How the plan is tested
+
+The DDL `diff` writes is judged against a real server, the way `apply` would run it, by a
+generator rather than by hand-picked cases (`check/postgres/migrate` and `check/mysql/migrate`,
+`TestMigrateProbe`). From the planner's vocabulary it draws a schema, mutates it one to five
+times into a target (each mutation writes its own `-- @migrate` declaration), fills every table
+with three rows, and runs the plan on a server holding the source. A pair passes when the server
+refuses nothing, what it reads back afterwards is the target's canonical form (column order
+aside on PostgreSQL), and a second plan from there is empty. A failing pair is minimized and the
+fix is pinned as a regression test with the server's error (`probe_findings_test.go`). Besides
+the random pairs, every mutation is applied alone once per run, so no kind of change depends on
+the draw. PostgreSQL's probe runs against 17 and against 18 (`TestMigrateProbe18`), each with
+that version's own vocabulary.
+
+What the generator has to reach is defined, not guessed: a plan's whole input is the diff, so
+every kind of change the diff can report (a table added, a column's type changed, a constraint
+turning deferrable, ...) is enumerated from the diff's own comparison functions, and the gate
+(200 pairs of one fixed seed) fails unless each of them is produced by some pair or listed as
+unreachable with a reason. Only two reasons are accepted: the planner writes no DDL for that
+change and reports it instead (PostgreSQL's `INHERITS`, `OF type`, a domain's base type, a
+range's subtype, and the partition key of a table holding rows), or the change cannot appear
+(PostgreSQL 18 syntax against a PostgreSQL 17 server, or a change pg_dump never renders as
+such). Combinations and orderings are left to the random pairs. PostgreSQL reaches 94 of 103
+kinds on 17 and 98 on 18, MySQL all 48; every unreached kind is a problem the plan stops on or
+a change that cannot appear. The classes of planner bugs the probe found, most of them orderings
+a real server refuses, are the regression tests.
+
+What this does not reach: schema shapes outside the generator's model (legacy spellings,
+extension types, very large tables) and failures that depend on the data (a backfill's values,
+lock time). Those arrive with your `schema.sql`, and `apply`'s end check before it runs anything
+is what catches them.
+
 ## Requirements
+
+PostgreSQL:
 
 - `pg_dump` on `PATH` or named by `$SQLSHAPE_PG_DUMP`; its major version must be at least the
   database's.
@@ -145,6 +277,18 @@ a one-row change and a `MERGE`, where an enum needs the type recreated under eve
   afterwards it starts in a quarter of a second. Your database is never used for this. When the
   database runs another major version than the schema declares, the commands say so on stderr
   and go on: the DDL is judged by the declared version's rules.
+
+MySQL:
+
+- With `-db`, the connection's user can `CREATE DATABASE` and `DROP DATABASE` (for the scratch
+  database). The server's `lower_case_table_names` must be the one the schema declares (0 when
+  it declares none); the commands stop otherwise. When the server runs another MySQL version than
+  the schema declares, the commands say so and go on.
+- With `-from` (two schema texts), a `mysqld` on `PATH` (`nix-shell -p mysql84`, a distribution
+  package, a server tarball's `bin/`), started with the schema's declared settings.
+
+Both:
+
 - `-schema PATH` names `schema.sql`, or a `schema/` directory whose `*.sql` files apply in name
   order; the default is the nearest one from the working directory up.
 
