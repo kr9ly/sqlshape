@@ -80,9 +80,12 @@ jobs:
       - name: Smoke test
         run: go build -o sqlshape ./cmd/sqlshape && .github/scripts/smoke.sh ./sqlshape
 
-      # coverage counts every package except the catalog generator (a manual tool run
-      # against a PostgreSQL) and the 5-statement main; the generated protobuf node types
-      # (check/postgres/pgparse/pg_query.pb.go, 40k lines of accessors) are dropped from the profile.
+      # coverage counts every package except the generators, which are manual tools run
+      # against a server or its source (check/postgres/catalog/gen, check/mysql's parsegen)
+      # and the 5-statement main; generated data tables are dropped from the profile the way
+      # the protobuf node types (check/postgres/pgparse/pg_query.pb.go, 40k lines of
+      # accessors) are: mysqlast/views.go, mysqlparse's shapes.go / kinds.go and the
+      # catalog's functions.go / sysvars.go, all written by parsegen from the server source.
       # -count=1: a cached test result replays the profile it recorded, with block positions
       # from the sources of that run; after an edit to a package the cached package does not
       # depend on, the stale blocks no longer line up and the merged total drops by ten points
@@ -95,9 +98,12 @@ jobs:
           SQLSHAPE_MYSQLTEST_DIR: ${{ runner.temp }}
         run: |
           # ./... is the root module; the other modules of the workspace are named one by one
-          pkgs=$(go list ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /check/postgres/catalog/gen -e /parsegen/cmd | paste -sd,)
+          # the exclusions name path segments, not full paths, so the /v2/ in the module
+          # paths cannot silently defeat them (it did: /check/postgres/catalog/gen matched
+          # nothing once the paths carried /v2/)
+          pkgs=$(go list ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... | grep -v -e /catalog/gen -e /internal/parsegen | paste -sd,)
           go test ./... ./postgres/... ./mysql/... ./mysqltest/... ./pgtest/... ./examples/... ./cmd/sqlshape/... ./check/postgres/... ./check/mysql/... -count=1 -coverpkg="$pkgs" -coverprofile=cover.out -timeout 40m
-          grep -v '/pg_query\.pb\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
+          grep -v -e '/pg_query\.pb\.go:' -e '/mysqlast/views\.go:' -e '/mysqlparse/shapes\.go:' -e '/mysqlparse/kinds\.go:' -e '/internal/catalog/functions\.go:' -e '/internal/catalog/sysvars\.go:' cover.out > cover.filtered && mv cover.filtered cover.out
 
       # coverage badge: statement coverage of the whole module, committed as an SVG so the
       # README can show it without a third-party service; --min makes it a regression gate
