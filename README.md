@@ -248,7 +248,7 @@ if mysql.Violates(err, "users_email_key") { /* the declared failure mode */ }
 `Collect` gathers every row and `Exec` runs a write and returns the driver's `sql.Result`. `Run`
 streams rows, `First` takes the first, and `Get` / `ExecOne` run `One` statements
 ([docs/runtime.md](docs/runtime.md#statements)). `db` is a `*sql.DB`, `*sql.Tx` or `*sql.Conn`
-opened with go-sql-driver/mysql; the DSN needs `parseTime=true` ([docs/mysql.md](docs/mysql.md)).
+opened with go-sql-driver/mysql; the DSN needs `parseTime=true` ([docs/mysql.md](docs/mysql.md#connecting)).
 
 ## Struct generation, editor and CI
 
@@ -431,10 +431,11 @@ specific to one database; the rest of the documentation is written for both.
 
 - [docs/postgres.md](docs/postgres.md) — everything PostgreSQL's: the version declaration, what the checker embeds and how it is verified, the runtime on pgx (`Batch`, `Copy`, `MatView`, type registration), migrations on PostgreSQL
 - [docs/mysql.md](docs/mysql.md) — everything MySQL's: the version and `server` declarations, the Go type table, constraint names and error numbers, the `ONLY_FULL_GROUP_BY` check, the runtime on `database/sql`, migrations on MySQL
-- [docs/checks.md](docs/checks.md) — everything the checker verifies, for both databases: shapes, meaning, failure modes, cardinality, the rules a schema declares (`require`, aggregates, `sqlshape check`)
-- [docs/templates.md](docs/templates.md) — the template subset, directives, shared fragments, hazards, sparse checking
+- [docs/mysql-errors.md](docs/mysql-errors.md) — the MySQL error numbers the checker predicts from a statement's own form, with an index by number: stored values, constant expressions, trigger and routine bodies, name resolution, views
+- [docs/checks.md](docs/checks.md) — everything the checker verifies, for both databases: shapes, meaning, failure modes, cardinality, the rules a schema declares (every `schema.sql` directive, `require`, aggregates, `sqlshape check`)
+- [docs/templates.md](docs/templates.md) — the template subset, the directives a template carries, shared fragments, hazards, sparse checking
 - [docs/runtime.md](docs/runtime.md) — what every runtime does: `Run` / `Collect` / `First` / `Exec`, `One`, row mapping, errors, the guarantee that only checked SQL runs, and what a runtime of your own does not get
-- [docs/migrations.md](docs/migrations.md) — `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, seeded tables, requirements, what differs on MySQL
+- [docs/migrations.md](docs/migrations.md) — what to have before you start, `diff` / `apply` / `verify-schema`, `-- @migrate` declarations, several environments and rolling back, seeded tables, what differs on MySQL
 - [docs/flags.md](docs/flags.md) — every flag, the `-strict` advisories, editor setup
 - [docs/design.md](docs/design.md) — design decisions: what was decided, why, and what was rejected (Japanese)
 

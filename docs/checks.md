@@ -33,6 +33,7 @@ statement: the Go code around it, and the schema itself.
   - [Returning one row (`One`)](#returning-one-row-one)
   - [Bulk loading with COPY (PostgreSQL)](#bulk-loading-with-copy-postgresql)
 - [Part 2 — Rules the schema declares](#part-2--rules-the-schema-declares)
+  - [Directives in `schema.sql`](#directives-in-schemasql)
   - [How a declaration works](#how-a-declaration-works)
   - [Every read carries the visibility predicate (`visible where`)](#every-read-carries-the-visibility-predicate-visible-where)
   - [A column is pinned on every statement (`pinned`, `-require-columns`)](#a-column-is-pinned-on-every-statement-pinned--require-columns)
@@ -805,7 +806,7 @@ the decimal `MYSQL_ERRNO` when it sets one (`30001`), else the SQLSTATE (`45000`
 item spells it as that code or as the annotation's Name: neither `Violates` nor the runtime reads
 the schema, so a `sqlshape.Failure` from `sqlshape.Error("30001")` still carries the code, and
 judges by it. What the key is when the SIGNAL sets no `MYSQL_ERRNO`, and the numbers a `SELECT
-... INTO` and a trigger writing its own table carry, are [mysql.md's](mysql.md#triggers-and-stored-routines).
+... INTO` and a trigger writing its own table carry, are in [mysql.md](mysql.md#errors-a-trigger-or-routine-raises) and [mysql-errors.md](mysql-errors.md#triggers-routines-and-events).
 
 #### PL/pgSQL statements that fail on their own (PostgreSQL)
 
@@ -868,7 +869,7 @@ SELECT place_order({{.CustomerID}}, {{.Total}})
 
 What is MySQL's about it -- a wrong argument count (1318), a function writing a table its own
 caller reads or writes (1442, on every execution), `CALL`'s own `OUT` argument and result-column
-rules -- is [mysql.md's](mysql.md#triggers-and-stored-routines).
+rules -- is in [mysql-errors.md](mysql-errors.md#triggers-routines-and-events).
 
 ### Returning one row (`One`)
 
@@ -964,6 +965,28 @@ Rules that show up in the shape of the SQL can be enforced by the checker: alway
 soft-deleted rows, always pin the tenant column, read tables only through views, move a status
 column only along its transitions. They are declared in `schema.sql`, above the table they are about,
 and every statement that touches the table must satisfy them. None applies until declared.
+
+### Directives in `schema.sql`
+
+Every directive `schema.sql` can carry, with where it goes. The sections below explain the
+rules; the directives a template itself carries are in [templates.md](templates.md#directives).
+
+| directive | placed | meaning |
+|---|---|---|
+| `-- sqlshape: postgres 17` / `postgres 18` | the first line | the PostgreSQL version the schema is written for; statements are judged by its grammar and catalog ([below](#the-schema-names-its-postgresql-version-postgres)) |
+| `-- sqlshape: mysql 8.4` | the first line | the MySQL version the schema is written for ([below](#the-schema-names-its-mysql-version-mysql)) |
+| `-- sqlshape: server sql_mode = '...'` / `server lower_case_table_names = 1` | after the `mysql` line | MySQL only: a setting the server runs with when it is not the default ([below](#the-schema-names-the-servers-settings-server)) |
+| `-- sqlshape: visible where deleted_at IS NULL` | above `CREATE TABLE` | every statement reading the table must carry this predicate (short for `require deleted_at IS NULL on read`) |
+| `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | above `CREATE TABLE` / `CREATE VIEW` | an obligation on every statement that touches the relation: a predicate, `pinned(col)`, `immutable(col)`, `via view`, `never`, `paired(table)` or `single`, optionally `on select, insert, update, delete` ([below](#how-a-declaration-works)) |
+| `-- sqlshape: aggregate orders (order_items, order_notes) [lock version]` | above the root's `CREATE TABLE` | the tables form one aggregate: children are pinned to the root's key, a statement touches one aggregate only, and with `lock` every write names the root's version |
+| `-- sqlshape: transitions status: draft -> submitted, submitted -> paid \| cancelled` | above `CREATE TABLE` | the column is a state machine: an UPDATE setting it must fix the current state to a predecessor in its WHERE |
+| `-- sqlshape: sensitive pii: email, phone` | above `CREATE TABLE` | the columns carry the label; only a context with `may read pii` may reference them (through views too; a masking expression drops the label) |
+| `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | above `CREATE TABLE` / `CREATE VIEW` | the obligations that differ under the named context, selected by a package's `// sqlshape: context ops` comment, vet's `-context`, or `check -context` |
+| `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | above `CREATE VIEW` | the view's own definition opts out, as a statement would |
+| `-- sqlshape: not null` | above `CREATE FUNCTION` | the function's result is never NULL |
+| `-- sqlshape: error P0401 = OrderTooLarge` | above the `CREATE FUNCTION` (on MySQL also `CREATE TRIGGER` / `PROCEDURE`) that raises it | names an error code, so expect lines and `Violates` can use the name ([below](#name-the-errors-a-trigger-raises)); on PostgreSQL a PL/pgSQL body's `RAISE` statements are found without it, under their code |
+| `-- sqlshape: seed` | above `INSERT ... VALUES` | PostgreSQL only: the seed is additive, rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables-postgresql)) |
+| `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 
 ### How a declaration works
 
@@ -1538,7 +1561,7 @@ A MySQL trigger or stored PROCEDURE/FUNCTION body is checked the same way, once 
 `NEW`/`OLD`, `DECLARE`d variables and parameters, control flow, `SELECT ... INTO`, cursors,
 `CALL` and `SIGNAL`/`RESIGNAL` are all in scope; what the server itself refuses when the body is
 created is reported as a schema problem too. What is MySQL's about the body -- the constraint
-names and error numbers, the SIGNAL key rules -- is [mysql.md's](mysql.md#triggers-and-stored-routines).
+names and error numbers, the SIGNAL key rules -- is in [mysql-errors.md](mysql-errors.md#triggers-routines-and-events) and [mysql.md](mysql.md#errors-a-trigger-or-routine-raises).
 
 Row-level security policies are checked here too: a `CREATE POLICY` predicate must be boolean,
 contain no aggregates or window functions, and respect domain units. A policy on a table whose row

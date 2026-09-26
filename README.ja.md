@@ -203,7 +203,7 @@ res, err := mysql.Exec(ctx, db, Create, struct{ Email, Name string }{e, n})     
 if mysql.Violates(err, "users_email_key") { /* expect行で宣言した失敗 */ }
 ```
 
-`Collect`は全行を集め、`Exec`は書き込みを実行してドライバの`sql.Result`を返す。`Run`は行を順に流し、`First`は最初の行を取り、`Get` / `ExecOne`は`One`の文を実行する（[docs/runtime.ja.md](docs/runtime.ja.md#文の実行)）。`db`はgo-sql-driver/mysqlで開いた`*sql.DB`、`*sql.Tx`、`*sql.Conn`のどれでもよく、DSNには`parseTime=true`が要る（[docs/mysql.ja.md](docs/mysql.ja.md)）。
+`Collect`は全行を集め、`Exec`は書き込みを実行してドライバの`sql.Result`を返す。`Run`は行を順に流し、`First`は最初の行を取り、`Get` / `ExecOne`は`One`の文を実行する（[docs/runtime.ja.md](docs/runtime.ja.md#文の実行)）。`db`はgo-sql-driver/mysqlで開いた`*sql.DB`、`*sql.Tx`、`*sql.Conn`のどれでもよく、DSNには`parseTime=true`が要る（[docs/mysql.ja.md](docs/mysql.ja.md#接続)）。
 
 ## 構造体の生成、エディタとCI
 
@@ -321,10 +321,11 @@ MySQL。関数の表もパーサと同じサーバのソースから読む。判
 
 - [docs/postgres.ja.md](docs/postgres.ja.md) — PostgreSQLに属するもの全部: バージョンの宣言、検査器が埋め込むものとその検証、pgxの上のランタイム（`Batch`、`Copy`、`MatView`、型の登録）、PostgreSQLのマイグレーション
 - [docs/mysql.ja.md](docs/mysql.ja.md) — MySQLに属するもの全部: バージョンと`server`の宣言、Go型の表、制約名とエラー番号、`ONLY_FULL_GROUP_BY`の検査、`database/sql`の上のランタイム、MySQLのマイグレーション
-- [docs/checks.ja.md](docs/checks.ja.md) — 検査器が確かめること全部（両データベース共通）: 形、意味、失敗モード、カーディナリティ、スキーマが宣言する規約（`require`、集約、`sqlshape check`）
-- [docs/templates.ja.md](docs/templates.ja.md) — テンプレートで使える構文、ディレクティブ、共有フラグメント、危険な書き方、疎検査
+- [docs/mysql-errors.ja.md](docs/mysql-errors.ja.md) — 検査器が文の形から予測するMySQLのエラー番号（番号の索引つき）: 格納する値、定数式、トリガとルーチンの本体、名前解決、ビュー
+- [docs/checks.ja.md](docs/checks.ja.md) — 検査器が確かめること全部（両データベース共通）: 形、意味、失敗モード、カーディナリティ、スキーマが宣言する規約（`schema.sql`のディレクティブ一覧、`require`、集約、`sqlshape check`）
+- [docs/templates.ja.md](docs/templates.ja.md) — テンプレートで使える構文、テンプレートに書くディレクティブ、共有フラグメント、危険な書き方、疎検査
 - [docs/runtime.ja.md](docs/runtime.ja.md) — どのランタイムでも同じこと: `Run` / `Collect` / `First` / `Exec`、`One`、行のマッピング、エラー、検査済みのSQLだけが走る保証、自前のランタイムでは得られないもの
-- [docs/migrations.ja.md](docs/migrations.ja.md) — `diff` / `apply` / `verify-schema`、`-- @migrate`宣言、seed済みテーブル、必要な環境、MySQLで違うところ
+- [docs/migrations.ja.md](docs/migrations.ja.md) — 必要な環境、`diff` / `apply` / `verify-schema`、`-- @migrate`宣言、複数の環境とロールバック、seed済みテーブル、MySQLで違うところ
 - [docs/flags.ja.md](docs/flags.ja.md) — 全フラグ、`-strict`の助言一覧、エディタ設定
 - [docs/design.md](docs/design.md) — 設計上の裁定。何を決めたか、なぜか、何を棄てたか
 

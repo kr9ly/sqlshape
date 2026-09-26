@@ -8,6 +8,39 @@ release it is a candidate for.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-27
+
+### Changed
+
+- A `-- @migrate backfill` declaration left in `schema.sql` after its step is applied is now
+  an error (`diff` exits 1 and the UPDATE is not printed) when nothing else about its table
+  changes. Before, the UPDATE was silently printed again, and applying it overwrote data the
+  application had written since. A backfill in a step that does change the table — a new
+  column, a new `CHECK` / `UNIQUE` / foreign key on existing rows — is emitted as before.
+- `mysql.Verify` no longer fails on a `sql_mode` name MySQL 8.4 does not define (a server of
+  another version or lineage runs with some): it compares the modes it knows and, on a
+  mismatch, says which names it left out.
+
+### Fixed
+
+- On MySQL, `sqlshape apply` runs the DDL under the `sql_mode` the schema declares (the 8.4
+  default when it declares none), the same setting the plan was verified under. Before, the
+  DDL ran under the server's global mode, so the pre-check and the real run could disagree.
+- On MySQL, a backfill of an existing column is printed before the keys, `CHECK` constraints
+  and foreign keys the step adds, so `apply` no longer fails on rows the backfill was meant
+  to fix.
+
+### Documentation
+
+- The README leads with what a reader needs to decide: what is checked, the supported
+  versions, that checking needs no database, and how sqlshape differs from generators and
+  ORMs. A Limitations section states what is out of scope, including that a server of an
+  undeclared version still runs but its divergences are not guaranteed to be caught.
+- The MySQL error catalog moved to [docs/mysql-errors.md](docs/mysql-errors.md) with an
+  index by error number; [docs/mysql.md](docs/mysql.md) now leads with the type table, the
+  DSN requirements and the runtime. [docs/migrations.md](docs/migrations.md) starts with the
+  prerequisites and gained a section on running migrations across several environments.
+
 ## [2.0.0] - 2026-09-20
 
 ### Added
@@ -40,9 +73,9 @@ release it is a candidate for.
   view's updatable / insertable flags are computed over its `FROM` leaves the way
   `sql_resolver.cc` computes them when it merges, a join view follows the server's rules for
   each write kind, `REPLACE` and `DELETE` never reach one, and a subquery reading the written
-  view itself is 1093. The rules are [docs/mysql.md](docs/mysql.md#views)'s.
+  view itself is 1093. The rules are [docs/mysql-errors.md](docs/mysql-errors.md#views)'s.
 - The run-time failures MySQL decides by a constant's value are judged (each measured against
-  mysqld; the rules are [docs/mysql.md](docs/mysql.md)'s): a literal a column can never store
+  mysqld; the rules are [docs/mysql-errors.md](docs/mysql-errors.md)'s): a literal a column can never store
   (1264 / 1265 / 1292 / 1366 / 1406 / 1416, in strict mode outside `IGNORE`), a temporal
   literal the server cannot read as its type (1525) or a `TIMESTAMP` column cannot hold, the
   spatial rules (1210 / 3037 / 3516 / 1416), constant arithmetic the server cannot compute
@@ -237,7 +270,8 @@ First release: `sqlshape.Query[R, P]` / `One[R, P]` templates checked by `go vet
 test oracle), the runtime on pgx, and `sqlshape diff` / `apply` / `verify-schema` for migrations
 from a declared schema.
 
-[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/kr9ly/sqlshape/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/kr9ly/sqlshape/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/kr9ly/sqlshape/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/kr9ly/sqlshape/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kr9ly/sqlshape/compare/v1.0.0...v1.1.0

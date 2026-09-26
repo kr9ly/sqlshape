@@ -30,13 +30,13 @@ tag, err   := postgres.ExecOne(ctx, db, MarkOrderPaid, q) // 1行も対象にな
 
 ## 行のマッピング
 
-結果列は名前でフィールドに対応づけられる。`col:"..."`タグ、次に`db:"..."`タグ、次にフィールド名をsnake_caseにしたものの順で探す。埋め込み構造体のフィールドは平坦化される。NULLを受けられるフィールド（ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`のようなドライバのNULL可の値型）はNULLをゼロ値として受ける。この展開の結果に列が無いフィールド（一部の分岐だけが選ぶ列）もゼロ値のままになる。`R`がスカラーなら1列を直接受ける。`numeric` / `DECIMAL`は`string`で受けると全桁が保たれる。列やパラメータをどのGo型で受けられるかはデータベースごとの表にある（[postgres.ja.md](postgres.ja.md#規則が使うもの)、[mysql.ja.md](mysql.ja.md#go型の表)）。
+結果列は名前でフィールドに対応づけられる。`col:"..."`タグ、次に`db:"..."`タグ、次にフィールド名をsnake_caseにしたものの順で探す。埋め込み構造体のフィールドは平坦化される。NULLを受けられるフィールド（ポインタ、スライス、マップ、`sql.Null*`、`pgtype.*`のようなドライバのNULL可の値型）はNULLをゼロ値として受ける。この展開の結果に列が無いフィールド（一部の分岐だけが選ぶ列）もゼロ値のままになる。`R`がスカラーなら1列を直接受ける。`numeric` / `DECIMAL`は`string`で受けると全桁が保たれる。列やパラメータをどのGo型で受けられるかはデータベースごとの表にある（[postgres.ja.md](postgres.ja.md#go型の表)、[mysql.ja.md](mysql.ja.md#go型の表)）。
 
 Goのenum型に`Known() bool`を実装しておくと（`Labelled`インターフェース）、マッパーはこのビルドが知らないラベルを受け取ったとき、switchで扱えない値をアプリケーションに渡す代わりに`*UnknownLabelError`を返す。
 
 ## エラー
 
-制約違反はランタイムの`*ConstraintError`として返る（`postgres.ConstraintError`は`*pgconn.PgError`を、`mysql.ConstraintError`はドライバのエラーを包む）。サーバが報告した内容を持ち、`Key()`はexpect行に書くのと同じ表記の名前を返す。データベースが制約に付ける名前、またはNOT NULLなら`table.column`である（[postgres.ja.md](postgres.ja.md#規則が使うもの)、[mysql.ja.md](mysql.ja.md#制約名と失敗モード)）。expect行で名指したSQLSTATE（PostgreSQLのトリガの`P0401`、MySQLのSIGNAL自身のコード）も同じように包まれる。PostgreSQLはschema.sqlを読まないので`-- sqlshape: error`注釈のNameを検査器が突き合わせたコードに戻せず、expect行が何か書いてある文が受け取ったカスタムSQLSTATEはすべて包む——検査器がその文について予告済みと確認できたものだけに限らない。
+制約違反はランタイムの`*ConstraintError`として返る（`postgres.ConstraintError`は`*pgconn.PgError`を、`mysql.ConstraintError`はドライバのエラーを包む）。サーバが報告した内容を持ち、`Key()`はexpect行に書くのと同じ表記の名前を返す。データベースが制約に付ける名前、またはNOT NULLなら`table.column`である（[postgres.ja.md](postgres.ja.md#制約の名前)、[mysql.ja.md](mysql.ja.md#制約名と失敗モード)）。expect行で名指したSQLSTATE（PostgreSQLのトリガの`P0401`、MySQLのSIGNAL自身のコード）も同じように包まれる。PostgreSQLはschema.sqlを読まないので`-- sqlshape: error`注釈のNameを検査器が突き合わせたコードに戻せず、expect行が何か書いてある文が受け取ったカスタムSQLSTATEはすべて包む——検査器がその文について予告済みと確認できたものだけに限らない。
 
 ```go
 _, err := postgres.First(ctx, db, CreateCustomer, p)

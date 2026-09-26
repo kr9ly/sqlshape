@@ -17,6 +17,7 @@
   - [1行だけ返す（`One`）](#1行だけ返すone)
   - [COPYで一括ロードする（PostgreSQL）](#copyで一括ロードするpostgresql)
 - [第2部 — スキーマが宣言する規約](#第2部--スキーマが宣言する規約)
+  - [`schema.sql`のディレクティブ](#schemasqlのディレクティブ)
   - [宣言の仕組み](#宣言の仕組み)
   - [必ず付ける読み取り条件（`visible where`）](#必ず付ける読み取り条件visible-where)
   - [列を必ず固定する（`pinned`、`-require-columns`）](#列を必ず固定するpinned-require-columns)
@@ -674,7 +675,7 @@ END;
 INSERT INTO orders (customer_id, total) VALUES ({{.CustomerID}}, {{.Total}})
 ```
 
-expect行と`mysql.Violates`が判定に使うキーは、SIGNALにMySQL自身が付けるもの——`MYSQL_ERRNO`を設定していればその10進表記（`30001`）、無ければSQLSTATE（`45000`）——であることに変わりはない。項目をそのコードで綴っても注釈のNameで綴っても同じで、`Violates`もランタイムもスキーマを読まないので、`sqlshape.Error("30001")`から作った`sqlshape.Failure`もコードそのものを運んでおり、そのコードで判定される。`MYSQL_ERRNO`を設定しないときのキー、`SELECT ... INTO`とトリガーが自分の表に書く場合の番号は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
+expect行と`mysql.Violates`が判定に使うキーは、SIGNALにMySQL自身が付けるもの——`MYSQL_ERRNO`を設定していればその10進表記（`30001`）、無ければSQLSTATE（`45000`）——であることに変わりはない。項目をそのコードで綴っても注釈のNameで綴っても同じで、`Violates`もランタイムもスキーマを読まないので、`sqlshape.Error("30001")`から作った`sqlshape.Failure`もコードそのものを運んでおり、そのコードで判定される。`MYSQL_ERRNO`を設定しないときのキー、`SELECT ... INTO`とトリガーが自分の表に書く場合の番号は[mysql.ja.md](mysql.ja.md#トリガやルーチンが送出するエラー)と[mysql-errors.ja.md](mysql-errors.ja.md#トリガとストアドルーチンとイベント)にある。
 
 #### RAISE無しで失敗するPL/pgSQL文（PostgreSQL）
 
@@ -721,7 +722,7 @@ SELECT place_order({{.CustomerID}}, {{.Total}})
 --       add `-- sqlshape: expect OrderTooLarge` to the template or make it impossible
 ```
 
-MySQL固有のもの——引数の数が違う場合(1318)、呼び出し側自身が読むか書く表に関数自身が書く場合(1442、実行のたびに)、`CALL`のOUT引数と結果列の規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
+MySQL固有のもの——引数の数が違う場合(1318)、呼び出し側自身が読むか書く表に関数自身が書く場合(1442、実行のたびに)、`CALL`のOUT引数と結果列の規則——は[mysql-errors.ja.md](mysql-errors.ja.md#トリガとストアドルーチンとイベント)にある。
 
 ### 1行だけ返す（`One`）
 
@@ -799,6 +800,27 @@ var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 ## 第2部 — スキーマが宣言する規約
 
 チームの規約のうち、SQLの形として現れるものは検査器に強制させられる。論理削除の条件を必ず付ける、テナント列で必ず絞る、テーブルを直接読まずビューを通す、ステータス列は決めた遷移でしか動かさない、といったもの。規約は`schema.sql`の、対象のテーブルの直上に書く。宣言しない限り何も適用されない。
+
+### `schema.sql`のディレクティブ
+
+`schema.sql`に書けるディレクティブの一覧と、書く場所。規約の中身は以下の各節で説明する。テンプレートの中に書くディレクティブは[templates.ja.md](templates.ja.md#ディレクティブ)にある。
+
+| ディレクティブ | 置く場所 | 意味 |
+|---|---|---|
+| `-- sqlshape: postgres 17` / `postgres 18` | 先頭の行 | スキーマが前提とするPostgreSQLのバージョン。文はその文法とカタログで判定される（[下記](#スキーマはpostgresqlのバージョンを名乗るpostgres)） |
+| `-- sqlshape: mysql 8.4` | 先頭の行 | スキーマが前提とするMySQLのバージョン（[下記](#スキーマはmysqlのバージョンを名乗るmysql)） |
+| `-- sqlshape: server sql_mode = '...'` / `server lower_case_table_names = 1` | `mysql`の行の後 | MySQLのみ。サーバが既定と違う設定で動くときの、その設定（[下記](#スキーマはサーバの設定を名乗るserver)） |
+| `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE`の直上 | このテーブルを読む文はすべてこの条件を持たなければならない（`require deleted_at IS NULL on read`の略記） |
+| `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW`の直上 | そのリレーションに触る文すべてへの義務。述語、`pinned(列)`、`immutable(列)`、`via view`、`never`、`paired(表)`、`single`のいずれかに、任意で`on select, insert, update, delete`を付ける（[下記](#宣言の仕組み)） |
+| `-- sqlshape: aggregate orders (order_items, order_notes) [lock version]` | ルートの`CREATE TABLE`の直上 | これらの表で1つの集約を成す。子表はルートの鍵で固定し、1文は1集約にしか触らない。`lock`を付ければ書き込みはルートのバージョンを名指しする |
+| `-- sqlshape: transitions status: draft -> submitted, submitted -> paid \| cancelled` | `CREATE TABLE`の直上 | この列は状態機械。SETするUPDATEはWHEREで現在の状態を前状態に固定する |
+| `-- sqlshape: sensitive pii: email, phone` | `CREATE TABLE`の直上 | この列はラベルを持つ。`may read pii`の文脈だけが参照できる（ビュー経由も同じ。マスクの式でラベルは外れる） |
+| `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | `CREATE TABLE` / `CREATE VIEW`の直上 | 名前つき文脈での義務の差分。パッケージコメントの`// sqlshape: context ops`、vetの`-context`、`check -context`のいずれかで選ぶ |
+| `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW`の直上 | ビュー定義自身が文としてopt-outする |
+| `-- sqlshape: not null` | `CREATE FUNCTION`の直上 | この関数の戻り値はNULLにならない |
+| `-- sqlshape: error P0401 = OrderTooLarge` | そのエラーを送出する`CREATE FUNCTION`（MySQLでは`CREATE TRIGGER` / `PROCEDURE`も）の直上 | エラーコードに名前を付け、expect行と`Violates`でその名前を使えるようにする（[下記](#トリガーが送出するエラーには名前を付ける)）。PostgreSQLではPL/pgSQL本体の`RAISE`は注釈なしでもコードで検出される |
+| `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | PostgreSQLのみ。このseedは追加のみで、宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブルpostgresql)） |
+| `-- @migrate ...` | どこでも | マイグレーションの意図の宣言（[migrations.ja.md](migrations.ja.md#diffだけでは決められないことを宣言する)） |
 
 ### 宣言の仕組み
 
@@ -1211,7 +1233,7 @@ SELECT o.id, c.nmae AS customer_name FROM orders o JOIN customers c ON c.id = o.
 -- sqlshape: schema schema.sql: view order_summary: 42703: column c.nmae does not exist (at <schema.sqlでのバイトオフセット>)
 ```
 
-MySQLのトリガやストアドPROCEDURE / FUNCTIONの本体も、スキーマごとに1回、同じように検査される。`NEW` / `OLD`、`DECLARE`した変数や引数、制御構造、`SELECT ... INTO`、カーソル、`CALL`、`SIGNAL` / `RESIGNAL`がスコープに入る。本体の作成時にサーバ自身が拒むものもスキーマの問題として報告される。本体についてMySQL固有のもの——制約名とエラー番号、SIGNALのキーの規則——は[mysql.ja.md](mysql.ja.md#トリガとストアドルーチン)にある。
+MySQLのトリガやストアドPROCEDURE / FUNCTIONの本体も、スキーマごとに1回、同じように検査される。`NEW` / `OLD`、`DECLARE`した変数や引数、制御構造、`SELECT ... INTO`、カーソル、`CALL`、`SIGNAL` / `RESIGNAL`がスコープに入る。本体の作成時にサーバ自身が拒むものもスキーマの問題として報告される。本体についてMySQL固有のもの——制約名とエラー番号、SIGNALのキーの規則——は[mysql-errors.ja.md](mysql-errors.ja.md#トリガとストアドルーチンとイベント)と[mysql.ja.md](mysql.ja.md#トリガやルーチンが送出するエラー)にある。
 
 補足。行レベルセキュリティのポリシーもここで検査される。`CREATE POLICY`の条件式はboolean型で、集約やウィンドウ関数を含まず、ドメインの単位を守っていなければならない。行セキュリティを有効にしていないテーブルにポリシーがあれば報告する。ポリシーの条件を文の側で繰り返すことは要求しない。絞り込むのはデータベースの仕事である。
 

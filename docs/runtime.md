@@ -43,7 +43,7 @@ name in snake_case. Embedded structs flatten. A nullable field (pointer, slice, 
 the driver's nullable value types such as `pgtype.*`) receives NULL as its zero value; a nullable field whose column is absent from this
 expansion's result stays zero (a column only some branches select). A scalar `R` receives the
 single column. A `numeric` / `DECIMAL` into `string` keeps every digit. Which Go types a column or
-a parameter may take is the database's table: [postgres.md](postgres.md#what-the-rules-use),
+a parameter may take is the database's table: [postgres.md](postgres.md#the-go-type-table),
 [mysql.md](mysql.md#the-go-type-table).
 
 A Go enum type may implement `Known() bool` (the `sqlshape.Labelled` interface); the mapper then
@@ -56,7 +56,7 @@ A constraint violation comes back as a `*ConstraintError` of the runtime (`postg
 wrapping the `*pgconn.PgError`, `mysql.ConstraintError` wrapping the driver's error) with what
 the server reported. Its `Key()` is the violation as the template's expect line spells it: the
 constraint's name as the database names it, or `table.column` for NOT NULL
-([postgres.md](postgres.md#what-the-rules-use), [mysql.md](mysql.md#constraint-names-and-failure-modes)).
+([postgres.md](postgres.md#constraint-names), [mysql.md](mysql.md#constraint-names-and-failure-modes)).
 A SQLSTATE the expect line names (a PostgreSQL trigger's `P0401`, or a MySQL SIGNAL's own
 code) is wrapped the same way; on PostgreSQL, since the runtime does not read schema.sql and so
 cannot resolve a `-- sqlshape: error` annotation's Name back to the code the checker matched it

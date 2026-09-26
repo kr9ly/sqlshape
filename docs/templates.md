@@ -63,21 +63,8 @@ Directives are SQL comments the checker reads. In a template:
 | `-- sqlshape: unfiltered memos` | this statement deliberately reads `memos` without its `visible where` predicate (the predicate obligations only) |
 | `-- sqlshape: waive orders pinned(tenant_id), audit` | this statement opts out of one obligation of `orders`, named as it was declared, and of every obligation of `audit`; opt-outs are reported with `-strict` ([checks.md](checks.md#how-a-declaration-works)) |
 
-In `schema.sql`:
-
-| directive | placed above | meaning |
-|---|---|---|
-| `-- sqlshape: visible where deleted_at IS NULL` | `CREATE TABLE` | every statement reading the table must carry this predicate (short for `require deleted_at IS NULL on read`) |
-| `-- sqlshape: require pinned(tenant_id)` / `require pinned(version) on update, delete` | `CREATE TABLE` / `CREATE VIEW` | an obligation on every statement that touches the relation: a predicate, `pinned(col)`, `immutable(col)`, `via view`, `never`, `paired(table)` or `single`, optionally `on select, insert, update, delete` ([checks.md](checks.md#how-a-declaration-works)) |
-| `-- sqlshape: aggregate orders (order_items, order_notes) [lock version]` | the root's `CREATE TABLE` | the tables form one aggregate: children are pinned to the root's key, a statement touches one aggregate only, and with `lock` every write names the root's version ([checks.md](checks.md#how-a-declaration-works)) |
-| `-- sqlshape: transitions status: draft -> submitted, submitted -> paid \| cancelled` | `CREATE TABLE` | the column is a state machine: an UPDATE setting it must fix the current state to a predecessor in its WHERE |
-| `-- sqlshape: sensitive pii: email, phone` | `CREATE TABLE` | the columns carry the label; only a context with `may read pii` may reference them (through views too; a masking expression drops the label) |
-| `-- sqlshape: context ops: waive pinned(tenant_id); require id = $1 on delete` | `CREATE TABLE` / `CREATE VIEW` | the obligations that differ under the named context, selected by a package's `// sqlshape: context ops` comment, vet's `-context`, or `check -context` ([checks.md](checks.md#how-a-declaration-works)) |
-| `-- sqlshape: unfiltered orders` / `waive orders pinned(tenant_id)` | `CREATE VIEW` | the view's own definition opts out, as a statement would |
-| `-- sqlshape: not null` | `CREATE FUNCTION` | the function's result is never NULL |
-| `-- sqlshape: error P0401 = OrderTooLarge` | a function's `CREATE FUNCTION` | names a SQLSTATE the function raises, so expect lines and `Violates` can use the name; a PL/pgSQL body's `RAISE` statements are found without it, under their code |
-| `-- sqlshape: seed` | `INSERT ... VALUES` | the seed is additive: rows the declaration does not list stay ([migrations.md](migrations.md#seeded-tables-postgresql)) |
-| `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
+The directives `schema.sql` carries (the version, `visible where`, `require`, `seed`, `-- @migrate` and
+the rest) are listed in [checks.md](checks.md#directives-in-schemasql).
 
 In Go, `// sqlshape: type money_amount` in a type's doc comment binds the type to that PostgreSQL
 type ([postgres.md](postgres.md#the-go-type-table); PostgreSQL only, MySQL has no named types to bind to), and `// sqlshape: context ops` in a package comment
