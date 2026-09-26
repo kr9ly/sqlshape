@@ -54,19 +54,32 @@ var names = []string{
 // case, spaces around them ignored, the empty string allowed. The combination modes are
 // expanded (Expand), as the server stores them.
 func Parse(s string) (Mode, error) {
+	m, unknown := ParseLenient(s)
+	if len(unknown) > 0 {
+		return 0, fmt.Errorf("sql_mode: %q is not a mode of MySQL 8.4", unknown[0])
+	}
+	return m, nil
+}
+
+// ParseLenient reads a sql_mode value like Parse, but collects the names 8.4 does not
+// define instead of failing on the first: a server of another version or lineage runs
+// with modes this table lacks, and the caller decides what they mean there.
+func ParseLenient(s string) (Mode, []string) {
 	var m Mode
-	for _, f := range strings.Split(s, ",") {
+	var unknown []string
+	for f := range strings.SplitSeq(s, ",") {
 		f = strings.TrimSpace(f)
 		if f == "" {
 			continue
 		}
 		bit, ok := lookup(f)
 		if !ok {
-			return 0, fmt.Errorf("sql_mode: %q is not a mode of MySQL 8.4", f)
+			unknown = append(unknown, f)
+			continue
 		}
 		m |= bit
 	}
-	return m.Expand(), nil
+	return m.Expand(), unknown
 }
 
 func lookup(name string) (Mode, bool) {

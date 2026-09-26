@@ -2,8 +2,10 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
 	"github.com/kr9ly/sqlshape/v2/x/sqlmode"
@@ -17,6 +19,10 @@ import (
 // @@sql_mode, so it sees what the pool's connections were given, and the global
 // lower_case_table_names, which is fixed at the server's initialization. An application
 // calls it once at start-up, after opening the pool.
+//
+// A mode name 8.4 does not define — a server of another version or lineage runs with
+// some — is left out of the comparison rather than reported: only the modes the checker
+// knows can change how a statement was judged.
 func Verify(ctx context.Context, db DB, schemaSQL string) error {
 	settings, err := dialect.Settings(schemaSQL)
 	if err != nil {
@@ -48,12 +54,13 @@ func Verify(ctx context.Context, db DB, schemaSQL string) error {
 	if err := rows.Scan(&mode, &lctn); err != nil {
 		return err
 	}
-	got, err := sqlmode.Parse(mode)
-	if err != nil {
-		return fmt.Errorf("sqlshape: the server's sql_mode %q: %w", mode, err)
-	}
+	got, unknown := sqlmode.ParseLenient(mode)
 	if got != want {
-		return fmt.Errorf("sqlshape: the connection runs with sql_mode '%s' but schema.sql declares '%s' (the default when it declares none): the statements were checked under the declared mode; declare `-- sqlshape: server sql_mode = '%s'` if the connection's is the one meant", got, want, got)
+		msg := fmt.Sprintf("sqlshape: the connection runs with sql_mode '%s' but schema.sql declares '%s' (the default when it declares none): the statements were checked under the declared mode; declare `-- sqlshape: server sql_mode = '%s'` if the connection's is the one meant", got, want, got)
+		if len(unknown) > 0 {
+			msg += fmt.Sprintf(" (leaving out %s, which MySQL 8.4 does not define)", strings.Join(unknown, ", "))
+		}
+		return errors.New(msg)
 	}
 	if lctn != wantLCTN {
 		return fmt.Errorf("sqlshape: the server runs with lower_case_table_names = %d but schema.sql declares %d: declare `-- sqlshape: server lower_case_table_names = %d` if the server is the one meant", lctn, wantLCTN, lctn)

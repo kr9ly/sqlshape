@@ -42,3 +42,17 @@ func TestParse(t *testing.T) {
 		t.Errorf("bits: %#x %#x %#x %#x %#x", uint64(NoBackslashEscapes), uint64(StrictTransTables), uint64(StrictAllTables), uint64(Traditional), uint64(NoEngineSubstitution))
 	}
 }
+
+func TestParseLenient(t *testing.T) {
+	// names 8.4 does not define are collected, the known ones still count
+	m, unknown := ParseLenient("STRICT_TRANS_TABLES, NO_AUTO_CREATE_USER, ORACLE, ansi_quotes")
+	if m != StrictTransTables|ANSIQuotes {
+		t.Errorf("mode: got %#x", uint64(m))
+	}
+	if len(unknown) != 2 || unknown[0] != "NO_AUTO_CREATE_USER" || unknown[1] != "ORACLE" {
+		t.Errorf("unknown: %q", unknown)
+	}
+	if m, unknown := ParseLenient(""); m != 0 || unknown != nil {
+		t.Errorf("empty: %#x %q", uint64(m), unknown)
+	}
+}
