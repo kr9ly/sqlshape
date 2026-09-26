@@ -80,7 +80,7 @@ In `schema.sql`:
 | `-- @migrate ...` | anywhere | a migration intent ([migrations.md](migrations.md#declaring-what-a-diff-cannot-see)) |
 
 In Go, `// sqlshape: type money_amount` in a type's doc comment binds the type to that PostgreSQL
-type ([checks.md](postgres.md#the-go-type-table); PostgreSQL only, MySQL has no named types to bind to), and `// sqlshape: context ops` in a package comment
+type ([postgres.md](postgres.md#the-go-type-table); PostgreSQL only, MySQL has no named types to bind to), and `// sqlshape: context ops` in a package comment
 selects the obligation context the package is judged under.
 
 ## Sharing SQL
@@ -150,7 +150,7 @@ SELECT id FROM orders -- {{.Note}}
 
 ## Many branches
 
-When the branch combinations exceed 256 (eight independent `{{if}}`s), not every combination is
+When the branch combinations exceed 256 (nine or more independent `{{if}}`s, 512 or more combinations), not every combination is
 checked; a representative set is. With `-strict` you are told:
 
 ```

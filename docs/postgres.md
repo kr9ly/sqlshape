@@ -24,10 +24,15 @@ ENFORCED`, `VIRTUAL` generated columns are 18's) is a syntax error under an olde
 it is on that server. Moving to a new PostgreSQL is changing the number and reading what the
 checker reports.
 
+The declaration chooses the rules statements are judged by; it does not restrict the server. A
+program whose schema declares `postgres 17` runs on whatever server pgx connects to, but on a
+server of another version the verdicts still follow 17's rules, and where that server behaves
+differently they are not guaranteed to match it ([README: Limitations](../README.md#limitations)).
+
 ## What the checker embeds
 
 The parser is libpg_query of the declared version, embedded as WebAssembly and run on wazero, so
-everything the server parses, the checker parses the same way: SELECT and DML, MERGE, CTEs,
+everything a PostgreSQL of that version parses, the checker parses the same way: SELECT and DML, MERGE, CTEs,
 window functions, GROUPING SETS, SQL/JSON, ranges, `RETURNING old` / `new` and temporal keys on
 18, extensions such as citext and hstore, and DDL including views, functions (SQL and PL/pgSQL
 bodies), triggers and policies. The analyzer is a pure-Go implementation built from that
@@ -135,7 +140,7 @@ A second constraint that would get the same name is numbered, as PostgreSQL does
 same way PostgreSQL cuts it, without splitting a multibyte character.
 
 An UPDATE / INSERT through an auto-updatable view declared `WITH CHECK OPTION` discharges
-a base table's `require pinned(<col>)` (`Discharge.Path` `ByView`):
+a base table's `require pinned(<col>)` (`sqlshape check` prints it as `ok(view)`):
 
 - when the view's own WHERE fixes the column by equality; `WITH CHECK OPTION` alone is
   CASCADED, so every underlying view's WHERE counts too; `WITH LOCAL CHECK OPTION` stops at the
@@ -163,7 +168,7 @@ tag, err    := postgres.Exec(ctx, db, MarkPaid, p)                 // pgconn.Com
 
 u, err     := postgres.Get(ctx, db, UserByEmail, p)                // One: ErrNoRows when absent
 u, ok, err := postgres.Find(ctx, db, UserByEmail, p)               // One: ok reports presence
-tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)               // One: ErrNoRows when no row was touched
+tag, err   := postgres.ExecOne(ctx, db, MarkOrderPaid, p)          // One: ErrNoRows when no row was touched
 ```
 
 What every runtime does the same way (row mapping, `One`, the guarantee that only checked SQL
@@ -205,7 +210,7 @@ runs, errors under the expect line's names) is in [runtime.md](runtime.md). What
   ```go
   b := postgres.NewBatch()
   orders := postgres.Queue(b, ListOrders, ListParams{Status: &paid})
-  paid   := postgres.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
+  paid   := postgres.QueueOne(b, MarkOrderPaid, struct{ ID int64 }{id})
   if err := b.Send(ctx, db); err != nil { ... }
   rows, err := orders.Rows()    // []Order; First() for the first row
   tag, err  := paid.Tag()
@@ -244,10 +249,12 @@ runs, errors under the expect line's names) is in [runtime.md](runtime.md). What
 
 `sqlshape diff`, `apply` and `verify-schema` derive the DDL from the difference between a
 database and `schema.sql`, check that the DDL leads to `schema.sql`, and run it. They compare
-both sides as `pg_dump` output, so they need the declared version's `pg_dump` on `PATH`, and they
-boot an embedded PostgreSQL of the declared version (downloaded on first use, cached under
-`~/.cache/sqlshape`) to read `schema.sql` through it. [migrations.md](migrations.md) has the
-commands; its MySQL section says what differs there.
+both sides as `pg_dump` output, so they need a `pg_dump` on `PATH` whose major version is at least
+the database's, and they boot an embedded PostgreSQL of the declared version (downloaded on first
+use, cached under `~/.cache/sqlshape`) to read `schema.sql` through it. When the database runs
+another major version than the schema declares, they say so on stderr and go on, judging the DDL
+by the declared version's rules ([migrations.md](migrations.md#requirements)).
+[migrations.md](migrations.md) has the commands; its MySQL section says what differs there.
 
 ## License
 

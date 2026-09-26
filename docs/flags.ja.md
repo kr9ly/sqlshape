@@ -21,8 +21,7 @@
 | `-schemas=a_api,b_private` | 全部 | このコードが参照してよいPostgreSQLのスキーマ。1つのデータベースを複数サービスで使うときの境界 |
 | `-context=ops` | なし | パッケージを判定する義務の文脈。パッケージコメントに`// sqlshape: context <name>`があればそちらが優先 |
 | `-require-columns=tenant_id` | なし | すべての文が、その列を持つ各テーブルでその列を等値で固定しなければならない。INSERTは値を入れなければならない。その列を固定する行レベルセキュリティのポリシーがあれば満たしたことになる |
-
-| `-query=pkg.Func,pkg.Other:one` | なし | 自前のマーカー関数を`sqlshape.Query`と同じように読む（`:one`は`One`と同じ扱い）。テンプレートを引数に取る generic な`F[R, P any](string) T`であればよい。検査器が読むのは宣言であって、実行するランタイムではない |
+| `-query=example.com/app/db.Query,example.com/app/db.Get:one` | なし | 自前のマーカー関数を`sqlshape.Query`と同じように読む（`:one`は`One`と同じ扱い）。テンプレートを引数に取る generic な`F[R, P any](string) T`であればよい。関数はフルのimport pathに`.`と関数名を続けて指定する。短いパッケージ名では何にも一致しない。検査器が読むのは宣言であって、実行するランタイムではない |
 | `-raw-sql=constant` | `constant` | sqlshapeを通さないドライバ呼び出し（pgx / `database/sql`の`Query`、`Exec`など）の扱い。`constant`はSQL引数が定数であることを要求し、`forbid`は拒否し、`allow`は無視する |
 | `-raw-sql-allow=pkg/...` | なし | `-raw-sql=forbid`を適用しないパッケージ（`/...`で終わる接頭辞も可） |
 | `-coverage` | off | パッケージごとに、検査した`Query` / `One`の数と、検査できなかった数（テンプレートが定数でないもの）を報告する |
@@ -75,11 +74,11 @@
 検査器は`go vet`のツールなので、`go vet`が走る場所ならどこでも走る。一度ビルドして`-vettool`に指定する:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@v2.0.0   # 使うリリースに固定する
 $ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 
-Go統合のあるエディタは保存時に`go vet`を走らせて診断をインラインに表示できるので、その設定に同じ`-vettool`と`-strict`を渡す。gopls自体はサードパーティのアナライザーを読み込まないため、goplsではなく`go vet`を経由する。CIでも同じコマンドを走らせればよい。golangci-lintにはモジュールプラグインとして読み込める。
+Go統合のあるエディタは保存時に`go vet`を走らせて診断をインラインに表示できるので、その設定に同じ`-vettool`と`-strict`を渡す。gopls自体はサードパーティのアナライザーを読み込まないため、goplsではなく`go vet`を経由する。CIでも同じコマンドを、バージョンを固定して走らせればよい。マイナーリリースで診断が増えることがあるためである（[README: バージョニング](../README.ja.md#バージョニング)）。
 
 ### SQLから構造体を書き起こす
 

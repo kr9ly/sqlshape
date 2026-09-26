@@ -17,10 +17,10 @@ packages, where the SQL lives in `Query` / `One` templates and is compared with 
 `sqlshape check file.sql` runs the same analyzer and the same schema rules over SQL that is not in Go
 at all ([Part 2](#the-same-rules-for-sql-outside-go-sqlshape-check)).
 
-It has three parts. **Part 1** is what every statement gets, with no declaration: the shape of the
-result and the parameters, the meaning of the types, the failure modes, the `One` proof. **Part 2**
+It has three parts. Part 1 is what every statement gets, with no declaration: the shape of the
+result and the parameters, the meaning of the types, the failure modes, the `One` proof. Part 2
 is what `schema.sql` can additionally demand of the statements that touch a table: predicates, pinned
-columns, aggregates, state machines, labelled columns. **Part 3** is what is checked outside a
+columns, aggregates, state machines, labelled columns. Part 3 is what is checked outside a
 statement: the Go code around it, and the schema itself.
 
 ## Contents
@@ -339,7 +339,7 @@ type Params struct {
 ```
 
 A `string` can be passed as a parameter of any type (it is sent in text form and interpreted by
-PostgreSQL). A parameter *wider* than the column it feeds gets an overflow note: an `int64` value
+PostgreSQL). A parameter wider than the column it feeds gets an overflow note: an `int64` value
 going into an `integer` column is `parameter .ID: int64 into integer may overflow` (the same for a
 `float64` value going into a `real` column). This applies element-wise to an array parameter too:
 `[]int64` into `smallint[]` gets `parameter .Tags: int64 into smallint may overflow`.
@@ -394,7 +394,7 @@ A plain `sku IN ({{range}}...{{end}})` is not empty-safe: with zero `.Items`, it
 `sku IN ()`, a syntax error. The checker's branch-state exploration tries every length `.Items`
 could have (0, 1, 2, ...) and reports exactly that error when it finds it. A `range` used this way
 needs a form that stays valid SQL at every length, such as the `false {{range}} OR ... {{end}}`
-above (or `WHERE true {{range}} OR (...) {{end}}`, as `testdata/src/a/a.go`'s `indexParam` does).
+above (or `WHERE true {{range}} OR (...) {{end}}`).
 
 #### Composite parameters are structs
 
@@ -967,8 +967,8 @@ and every statement that touches the table must satisfy them. None applies until
 
 ### How a declaration works
 
-A table (or view) declares an **obligation**; a statement that touches it must **discharge** the
-obligation with what it provably does. The general form is a directive above `CREATE TABLE` or
+A table (or view) declares a rule that every statement touching it must satisfy with what it
+provably does; we call the rule an obligation, and satisfying it discharging the obligation. The general form is a directive above `CREATE TABLE` or
 `CREATE VIEW`:
 
 ```sql
@@ -1129,12 +1129,12 @@ SELECT id, customer_name FROM order_summary
 ```
 
 `-no-table-reads` still allows a table as the target of INSERT, UPDATE, DELETE and MERGE.
-`-no-tables` forbids every table reference, writes included
+`-no-tables` forbids every table reference, writes included.
 
 ### A predicate across tables has a witness (`EXISTS`)
 
 A predicate that reaches across tables is written as `EXISTS`, and the statement must have a
-**witness** for it: a table of the same level joined so that the body holds (an inner join; an outer
+witness for it: a table of the same level joined so that the body holds (an inner join; an outer
 join's ON does not restrict the subject's rows), or an unnegated `EXISTS` / `IN (SELECT ...)` of its
 own whose body holds.
 
@@ -1163,7 +1163,7 @@ SELECT carrier FROM shipments s WHERE NOT EXISTS (SELECT 1 FROM orders x WHERE x
 Some tables only make sense together. An order has its line items and its notes; nobody adds a line
 to an order without going through the order, and an invariant like "the total matches the lines"
 holds for the order as a whole, not for a line on its own. Domain-driven design calls such a cluster
-an **aggregate**: one table is the root, the others are its children, the outside world holds the
+an aggregate: one table is the root, the others are its children, the outside world holds the
 root's ID and nothing else, and one change touches one aggregate. Applications enforce this by
 convention (a repository per aggregate, a service layer), which holds until someone writes the SQL
 directly. sqlshape can enforce the part of it that shows in the shape of a statement, and it is a
@@ -1309,7 +1309,7 @@ SELECT phone_masked FROM order_contacts                -- passes: an expression 
 ### Different callers, different rules (`context`)
 
 An operator's script may run without a tenant, an analyst may only read views, billing may read
-personal data. A **context** declares the difference per table, and a package or a `check` run selects
+personal data. A context declares the difference per table, and a package or a `check` run selects
 one:
 
 ```sql
@@ -1413,9 +1413,10 @@ exist on MySQL and is not checked there.
 
 A server variable that changes how a statement is judged is declared next to the version, one per
 line, so the checker and the production connection agree on it. Without the line
-the checker assumes the server's defaults; on MySQL 8.4 that is the default `sql_mode`
+the checker assumes the defaults of a freshly initialized MySQL 8.4 server on Linux, not those of
+the server you connect to: the default `sql_mode`
 (`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`)
-and `lower_case_table_names = 0`, a freshly initialized Linux server.
+and `lower_case_table_names = 0`.
 
 ```sql
 -- sqlshape: mysql 8.4
@@ -1467,10 +1468,11 @@ What the checker does with them:
 The declaration is a promise about the server the statements run on, and `mysql.Verify(ctx, db,
 schemaSQL)` checks it: it reads the connection's session `@@sql_mode` (a DSN or a pool's setup
 may override it) and the server's `lower_case_table_names`, and reports a difference from the
-declaration ([mysql.md](mysql.md#the-runtime-databasesql)).
+declaration; a mode name 8.4 does not define is left out of the comparison ([mysql.md](mysql.md#the-runtime-databasesql)).
 
 ### Do not run SQL that bypasses sqlshape (`-raw-sql`)
 
+Calling pgx's or `database/sql`'s `Query` / `Exec` with a string built at run time opens a hole the
 template guarantee does not cover.
 
 Rejected (the default, `-raw-sql=constant`)

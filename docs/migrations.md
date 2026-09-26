@@ -44,13 +44,14 @@ value should become, or what a new `NOT NULL` column should hold for existing ro
 declared in `schema.sql` with `-- @migrate` lines:
 
 ```sql
--- @migrate rename orders.state -> orders.status      a column, or a table: rename old -> new
--- @migrate drop orders.legacy                        this column (or table) may go
+-- @migrate rename orders.state -> orders.status
+-- @migrate drop orders.legacy
 -- @migrate enum order_status: drop 'canceled' using 'cancelled'
 -- @migrate backfill orders.status = 'pending' where status is null
 ```
 
-The left side of a rename names things as they are now, the right as they will be. A table or
+`rename old -> new` renames a column or a table; `drop` says a column (or table) may go. Each
+declaration is the whole line: nothing may follow it on the same line. The left side of a rename names things as they are now, the right as they will be. A table or
 column that disappears without a `drop` or `rename` declaration is an error (the DDL is still
 printed), so data loss is always announced. A declaration the diff does not bear out (a rename
 whose source does not exist, a drop of a column that is still there) is an error too, so stale
@@ -276,14 +277,16 @@ PostgreSQL:
   `~/.cache/sqlshape` (`$SQLSHAPE_PG_CACHE`). The first run takes a few seconds for the download;
   afterwards it starts in a quarter of a second. Your database is never used for this. When the
   database runs another major version than the schema declares, the commands say so on stderr
-  and go on: the DDL is judged by the declared version's rules.
+  and go on: the DDL is judged by the declared version's rules. Passing those checks does not
+  guarantee the DDL behaves the same on that server; it can still fail there, or act differently.
 
 MySQL:
 
 - With `-db`, the connection's user can `CREATE DATABASE` and `DROP DATABASE` (for the scratch
   database). The server's `lower_case_table_names` must be the one the schema declares (0 when
   it declares none); the commands stop otherwise. When the server runs another MySQL version than
-  the schema declares, the commands say so and go on.
+  the schema declares, the commands say so and go on. As on PostgreSQL, passing the checks does
+  not guarantee the DDL behaves the same on that server.
 - With `-from` (two schema texts), a `mysqld` on `PATH` (`nix-shell -p mysql84`, a distribution
   package, a server tarball's `bin/`), started with the schema's declared settings.
 
@@ -292,5 +295,11 @@ Both:
 - `-schema PATH` names `schema.sql`, or a `schema/` directory whose `*.sql` files apply in name
   order; the default is the nearest one from the working directory up.
 
-Exit codes: 0 no difference, 1 a finding (a diff, a drift, a refused apply), 2 a usage or
-environment error.
+Exit codes, per command:
+
+- `diff`: 0 when it prints the DDL, including a non-empty one; 1 when a table or column
+  disappears without a `drop` or `rename` declaration, or a declaration is not borne out by the
+  diff (the DDL is still printed).
+- `verify-schema`: 0 when the database matches `schema.sql`, 1 when it differs.
+- `apply`: 0 when the DDL was applied, 1 when it refused.
+- Every command: 2 for a usage or environment error.

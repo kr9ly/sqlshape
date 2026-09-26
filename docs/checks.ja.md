@@ -6,7 +6,7 @@
 
 検査器の入口は2つある。`go vet -vettool=sqlshape`（または`sqlshape ./...`）はGoのパッケージを対象に実行され、`Query` / `One`のテンプレートにあるSQLをGoの型と突き合わせる。`sqlshape check file.sql`は、Goの中にないSQLに対して同じ解析器と同じスキーマの規約を実行する（[第2部](#goの外のsqlにも同じ規約を適用するsqlshape-check)）。
 
-三部に分かれる。**第1部**は何も宣言しなくても全部の文にかかる検査。結果とパラメータの形、型の意味、失敗モード、`One`の証明。**第2部**は`schema.sql`に宣言して初めてかかる規約。読み取り条件、列の固定、集約、状態機械、ラベル付きの列。**第3部**は文の外側の検査。文を囲むGoコードと、スキーマ自体。
+三部に分かれる。第1部は何も宣言しなくても全部の文にかかる検査。結果とパラメータの形、型の意味、失敗モード、`One`の証明。第2部は`schema.sql`に宣言して初めてかかる規約。読み取り条件、列の固定、集約、状態機械、ラベル付きの列。第3部は文の外側の検査。文を囲むGoコードと、スキーマ自体。
 ## 目次
 
 - [第1部 — すべての文にかかる検査](#第1部--すべての文にかかる検査)
@@ -332,7 +332,7 @@ SELECT id FROM products
    AND (false {{range $i, $it := .Items}} OR sku = {{$it.Sku}} {{end}})
 ```
 
-素朴な`sku IN ({{range}}...{{end}})`は空長で安全ではない。`.Items`が空だと`sku IN ()`となり構文エラーになる。検査器は`.Items`が取りうる長さ（0、1、2、……）を全て試し、それが構文エラーを引き起こすことをそのまま報告する。`range`をこの用途で使うときは、どの長さでも文法的に妥当な形にする必要がある。上の`false {{range}} OR ... {{end}}`の形（あるいは`testdata/src/a/a.go`の`indexParam`がそうしているような`WHERE true {{range}} OR (...) {{end}}`の形）がそれにあたる。
+素朴な`sku IN ({{range}}...{{end}})`は空長で安全ではない。`.Items`が空だと`sku IN ()`となり構文エラーになる。検査器は`.Items`が取りうる長さ（0、1、2、……）を全て試し、それが構文エラーを引き起こすことをそのまま報告する。`range`をこの用途で使うときは、どの長さでも文法的に妥当な形にする必要がある。上の`false {{range}} OR ... {{end}}`の形（あるいは`WHERE true {{range}} OR (...) {{end}}`の形）がそれにあたる。
 
 #### 複合型のパラメータは構造体で渡す
 
@@ -802,7 +802,7 @@ var Load = postgres.Copy[Item]("order_items", "order_id", "line_no", "sku")
 
 ### 宣言の仕組み
 
-テーブル（またはビュー）が**義務**を宣言し、そのテーブルに触る文は、自分が証明できることでその義務を**履行**する。一般形は`CREATE TABLE`か`CREATE VIEW`の直上のディレクティブ。
+テーブル（またはビュー）は、そのテーブルに触る文が守るべき規則を宣言する。この規則を義務と呼び、文が自分の証明できることで義務を満たすことを履行と呼ぶ。一般形は`CREATE TABLE`か`CREATE VIEW`の直上のディレクティブ。
 
 ```sql
 -- sqlshape: require <what> [on <kinds>]
@@ -926,7 +926,7 @@ SELECT id, customer_name FROM order_summary
 
 ### 表をまたぐ述語には証人が要る（`EXISTS`）
 
-表をまたぐ述語は`EXISTS`で書く。文の側は、それを成り立たせる**証人**を持っていなければならない。同じレベルで本体が成り立つように結合した表（内部結合。外部結合のONは対象の行を絞らない）か、文自身の否定なし`EXISTS` / `IN (SELECT ...)`で本体が成り立つもの。
+表をまたぐ述語は`EXISTS`で書く。文の側は、それを成り立たせる証人を持っていなければならない。同じレベルで本体が成り立つように結合した表（内部結合。外部結合のONは対象の行を絞らない）か、文自身の否定なし`EXISTS` / `IN (SELECT ...)`で本体が成り立つもの。
 
 ```sql
 -- sqlshape: require EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.tenant_id = $1)
@@ -950,7 +950,7 @@ SELECT carrier FROM shipments s WHERE NOT EXISTS (SELECT 1 FROM orders x WHERE x
 
 ### 集約にはルート経由で触り、1文で1つだけ触る（`aggregate`）
 
-いくつかのテーブルは、まとまりでしか意味を持たない。注文には明細とメモが付き、注文を通さずに明細を足す人はいないし、「合計は明細の和に一致する」といった不変条件は明細1行ではなく注文全体について成り立つ。ドメイン駆動設計（DDD）はこのまとまりを**集約**と呼ぶ。1つのテーブルがルート、残りはその子、外の世界はルートのIDだけを持ち、1回の変更は1つの集約にしか触らない。アプリケーションはこれを規約で守る（集約ごとのリポジトリ、サービス層）が、規約は誰かがSQLを直接書いた時点で破れる。sqlshapeは、このうち文の形に現れる部分を検査器に守らせる。集約は義務の束で、ルートの直上に1行で宣言する。
+いくつかのテーブルは、まとまりでしか意味を持たない。注文には明細とメモが付き、注文を通さずに明細を足す人はいないし、「合計は明細の和に一致する」といった不変条件は明細1行ではなく注文全体について成り立つ。ドメイン駆動設計（DDD）はこのまとまりを集約と呼ぶ。1つのテーブルがルート、残りはその子、外の世界はルートのIDだけを持ち、1回の変更は1つの集約にしか触らない。アプリケーションはこれを規約で守る（集約ごとのリポジトリ、サービス層）が、規約は誰かがSQLを直接書いた時点で破れる。sqlshapeは、このうち文の形に現れる部分を検査器に守らせる。集約は義務の束で、ルートの直上に1行で宣言する。
 
 ```sql
 -- sqlshape: aggregate orders (order_items, order_notes)
@@ -1057,7 +1057,7 @@ SELECT phone_masked FROM order_contacts                -- OK。式にはラベ�
 
 ### 呼び出し元ごとに規約を変える（`context`）
 
-運用スクリプトはテナントを固定せずに実行される、分析者はビューしか読まない、請求だけは個人情報を読む。**文脈（context）**はその差分を表ごとに宣言し、パッケージか`check`の実行が一つを選ぶ。
+運用スクリプトはテナントを固定せずに実行される、分析者はビューしか読まない、請求だけは個人情報を読む。文脈（context）はその差分を表ごとに宣言し、パッケージか`check`の実行が一つを選ぶ。
 
 ```sql
 -- sqlshape: require pinned(tenant_id)
@@ -1131,7 +1131,7 @@ NG
 
 ### スキーマはサーバの設定を名乗る（`server`）
 
-文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である。宣言が無ければ検査器はサーバの既定値を仮定する。MySQL 8.4なら既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`、つまりLinuxで初期化したままのサーバである。
+文の判定を変えるサーバ変数は、バージョンと並べて1行に1つ宣言する。検査器と本番の接続を同じ設定に揃えるための行である。宣言が無ければ検査器は、接続先のサーバではなく、Linuxで初期化したままのMySQL 8.4の既定値を仮定する。既定の`sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`）と`lower_case_table_names = 0`である。
 
 ```sql
 -- sqlshape: mysql 8.4
@@ -1160,7 +1160,7 @@ OK
 - 残りの名前（`NO_ZERO_DATE`、`ERROR_FOR_DIVISION_BY_ZERO`、`NO_ENGINE_SUBSTITUTION`、`PAD_CHAR_TO_FULL_LENGTH`など）は実行時にしか効かない。検査器はそのまま受け付ける
 - `lower_case_table_names = 1`は表名とビュー名を小文字にして持つ。サーバの報告と同じである（`SELECT * FROM Users`は表`users`を読み、factsも境界の検査もその名前で見る）。2は宣言どおりの綴りで持ち、大文字小文字を無視して照合する。0は`Users`と`users`を区別する（1146）。ディレクティブ（`unfiltered`、`waive`、義務）が名乗る表名も同じ規則で解決する。1と2ならどの綴りでも届き、0なら`CREATE`の綴りで書く
 
-宣言は「文が走るサーバはこう設定されている」という約束であり、`mysql.Verify(ctx, db, schemaSQL)`がそれを確かめる。接続のセッションの`@@sql_mode`（DSNやプールの初期化が上書きしうる）とサーバの`lower_case_table_names`を読み、宣言との差を返す（[mysql.ja.md](mysql.ja.md#ランタイム-databasesql)）。
+宣言は「文が走るサーバはこう設定されている」という約束であり、`mysql.Verify(ctx, db, schemaSQL)`がそれを確かめる。接続のセッションの`@@sql_mode`（DSNやプールの初期化が上書きしうる）とサーバの`lower_case_table_names`を読み、宣言との差を返す。8.4が定義しないモード名は照合から外す（[mysql.ja.md](mysql.ja.md#ランタイム-databasesql)）。
 
 ### sqlshapeを通さないSQLを書かない（`-raw-sql`）
 

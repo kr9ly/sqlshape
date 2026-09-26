@@ -63,7 +63,7 @@ SELECT id FROM products
 | `-- sqlshape: seed` | `INSERT ... VALUES`の直上 | このseedは追加のみ。宣言に無い行もテーブルに残す（[migrations.ja.md](migrations.ja.md#seed済みテーブルpostgresql)） |
 | `-- @migrate ...` | どこでも | マイグレーションの意図の宣言（[migrations.ja.md](migrations.ja.md#diffだけでは決められないことを宣言する)） |
 
-Goのコードの中では、型宣言のdocコメントに`// sqlshape: type money_amount`と書くと、その型をPostgreSQLの型に結びつけられる（[checks.ja.md](postgres.ja.md#go型の表)。PostgreSQLのみ。MySQLには結びつける先の名前付きの型が無い）。パッケージコメントの`// sqlshape: context ops`は、そのパッケージが判定される義務の文脈を選ぶ。
+Goのコードの中では、型宣言のdocコメントに`// sqlshape: type money_amount`と書くと、その型をPostgreSQLの型に結びつけられる（[postgres.ja.md](postgres.ja.md#go型の表)。PostgreSQLのみ。MySQLには結びつける先の名前付きの型が無い）。パッケージコメントの`// sqlshape: context ops`は、そのパッケージが判定される義務の文脈を選ぶ。
 
 ## SQLを共有する
 
@@ -130,7 +130,7 @@ SELECT id FROM orders -- {{.Note}}
 
 ## 分岐が多いとき
 
-分岐の組み合わせが256通り（独立した`{{if}}`が8個）を超えると、全組み合わせは検査されず、代表的な組み合わせだけが検査される。`-strict`を付けると次の診断で知らされる:
+分岐の組み合わせが256通りを超える（独立した`{{if}}`が9個以上で、512通り以上になる）と、全組み合わせは検査されず、代表的な組み合わせだけが検査される。`-strict`を付けると次の診断で知らされる:
 
 ```
 sqlshape: 512 branch combinations exceed 256: checked sparsely (all branches off, all on, each on alone); the runtime cannot compare renderings with the checked set

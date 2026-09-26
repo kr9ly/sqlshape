@@ -23,7 +23,7 @@ The migration subcommands (`diff`, `apply`, `verify-schema`) have their own flag
 | `-schemas=a_api,b_private` | all | the PostgreSQL schemas this code may reference (a service boundary over one database) |
 | `-context=ops` | none | the obligation context packages are judged under, unless a package names its own with `// sqlshape: context <name>` in its package comment |
 | `-require-columns=tenant_id` | none | every statement must pin these columns by equality on each table that has them; INSERTs must assign them (a row-level security policy fixing the column also satisfies it) |
-| `-query=pkg.Func,pkg.Other:one` | none | marker functions of your own, read like `sqlshape.Query` (`:one` like `One`): a generic `F[R, P any](string) T` whose argument is the template. The checker reads declarations, not the runtime that executes them |
+| `-query=example.com/app/db.Query,example.com/app/db.Get:one` | none | marker functions of your own, read like `sqlshape.Query` (`:one` like `One`): a generic `F[R, P any](string) T` whose argument is the template. Each is named by its full import path, then `.` and the function name; a short package name matches nothing. The checker reads declarations, not the runtime that executes them |
 | `-raw-sql=constant` | `constant` | driver calls outside sqlshape (pgx / `database/sql` `Query`, `Exec`, ...): `constant` requires their SQL to be a constant string, `forbid` rejects them, `allow` ignores them |
 | `-raw-sql-allow=pkg/...` | none | packages (or prefixes ending in `/...`) where `-raw-sql=forbid` does not apply |
 | `-coverage` | off | report per package how many `Query` / `One` declarations were checked and how many could not be (non-constant templates) |
@@ -88,14 +88,15 @@ The checker is a `go vet` tool, so it runs wherever `go vet` runs. Build it once
 the `-vettool`:
 
 ```
-$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@latest
+$ go install github.com/kr9ly/sqlshape/cmd/sqlshape/v2@v2.0.0   # pin the release you use
 $ go vet -vettool="$(which sqlshape)" -strict ./...
 ```
 
 Editors with a Go integration can run `go vet` on save and show its diagnostics inline; give that
 integration the same `-vettool` and `-strict` flags. gopls itself does not load third-party
 analyzers, which is why the checker goes through `go vet` rather than gopls. In CI, run the same
-command. golangci-lint can load `sqlshape` as a module plugin.
+command with the version pinned: a minor release may add diagnostics
+([README: Versioning](../README.md#versioning)).
 
 ### Writing a statement's types from the SQL
 

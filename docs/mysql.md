@@ -21,6 +21,12 @@ CREATE TABLE ...
 grammar then parses the schema and every statement, and MySQL's rules type the expressions. Two
 declarations that disagree, or one that also names `postgres`, are rejected.
 
+The declaration chooses the rules statements are judged by; it does not restrict the server. The
+program runs on whatever server go-sql-driver/mysql connects to, another MySQL version, MariaDB
+or another MySQL-compatible database included, but the verdicts still follow 8.4's rules, and
+where that server behaves differently they are not guaranteed to match it
+([README: Limitations](../README.md#limitations)).
+
 A server variable that changes how a statement is judged is declared next to the version, one
 per line, so the checker and the production connection agree on it
 ([checks.md](checks.md#the-schema-names-the-servers-settings-server)). MySQL reads three:
@@ -60,7 +66,8 @@ your program.
 The verdicts are checked against a running `mysqld`: 5,033 typed statements (the result types of
 every built-in function in every argument combination), 65 error statements, the 376 statements
 of the `ONLY_FULL_GROUP_BY` check, and 22 statements and 6 writes under non-default `sql_mode`
-values agree with 8.4.
+values agree with 8.4. Every server behavior this page describes was measured against `mysqld`
+8.4.
 
 MySQL's own test corpus is replayed as well: the 1,281 files of `mysql-test/t` (some 137,000
 statements) run against a `mysqld` and the analyzer side by side, a SELECT's columns compared by
@@ -104,7 +111,7 @@ operator is a `bigint(1)`, which `bool` may receive; so may a `TINYINT(1)`.
 
 There is no `// sqlshape: type` binding on MySQL: it has no named types to bind a Go type to.
 
-A few results are not the type they are written over (all measured):
+A few results are not the type they are written over:
 
 - a window function's integer (`MIN(id) OVER ()`, `FIRST_VALUE`, `NTH_VALUE`, `LAG`, `LEAD`
   ...) reaches the client through the window's temporary table, which widens it: `INT` and
@@ -142,7 +149,7 @@ What a statement's own form does to the list:
 - `ON DUPLICATE KEY UPDATE` absorbs the insert's key violations;
 - `REPLACE` violates no key and may violate a referencing foreign key (1451);
 - `UPDATE IGNORE` absorbs a `WITH CHECK OPTION` view's 1369 the same way it absorbs a key
-  or `NOT NULL` violation (measured), unlike a trigger's own `SIGNAL`, which no `IGNORE`
+  or `NOT NULL` violation, unlike a trigger's own `SIGNAL`, which no `IGNORE`
   absorbs;
 - without strict mode only a single-row `INSERT` or `REPLACE` (its `ON DUPLICATE KEY UPDATE`
   included) rejects a `NULL` for a `NOT NULL` column; more rows, `INSERT ... SELECT` and `UPDATE`
@@ -153,8 +160,8 @@ gives an error from a statement run outside `Run` / `Exec` the same wrapping fir
 
 A literal the column can never store is not a failure mode but the statement's own error,
 since every execution fails the same way in strict mode (the default). The checker applies the
-server's own `Field::store` rules to a literal written straight into a column by `INSERT ...
-VALUES`, `UPDATE ... SET`, `ON DUPLICATE KEY UPDATE` or `REPLACE` (all measured):
+rules the server uses when it stores a value into a column to a literal written straight into a
+column by `INSERT ... VALUES`, `UPDATE ... SET`, `ON DUPLICATE KEY UPDATE` or `REPLACE`:
 
 | into | rejected | error |
 |---|---|---|
@@ -164,8 +171,8 @@ VALUES`, `UPDATE ... SET`, `ON DUPLICATE KEY UPDATE` or `REPLACE` (all measured)
 | `YEAR` | anything but 0, 1-99 and 1901-2155 | 1264 |
 | `DECIMAL(M,D)` | more than M-D integer digits once rounded to D places; a negative value into `UNSIGNED` | 1264 |
 | `FLOAT` | a value beyond the single-precision range | 1264 |
-| `DATE` / `DATETIME` / `TIMESTAMP` | a string `str_to_datetime` cannot read or finds out of range, a zero month, day or date the `sql_mode` forbids (`NO_ZERO_IN_DATE`, `NO_ZERO_DATE`), a day the month lacks unless `ALLOW_INVALID_DATES`; a number `number_to_datetime` rejects; a `TIMESTAMP` outside 1970-01-01 00:00:01 to 2038-01-19 03:14:07 UTC (judged only where the session time zone cannot change the verdict) | 1292 |
-| `TIME` | a string `str_to_time` cannot read, minutes or seconds of 60 or more, more than 838 hours | 1292 |
+| `DATE` / `DATETIME` / `TIMESTAMP` | a string the server cannot read as a date and time or finds out of range, a zero month, day or date the `sql_mode` forbids (`NO_ZERO_IN_DATE`, `NO_ZERO_DATE`), a day the month lacks unless `ALLOW_INVALID_DATES`; a number the server does not accept as a date and time; a `TIMESTAMP` outside 1970-01-01 00:00:01 to 2038-01-19 03:14:07 UTC (judged only where the session time zone cannot change the verdict) | 1292 |
+| `TIME` | a string the server cannot read as a time, minutes or seconds of 60 or more, more than 838 hours | 1292 |
 | `CHAR(n)` / `VARCHAR(n)` / `BINARY(n)` / `VARBINARY(n)` | a string longer than n characters (bytes when binary) once trailing spaces are dropped | 1406 |
 | `ENUM` | a string that names no member (compared as the collation does) and is not a member's index; a number outside 1 to the member count | 1265 |
 | `SET` | a list naming a member the set lacks | 1265 |
@@ -181,7 +188,7 @@ literals, `JSON` and `BIT` columns, and an expression the server would fold (`10
 A geometry value has one of seven types (`POINT` ... `GEOMETRYCOLLECTION`); a column is declared
 with one of them or with `GEOMETRY` (any). The checker knows a value's type when a constructor
 (`POINT(1, 1)`), a typed reader (`ST_PointFromText`) or a constant text or WKB fixes it, and
-judges with it (all measured):
+judges with it:
 
 | statement | error |
 |---|---|
@@ -201,7 +208,7 @@ constant SRID names a spatial reference system (3548), the functions' own run-ti
 ### Constant arithmetic
 
 A constant expression the server cannot compute is the statement's own 1690, judged before any
-row is read (all measured, as item_func.cc computes):
+row is read, as the server computes it:
 
 | expression | error |
 |---|---|
@@ -224,25 +231,25 @@ matches, `x IS NULL` over a never-NULL x, a `GROUP BY` / `ORDER BY` item, an `EX
 subquery's select list, `LIMIT 0`. Not read: a trigger's or routine's body, a hex or bit
 literal operand, a user variable, a window's `ORDER BY`, `DECIMAL` overflow (65 digits).
 
-The same two shapes are two writes for the obligation checker (x/obligation), not one:
+The same two shapes are two writes, not one, when the schema's rules (`require`, `visible where`) are judged:
 
 | statement | writes recorded | why |
 |---|---|---|
 | `INSERT ... ON DUPLICATE KEY UPDATE` | an INSERT, and an UPDATE of the columns the branch assigns | the branch moves an existing row |
-| `REPLACE` | an INSERT and a DELETE | a colliding key deletes the old row first (its `AFTER DELETE` trigger fires, measured) |
+| `REPLACE` | an INSERT and a DELETE | a colliding key deletes the old row first (its `AFTER DELETE` trigger fires) |
 
 A write through a view declared `WITH CHECK OPTION` discharges `require pinned(<col>)` on the
-base table (`Discharge.Path` `ByView`):
+base table (`sqlshape check` prints it as `ok(view)`):
 
 - when the view's own `WHERE` fixes the column by equality; a plain `WITH CHECK OPTION` is
-  CASCADED, so every underlying view's `WHERE` counts too (behind a join as well, measured);
+  CASCADED, so every underlying view's `WHERE` counts too (behind a join as well);
   `WITH LOCAL CHECK OPTION` stops at the view itself except for an underlying view that
-  declares a check option of its own, which the server keeps enforcing (measured);
+  declares a check option of its own, which the server keeps enforcing;
 - the 1369 above is what makes the pin genuine: a view without the clause never discharges it
   (a write through it moves the row out of the view's `WHERE` silently);
-- for `UPDATE`, `INSERT` and `REPLACE` alike (a `DELETE` never checks the option, measured);
+- for `UPDATE`, `INSERT` and `REPLACE` alike (a `DELETE` never checks the option);
   an underlying view's own check option is enforced whatever the view written through says,
-  and the 1369 still names the latter (measured).
+  and the 1369 still names the latter.
 
 Not a failure mode here: a length, range or `ENUM` value truncation (1265 / 1406 / 1366 /
 1264). It is a property of the type (a parameter's Go type, a literal's own value set), caught
@@ -252,13 +259,12 @@ on that side.
 
 A strict `INSERT` / `REPLACE` / `UPDATE` / `DELETE` (outside `IGNORE`) escalates a constant
 conversion's warning to the error 1292 `ER_TRUNCATED_WRONG_VALUE`; a `SELECT`, a `SET`, a `DO`
-or a non-strict write runs the same expression with a warning, rows present or not (all
-measured against mysqld):
+or a non-strict write runs the same expression with a warning, rows present or not:
 
 | expression | fails when |
 |---|---|
 | `CAST` / `CONVERT` of a constant to `DATE` / `DATETIME` | the value is no datetime under the session's zero-date flags (`CAST('2004-10-0' AS DATE)`, `CAST(65 AS DATETIME)`) |
-| ... to `TIME` | `str_to_time` rejects it or it passes 838 hours |
+| ... to `TIME` | the server does not read it as a time, or it passes 838 hours |
 | ... to `YEAR` | the leading integer of the string is followed by anything (`'2020extra'`, `'2020.5'`), or the value is outside 0-99 and 1901-2155; a string with no digits at all is 0 without a warning |
 | ... to `CHAR(n)` | the value's string form is longer than n (`CAST(1000 AS CHAR(3))`) |
 | ... to `SIGNED` / `UNSIGNED` | the string is not a whole integer (`'abc'`, `'1.5'`, `'1e2'`) or its magnitude passes `BIGINT UNSIGNED`; a decimal outside the range |
@@ -309,7 +315,7 @@ and a query over no rows does not fail):
 | `INET_ATON` | the value is not digit groups of at most 255 separated by up to three dots (`'122.256'`, a trailing dot; `'1.2.3'` runs) | 1411, in a strict write outside `IGNORE` |
 | `INET6_ATON` | the value is neither a full dotted IPv4 (four groups, no leading `0x`) nor a valid IPv6 text (one `::` gap at most, four hex digits per group) | 1411, the same gate |
 | `UNHEX` | the value holds a non-hex character | 1411, the same gate |
-| `STR_TO_DATE` | the value does not parse under the format (`extract_date_time`'s specifiers, the en_US month and day names, `%V`/`%v` weeks with their `%X`/`%x` years), or the date fails the session's zero-date flags (under `NO_ZERO_DATE` any zero year, month or day of a date result) | 1411; a parsed value with a non-space tail is 1292, spelt with the format's own result type |
+| `STR_TO_DATE` | the value does not parse under the format (the server's format specifiers, the en_US month and day names, `%V`/`%v` weeks with their `%X`/`%x` years), or the date fails the session's zero-date flags (under `NO_ZERO_DATE` any zero year, month or day of a date result) | 1411; a parsed value with a non-space tail is 1292, spelt with the format's own result type |
 | `UUID_TO_BIN` | the value is not 32 hex digits, the dashed 8-4-4-4-12 form, or that form in braces | 1411, every statement and mode |
 | `BIN_TO_UUID` | the value is not exactly 16 bytes | 1411, every statement and mode |
 | `PERIOD_ADD` / `PERIOD_DIFF` | a period argument is not a positive `[YY]YYMM` with month 1 to 12 | 1210, every statement and mode |
@@ -335,7 +341,7 @@ server marks internal) are 3566 whenever a statement names them, before either c
 An explicitly scoped system variable read must match the variable's own scope: `@@session.x`
 (`@@local.x` means the same) of a GLOBAL-only variable and `@@global.x` of a SESSION-only one
 are the statement's 1238, wherever the read sits -- a dead branch, a subquery, a `SELECT`
-with no rows. The scope table is generated from the server source (`sql/sys_vars.cc`), so it
+with no rows. The scope table is generated from the server source, so it
 covers every stock variable; a plugin's or component's variable (`@@x.y` included) and an
 unqualified `@@x` are never judged, and an unknown name is left to the server's own 1193.
 
@@ -355,8 +361,7 @@ takes a table's triggers with it; `RENAME TABLE` moves them.
 of the event, a new schedule the whole schedule, `RENAME TO` the name) and `DROP EVENT` are
 applied. Nothing a statement of the program runs reaches an event,
 so its body is read for the schema's own sake: the server checks nothing of it at `CREATE`
-time (a `DELETE` from a table that does not exist is accepted and fails at every run,
-measured), the checker reports it as a schema problem, and the body's own statements are
+time (a `DELETE` from a table that does not exist is accepted and fails at every run), the checker reports it as a schema problem, and the body's own statements are
 judged for the obligations like a routine's. A `RETURN` in an event is 1313. The migration
 commands manage events ([migrations.md](migrations.md#mysql)).
 
@@ -372,7 +377,7 @@ The body is read once per schema, the way a PL/pgSQL function's is on PostgreSQL
   a BEFORE trigger, is 1362; outside a trigger, `SET NEW.col` / `SET OLD.col` is 1193 (a
   read of `NEW.col` there is a column the server resolves only at run time);
 - a NOT NULL column's `NEW.col` can still be NULL in a BEFORE trigger and is as declared in an
-  AFTER one: the server's own NOT NULL check runs between the two (measured);
+  AFTER one: the server's own NOT NULL check runs between the two;
 - a `DECLARE`d variable or a routine's own parameter shadows a column of the same name.
 
 What the server itself refuses when the body is created is an error here too:
@@ -386,18 +391,18 @@ What the server itself refuses when the body is created is an error here too:
 | a mismatched `SELECT ... INTO` column count | 1222 |
 | a trigger or function that returns a result set (its own INTO-less `SELECT`, or a `CALL`ed PROCEDURE's own) | 1415 |
 | `COMMIT` / `START TRANSACTION` / a DDL statement inside a body | 1422 |
-| a trigger that writes its own table | 1442, on every one of the 18 timing x event x write combinations (measured): always a failure, reported on the trigger's own definition rather than on a statement that fires it |
+| a trigger that writes its own table | 1442, on every one of the 18 timing x event x write combinations: always a failure, reported on the trigger's own definition rather than on a statement that fires it |
 | two `DECLARE`s of the same variable name in one block | 1331 |
 | two `DECLARE ... CONDITION`s or two `DECLARE ... CURSOR`s of one name in one block (a variable and a cursor of one name are different namespaces) | 1332 / 1333 |
 | two `HANDLER`s of one block naming the same condition value (handlers that merely overlap, `SQLEXCEPTION` next to `SQLSTATE '45000'`, are accepted) | 1413 |
 | dynamic SQL (`PREPARE` / `EXECUTE` / `DEALLOCATE PREPARE`) or `FLUSH` in a trigger or FUNCTION (a PROCEDURE is exempt) | 1336 |
 | `LOCK TABLES` / `UNLOCK TABLES`, `LOAD DATA` or `ALTER VIEW` in any body, a PROCEDURE's included (`SELECT ... INTO OUTFILE` is allowed, even in a trigger or function: it returns no result set) | 1314 |
-| a SQLSTATE literal that is not five characters (`SIGNAL SQLSTATE '4500'`, a `CONDITION` or `HANDLER` naming one) | 1407 at CREATE; five characters of any kind are accepted (measured) |
+| a SQLSTATE literal that is not five characters (`SIGNAL SQLSTATE '4500'`, a `CONDITION` or `HANDLER` naming one) | 1407 at CREATE; five characters of any kind are accepted |
 | a `SIGNAL` or `RESIGNAL` setting `MYSQL_ERRNO = 0` | 1231, certain every time |
 | a bare `RESIGNAL` reached outside any `HANDLER` | 1645, certain every time |
 | a PROCEDURE that `CALL`s itself | 1456 on every recursive invocation while `max_sp_recursion_depth` is 0 (the default; declare it above 0 and nothing is predicted); direct self-recursion only, not a routine reaching itself through another |
 | a FUNCTION that calls itself | 1424 on every invocation (the `CREATE` goes through; the setting does not apply to functions) |
-| a trigger chain writing back into a table already in use further up (`INSERT INTO x` fires `x`'s trigger writing `y`, whose trigger writes `x`), or reading it under a lock (`SELECT ... FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`; a plain read does not collide, measured) | 1442, though neither trigger writes its own table; a chain that a `CALL`ed routine continues counts the same, and a certain failure found anywhere along the chain (1442, 1456) is reported on the firing statement |
+| a trigger chain writing back into a table already in use further up (`INSERT INTO x` fires `x`'s trigger writing `y`, whose trigger writes `x`), or reading it under a lock (`SELECT ... FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`; a plain read does not collide) | 1442, though neither trigger writes its own table; a chain that a `CALL`ed routine continues counts the same, and a certain failure found anywhere along the chain (1442, 1456) is reported on the firing statement |
 
 And among the body's failure modes, the "may" shape a `SIGNAL` has:
 
@@ -410,7 +415,7 @@ A trigger's or routine's own writes bring their own failure modes into the body'
 schema's constraints, and what those writes' own triggers raise in turn (a cycle is cut). A
 `SIGNAL`'s key is its `MYSQL_ERRNO` as decimal text when it sets one -- a builtin's number
 too, `SET MYSQL_ERRNO = 1062` under SQLSTATE `'23000'` is keyed `1062`, not by a key name the
-message never carried (measured) -- else its SQLSTATE (the same rule the
+message never carried -- else its SQLSTATE (the same rule the
 [runtime](#the-runtime-databasesql) reads an error back by); SQLSTATE class
 `01` is a warning and no failure mode, an unhandled class `02` is 1643, anything else
 unhandled is 1644. A named `CONDITION` resolves to its value; a bare `RESIGNAL` re-raises
@@ -423,14 +428,14 @@ schema both ways; an expect line and `mysql.Violates` still judge by the key its
 `sqlshape.Failure` from `sqlshape.Error("30001")` carries the code and nothing else. A
 `DECLARE ... HANDLER FOR` absorbs the matching failure modes of its own block (`SQLEXCEPTION`
 everything but classes `01` and `02`, `SQLWARNING` / `NOT FOUND` their class, a SQLSTATE or
-number itself); `INSERT` / `UPDATE IGNORE` absorbs none of a trigger's SIGNALs (measured: the
+number itself); `INSERT` / `UPDATE IGNORE` absorbs none of a trigger's SIGNALs (the
 statement still fails). `SELECT ... INTO` carries 1172 unless the query is provably at most
 one row, the same proof `One` uses (a query with no row is NOT FOUND, a warning, never a
 failure).
 
 A statement on a table takes the failure modes of that table's triggers for its event:
 `INSERT` / `UPDATE` / `DELETE`; `REPLACE` fires the INSERT and DELETE triggers, `ON DUPLICATE
-KEY UPDATE` the INSERT and UPDATE ones (measured).
+KEY UPDATE` the INSERT and UPDATE ones.
 
 A call to a FUNCTION the catalog does not know resolves to the schema's own (an unqualified
 name that is also a native function resolves to the native one, as on the server; `db.f`
@@ -439,14 +444,14 @@ the `RETURNS` declaration and is always nullable (a stored function's `RETURN` c
 NULL regardless of the declared type; there is no static proof otherwise), and the body's own
 failure modes (its SIGNALs, its writes' violations, what they fire) reach the calling
 statement. A function that writes a table the calling statement itself reads or writes is
-1442 on every execution (reading the table is enough, measured; so is naming it in `FROM`
+1442 on every execution (reading the table is enough; so is naming it in `FROM`
 without reading a column). The writes count through nested calls (a function that `CALL`s
 a procedure writing t, or `RETURN`s another function that does, collides the same way), and
 inside a body each statement is the invoking one: `UPDATE t SET v = f(v)` with f writing t is
 1442 when the routine is `CALL`ed, `SELECT COUNT(*) INTO n FROM t; SET @x = f(1)` as two
 statements is not, and a trigger's own table collides with every statement of its body (a
 trigger on `other` running `SET @y = g(1)` with g writing `other` is 1442; a table the
-firing statement merely reads is not the trigger's, measured). A `CALL` inside a body is
+firing statement merely reads is not the trigger's). A `CALL` inside a body is
 resolved the way a top-level one is (1305 / 1318 / 1414), and the callee's failure modes and
 writes become the body's. `-- sqlshape: not null`
 above a `CREATE FUNCTION` declares the function never returns NULL, the same directive
@@ -455,7 +460,7 @@ for PostgreSQL; a call then types as NOT NULL instead. A PROCEDURE or a TRIGGER 
 the directive: neither returns a value for it to describe.
 
 `CALL p(...)` types an `IN` / `INOUT` argument by its parameter and requires an `OUT` /
-`INOUT` argument to be a variable (1414); its own facts are `Kind Call`. What counts as a
+`INOUT` argument to be a variable (1414). What counts as a
 variable there:
 
 | argument | variable? |
@@ -463,6 +468,7 @@ variable there:
 | a declared variable, a parameter, a `?` | yes |
 | `NEW.col` inside a `BEFORE` trigger's own body | yes (the server's own 1414 message names this exception) |
 | `OLD.col`, or `NEW.col` in an `AFTER` trigger | no |
+
 Its result columns come from the body's own INTO-less `SELECT`s: none is no columns, one is
 those columns, several of the same shape agree on one list, several of different shapes is
 the checker's own error (not something mysqld itself refuses -- it only ever returns
@@ -533,32 +539,32 @@ visible there. The row alias (`INSERT ... VALUES (...) AS new [(names)]`, 8.0.19
 inserted columns -- the insert's own fields, renamed positionally by the name list -- to
 `ON DUPLICATE KEY UPDATE` beside the target: an unqualified name both carry is 1052, a name
 list of the wrong count 1353, an alias colliding with the target 1066, and `VALUES(c)` stays
-usable beside it (all measured). A derived table needs an alias (1248); `QUALIFY` is rejected as 8.4 rejects it
+usable beside it. A derived table needs an alias (1248); `QUALIFY` is rejected as 8.4 rejects it
 without the hypergraph optimizer (6037). A `USING` or `NATURAL` join
 coalesces its common columns (an unqualified name resolves to the left side, `SELECT *` lists it
 once). Table and view names compare as `lower_case_table_names` says; column and key names never
 mind case. An `UPDATE` or `DELETE` whose subquery reads the table it writes is refused as the
 server refuses it: 1093 for the table itself (in `WHERE`, `EXISTS` or `IN` alike), 1443 for a
 view over it; a derived table over it is materialized and accepted, as is `INSERT ... SELECT`
-from the same table (measured).
+from the same table.
 
 ### Views
 
 A view is merged into the query that reads it unless it says `ALGORITHM=TEMPTABLE` or its
 query cannot be merged (`GROUP BY`, `HAVING`, `DISTINCT`, `LIMIT`, a set operation, a window
-function or a subquery in the select list) -- the server's own `is_mergeable`. A write through a
+function or a subquery in the select list), as the server decides it. A write through a
 merged view lands on its base table; through any other view it is 1288 (an `INSERT`'s spelling
 of the same refusal is 1471). A merged view carries the server's own two write flags, computed
 over the `FROM` leaves of its query: it is updatable when any leaf is (a base table, or an
 updatable view), insertable when every leaf is, and neither when any leaf sits on the nullable
 side of an outer join -- so a join with a derived table or a `TEMPTABLE` view stays updatable
 but is never insertable, and a view over a `TEMPTABLE` view is neither. Each write's own
-rules, measured against the server:
+rules:
 
 - `INSERT` needs the insertable flag (else 1471). The fields -- the column list, or without
   one every view column -- resolve against the view (1054, 1136); a derived column among them
   is that column's 1348, one outside them, or the same base column behind two view columns,
-  is 1471. A `COLLATE` wrapper is transparent (the server's `field_for_view_update`): such a
+  is 1471. A `COLLATE` wrapper is transparent, as it is to the server: such a
   column stays plain. A join view additionally needs an explicit column list (1394) naming
   columns of exactly one base table, the `ON DUPLICATE KEY UPDATE` assignments included
   (1393), and `REPLACE` never reaches one (1395: the delete half). The write's failure modes
@@ -590,7 +596,7 @@ Besides `SELECT` / `INSERT` / `UPDATE` / `DELETE` / `CALL`, the checker reads th
   placeholder in one takes the column's type. Its failure modes are the INSERT's -- the keys,
   foreign keys and checks of the columns it fills (1062 / 1452 / 3819), `IGNORE` turning them
   into warnings, `REPLACE` deleting the colliding row first -- with two differences the server
-  makes (measured): a field for a `NOT NULL` column may be NULL, which is 1263 rather than 1048
+  makes: a field for a `NOT NULL` column may be NULL, which is 1263 rather than 1048
   (a `SET col = NULL` stays 1048), and a `NOT NULL` column the column list leaves out takes its
   type's implicit default rather than 1364.
 - `LOCK TABLES` names tables that must exist (1146, a view may be locked) under distinct aliases
@@ -630,7 +636,7 @@ res, err    := mysql.Exec(ctx, db, MarkPaid, p)                 // sql.Result
 
 u, err     := mysql.Get(ctx, db, UserByEmail, p)                // One: ErrNoRows when absent
 u, ok, err := mysql.Find(ctx, db, UserByEmail, p)               // One: ok reports presence
-res, err   := mysql.ExecOne(ctx, db, MarkPaid, p)               // One: ErrNoRows when no row was touched
+res, err   := mysql.ExecOne(ctx, db, MarkOrderPaid, p)          // One: ErrNoRows when no row was touched
 ```
 
 What every runtime does the same way (row mapping, `One`, the guarantee that only checked SQL
@@ -649,9 +655,12 @@ runs, errors under the expect line's names) is in [runtime.md](runtime.md). What
 - There is no `Batch`, `Copy` or `MatView`.
 - `mysql.Verify(ctx, db, schemaSQL)` asks the connection for its session `@@sql_mode` and the
   server's `lower_case_table_names` and returns an error when they differ from what the schema
-  declares (the server's defaults when it declares none): a DSN's `sql_mode=...`, a pool's session
-  setup or a server configured otherwise would run the statements under rules the checker did
-  not judge them by. Call it once at start-up, after opening the pool.
+  declares (a freshly initialized 8.4's defaults when it declares none): a DSN's `sql_mode=...`, a
+  pool's session setup or a server configured otherwise would run the statements under rules the
+  checker did not judge them by. A mode name 8.4 does not define (another MySQL version or
+  MariaDB may run with some) is left out of the comparison rather than reported; only a
+  difference in the modes 8.4 knows is an error, and its message names the modes it left out.
+  Call it once at start-up, after opening the pool.
 
   ```go
   if err := mysql.Verify(ctx, db, schemaSQL); err != nil { ... }

@@ -25,10 +25,11 @@ tag, err    := postgres.Exec(ctx, db, MarkPaid, p)                 // the driver
 
 ```go
 var UserByEmail = sqlshape.One[User, struct{ Email string }](`...`)
+var MarkOrderPaid = sqlshape.One[struct{}, struct{ ID int64 }](`UPDATE orders SET paid_at = now() WHERE id = {{.ID}}`)
 
-u, err     := postgres.Get(ctx, db, UserByEmail, p)    // ErrNoRows when absent
-u, ok, err := postgres.Find(ctx, db, UserByEmail, p)   // ok reports presence
-tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)      // ErrNoRows when no row was touched
+u, err     := postgres.Get(ctx, db, UserByEmail, p)       // ErrNoRows when absent
+u, ok, err := postgres.Find(ctx, db, UserByEmail, p)      // ok reports presence
+tag, err   := postgres.ExecOne(ctx, db, MarkOrderPaid, q) // ErrNoRows when no row was touched
 ```
 
 All three return `ErrManyRows` if a second row arrives. The checker proved from the schema that
@@ -47,8 +48,7 @@ a parameter may take is the database's table: [postgres.md](postgres.md#what-the
 
 A Go enum type may implement `Known() bool` (the `sqlshape.Labelled` interface); the mapper then
 rejects a label this build does not know with `*sqlshape.UnknownLabelError` instead of handing
-the application a value it cannot switch on. The binding rules (`sqlshape.Fields`) are the root
-module's, shared by the checker and every runtime.
+the application a value it cannot switch on.
 
 ## Errors
 

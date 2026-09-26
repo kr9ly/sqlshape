@@ -28,11 +28,13 @@ PostgreSQLでは両側とも`pg_dump`の出力として読むので、比較さ�
 2つのスキーマの差分を見ても決められないことがある。renameなのかdropしてaddしたのか、削除するenumのラベルを持つ行は何に置き換えるのか、新しい`NOT NULL`列に既存の行では何を入れるのか、である。これらは`schema.sql`に`-- @migrate`行で宣言する:
 
 ```sql
--- @migrate rename orders.state -> orders.status      列、またはテーブルのrename。左が現在の名前、右が新しい名前
--- @migrate drop orders.legacy                        この列（またはテーブル）を落としてよい
+-- @migrate rename orders.state -> orders.status
+-- @migrate drop orders.legacy
 -- @migrate enum order_status: drop 'canceled' using 'cancelled'
 -- @migrate backfill orders.status = 'pending' where status is null
 ```
+
+`rename 旧 -> 新`は列またはテーブルのrenameで、左が現在の名前、右が新しい名前である。`drop`はその列（またはテーブル）を落としてよいという宣言である。宣言は1行全体で、同じ行の後ろには何も書けない。
 
 `drop`も`rename`も宣言されていないのに消えるテーブルや列があればエラーになる（DDLは出力される）。データが失われる変更は必ず宣言を要求する、ということである。逆に、差分と食い違う宣言（元が存在しないrename、まだ残っている列のdrop）もエラーになるので、古い宣言が残り続けることはない。宣言はデータベースの現状から`schema.sql`への1ステップを記述するもので、適用したら消す。
 
@@ -142,15 +144,20 @@ MySQLでは両側をサーバ自身の描き方で読む。全部の表とビュ
 PostgreSQL:
 
 - `pg_dump`。`PATH`にあるか、`$SQLSHAPE_PG_DUMP`で指定する。メジャーバージョンは対象データベース以上であること。
-- 比較のために、`sqlshape`はスキーマが宣言したバージョン（`-- sqlshape: postgres 17`）の専用PostgreSQLを初回にダウンロードして`~/.cache/sqlshape`（`$SQLSHAPE_PG_CACHE`）にキャッシュし、そこで`schema.sql`を実行する。接続先のデータベースが宣言と違うメジャーバージョンで動いているときは、その旨をstderrに出して続行する。DDLは宣言したバージョンの規則で判定される。初回はダウンロードに数秒かかり、以後は0.25秒程度で起動する。利用者のデータベースはこの用途には使わない。
+- 比較のために、`sqlshape`はスキーマが宣言したバージョン（`-- sqlshape: postgres 17`）の専用PostgreSQLを初回にダウンロードして`~/.cache/sqlshape`（`$SQLSHAPE_PG_CACHE`）にキャッシュし、そこで`schema.sql`を実行する。接続先のデータベースが宣言と違うメジャーバージョンで動いているときは、その旨をstderrに出して続行する。DDLは宣言したバージョンの規則で判定される。この確認を通っても、そのサーバでDDLが同じように動くことは保証しない。実際のサーバで失敗したり、挙動が違ったりすることはありうる。初回はダウンロードに数秒かかり、以後は0.25秒程度で起動する。利用者のデータベースはこの用途には使わない。
 
 MySQL:
 
-- `-db`では、接続ユーザーに`CREATE DATABASE`と`DROP DATABASE`の権限が要る（一時データベースのため）。サーバの`lower_case_table_names`はスキーマが宣言した値（宣言が無ければ0）でなければならず、違えばコマンドは止まる。サーバがスキーマの宣言と違うバージョンのMySQLで動いているときは、その旨を出して続行する。
+- `-db`では、接続ユーザーに`CREATE DATABASE`と`DROP DATABASE`の権限が要る（一時データベースのため）。サーバの`lower_case_table_names`はスキーマが宣言した値（宣言が無ければ0）でなければならず、違えばコマンドは止まる。サーバがスキーマの宣言と違うバージョンのMySQLで動いているときは、その旨を出して続行する。PostgreSQLと同じく、確認を通ってもそのサーバでDDLが同じように動くことは保証しない。
 - `-from`（テキスト同士）では、`PATH`の`mysqld`（`nix-shell -p mysql84`、ディストリビューションのパッケージ、サーバtarballの`bin/`）をスキーマの宣言した設定で起こす。
 
 共通:
 
 - `-schema PATH`で`schema.sql`、または`*.sql`を名前順に適用する`schema/`ディレクトリを指定できる。既定は作業ディレクトリから上に辿って最初に見つかるもの。
 
-終了コードは、0が差分なし、1が何かを見つけた（差分、ドリフト、拒否されたapply）、2が使い方か環境のエラー。
+終了コードはコマンドごとに違う:
+
+- `diff`: DDLを出力したら（空でなくても）0。`drop`も`rename`も宣言されずに消える表や列があるとき、または差分と食い違う宣言があるときは1（DDLは出力される）
+- `verify-schema`: データベースが`schema.sql`と一致すれば0、違いがあれば1
+- `apply`: DDLを適用したら0、拒否したら1
+- どのコマンドも、使い方か環境のエラーは2

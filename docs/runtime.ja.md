@@ -19,10 +19,11 @@ tag, err    := postgres.Exec(ctx, db, MarkPaid, p)                 // ドライ�
 
 ```go
 var UserByEmail = sqlshape.One[User, struct{ Email string }](`...`)
+var MarkOrderPaid = sqlshape.One[struct{}, struct{ ID int64 }](`UPDATE orders SET paid_at = now() WHERE id = {{.ID}}`)
 
-u, err     := postgres.Get(ctx, db, UserByEmail, p)    // 無ければ ErrNoRows
-u, ok, err := postgres.Find(ctx, db, UserByEmail, p)   // ok が有無を表す
-tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)      // 1行も対象にならなければ ErrNoRows
+u, err     := postgres.Get(ctx, db, UserByEmail, p)       // 無ければ ErrNoRows
+u, ok, err := postgres.Find(ctx, db, UserByEmail, p)      // ok が有無を表す
+tag, err   := postgres.ExecOne(ctx, db, MarkOrderPaid, q) // 1行も対象にならなければ ErrNoRows
 ```
 
 3つとも、2行目が返ってきたら`ErrManyRows`を返す。検査器は1行以下しか返らないことをスキーマから証明しているので、これが起きるのは、証明の根拠になった一意制約が実際のデータベースでは外れているときである。

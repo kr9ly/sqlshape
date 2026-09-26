@@ -15,9 +15,11 @@ CREATE TABLE ...
 
 新しいバージョンだけが受け付ける構文（`RETURNING old.*`、`WITHOUT OVERLAPS`、`NOT ENFORCED`、`VIRTUAL`な生成列は18のもの）は、古いバージョンを宣言していれば構文エラーになる。そのバージョンのサーバに流したときと同じ結果である。PostgreSQLのバージョンを上げる作業は、この数字を変えて検査器の報告を読むことになる。
 
+宣言が決めるのは文を判定する規則であって、接続するサーバを制限するものではない。スキーマが`postgres 17`を宣言したプログラムは、pgxが接続できるサーバならどれの上でも動く。ただし他のバージョンのサーバでも判定は17の規則に従うので、そのサーバの挙動が違う箇所では、判定がサーバの実際の動きと一致することは保証しない（[README: 制約事項](../README.ja.md#制約事項)）。
+
 ## 検査器が埋め込んでいるもの
 
-パーサは宣言したバージョンのlibpg_queryで、WebAssemblyとして埋め込みwazeroで動かす。サーバが読める文は検査器も同じように読む。SELECTとDML、MERGE、CTE、ウィンドウ関数、GROUPING SETS、SQL/JSON、範囲型、18の`RETURNING old` / `new`と時制キー、citextやhstoreなどの拡張、ビュー・関数（SQLとPL/pgSQLの本体まで）・トリガ・ポリシーを含むDDL。アナライザーはそのバージョンの`pg_catalog`から組み上げたpure Goの実装で、検査時にPostgreSQLへ接続することはない。Cコンパイラもリンクするライブラリも要らない。初回だけモジュールのコンパイルに1秒ほどかかり、結果はユーザーのキャッシュディレクトリ（Linuxでは`~/.cache/sqlshape`）に置かれる。
+パーサは宣言したバージョンのlibpg_queryで、WebAssemblyとして埋め込みwazeroで動かす。そのバージョンのPostgreSQLが読める文は検査器も同じように読む。SELECTとDML、MERGE、CTE、ウィンドウ関数、GROUPING SETS、SQL/JSON、範囲型、18の`RETURNING old` / `new`と時制キー、citextやhstoreなどの拡張、ビュー・関数（SQLとPL/pgSQLの本体まで）・トリガ・ポリシーを含むDDL。アナライザーはそのバージョンの`pg_catalog`から組み上げたpure Goの実装で、検査時にPostgreSQLへ接続することはない。Cコンパイラもリンクするライブラリも要らない。初回だけモジュールのコンパイルに1秒ほどかかり、結果はユーザーのキャッシュディレクトリ（Linuxでは`~/.cache/sqlshape`）に置かれる。
 
 判定の裏付けはPostgreSQL自身の回帰テストである。`src/test/regress`の文を、アナライザーと同じバージョンの本物のPostgreSQLに並走させ、パラメータの型・結果列・エラーの判定が一致することを確認している。一致しないのは17で22,103文のうち19件、18で23,384文のうち31件。全件を`check/postgres/analyze/testdata/regress_baseline_<version>.txt`に列挙してあり、どれも静的解析では判定できないもの（行レベルセキュリティの再帰、権限、サーバ内部のエラー）か、検査器が正しくサーバのDescribeには見えないもの（INSERTの`RETURNING old`がNULLであること）である。この突き合わせは`go test ./...`の一部なので、新しい不一致が出ればテストが失敗する。
 
@@ -90,7 +92,7 @@ type Money struct{ ... }   // sql.Scanner / driver.Valuer を実装する
 
 同じ名前になる制約が2つあると、PostgreSQLと同様に番号が付く（`orders_total_check1`）。生成した名前がPostgreSQLの63バイトという識別子の上限を超える場合は、マルチバイト文字を途中で切らないよう、PostgreSQLと同じやり方で切り詰める。
 
-自動更新可能ビューで`WITH CHECK OPTION`を宣言したものへの`UPDATE` / `INSERT`は、基底表の`require pinned(<列>)`を履行する（`Discharge.Path`は`ByView`）:
+自動更新可能ビューで`WITH CHECK OPTION`を宣言したものへの`UPDATE` / `INSERT`は、基底表の`require pinned(<列>)`を満たす（`sqlshape check`は`ok(view)`と出す）:
 
 - ビュー自身のWHEREがその列を等値で固定しているとき。`WITH CHECK OPTION`単独ならCASCADEDなので下位の全ビューのWHEREも数える。`WITH LOCAL CHECK OPTION`はそのビュー自身で止まるが、自前のCHECK OPTIONを宣言した下位ビューはPostgreSQLが検査し続けるので数える
 - 裏付けは上の44000そのもの。CHECK OPTIONを宣言していないビューはこの経路を持たない
@@ -112,7 +114,7 @@ tag, err    := postgres.Exec(ctx, db, MarkPaid, p)                 // pgconn.Com
 
 u, err     := postgres.Get(ctx, db, UserByEmail, p)                // One: 無ければ ErrNoRows
 u, ok, err := postgres.Find(ctx, db, UserByEmail, p)               // One: ok が有無
-tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)               // One: 1行も触らなければ ErrNoRows
+tag, err   := postgres.ExecOne(ctx, db, MarkOrderPaid, p)          // One: 1行も触らなければ ErrNoRows
 ```
 
 どのランタイムでも同じこと（行のマッピング、`One`、検査済みのSQLだけが走る保証、expect行の名前で返るエラー）は[runtime.ja.md](runtime.ja.md)にある。pgxで足されるもの:
@@ -133,7 +135,7 @@ tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)               // One: 1行�
   ```go
   b := postgres.NewBatch()
   orders := postgres.Queue(b, ListOrders, ListParams{Status: &paid})
-  paid   := postgres.QueueOne(b, MarkPaid, struct{ ID int64 }{id})
+  paid   := postgres.QueueOne(b, MarkOrderPaid, struct{ ID int64 }{id})
   if err := b.Send(ctx, db); err != nil { ... }
   rows, err := orders.Rows()    // []Order。First() で先頭行
   tag, err  := paid.Tag()
@@ -161,7 +163,7 @@ tag, err   := postgres.ExecOne(ctx, db, MarkPaid, p)               // One: 1行�
 
 ## マイグレーション
 
-`sqlshape diff`、`apply`、`verify-schema`は、データベースと`schema.sql`の差分からDDLを導き、そのDDLが本当に`schema.sql`に至ることを確かめてから実行する。両側を`pg_dump`の出力として比較するので、宣言したバージョンの`pg_dump`が`PATH`に要り、`schema.sql`を読むために宣言したバージョンの埋め込みPostgreSQL（初回にダウンロードされ、`~/.cache/sqlshape`にキャッシュされる）を起動する。コマンドは[migrations.ja.md](migrations.ja.md)にあり、MySQLで違うところはそのMySQLの節にある。
+`sqlshape diff`、`apply`、`verify-schema`は、データベースと`schema.sql`の差分からDDLを導き、そのDDLが本当に`schema.sql`に至ることを確かめてから実行する。両側を`pg_dump`の出力として比較するので、メジャーバージョンが対象データベース以上の`pg_dump`が`PATH`に要り、`schema.sql`を読むために宣言したバージョンの埋め込みPostgreSQL（初回にダウンロードされ、`~/.cache/sqlshape`にキャッシュされる）を起動する。データベースが宣言と違うメジャーバージョンで動いているときは、その旨をstderrに出して続行し、DDLは宣言したバージョンの規則で判定する（[migrations.ja.md](migrations.ja.md#必要な環境)）。コマンドは[migrations.ja.md](migrations.ja.md)にあり、MySQLで違うところはそのMySQLの節にある。
 
 ## License
 
