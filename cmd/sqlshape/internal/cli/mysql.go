@@ -149,9 +149,18 @@ func runApplyMySQL(ctx context.Context, schemaPath, text, db, ddl, pkgs string, 
 		return err
 	}
 	defer conn.Close()
+	// one session, under the sql_mode the scratch database judged the DDL by
+	session, err := conn.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	if err := mydump.SetSQLMode(ctx, session, mydump.Header(text)); err != nil {
+		return err
+	}
 	stmts := mymigrate.SplitFor(ddl, tgt.s)
 	for i, stmt := range stmts {
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+		if _, err := session.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("apply: statement %d of %d failed, the %d before it are applied (MySQL DDL commits implicitly; `sqlshape diff` from here gives the rest):\n  %s\n%v", i+1, len(stmts), i, stmt, err)
 		}
 	}

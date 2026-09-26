@@ -27,6 +27,7 @@ import (
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 	"github.com/kr9ly/sqlshape/mysqltest/v2"
 	"github.com/kr9ly/sqlshape/v2/x/dialect"
+	"github.com/kr9ly/sqlshape/v2/x/sqlmode"
 )
 
 // Canonicalizer gives schema text its canonical form: the schema the server holds after
@@ -449,6 +450,22 @@ func checkSettings(ctx context.Context, db Querier, header string) error {
 	return nil
 }
 
+// SetSQLMode sets the session sql_mode schema.sql's statements run under on conn (one
+// connection: a session setting does not reach a pool's others): the declared one, else
+// 8.4's default, as the checker reads an undeclared mode -- whatever the server's global
+// setting is. The scratch database that judges a DDL and the connection apply runs it on
+// both take it, so the DDL runs under the mode it was judged by.
+func SetSQLMode(ctx context.Context, conn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, header string) error {
+	mode, ok := sqlMode(header)
+	if !ok {
+		mode = sqlmode.Default.String()
+	}
+	_, err := conn.ExecContext(ctx, "SET SESSION sql_mode = '"+strings.ReplaceAll(mode, "'", "''")+"'")
+	return err
+}
+
 // sqlMode is the declared sql_mode, "" when the header declares none.
 func sqlMode(header string) (string, bool) {
 	if settings, err := dialect.Settings(header); err == nil {
@@ -518,10 +535,8 @@ func canonicalOn(ctx context.Context, db *sql.DB, schemaSQL, header string) (*sc
 		return nil, "", err
 	}
 	defer conn.Close()
-	if mode, ok := sqlMode(header); ok {
-		if _, err := conn.ExecContext(ctx, "SET SESSION sql_mode = '"+strings.ReplaceAll(mode, "'", "''")+"'"); err != nil {
-			return nil, "", err
-		}
+	if err := SetSQLMode(ctx, conn, header); err != nil {
+		return nil, "", err
 	}
 	if err := checkSettings(ctx, conn, header); err != nil {
 		return nil, "", err

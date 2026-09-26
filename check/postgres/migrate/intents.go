@@ -179,6 +179,7 @@ func (p *planner) readIntents(list []Intent) {
 			ordered = append(ordered, i)
 		}
 	}
+	var backfills []Intent
 	for _, i := range ordered {
 		switch i.Kind {
 		case Rename:
@@ -256,9 +257,97 @@ func (p *planner) readIntents(list []Intent) {
 				bad(i, "%s.%s is not in the target schema", i.Table, i.Column)
 				continue
 			}
-			in.backfills[tr.FullName()] = append(in.backfills[tr.FullName()], i)
+			backfills = append(backfills, i)
 		}
 	}
+	// after every rename is known: a backfill belongs to a step that touches its table -- a
+	// column added or changed, or a constraint, index or trigger the rows must satisfy first
+	// (a plain data fix ahead of a new CHECK / UNIQUE / FOREIGN KEY). One on a table the step
+	// leaves exactly as it is would be emitted again by every later plan (a declaration
+	// applied and not removed), overwriting what the rows hold by then
+	var touched map[string]bool
+	if len(backfills) > 0 {
+		touched = touchedRelations(diff.Compare(p.from, p.to))
+	}
+	for _, i := range backfills {
+		tr, tc := resolveName(p.to, i.Table+"."+i.Column)
+		if p.backfillStale(tr, tc, touched) {
+			bad(i, "%s.%s is in the current schema already and this step does not change its table", i.Table, i.Column)
+			continue
+		}
+		in.backfills[tr.FullName()] = append(in.backfills[tr.FullName()], i)
+	}
+}
+
+// backfillStale reports whether the target column r.col exists in the current schema and
+// the step changes nothing of its table (touched: touchedRelations of the step's diff) nor of
+// the column's type: nothing in this step for a backfill to fill or to prepare.
+func (p *planner) backfillStale(r *schema.Relation, col string, touched map[string]bool) bool {
+	f := p.fromOf(r)
+	if f == nil || f.FullName() != r.FullName() {
+		return false // a new or renamed table
+	}
+	if touched[r.FullName()] {
+		return false
+	}
+	fc, c := f.Column(p.fromCol(r, col)), r.Column(col)
+	if fc == nil || c == nil {
+		return false // a new column
+	}
+	if p.fromCol(r, col) != col {
+		return false // a renamed column: the step touches it
+	}
+	// the same type name can still change underneath: an enum losing a label, a domain's
+	// constraint
+	if k := userTypeKey(p.from, fc.Type); k != "" {
+		ft, tt := diff.UserTypes(p.from)[k], diff.UserTypes(p.to)[k]
+		if ft.Kind != tt.Kind || fmt.Sprint(ft.Props) != fmt.Sprint(tt.Props) {
+			return false
+		}
+	}
+	return true
+}
+
+// touchedRelations is the set of relations (by FullName) a diff changes: the relation
+// itself, or a column, constraint, index, rule, policy, trigger or seeded row of it (all
+// named <relation>.<name> or by the relation's name). A difference in column order alone is
+// no change a step makes.
+func touchedRelations(changes []diff.Change) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range changes {
+		if c.OrderOnly() {
+			continue
+		}
+		switch c.Kind {
+		case "table", "view", "matview", "rows":
+			out[c.Name] = true
+		case "column", "constraint", "index", "rule", "policy", "trigger":
+			if i := strings.LastIndexByte(c.Name, '.'); i > 0 {
+				out[c.Name[:i]] = true
+			}
+		}
+	}
+	return out
+}
+
+// userTypeKey is the name diff.UserTypes lists a column's type under (the element type for
+// an array), "" for a built-in type.
+func userTypeKey(s *schema.Schema, r schema.TypeRef) string {
+	t := s.Types.ByOID(r.OID)
+	if t != nil && t.Elem != 0 {
+		t = s.Types.ByOID(t.Elem)
+	}
+	if t == nil {
+		return ""
+	}
+	name := t.Name
+	if sch := s.Types.Schemas[t.OID]; sch != "" && sch != "public" {
+		name = sch + "." + t.Name
+	}
+	if _, ok := diff.UserTypes(s)[name]; !ok {
+		return ""
+	}
+	return name
 }
 
 // rels caches the relation maps of the two schemas.

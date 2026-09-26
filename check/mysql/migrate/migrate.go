@@ -1339,6 +1339,14 @@ func (p *planner) addParts(f, t *schema.Table) {
 		// key over the column goes on (Error 1452 on the ADD CONSTRAINT otherwise, measured)
 		p.backfill(t.Name, c.Name)
 	}
+	// a backfill of a column the table already had is a data fix the key, check and foreign
+	// key additions below may depend on (a duplicate the new UNIQUE key refuses, a row the
+	// new CHECK or FOREIGN KEY rejects): it runs before them, after this table's MODIFYs
+	for _, in := range p.backfillsOf {
+		if in.Table == t.Name && fcols[in.Column] {
+			p.backfill(t.Name, in.Column)
+		}
+	}
 	for _, k := range t.Keys {
 		if p.earlyKeys[t.Name+"."+keyName(k)] {
 			continue // dropKeysOf already added this one, folded into its own DROP

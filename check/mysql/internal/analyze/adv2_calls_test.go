@@ -203,7 +203,7 @@ CREATE TABLE t_chk (
 // disallowed function: `f_det`"); a column DEFAULT (expr) naming one is refused with 3770
 // ("Default value expression of column 'v' contains a disallowed function"); a CHECK
 // constraint naming one is refused with 3814 ("An expression of a check constraint ...
-// contains disallowed function"). All three are CREATE-time refusals docs/mysql.md already
+// contains disallowed function"). All three are CREATE-time refusals docs/mysql-errors.md already
 // promises the checker reports as schema Problems ("What the server itself refuses at
 // CREATE time is a problem the same way an unknown table is").
 //
@@ -277,7 +277,7 @@ END;
 // measured: `SELECT f_write_b(v) FROM a_tbl WHERE id = 1` (a statement that only reads
 // a_tbl and calls f_write_b) raises 1442 on the real server ("Can't update table 'a_tbl' ...
 // because it is already used by statement which invoked this stored function/trigger"),
-// the same collision docs/mysql.md documents for a routine that writes the referenced table
+// the same collision docs/mysql-errors.md documents for a routine that writes the referenced table
 // directly -- it is exactly as certain here, since b_au always fires on b_tbl's UPDATE.
 //
 // checkCalledRoutineOverlap (call.go line 56) computes the collision from

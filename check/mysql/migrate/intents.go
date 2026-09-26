@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/kr9ly/sqlshape/check/mysql/v2/diff"
 	"github.com/kr9ly/sqlshape/check/mysql/v2/internal/schema"
 )
 
@@ -165,6 +166,7 @@ func (p *planner) readIntents(list []Intent) {
 			ordered = append(ordered, in)
 		}
 	}
+	var backfills []Intent
 	for _, in := range ordered {
 		switch in.Kind {
 		case Rename:
@@ -278,9 +280,66 @@ func (p *planner) readIntents(list []Intent) {
 			}
 			p.enumDrops = append(p.enumDrops, in)
 		case Backfill:
-			p.backfillsOf = append(p.backfillsOf, in)
+			backfills = append(backfills, in)
 		}
 	}
+	// after every rename is known: a backfill belongs to a step that touches its table -- a
+	// column added or changed, or a key, foreign key or check the rows must satisfy first (a
+	// plain data fix ahead of a new CHECK / UNIQUE / FOREIGN KEY). One on a table the step
+	// leaves exactly as it is would be emitted again by every later plan (a declaration
+	// applied and not removed), overwriting what the rows hold by then
+	var touched map[string]bool
+	if len(backfills) > 0 {
+		touched = touchedTables(diff.Compare(p.from, p.to))
+	}
+	for _, in := range backfills {
+		if p.backfillStale(in.Table, in.Column, touched) {
+			p.problem("line %d: backfill %s.%s: in the current schema already, and this step does not change its table", in.Line, in.Table, in.Column)
+			continue
+		}
+		p.backfillsOf = append(p.backfillsOf, in)
+	}
+}
+
+// backfillStale reports whether the target column table.col exists in the current schema
+// and the step changes nothing of its table (touched: touchedTables of the step's diff):
+// nothing in this step for a backfill to fill or to prepare.
+func (p *planner) backfillStale(table, col string, touched map[string]bool) bool {
+	t := p.to.Table(table)
+	if t == nil || t.Column(col) == nil {
+		return false // emitBackfill reports it
+	}
+	ft := p.fromName(table)
+	f := p.from.Table(ft)
+	if f == nil || ft != table {
+		return false // a new or renamed table
+	}
+	if touched[table] {
+		return false
+	}
+	fcName := p.fromCol(ft, col)
+	fc := f.Column(fcName)
+	if fc == nil {
+		return false // a new column
+	}
+	return fcName == col // a renamed column: the step touches it
+}
+
+// touchedTables is the set of tables a diff changes: the table itself (its options,
+// partitioning), or a column, key, foreign key or check of it (named <table>.<name>).
+func touchedTables(changes []diff.Change) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range changes {
+		switch c.Kind {
+		case "table":
+			out[c.Name] = true
+		case "column", "key", "foreign key", "check":
+			if i := strings.LastIndexByte(c.Name, '.'); i > 0 {
+				out[c.Name[:i]] = true
+			}
+		}
+	}
+	return out
 }
 
 // hasPartition reports whether p (a RANGE / LIST Partitioning; HASH/KEY's Parts is always

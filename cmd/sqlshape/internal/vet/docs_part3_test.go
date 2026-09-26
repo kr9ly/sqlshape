@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -890,50 +889,7 @@ var Q = sqlshape.Query[int64, struct{}](`+"`SELECT id FROM orders`"+`)
 }
 
 // ---------------------------------------------------------------------------------------
-// postgres.md / mysql.md
-//
-// docs_test.go's parseDocBlocks only recognizes a fence whose ``` sits at column 0
-// ("^```(go|sql)\\s*$"); postgres.md's Copy and MatView examples (and mysql.md's version
-// declaration fragment) are nested two spaces under a bullet list item instead, so they
-// need their own, separate extraction rather than reusing that regex (which this file
-// does not edit). p3IndentedBlock finds the n'th such fence of the given language in
-// file order.
-// ---------------------------------------------------------------------------------------
-
-var p3IndentedFenceRE = regexp.MustCompile(`^[ \t]+` + "```" + `(go|sql)\s*$`)
-
-func p3IndentedBlock(t *testing.T, path, lang string, occurrence int) string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(string(data), "\n")
-	n := 0
-	for i := 0; i < len(lines); i++ {
-		m := p3IndentedFenceRE.FindStringSubmatch(lines[i])
-		if m == nil || m[1] != lang {
-			continue
-		}
-		indent := lines[i][:strings.Index(lines[i], "```")]
-		j := i + 1
-		var body []string
-		for j < len(lines) && strings.TrimSpace(lines[j]) != "```" {
-			body = append(body, strings.TrimPrefix(lines[j], indent))
-			j++
-		}
-		n++
-		if n == occurrence {
-			return strings.Join(body, "\n")
-		}
-		i = j
-	}
-	t.Fatalf("%s: no indented %s block #%d (found %d)", path, lang, occurrence, n)
-	return ""
-}
-
-// ---------------------------------------------------------------------------------------
-// postgres.md "The Go type table": `// sqlshape: type <pg type>` binds a Go type to a
+// postgres.md "Types of your own": `// sqlshape: type <pg type>` binds a Go type to a
 // PostgreSQL type not in the built-in table (here, a domain). The fence's own struct body
 // is an ellipsis (its point is the doc-comment syntax, not a specific struct), completed
 // here with a type that actually implements sql.Scanner / driver.Valuer, backed by the
@@ -942,8 +898,10 @@ func p3IndentedBlock(t *testing.T, path, lang string, occurrence int) string {
 // ---------------------------------------------------------------------------------------
 
 func TestDocsPostgresTypeBinding(t *testing.T) {
-	block := p3IndentedBlock(t, filepath.Join("..", "..", "..", "..", "docs", "postgres.md"), "go", 1)
-	_ = block // the fence is a syntax fragment (`type Money struct{ ... }`); see below
+	block := nthBlock(t, parseDocBlocks(t, docsMD("postgres.md")), "Types of your own", "go", 1)
+	if !strings.Contains(block.body, "// sqlshape: type money_amount") {
+		t.Fatalf("postgres.md \"Types of your own\": the go fence no longer shows the binding; got:\n%s", block.body)
+	}
 
 	td := t.TempDir()
 	writeFile(t, td, "src/docsex_p3_pgtype_ok/ok.go", `package docsex_p3_pgtype_ok
@@ -974,7 +932,7 @@ var Q = sqlshape.Query[struct{ Amount bool }, struct{ ID int64 }](`+"`SELECT amo
 }
 
 // ---------------------------------------------------------------------------------------
-// postgres.md "The runtime: pgx", the Copy example. Only the declaration
+// postgres.md "Copy" (under "The runtime: pgx"). Only the declaration
 // (`postgres.Copy[Item](...)`) is checked, as docsex_copy_ok already does for
 // checks.md's own COPY section -- the `.From` / `.FromSeq` runtime calls the fence also
 // shows are not: the vendored test stub (testdata/src/github.com/kr9ly/sqlshape/postgres/v2,
@@ -1005,7 +963,7 @@ type Item struct {
 }
 
 // ---------------------------------------------------------------------------------------
-// postgres.md "The runtime: pgx", the MatView example: only the declaration
+// postgres.md "MatView" (under "The runtime: pgx"): only the declaration
 // (`postgres.MatView("order_stats")`), for the same reason as Copy above -- `Refresh` /
 // `RefreshConcurrently` are not part of the vendored stub.
 // ---------------------------------------------------------------------------------------

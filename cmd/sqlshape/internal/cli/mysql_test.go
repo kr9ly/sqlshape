@@ -87,6 +87,56 @@ CREATE EVENT sweep_audit ON SCHEDULE EVERY 1 DAY DO DELETE FROM order_audit WHER
 	}
 }
 
+// apply runs the DDL under the sql_mode schema.sql declares (none: 8.4's default, strict),
+// the one the scratch database judged it by, not under the server's global setting: with
+// the global mode emptied, a value too long for its column is still refused instead of
+// being truncated, and the global setting is left as it was.
+func TestMySQLApplySessionSQLMode(t *testing.T) {
+	ctx := context.Background()
+	base := example(t, "5-mysql") + "\nCREATE TABLE probe (id INT PRIMARY KEY, v VARCHAR(3));\n"
+	db, err := mysqltest.Start(ctx, base)
+	if errors.Is(err, mysqltest.ErrNoServer) {
+		t.Skip("no mysqld on PATH (nix-shell -p mysql84)")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var global string
+	if err := db.Conn().QueryRowContext(ctx, "SELECT @@GLOBAL.sql_mode").Scan(&global); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Conn().ExecContext(ctx, "SET GLOBAL sql_mode = ''"); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Conn().ExecContext(ctx, "SET GLOBAL sql_mode = '"+global+"'")
+	if _, err := db.Conn().ExecContext(ctx, "INSERT INTO probe (id, v) VALUES (1, 'a')"); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	schemaPath := filepath.Join(dir, "schema.sql")
+	target := strings.Replace(base, "v VARCHAR(3));", "v VARCHAR(3), w VARCHAR(3));", 1)
+	if err := os.WriteFile(schemaPath, []byte(target), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ddlPath := filepath.Join(dir, "up.sql")
+	if err := os.WriteFile(ddlPath, []byte("ALTER TABLE `probe` ADD COLUMN `w` varchar(3) DEFAULT NULL;\nUPDATE `probe` SET `w` = 'too long';\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := run(t, "apply", "-db", db.DSN(), "-schema", schemaPath, ddlPath)
+	if code != 2 || !strings.Contains(errs, "statement 2 of 2 failed") || !strings.Contains(errs, "Error 1406") {
+		t.Fatalf("apply must run strict: code %d\n%s", code, errs)
+	}
+	var w *string
+	if err := db.Conn().QueryRowContext(ctx, "SELECT w FROM probe WHERE id = 1").Scan(&w); err != nil || w != nil {
+		t.Errorf("w = %v (%v): the too-long value must not be stored truncated", w, err)
+	}
+	var after string
+	if err := db.Conn().QueryRowContext(ctx, "SELECT @@GLOBAL.sql_mode").Scan(&after); err != nil || after != "" {
+		t.Errorf("global sql_mode %q (%v): apply must leave it as it was", after, err)
+	}
+}
+
 func ddlEditPath(t *testing.T, dir, text string) string {
 	t.Helper()
 	p := filepath.Join(dir, "edited.sql")

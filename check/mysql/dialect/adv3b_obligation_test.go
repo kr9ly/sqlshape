@@ -127,7 +127,7 @@ CREATE TABLE items (
 // TestAdv3UnqualifiedUsingColumnNeverPinsEitherSide: severity medium (a correct, safe
 // statement is rejected on both sides of the join).
 //
-// docs/mysql.md / docs.md's own claim: "A USING or NATURAL join coalesces its common
+// docs/mysql-errors.md / docs.md's own claim: "A USING or NATURAL join coalesces its common
 // columns (an unqualified name resolves to the left side, SELECT * lists it once)." So
 // `items JOIN orders USING (tenant_id) ... WHERE tenant_id = $1` names one coalesced
 // column that both items.tenant_id and orders.tenant_id must equal (that is what USING

@@ -245,7 +245,10 @@ func TestPlanProblems(t *testing.T) {
 		{"stale drop", "-- @migrate drop orders.note", "orders.note still exists in the target schema"},
 		{"stale rename", "-- @migrate rename customers.name -> customers.full_name", "customers.full_name is not in the target schema"},
 		{"enum label kept", "-- @migrate enum orders.status: drop 'paid' using 'pending'", "'paid' is still a label in the target schema"},
-		{"backfill error", "-- @migrate backfill orders.total = nope\nALTER TABLE orders MODIFY COLUMN note TEXT COMMENT 'x';", "backfill orders.total: Unknown column 'nope'"},
+		{"backfill error", "-- @migrate backfill orders.note = nope\nALTER TABLE orders MODIFY COLUMN note TEXT COMMENT 'x';", "backfill orders.note: Unknown column 'nope'"},
+		// a backfill left in schema.sql after it was applied: the column exists, unchanged
+		{"stale backfill", "-- @migrate backfill orders.total = 1", "backfill orders.total: in the current schema already, and this step does not change its table"},
+		{"stale backfill, another table changes", "-- @migrate backfill orders.total = 1\nALTER TABLE customers ADD COLUMN nickname VARCHAR(20);", "backfill orders.total: in the current schema already, and this step does not change its table"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -260,6 +263,52 @@ func TestPlanProblems(t *testing.T) {
 				t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
 			}
 		})
+	}
+}
+
+// A backfill on a column the step changes is not stale: a nullable column turning NOT NULL
+// keeps its UPDATE, and so does a data fix ahead of a CHECK, a UNIQUE key or a FOREIGN KEY the
+// table gains with its columns unchanged -- the UPDATE runs before the constraint. The stale
+// backfill is left out of the DDL rather than emitted.
+func TestBackfillStaleOnlyWhenUnchanged(t *testing.T) {
+	ctx := start(t)
+	baseSQL := example(t)
+	base := mustCanonical(t, ctx, baseSQL)
+	text := baseSQL + "\n-- @migrate backfill orders.note = 'none' where note is null\nALTER TABLE orders MODIFY COLUMN note VARCHAR(100) NOT NULL;"
+	to := mustCanonical(t, ctx, text)
+	ddl := strings.Join(plan(t, ctx, "not null", base, to), "\n")
+	if !strings.Contains(ddl, "UPDATE `orders` SET `note` = 'none' WHERE note is null;") {
+		t.Errorf("DDL lacks the backfill:\n%s", ddl)
+	}
+	for _, c := range []struct{ name, edit, update, constraint string }{
+		{"check added", "-- @migrate backfill orders.total = 1 where total > 1000\nALTER TABLE orders ADD CONSTRAINT orders_total_max CHECK (total <= 1000);",
+			"UPDATE `orders` SET `total` = 1 WHERE total > 1000;", "orders_total_max"},
+		{"unique added", "-- @migrate backfill customers.name = concat(name, id)\nALTER TABLE customers ADD UNIQUE KEY customers_name_key (name);",
+			"UPDATE `customers` SET `name` = concat(name, id);", "customers_name_key"},
+		{"foreign key added", "-- @migrate backfill order_audit.customer_id = (SELECT MIN(id) FROM customers) where customer_id NOT IN (SELECT id FROM customers)\nALTER TABLE order_audit ADD CONSTRAINT order_audit_customer_fk FOREIGN KEY (customer_id) REFERENCES customers (id);",
+			"UPDATE `order_audit` SET `customer_id` = (SELECT MIN(id) FROM customers)", "order_audit_customer_fk"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			to := mustCanonical(t, ctx, baseSQL+"\n"+c.edit)
+			ddl := strings.Join(plan(t, ctx, c.name, base, to), "\n")
+			u, k := strings.Index(ddl, c.update), strings.Index(ddl, c.constraint)
+			if u < 0 || k < 0 || u > k {
+				t.Errorf("want %q before %q:\n%s", c.update, c.constraint, ddl)
+			}
+		})
+	}
+	stale := baseSQL + "\n-- @migrate backfill orders.total = 1"
+	s, _, err := (dump.Local{}).Canonical(ctx, stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, _ := ParseIntents(stale)
+	got, err := Plan(base.s, s, in)
+	if err == nil {
+		t.Fatal("stale backfill planned without an error")
+	}
+	if joined := strings.Join(got, "\n"); strings.Contains(joined, "UPDATE") {
+		t.Errorf("stale backfill still emitted:\n%s", joined)
 	}
 }
 

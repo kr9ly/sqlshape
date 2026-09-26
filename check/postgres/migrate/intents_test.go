@@ -206,6 +206,59 @@ func TestReadIntentsBackfillUnresolved(t *testing.T) {
 	}
 }
 
+// TestReadIntentsBackfillStale covers the backfill a step no longer bears out: its column is
+// in the current schema and the step changes nothing of its table (a declaration applied
+// and not removed), even when other tables change. A column the step adds, renames, or
+// changes (NOT NULL, or an enum type losing a label) still takes its backfill, whatever line
+// the rename is declared on, and so does a plain data fix ahead of a CHECK, UNIQUE or
+// FOREIGN KEY the table gains with its column definitions unchanged.
+func TestReadIntentsBackfillStale(t *testing.T) {
+	const staleMsg = "is in the current schema already and this step does not change its table"
+	cases := []struct {
+		name, from, to, decl string
+		stale                bool
+	}{
+		{"unchanged column", "CREATE TABLE a (id int, n text);", "CREATE TABLE a (id int, n text);", "-- @migrate backfill a.n = 'x'", true},
+		{"unchanged column, with where", "CREATE TABLE a (id int, n text);", "CREATE TABLE a (id int, n text);", "-- @migrate backfill a.n = 'x' where n is null", true},
+		{"another table changes", "CREATE TABLE a (id int, n text); CREATE TABLE b (id int);", "CREATE TABLE a (id int, n text); CREATE TABLE b (id int, m int);", "-- @migrate backfill a.n = 'x'", true},
+		{"check added", "CREATE TABLE a (id int, n int);", "CREATE TABLE a (id int, n int CHECK (n > 0));", "-- @migrate backfill a.n = 1 where n <= 0", false},
+		{"unique added", "CREATE TABLE a (id int, n int);", "CREATE TABLE a (id int, n int UNIQUE);", "-- @migrate backfill a.n = id", false},
+		{"foreign key added",
+			"CREATE TABLE b (id int PRIMARY KEY); CREATE TABLE a (id int, n int);",
+			"CREATE TABLE b (id int PRIMARY KEY); CREATE TABLE a (id int, n int REFERENCES b);",
+			"-- @migrate backfill a.n = NULL where n NOT IN (SELECT id FROM b)", false},
+		{"new column", "CREATE TABLE a (id int);", "CREATE TABLE a (id int, n text NOT NULL);", "-- @migrate backfill a.n = 'x'", false},
+		{"new table", "", "CREATE TABLE a (id int, n text);", "-- @migrate backfill a.n = 'x'", false},
+		{"turning not null", "CREATE TABLE a (id int, n text);", "CREATE TABLE a (id int, n text NOT NULL);", "-- @migrate backfill a.n = 'x' where n is null", false},
+		{"renamed column, rename declared after", "CREATE TABLE a (id int, m text);", "CREATE TABLE a (id int, n text);", "-- @migrate backfill a.n = 'x'\n-- @migrate rename a.m -> a.n", false},
+		{"enum losing a label",
+			"CREATE TYPE e AS ENUM ('p', 'q'); CREATE TABLE a (id int, s e);",
+			"CREATE TYPE e AS ENUM ('p'); CREATE TABLE a (id int, s e);",
+			"-- @migrate enum e: drop 'q' using 'p'\n-- @migrate backfill a.s = 'p' where s is null", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := planErr(t, c.from, c.to, c.decl)
+			if c.stale != strings.Contains(got, staleMsg) {
+				t.Errorf("stale = %v, got %q", c.stale, got)
+			}
+		})
+	}
+	// the stale backfill is reported, not emitted: the DDL must not overwrite the rows
+	in, err := ParseIntents("-- @migrate backfill a.n = 'x'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := mustLoad(t, "CREATE TABLE a (id int, n text);")
+	plan, err := Plan(s, mustLoad(t, "CREATE TABLE a (id int, n text);"), in)
+	if err == nil || !strings.Contains(err.Error(), "@migrate backfill a.n = 'x' (line 1): a.n "+staleMsg) {
+		t.Errorf("err = %v", err)
+	}
+	if strings.Contains(strings.Join(plan, "\n"), "UPDATE") {
+		t.Errorf("stale backfill emitted: %v", plan)
+	}
+}
+
 // TestEnumRecreatesProblems covers enumRecreates' declaration-mismatch branches: a
 // declared "using" label that is not itself a label of the target enum, a declared label
 // that is still present in the target enum (so dropping it was never necessary), an enum
