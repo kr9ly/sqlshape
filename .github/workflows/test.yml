@@ -118,7 +118,9 @@ jobs:
           git add .github/badges
           if ! git diff --cached --quiet; then
             git commit -m "CI: coverage badge [skip ci]"
-            git push
+            # main may move while this job runs (e.g. a release commit lands right
+            # after); rebase and retry instead of failing on non-fast-forward
+            git push || { git pull --rebase && git push; }
           fi
 
   # The analyzer against PostgreSQL 18: the embedded catalog loads, the oracle boots, and
